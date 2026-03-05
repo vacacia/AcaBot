@@ -4,3 +4,12 @@ tmp
 .claude
 docs
 docs-branch
+
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.egg-info/
+data/
+*.db
+.env
