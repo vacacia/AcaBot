@@ -18,6 +18,12 @@ dev = [
 [project.scripts]
 acabot = "acabot.main:main"
 
+[tool.pyright]
+pythonVersion = "3.11"
+venvPath = "."
+venv = ".venv"
+extraPaths = ["src"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
