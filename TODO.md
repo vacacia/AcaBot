@@ -55,6 +55,8 @@
   - 从 config.yaml 读取值传入各组件, 消除硬编码:
     - `gateway.host` / `gateway.port` (当前硬编码 0.0.0.0:8080)
     - `gateway.timeout` (当前硬编码 10.0s)
+    - `agent.default_model` (当前硬编码 gpt-4o-mini)
+    - `agent.max_tool_rounds` (当前硬编码 5)
     - `logging.level` (当前硬编码 INFO)
 
 **v0.3 验收标准：**
