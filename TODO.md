@@ -109,6 +109,11 @@
 
 - [ ] **Task 25: config.yaml llm_providers + main.py 组装**
 
+- [ ] **配置分层 — 基础设施与行为配置解耦**
+  - config.yaml 拆分为两层: 基础设施(gateway/端口/数据库路径, 绑定部署环境) + profile(模型/人设/插件配置, 绑定 bot 行为)
+  - config.yaml 通过 `profile: "profiles/casual.yaml"` 指向行为配置文件
+  - 切换 bot 性格/模型/插件只需改一行 profile 路径, 不碰基础设施配置
+
 **v0.4 验收标准：**
 - [ ] SQLite 存储正常（save/get_messages/query/count）
 - [ ] 插件加载（setup → hooks → tools → schedules）
