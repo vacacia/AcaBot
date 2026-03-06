@@ -52,6 +52,10 @@
 
 - [ ] **Task 10: Main 入口 — 串联所有组件**
   - `src/acabot/main.py`, `config.example.yaml`
+  - 从 config.yaml 读取值传入各组件, 消除硬编码:
+    - `gateway.host` / `gateway.port` (当前硬编码 0.0.0.0:8080)
+    - `gateway.timeout` (当前硬编码 10.0s)
+    - `logging.level` (当前硬编码 INFO)
 
 **v0.3 验收标准：**
 - [ ] LitellmAgent tool calling loop 正常（mock 测试通过）
