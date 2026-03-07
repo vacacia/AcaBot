@@ -1,0 +1,43 @@
+# AcaBot + NapCat 一键部署
+#
+# 使用方法:
+#   1. 复制 .env.example → .env, 填入 API Key
+#   2. 复制 config.example.yaml → config.yaml, 按需修改
+#   3. docker compose up -d
+#   4. 打开 http://localhost:${NAPCAT_WEBUI_PORT} 扫码登录 NapCat
+#   5. 查看日志: docker compose logs -f acabot
+
+services:
+  acabot:
+    build: .
+    container_name: acabot
+    restart: unless-stopped
+    ports:
+      - "${ACABOT_PORT:-8080}:8080"  # 宿主机端口从 .env 读, 容器内固定 8080
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./.env:/app/.env:ro
+      - ./data:/app/data     # 未来 SQLite 等数据存放
+    environment:
+      - TZ=Asia/Shanghai
+    networks:
+      - acabot_network
+
+  napcat:
+    image: mlikiowa/napcat-docker:latest
+    container_name: acabot-napcat
+    restart: unless-stopped
+    ports:
+      - "${NAPCAT_WEBUI_PORT:-6099}:6099"  # 宿主机端口从 .env 读
+    environment:
+      - NAPCAT_UID=${NAPCAT_UID:-1000}
+      - NAPCAT_GID=${NAPCAT_GID:-1000}
+    volumes:
+      - ./napcat/config:/app/napcat/config     # OneBot 配置
+      - ./napcat/QQ:/app/.config/QQ            # QQ 登录数据
+    networks:
+      - acabot_network
+
+networks:
+  acabot_network:
+    driver: bridge

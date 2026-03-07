@@ -9,8 +9,8 @@ gateway:
 
 # --- Agent (LLM 调用) ---
 agent:
-  default_model: "gpt-4o-mini"   # 默认模型
-  max_tool_rounds: 5             # 最大 tool 调用轮次
+  default_model: "deepseek-chat"   # 默认模型
+  max_tool_rounds: 30             # 最大 tool 调用轮次
   system_prompt: "you are a helpful assistant."
 
 # --- Session ---

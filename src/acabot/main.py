@@ -11,6 +11,8 @@ import logging
 import signal
 from typing import Any
 
+from dotenv import load_dotenv
+
 from .config import Config
 from .gateway.napcat import NapCatGateway
 from .session.memory import InMemorySessionManager
@@ -120,7 +122,10 @@ def setup_logging(config: Config) -> None:
 
 
 async def _run() -> None:
-    """异步主循环: 加载配置 → 组装组件 → 启动 Gateway → 等待关闭."""
+    """异步主循环: 加载 .env → 加载配置 → 组装组件 → 启动 Gateway → 等待关闭."""
+    # .env 必须在 Config 之前加载, litellm 从环境变量读 API Key
+    load_dotenv()
+
     config = Config.from_file()
     setup_logging(config)
 
