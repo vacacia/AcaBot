@@ -39,7 +39,7 @@ class BaseMessageStore(ABC):
     async def get_messages(
         self,
         session_key: str,
-        limit: int = 100,
+        limit: int | None = None,
         since: int | None = None,
     ) -> list[StoredMessage]: ...
 

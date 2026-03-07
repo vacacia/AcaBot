@@ -117,7 +117,7 @@ class BotContext:
         )
 
     async def get_messages(
-        self, session_key: str, limit: int = 100, since: int | None = None,
+        self, session_key: str, limit: int | None = None, since: int | None = None,
     ) -> list[Any]:
         """委托 Store 查询历史消息."""
         return await self.store.get_messages(session_key, limit=limit, since=since)

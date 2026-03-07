@@ -12,7 +12,7 @@ class NullMessageStore(BaseMessageStore):
         pass
 
     async def get_messages(
-        self, session_key: str, limit: int = 100, since: int | None = None,
+        self, session_key: str, limit: int | None = None, since: int | None = None,
     ) -> list[StoredMessage]:
         return []
 
