@@ -35,16 +35,19 @@ class HookResult:
     """Hook 返回值, 控制 Pipeline 后续行为.
 
     action:
-        "continue"  
+        "continue"
             — 继续执行下一个 hook
-        "skip_llm": 
-            — 跳过 LLM 调用, 直接用 early_response 回复(仅 on_receive/pre_llm 有效)
-            - 后续的 before_send / on_sent hook 仍然执行
-            - skip_llm + early_response:  on_receive → [跳过LLM] → before_send → send → on_sent
-        "abort": 会截断后续 hook 链
-            — 中断整个流程, 不发送任何回复
-            - abort: on_receive → (直接结束)
-    early_response: skip_llm 时要发送的 Action 列表
+        "skip_llm" (常用):
+            — 跳过 LLM 调用, 用 early_response 回复(仅 on_receive/pre_llm 有效)
+            - 后续的 post_llm / before_send / on_sent hook 仍然执行
+            - skip_llm 是处理固定指令、黑名单、关键词回复等场景的标准做法
+            - 流程: on_receive → [跳过LLM] → post_llm → before_send → send → on_sent
+        "abort" (慎用):
+            — 中断整个流程, 跳过所有后续 hook, 不发送, 不记录
+            - abort 意味着"这条消息从未发生过", 连 on_sent 归档都不会执行
+            - 除非明确知道自己在做什么, 否则不要用 abort, 用 skip_llm 代替
+            - 流程: on_receive → (直接结束)
+    early_response: skip_llm 时要发送的 Action 列表, 会被放入 ctx.actions
     """
     action: Literal["continue", "skip_llm", "abort"] = "continue"
     early_response: list[Action] | None = None
