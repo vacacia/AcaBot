@@ -13,3 +13,4 @@ __pycache__/
 data/
 *.db
 .env
+config.yaml

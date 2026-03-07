@@ -24,11 +24,17 @@ class NapCatGateway(BaseGateway):
     负责两个方向的翻译:
         收消息: OneBot v11 JSON → StandardEvent (translate)
         发消息: Action → OneBot API JSON (build_send_payload)
+
+    Args:
+        host: WebSocket 服务监听地址.
+        port: WebSocket 服务监听端口.
+        timeout: send / call_api 等待响应的超时秒数.
     """
 
-    def __init__(self, host: str = "0.0.0.0", port: int = 8080):
+    def __init__(self, host: str = "0.0.0.0", port: int = 8080, timeout: float = 10.0):
         self.host = host
         self.port = port
+        self.timeout = timeout
         self._ws: ServerConnection | None = None
         self._on_event: Callable[[StandardEvent], Awaitable[None]] | None = None
         self._pending: dict[str, asyncio.Future] = {}  # echo → Future, 请求-响应匹配
@@ -166,7 +172,7 @@ class NapCatGateway(BaseGateway):
         self._pending[echo] = future
         await self._ws.send(json.dumps(payload))
         try:
-            return await asyncio.wait_for(future, timeout=10.0)
+            return await asyncio.wait_for(future, timeout=self.timeout)
         except asyncio.TimeoutError:
             logger.error(f"Send timeout echo={echo}")
             return None
@@ -183,7 +189,7 @@ class NapCatGateway(BaseGateway):
         self._pending[echo] = future
         await self._ws.send(json.dumps(payload))
         try:
-            return await asyncio.wait_for(future, timeout=10.0)
+            return await asyncio.wait_for(future, timeout=self.timeout)
         except asyncio.TimeoutError:
             return {"status": "failed", "retcode": -1, "msg": f"Timeout: {action}"}
         finally:
