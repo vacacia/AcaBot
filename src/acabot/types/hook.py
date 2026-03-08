@@ -58,7 +58,7 @@ class HookContext:
     """贯穿 Pipeline 的共享上下文, hook 通过修改它来影响后续流程.
 
     Attributes:
-        event: 原始 StandardEvent(只读, 不要修改)
+        event: 原始 StandardEvent(on_receive hook 可改 segments, 其他阶段视为只读)
         session: 当前 Session
         messages: 要送给 LLM 的上下文消息列表(hook 可增删改)
         system_prompt: system prompt(hook 可追加记忆/人设等)
