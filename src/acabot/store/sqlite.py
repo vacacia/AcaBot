@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from typing import Any
 
 import aiosqlite
@@ -53,7 +54,8 @@ class SQLiteMessageStore(BaseMessageStore):
         self._db: aiosqlite.Connection | None = None
 
     async def initialize(self) -> None:
-        """连接数据库, 启用 WAL 模式, 建表."""
+        """连接数据库, 启用 WAL 模式, 建表. 目录不存在时自动创建."""
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._db = await aiosqlite.connect(self.db_path)
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.execute("PRAGMA synchronous=NORMAL")
@@ -65,6 +67,7 @@ class SQLiteMessageStore(BaseMessageStore):
         """关闭数据库连接."""
         if self._db:
             await self._db.close()
+            self._db = None
 
     def _ensure_db(self) -> aiosqlite.Connection:
         """获取数据库连接, 未初始化时抛出 RuntimeError."""

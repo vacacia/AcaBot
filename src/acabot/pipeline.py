@@ -111,7 +111,9 @@ class Pipeline:
 
         try:
             # --- on_receive ---
+            logger.debug("on_receive: event.text=%s", event.text[:200] if event.text else "(empty)")
             result = await run_hooks(self.hooks, HookPoint.ON_RECEIVE, ctx)
+            logger.debug("on_receive done: event.text=%s", event.text[:200] if event.text else "(empty)")
             if result.action == "abort":
                 return
             skip_llm = result.action == "skip_llm"

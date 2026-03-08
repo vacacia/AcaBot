@@ -49,6 +49,10 @@ class MultimodalPreprocessHook(Hook):
     ):
         self.vision_model = vision_model
         self.gateway = gateway
+        logger.info(
+            "MultimodalPreprocessHook init: vision_model=%s, gateway=%s",
+            vision_model, "yes" if gateway else "no",
+        )
 
     async def handle(self, ctx: HookContext) -> HookResult:
         """遍历 segments, 逐个替换为文字描述."""
@@ -56,11 +60,18 @@ class MultimodalPreprocessHook(Hook):
         msg_id = event.raw_message_id
         new_segments: list[MsgSegment] = []
 
+        logger.debug(
+            "handle() called: msg_id=%s, %d segment(s): %s",
+            msg_id, len(event.segments),
+            [(s.type, s.data) for s in event.segments],
+        )
+
         for seg in event.segments:
             text_seg = await self._convert_segment(seg, msg_id)
             new_segments.append(text_seg)
 
         event.segments = new_segments
+        logger.debug("handle() done: text=%s", event.text[:300] if event.text else "(empty)")
         return HookResult()
 
     # region segment 转换
@@ -93,14 +104,24 @@ class MultimodalPreprocessHook(Hook):
     async def _convert_image(self, seg: MsgSegment, msg_id: str) -> MsgSegment:
         """图片/mface → VLM 描述 或 纯占位."""
         url = seg.data.get("url", "")
+        logger.debug(
+            "Image: data=%s, vision_model=%s",
+            seg.data, self.vision_model,
+        )
 
         # 有 vision_model 且有 URL 时尝试 VLM 转述
         if self.vision_model and url:
             try:
+                logger.debug("Calling VLM: model=%s, url=%s", self.vision_model, url[:100])
                 description = await self._describe_image(url)
+                logger.debug("VLM success: %s", description[:100])
                 return self._make_text(f"[图片 msg_id={msg_id}: {description}]")
             except Exception as e:
-                logger.warning(f"VLM describe failed: {e}, fallback to placeholder")
+                logger.warning("VLM describe failed: %s, fallback to placeholder", e)
+        elif not url:
+            logger.debug("Image has no url, fallback to placeholder")
+        elif not self.vision_model:
+            logger.debug("No vision_model configured, fallback to placeholder")
 
         return self._make_text(f"[图片 msg_id={msg_id}]")
 

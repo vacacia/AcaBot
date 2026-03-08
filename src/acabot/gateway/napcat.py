@@ -102,6 +102,11 @@ class NapCatGateway(BaseGateway):
             MsgSegment(type=s["type"], data=s.get("data", {}))
             for s in raw.get("message", [])
         ]
+        logger.debug(
+            "translate: msg_id=%s, segments=%s",
+            raw.get("message_id"),
+            [(s.type, s.data) for s in segments],
+        )
         return StandardEvent(
             event_id=f"evt_{raw.get('message_id', '')}",
             event_type="message",
