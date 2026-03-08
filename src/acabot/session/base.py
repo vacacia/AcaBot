@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
@@ -13,10 +14,12 @@ class Session:
         session_key: 会话标识, 如 "qq:group:456" 或 "qq:user:123"
         messages: 当前上下文消息列表(OpenAI messages 格式)
         metadata: 扩展数据, hook 间传数据等
+        lock: 并发写保护 — Pipeline 和后台任务可能同时写 messages.
     """
     session_key: str
     messages: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False, compare=False)
 
 
 class BaseSessionManager(ABC):

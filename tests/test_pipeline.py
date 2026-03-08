@@ -33,6 +33,7 @@ class TestPipelineBasic:
     @pytest.fixture
     def pipeline(self):
         gw = AsyncMock()
+        gw.send = AsyncMock(return_value={"message_id": 1})
         agent = AsyncMock()
         agent.run = AsyncMock(return_value=AgentResponse(text="Reply!"))
         return Pipeline(
@@ -62,6 +63,7 @@ class TestPipelineBasic:
     # error_reply=None → 不回复用户, 只记日志
     async def test_error_no_reply_when_disabled(self):
         gw = AsyncMock()
+        gw.send = AsyncMock(return_value={"message_id": 1})
         agent = AsyncMock()
         agent.run = AsyncMock(return_value=AgentResponse(error="fail"))
         p = Pipeline(
@@ -75,21 +77,22 @@ class TestPipelineBasic:
     # 多轮对话: 第二次调用时 messages 包含前一轮的 user+assistant
     async def test_multi_turn(self, pipeline):
         await pipeline.process(make_event("first"))
-        # 第一轮: messages 里只有 1 条 user
-        assert len(pipeline.agent.run.call_args.kwargs["messages"]) == 1
+        # 第一轮: ctx.messages 含 user + assistant(LLM 调用后追加)
+        # 注: mock.call_args 持有 list 引用, 能看到后续 append
+        assert len(pipeline.agent.run.call_args.kwargs["messages"]) == 2
 
         pipeline.agent.run = AsyncMock(return_value=AgentResponse(text="R2"))
         await pipeline.process(make_event("second"))
-        # 第二轮: 前一轮 user + assistant + 本轮 user = 3 条
-        assert len(pipeline.agent.run.call_args.kwargs["messages"]) == 3
+        # 第二轮: 前一轮 user + assistant + 本轮 user + assistant = 4 条
+        assert len(pipeline.agent.run.call_args.kwargs["messages"]) == 4
 
     # 群聊共享: 同一 group 不同 user 共享 session
     async def test_group_shared_context(self, pipeline):
         await pipeline.process(make_event("msg A", "group", "A", "grp1"))
         pipeline.agent.run = AsyncMock(return_value=AgentResponse(text="R"))
         await pipeline.process(make_event("msg B", "group", "B", "grp1"))
-        # 用户 B 看到的 messages 应包含用户 A 的消息
-        assert len(pipeline.agent.run.call_args.kwargs["messages"]) == 3
+        # 用户 B 看到的 messages: A 的 user+assistant + B 的 user+assistant = 4 条
+        assert len(pipeline.agent.run.call_args.kwargs["messages"]) == 4
 
 
 # region Hook 集成
@@ -99,6 +102,7 @@ class TestPipelineWithHooks:
     @pytest.fixture
     def pipeline(self):
         gw = AsyncMock()
+        gw.send = AsyncMock(return_value={"message_id": 1})
         agent = AsyncMock()
         agent.run = AsyncMock(return_value=AgentResponse(text="Reply!"))
         hooks = HookRegistry()

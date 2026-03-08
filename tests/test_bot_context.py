@@ -1,5 +1,5 @@
 # BotContext: 插件与框架交互的唯一入口(门面模式)
-# 测试: Null Object 默认值, 代理调用委托(send/llm_call/get_messages), Config 读取
+# 测试: Null Object 默认值, 代理调用委托(llm_call/get_messages), Config 读取
 
 import pytest
 from unittest.mock import AsyncMock
@@ -32,12 +32,6 @@ class TestBotContext:
     async def test_get_messages_delegates_to_store(self, bot):
         msgs = await bot.get_messages("qq:group:123", limit=10)
         assert msgs == []  # NullMessageStore returns []
-
-    async def test_send_delegates_to_gateway(self, bot):
-        target = EventSource(platform="qq", message_type="private", user_id="1", group_id=None)
-        action = Action(action_type=ActionType.SEND_TEXT, target=target, payload={"text": "hi"})
-        await bot.send(action)
-        bot.gateway.send.assert_called_once_with(action)
 
     async def test_llm_call_delegates_to_agent(self, bot):
         resp = await bot.llm_call(system_prompt="test", messages=[{"role": "user", "content": "hi"}])

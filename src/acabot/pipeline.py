@@ -23,6 +23,9 @@ from .agent.base import BaseAgent
 from .agent.response import AgentResponse
 from .session.base import BaseSessionManager
 from .session.memory import InMemorySessionManager
+from .store.base import BaseMessageStore
+from .store.null import NullMessageStore
+from .bridge import SessionBridge
 from .hook import HookRegistry, run_hooks
 
 logger = logging.getLogger("acabot.pipeline")
@@ -44,6 +47,7 @@ class Pipeline:
         hooks: hook 注册表, 默认空.
         error_reply: Agent 出错时回复给用户的文案.
             None 表示不回复(只记日志), 有值则发送该文案.
+        store: 消息持久化存储, 默认 NullMessageStore.
     """
 
     def __init__(
@@ -54,6 +58,7 @@ class Pipeline:
         session_mgr: BaseSessionManager | None = None,
         hooks: HookRegistry | None = None,
         error_reply: str | None = _DEFAULT_ERROR_REPLY,
+        store: BaseMessageStore | None = None,
     ) -> None:
         self.gateway = gateway
         self.agent = agent
@@ -61,6 +66,7 @@ class Pipeline:
         self.session_mgr: BaseSessionManager = session_mgr or InMemorySessionManager()
         self.hooks = hooks or HookRegistry()
         self.error_reply = error_reply
+        self.store: BaseMessageStore = store or NullMessageStore()
         # 同 session 串行, 跨 session 并行
         self._session_locks: dict[str, asyncio.Lock] = {}
 
@@ -85,10 +91,16 @@ class Pipeline:
 
     # region 主线
     async def _run_pipeline(self, event: StandardEvent) -> None:
-        """主线逻辑: 
+        """主线逻辑:
         on_receive → pre_llm → LLM → post_llm → before_send → send → on_sent.
+
+        session 写入全由 bridge 管理, Pipeline 只操作 ctx.messages(临时副本).
         """
         session = await self.session_mgr.get_or_create(event.session_key)
+        bridge = SessionBridge(
+            gateway=self.gateway, session=session,
+            store=self.store, session_key=event.session_key,
+        )
 
         ctx = HookContext(
             event=event,
@@ -106,10 +118,9 @@ class Pipeline:
             if skip_llm:
                 ctx.actions = list(result.early_response or [])
 
-            # 追加用户消息(即使 skip_llm 也要记录, 保持上下文完整)
-            user_msg = {"role": "user", "content": event.text}
-            ctx.messages.append(user_msg)
-            session.messages.append(user_msg)
+            # 记录用户消息(即使 skip_llm 也会记录, 保持上下文完整)
+            await bridge.record_incoming(event)
+            ctx.messages.append({"role": "user", "content": event.text})
 
             if not skip_llm:
                 # --- pre_llm ---
@@ -117,6 +128,10 @@ class Pipeline:
                 if result.action == "skip_llm":
                     skip_llm = True
                     ctx.actions = list(result.early_response or [])
+
+            # LLM 原始回复
+            # session 存储原始消息; store 存储实际信息(分段/hook处理之后的消息)
+            llm_response_text: str | None = None
 
             if not skip_llm:
                 # --- LLM 调用 ---
@@ -139,7 +154,9 @@ class Pipeline:
                         return
                 else:
                     ctx.actions = self._build_actions(event, response)
-                    session.messages.append(
+                    llm_response_text = response.text
+                    # 只写 ctx.messages(给 post_llm hook 看)
+                    ctx.messages.append(
                         {"role": "assistant", "content": response.text},
                     )
 
@@ -151,9 +168,11 @@ class Pipeline:
             if result.action == "abort":
                 return
 
-            # --- send ---
+            # --- send (通过 bridge, 自动写入 session + store) ---
             for action in ctx.actions:
-                await self.gateway.send(action)
+                await bridge.send(
+                    action, session_content=llm_response_text,
+                )
 
             # --- on_sent ---
             await run_hooks(self.hooks, HookPoint.ON_SENT, ctx)
