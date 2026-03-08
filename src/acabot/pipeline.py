@@ -106,7 +106,7 @@ class Pipeline:
             event=event,
             session=session,
             messages=list(session.messages),
-            system_prompt=self.system_prompt,
+            system_prompt=self._build_system_prompt(session),
         )
 
         try:
@@ -181,6 +181,20 @@ class Pipeline:
             logger.exception(f"Pipeline error: {e}")
             ctx.metadata["error"] = str(e)
             await run_hooks(self.hooks, HookPoint.ON_ERROR, ctx)
+
+    # region 构建 system prompt
+    def _build_system_prompt(self, session: Any) -> str:
+        """拼接 system prompt + session 摘要.
+
+        如果 session 有 summary(由 ContextCompressorHook 生成),
+        追加到基础 system_prompt 末尾.
+        """
+        base = self.system_prompt
+        summary = getattr(session, "summary", None)
+        if summary and summary.strip():
+            separator = "\n\n---\n" if base else ""
+            base += f"{separator}以下是之前部分对话的压缩摘要:\n{summary}"
+        return base
 
     # region 构建 Action
     def _build_actions(

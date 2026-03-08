@@ -11,13 +11,16 @@ class Session:
     """单个会话的状态容器.
 
     Attributes:
-        session_key: 会话标识, 如 "qq:group:456" 或 "qq:user:123"
-        messages: 当前上下文消息列表(OpenAI messages 格式)
-        metadata: 扩展数据, hook 间传数据等
+        session_key: 会话标识, 如 "qq:group:456" 或 "qq:user:123".
+        messages: 当前上下文消息列表(OpenAI messages 格式).
+        summary: 旧消息的 LLM 摘要, 由 ContextCompressorHook 生成.
+            summary 拼接到 system_prompt 末尾.
+        metadata: 扩展数据, hook 间传数据等.
         lock: 并发写保护 — Pipeline 和后台任务可能同时写 messages.
     """
     session_key: str
     messages: list[dict[str, Any]] = field(default_factory=list)
+    summary: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False, compare=False)
 
@@ -30,8 +33,7 @@ class BaseSessionManager(ABC):
         """按 session_key 获取会话, 不存在则自动创建空会话.
 
         主流程用 — 收到消息时调用, 保证永远拿到可用的 Session.
-        需要加一个参数选择拉取出多少条消息填充 session 吗?
-        
+
         Args:
             session_key: 会话标识, 如 "qq:group:456".
 
