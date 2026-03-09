@@ -136,6 +136,27 @@ class PendingApproval:
 
 
 @dataclass(slots=True)
+class AgentRuntimeResult:
+    """一次 agent runtime 执行后的系统级结果.
+
+    ThreadPipeline 和 AgentRuntime 之间的正式契约.
+    包含文本, 动作, 状态, 错误和审批上下文.
+    """
+
+    status: Literal["completed", "waiting_approval", "failed"] = "completed"
+    text: str = ""
+    actions: list["PlannedAction"] = field(default_factory=list)
+    artifacts: list[dict[str, Any]] = field(default_factory=list)
+    usage: dict[str, int] = field(default_factory=dict)
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    model_used: str = ""
+    error: str | None = None
+    pending_approval: PendingApproval | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    raw: Any = None
+
+
+@dataclass(slots=True)
 class DeliveryResult:
     """单个 action 的投递结果."""
 

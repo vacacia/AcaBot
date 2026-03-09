@@ -4,8 +4,11 @@
 后续 App, ThreadPipeline, Outbox 继续挂到这一层.
 """
 
+from .agent_runtime import AgentRuntime
+from .app import RuntimeApp
 from .models import (
     AgentProfile,
+    AgentRuntimeResult,
     DeliveryResult,
     DispatchReport,
     MessageRecord,
@@ -20,12 +23,16 @@ from .models import (
     ThreadRecord,
     ThreadState,
 )
+from .outbox import Outbox
+from .pipeline import ThreadPipeline
 from .router import RuntimeRouter
 from .runs import InMemoryRunManager, RunManager
 from .stores import MessageStore, RunStore, ThreadStore
 from .threads import InMemoryThreadManager, ThreadManager
 
 __all__ = [
+    "AgentRuntime",
+    "AgentRuntimeResult",
     "AgentProfile",
     "DeliveryResult",
     "DispatchReport",
@@ -37,6 +44,7 @@ __all__ = [
     "PendingApproval",
     "PlannedAction",
     "RouteDecision",
+    "RuntimeApp",
     "RunContext",
     "RunManager",
     "RunRecord",
@@ -44,6 +52,8 @@ __all__ = [
     "RunStep",
     "RunStore",
     "RuntimeRouter",
+    "Outbox",
+    "ThreadPipeline",
     "ThreadManager",
     "ThreadRecord",
     "ThreadState",
