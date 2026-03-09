@@ -48,3 +48,25 @@ class BaseAgent(ABC):
             AgentResponse, 包含文本回复、附件、token 用量等.
         """
         ...
+
+    @abstractmethod
+    async def complete(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        model: str | None = None,
+    ) -> AgentResponse:
+        """单次 LLM completion, 不带 tool calling loop.
+
+        适用场景: 插件调 VLM 识图 / 提取关键信息 / 生成摘要等,
+        不需要工具调用, 只要一次 LLM 回复.
+
+        Args:
+            system_prompt: 系统提示词.
+            messages: 上下文消息列表(OpenAI messages 格式).
+            model: 模型名, None 则用 Agent 默认模型.
+
+        Returns:
+            AgentResponse, 只有 text/error/usage/model_used, 无 tool_calls_made.
+        """
+        ...

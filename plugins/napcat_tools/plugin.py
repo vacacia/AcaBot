@@ -9,6 +9,7 @@ v0.4 只包含查询类工具(get_user_info / get_group_info 等),
         enabled_tools:         # 留空则注册全部
           - get_user_info
           - get_group_info
+        vision_model: ""       # 头像识图模型, 留空则不识图只返回 URL
 """
 
 from __future__ import annotations
@@ -17,7 +18,6 @@ import logging
 from typing import Any
 
 from acabot.agent import ToolDef
-from acabot.gateway import BaseGateway
 from acabot.plugin.base import Plugin
 from acabot.plugin.context import BotContext
 from acabot.types import HookPoint
@@ -41,9 +41,11 @@ class NapCatToolsPlugin(Plugin):
     name = "napcat_tools"
 
     async def setup(self, bot: BotContext) -> None:
-        """保存 gateway 引用, 读取插件配置."""
+        """保存 bot 引用, 读取插件配置."""
+        self._bot = bot
         self._gateway = bot.gateway
         self._config = bot.get_config(self.name)
+        self._vision_model: str = self._config.get("vision_model", "")
 
     def hooks(self) -> list[tuple[HookPoint, Any]]:
         return []
@@ -173,6 +175,34 @@ class NapCatToolsPlugin(Plugin):
                 return val
         return _AVATAR_URL_TEMPLATE.format(user_id=user_id)
 
+    async def _describe_avatar(self, avatar_url: str) -> str | None:
+        """调 VLM 描述头像图片, 无 vision_model 配置则返回 None.
+
+        通过 bot.llm_complete() 调用, 不走 tool loop.
+        失败时记录日志并返回 None, 不中断工具流程.
+        """
+        if not self._vision_model:
+            return None
+        try:
+            resp = await self._bot.llm_complete(
+                system_prompt="简洁描述这张头像图片的内容, 一两句话即可.",
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "描述这张头像:"},
+                        {"type": "image_url", "image_url": {"url": avatar_url}},
+                    ],
+                }],
+                model=self._vision_model,
+            )
+            if resp.error:
+                logger.warning("VLM 识图失败: %s", resp.error)
+                return None
+            return resp.text.strip() or None
+        except Exception as e:
+            logger.warning("VLM 识图异常: %s", e)
+            return None
+
     async def _call_api(self, action: str, params: dict[str, Any]) -> Any:
         """统一的 API 调用 + 错误检查.
 
@@ -196,13 +226,12 @@ class NapCatToolsPlugin(Plugin):
     async def _handle_get_user_info(self, params: dict[str, Any]) -> dict[str, Any]:
         user_id = params["user_id"]
         data = await self._call_api("get_stranger_info", {"user_id": user_id})
-        # 优先用 API 返回的头像 URL, fallback 到 qlogo 拼接
         avatar_url = self._resolve_avatar_url(data, user_id)
         data["avatar_url"] = avatar_url
-        return {
-            **data,
-            "attachments": [{"type": "image", "url": avatar_url}],
-        }
+        description = await self._describe_avatar(avatar_url)
+        if description:
+            data["avatar_description"] = description
+        return data
 
     async def _handle_get_group_info(self, params: dict[str, Any]) -> dict[str, Any]:
         return await self._call_api("get_group_info", {"group_id": params["group_id"]})
@@ -217,10 +246,10 @@ class NapCatToolsPlugin(Plugin):
         user_id = params["user_id"]
         avatar_url = self._resolve_avatar_url(data, user_id)
         data["avatar_url"] = avatar_url
-        return {
-            **data,
-            "attachments": [{"type": "image", "url": avatar_url}],
-        }
+        description = await self._describe_avatar(avatar_url)
+        if description:
+            data["avatar_description"] = description
+        return data
 
     async def _handle_get_group_member_list(
         self, params: dict[str, Any],

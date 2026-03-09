@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from acabot.gateway import BaseGateway
 from acabot.session import BaseSessionManager
@@ -17,6 +17,9 @@ from acabot.agent import BaseAgent, AgentResponse
 from acabot.bridge import SessionBridge
 from acabot.types import Action, ActionType, EventSource, MsgSegment
 from acabot.config import Config
+
+if TYPE_CHECKING:
+    from acabot.kv import BaseKVStore
 
 logger = logging.getLogger("acabot.context")
 
@@ -45,16 +48,18 @@ class BotContext:
         agent: BaseAgent,
         config: Config,
         store: BaseMessageStore | None = None,
-        kv: Any = None,
+        kv: BaseKVStore | None = None,
         llm_registry: Any = None,
         scheduler: Any = None,
     ):
+        from acabot.kv import NullKVStore
+
         self.gateway = gateway
         self.session_mgr = session_mgr
         self.agent = agent
         self.config = config
         self.store: BaseMessageStore = store or NullMessageStore()
-        self.kv = kv
+        self.kv: BaseKVStore = kv or NullKVStore()
         self.llm_registry = llm_registry
         self.scheduler = scheduler
 
@@ -167,8 +172,25 @@ class BotContext:
         messages: list[dict[str, Any]],
         model: str | None = None,
     ) -> AgentResponse:
-        """委托 Agent 执行一次 LLM 调用."""
+        """委托 Agent 执行一次 LLM 调用(含 tool loop)."""
         return await self.agent.run(
+            system_prompt=system_prompt,
+            messages=messages,
+            model=model,
+        )
+
+    async def llm_complete(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        model: str | None = None,
+    ) -> AgentResponse:
+        """单次 LLM completion, 不带 tool loop.
+
+        插件用这个做 VLM 识图 / 提取关键信息 / 生成摘要等,
+        不会触发工具调用.
+        """
+        return await self.agent.complete(
             system_prompt=system_prompt,
             messages=messages,
             model=model,

@@ -110,6 +110,37 @@ class LitellmAgent(BaseAgent):
 
     # endregion
 
+    # region 单次 completion (不带 tools)
+
+    async def complete(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        model: str | None = None,
+    ) -> AgentResponse:
+        use_model = model or self.default_model
+        full_messages = [{"role": "system", "content": system_prompt}] + list(messages)
+        try:
+            # 不传 tools, 不进 loop, 只做一次 completion
+            response = await acompletion(model=use_model, messages=full_messages)
+            choice = response.choices[0]
+            usage = response.usage
+            return AgentResponse(
+                text=choice.message.content or "",
+                usage={
+                    "prompt_tokens": getattr(usage, "prompt_tokens", 0),
+                    "completion_tokens": getattr(usage, "completion_tokens", 0),
+                    "total_tokens": getattr(usage, "total_tokens", 0),
+                },
+                model_used=use_model,
+                raw=response,
+            )
+        except Exception as e:
+            logger.error("LLM complete failed: %s", e)
+            return AgentResponse(error=str(e), model_used=use_model)
+
+    # endregion
+
     # region tool call 处理
 
     async def _handle_tool_calls(
@@ -144,31 +175,37 @@ class LitellmAgent(BaseAgent):
             except json.JSONDecodeError:
                 params = {}
 
-            result_str, attachments = await self._execute_tool(tool_name, params)
+            result_content, attachments = await self._execute_tool(tool_name, params)
             all_attachments.extend(attachments)
+            # content 可以是 str 或 list[dict](content blocks, 含图片)
             full_messages.append(
-                {"role": "tool", "tool_call_id": tc.id, "content": result_str}
+                {"role": "tool", "tool_call_id": tc.id, "content": result_content}
             )
             tool_calls_made.append(
-                ToolCallRecord(name=tool_name, arguments=params, result=result_str)
+                ToolCallRecord(name=tool_name, arguments=params, result=result_content)
             )
 
     async def _execute_tool(
         self, tool_name: str, params: dict,
     ) -> tuple[str, list[Attachment]]:
-        """执行单个 tool, 返回 (结果 str, attachments).
+        """执行单个 tool, 返回 (tool result str, attachments).
 
-        handler 可以返回含 "attachments" key 的 dict,
-        NOTE: 提取附件并从 result 中移除, 避免在 tool result 中发给 LLM.
+        handler 返回 dict 时支持特殊 key "attachments": 提取后发给用户(Pipeline 处理).
         """
         tool_def = self._tools.get(tool_name)
         if not tool_def:
             return json.dumps({"error": f"Unknown tool: {tool_name}"}), []
         try:
             result = await tool_def.handler(params)
-            if isinstance(result, dict) and "attachments" in result:
-                # 浅拷贝后 pop, 不修改 handler 的原始返回值
-                result = dict(result)
+            if not isinstance(result, dict):
+                return (result if isinstance(result, str) else json.dumps(result)), []
+
+            # 浅拷贝, 不修改 handler 的原始返回值
+            result = dict(result)
+
+            # 提取 attachments(发给用户)
+            attachments: list[Attachment] = []
+            if "attachments" in result:
                 raw_attachments = result.pop("attachments")
                 attachments = [
                     Attachment(
@@ -178,11 +215,8 @@ class LitellmAgent(BaseAgent):
                     )
                     for a in raw_attachments
                 ]
-                # 空 dict 序列化为 "{}", 避免某些 LLM 拒绝空 tool result
-                return json.dumps(result), attachments
-            if isinstance(result, str):
-                return result, []
-            return json.dumps(result), []
+
+            return json.dumps(result), attachments
         except Exception as e:
             return json.dumps({"error": str(e)}), []
 

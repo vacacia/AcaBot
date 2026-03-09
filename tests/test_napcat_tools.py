@@ -17,13 +17,13 @@ from napcat_tools.plugin import NapCatToolsPlugin
 
 # region NapCatToolsPlugin
 
-def _make_bot(gateway=None, config_data=None):
+def _make_bot(gateway=None, config_data=None, agent=None):
     """构造带 mock gateway 的 BotContext."""
     gw = gateway or AsyncMock()
     return BotContext(
         gateway=gw,
         session_mgr=AsyncMock(),
-        agent=MagicMock(),
+        agent=agent or MagicMock(),
         config=Config(config_data or {}),
     )
 
@@ -44,16 +44,17 @@ class TestNapCatToolsPlugin:
         await p.setup(bot)
         return p
 
-    async def test_get_user_info_returns_avatar_and_attachments(self, plugin):
-        # get_user_info 应拼接 avatar_url 并返回 attachments
+    async def test_get_user_info_returns_avatar_url(self, plugin):
         tools = plugin.tools()
         get_user = next(t for t in tools if t.name == "get_user_info")
         result = await get_user.handler({"user_id": 12345})
 
         assert result["nickname"] == "TestUser"
         assert "12345" in result["avatar_url"]
-        assert result["attachments"][0]["type"] == "image"
-        assert result["attachments"][0]["url"] == result["avatar_url"]
+        # 没配 vision_model, 不应有 avatar_description
+        assert "avatar_description" not in result
+        assert "images_for_llm" not in result
+        assert "attachments" not in result
 
     async def test_get_user_info_prefers_api_avatar(self, plugin):
         # API 返回了 avatar_url → 优先使用, 不拼接 qlogo
@@ -94,8 +95,8 @@ class TestNapCatToolsPlugin:
         assert result["group_name"] == "TestGroup"
         assert result["member_count"] == 42
 
-    async def test_get_group_member_info_returns_avatar_and_attachments(self, plugin):
-        # get_group_member_info 也应拼接 avatar_url 并返回 attachments
+    async def test_get_group_member_info_returns_avatar_url(self, plugin):
+        # get_group_member_info 应返回 avatar_url, 无 vision_model 不做识图
         plugin._gateway.call_api = AsyncMock(return_value={
             "status": "ok",
             "data": {"user_id": 12345, "nickname": "TestUser", "card": "TestCard", "role": "member"},
@@ -105,7 +106,9 @@ class TestNapCatToolsPlugin:
         result = await get_member.handler({"group_id": 100, "user_id": 12345})
 
         assert "12345" in result["avatar_url"]
-        assert result["attachments"][0]["type"] == "image"
+        assert "avatar_description" not in result
+        assert "images_for_llm" not in result
+        assert "attachments" not in result
 
     async def test_get_group_member_list_wraps_in_members_key(self, plugin):
         # member_list 返回的 data 是 list, handler 应包成 {"members": [...]}
@@ -119,6 +122,70 @@ class TestNapCatToolsPlugin:
 
         assert "members" in result
         assert len(result["members"]) == 2
+
+
+class TestNapCatToolsVLM:
+    """NapCatToolsPlugin: 配置 vision_model 后调 VLM 识图."""
+
+    @pytest.fixture
+    async def plugin_with_vlm(self):
+        """配了 vision_model 的插件, agent.complete 返回 mock 描述."""
+        gw = AsyncMock()
+        gw.call_api = AsyncMock(return_value={
+            "status": "ok",
+            "data": {"user_id": 12345, "nickname": "TestUser"},
+        })
+        mock_agent = MagicMock()
+        mock_agent.complete = AsyncMock(return_value=AgentResponse(
+            text="一个卡通猫咪头像",
+        ))
+        bot = _make_bot(
+            gateway=gw,
+            agent=mock_agent,
+            config_data={
+                "plugins": {"napcat_tools": {"vision_model": "gpt-4o"}},
+            },
+        )
+        p = NapCatToolsPlugin()
+        await p.setup(bot)
+        return p
+
+    async def test_get_user_info_with_vlm_returns_description(self, plugin_with_vlm):
+        tools = plugin_with_vlm.tools()
+        get_user = next(t for t in tools if t.name == "get_user_info")
+        result = await get_user.handler({"user_id": 12345})
+
+        assert result["avatar_description"] == "一个卡通猫咪头像"
+        assert "images_for_llm" not in result
+
+    async def test_vlm_failure_returns_no_description(self):
+        """VLM 调用失败时不中断, 只是没有 avatar_description."""
+        gw = AsyncMock()
+        gw.call_api = AsyncMock(return_value={
+            "status": "ok",
+            "data": {"user_id": 12345, "nickname": "TestUser"},
+        })
+        mock_agent = MagicMock()
+        mock_agent.complete = AsyncMock(return_value=AgentResponse(
+            error="model not available",
+        ))
+        bot = _make_bot(
+            gateway=gw,
+            agent=mock_agent,
+            config_data={
+                "plugins": {"napcat_tools": {"vision_model": "gpt-4o"}},
+            },
+        )
+        p = NapCatToolsPlugin()
+        await p.setup(bot)
+
+        tools = p.tools()
+        get_user = next(t for t in tools if t.name == "get_user_info")
+        result = await get_user.handler({"user_id": 12345})
+
+        # VLM 失败, 不应有 avatar_description, 但不应抛异常
+        assert "avatar_description" not in result
+        assert "12345" in result["avatar_url"]
 
 
 class TestNapCatToolsPluginConfig:
@@ -183,22 +250,25 @@ class TestExecuteToolAttachment:
         assert attachments[0].type == "image"
         assert attachments[0].url == "https://example.com/img.jpg"
 
-    async def test_attachments_only_returns_empty_json(self, agent):
-        # handler 只返回 attachments, 无其他字段 → text 为 "{}" 而非 ""
+    async def test_images_for_llm_ignored_as_plain_data(self, agent):
+        # images_for_llm 不再有特殊处理, 当普通字段 json.dumps
         async def handler(params):
             return {
-                "attachments": [{"type": "image", "url": "https://example.com/img.jpg"}],
+                "nickname": "Test",
+                "images_for_llm": ["https://example.com/avatar.jpg"],
             }
 
         from acabot.agent.tool import ToolDef
         agent.register_tool(ToolDef(
-            name="att_only", description="att_only",
+            name="vision", description="vision",
             parameters={}, handler=handler,
         ))
 
-        text, attachments = await agent._execute_tool("att_only", {})
-        assert text == "{}"
-        assert len(attachments) == 1
+        result_content, attachments = await agent._execute_tool("vision", {})
+        # result_content 是 str(json), images_for_llm 当普通字段序列化
+        parsed = json.loads(result_content)
+        assert parsed["images_for_llm"] == ["https://example.com/avatar.jpg"]
+        assert attachments == []
 
     async def test_does_not_mutate_handler_return(self, agent):
         # _execute_tool 不应修改 handler 返回的原始 dict
@@ -217,7 +287,7 @@ class TestExecuteToolAttachment:
         ))
 
         await agent._execute_tool("cached", {})
-        assert "attachments" in cached  # 原始 dict 未被修改
+        assert "attachments" in cached
 
     async def test_dict_without_attachments(self, agent):
         # 普通 dict → 无附件
