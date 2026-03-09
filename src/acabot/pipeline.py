@@ -225,9 +225,16 @@ class Pipeline:
 
         for att in response.attachments:
             if att.type == "image":
-                seg = {"type": "image", "data": {"url": att.url or att.data}}
+                # NapCat 的 file 字段统一支持 URL / 本地路径 / base64:// 前缀
+                if att.url:
+                    file_value = att.url
+                elif att.data:
+                    file_value = f"base64://{att.data}"
+                else:
+                    continue
+                seg = {"type": "image", "data": {"file": file_value}}
             else:
-                seg = {"type": "text", "data": {"text": f"[{att.type}: {att.url}]"}}
+                seg = {"type": "text", "data": {"text": f"[{att.type}: {att.url or '(no url)'}]"}}
             actions.append(Action(
                 action_type=ActionType.SEND_SEGMENTS,
                 target=event.source,

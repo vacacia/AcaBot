@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import pathlib
 import signal
+import sys
 from typing import Any
 
 from dotenv import load_dotenv
@@ -153,6 +155,34 @@ def _register_hooks(
     hooks.register(HookPoint.PRE_LLM, cc_hook)
 
 
+async def _load_plugins(components: dict[str, Any]) -> None:
+    """加载外部插件.
+
+    plugins 不在 src/ 的 package 内, 通过 sys.path 引入.
+    后续 PluginLoader 支持目录扫描时替换此处手动 import.
+
+    Args:
+        components: build_components 返回的组件字典.
+    """
+    bot: BotContext = components["bot"]
+    hooks: HookRegistry = components["hooks"]
+    plugin_loader: PluginLoader = components["plugin_loader"]
+
+    # plugins/ 在项目根目录, 用绝对路径避免依赖 cwd
+    _project_root = pathlib.Path(__file__).resolve().parent.parent.parent
+    plugins_dir = str(_project_root / "plugins")
+    if plugins_dir not in sys.path:
+        sys.path.insert(0, plugins_dir)
+
+    try:
+        from napcat_tools.plugin import NapCatToolsPlugin  # type: ignore[import-untyped]
+        await plugin_loader.load_plugin(NapCatToolsPlugin(), bot, hooks)
+    except ImportError:
+        logger.warning("napcat_tools plugin not found, skipping")
+    except Exception:
+        logger.exception("Failed to load napcat_tools plugin")
+
+
 # endregion
 
 
@@ -204,6 +234,9 @@ async def _run() -> None:
     # 异步初始化: store 建表/连接
     await store.initialize()
     logger.info(f"MessageStore initialized: {store.db_path}")
+
+    # 加载插件
+    await _load_plugins(components)
 
     # 接通消息流: Gateway 收到事件 → Pipeline.process
     gateway.on_event(pipeline.process)

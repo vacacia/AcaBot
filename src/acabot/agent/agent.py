@@ -9,7 +9,7 @@ from typing import Any
 from litellm import acompletion
 
 from .base import BaseAgent
-from .response import AgentResponse, ToolCallRecord
+from .response import AgentResponse, Attachment, ToolCallRecord
 from .tool import ToolDef
 
 logger = logging.getLogger("acabot.agent")
@@ -64,6 +64,7 @@ class LitellmAgent(BaseAgent):
         tools_param = self._build_tools_param()
         total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         tool_calls_made: list[ToolCallRecord] = []
+        all_attachments: list[Attachment] = []
 
         for _ in range(self.max_tool_rounds + 1):
             try:
@@ -85,12 +86,14 @@ class LitellmAgent(BaseAgent):
                         msg,
                         full_messages,
                         tool_calls_made,
+                        all_attachments,
                     )
                     continue
 
                 # 没有 tool call → 最终回复
                 return AgentResponse(
                     text=msg.content or "",
+                    attachments=all_attachments,
                     usage=total_usage,
                     tool_calls_made=tool_calls_made,
                     model_used=use_model,
@@ -114,8 +117,16 @@ class LitellmAgent(BaseAgent):
         msg: Any,
         full_messages: list[dict[str, Any]],
         tool_calls_made: list[ToolCallRecord],
+        all_attachments: list[Attachment],
     ) -> None:
-        """处理一轮 tool calls: 把 assistant 消息和 tool 结果追加到 messages."""
+        """处理一轮 tool calls: 把 assistant 消息和 tool 结果追加到 messages.
+
+        Args:
+            msg: LLM 返回的 message 对象(含 tool_calls).
+            full_messages: 对话历史, 就地追加.
+            tool_calls_made: tool call 记录列表, 就地追加.
+            all_attachments: 累积的附件列表, 就地追加.
+        """
         # 追加 assistant 的 tool_call 请求
         full_messages.append(
             {
@@ -143,7 +154,8 @@ class LitellmAgent(BaseAgent):
             except json.JSONDecodeError:
                 params = {}
 
-            result_str = await self._execute_tool(tool_name, params)
+            result_str, attachments = await self._execute_tool(tool_name, params)
+            all_attachments.extend(attachments)
             full_messages.append(
                 {"role": "tool", "tool_call_id": tc.id, "content": result_str}
             )
@@ -151,15 +163,37 @@ class LitellmAgent(BaseAgent):
                 ToolCallRecord(name=tool_name, arguments=params, result=result_str)
             )
 
-    async def _execute_tool(self, tool_name: str, params: dict) -> str:
-        """执行单个 tool, 返回结果字符串. 异常时返回 error JSON."""
+    async def _execute_tool(
+        self, tool_name: str, params: dict,
+    ) -> tuple[str, list[Attachment]]:
+        """执行单个 tool, 返回 (结果 str, attachments).
+
+        handler 可以返回含 "attachments" key 的 dict,
+        NOTE: 提取附件并从 result 中移除, 避免在 tool result 中发给 LLM.
+        """
         tool_def = self._tools.get(tool_name)
         if not tool_def:
-            return json.dumps({"error": f"Unknown tool: {tool_name}"})
+            return json.dumps({"error": f"Unknown tool: {tool_name}"}), []
         try:
             result = await tool_def.handler(params)
-            return json.dumps(result) if not isinstance(result, str) else result
+            if isinstance(result, dict) and "attachments" in result:
+                # 浅拷贝后 pop, 不修改 handler 的原始返回值
+                result = dict(result)
+                raw_attachments = result.pop("attachments")
+                attachments = [
+                    Attachment(
+                        type=a.get("type", "file"),
+                        url=a.get("url", ""),
+                        data=a.get("data", ""),
+                    )
+                    for a in raw_attachments
+                ]
+                # 空 dict 序列化为 "{}", 避免某些 LLM 拒绝空 tool result
+                return json.dumps(result), attachments
+            if isinstance(result, str):
+                return result, []
+            return json.dumps(result), []
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}), []
 
     # endregion

@@ -44,6 +44,13 @@ logging:
   level: "INFO"          # DEBUG / INFO / WARNING / ERROR
 
 # --- 插件配置 ---
-# plugins:
-#   plugin_name:
-#     key: value
+plugins:
+  napcat_tools:
+    # 启用的工具列表, 留空则注册全部
+    enabled_tools:
+      - get_user_info
+      - get_group_info
+      - get_group_member_info
+      - get_group_member_list
+      - get_message
+    # 后续可加操作类: group_ban, group_kick, recall 等
