@@ -2,6 +2,8 @@ ref
 tmp
 .codebuddy
 .claude
+.codex
+
 docs
 docs-branch
 
@@ -15,3 +17,5 @@ data/
 .env
 config.yaml
 napcat/QQ/
+napcat/config
+agent-first
