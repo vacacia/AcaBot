@@ -1,83 +1,299 @@
-"""main.py 测试 — 验证 build_components 配置传递 + 边界行为."""
+"""main.py 测试.
+
+这一组测试只验证新的 RuntimeApp 启动链路.
+旧的 Session + Pipeline 组装不再属于默认主路径.
+"""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Any
+
 from acabot.config import Config
-from acabot.main import build_components
-from acabot.gateway.napcat import NapCatGateway
-from acabot.agent.agent import LitellmAgent
+from acabot.main import build_runtime_app, create_message_store, wait_for_shutdown_signal
+from acabot.runtime import (
+    AgentProfile,
+    InMemoryMessageStore,
+    RouteDecision,
+    RuntimeComponents,
+)
 
 
-# region 配置传递
+class FakeGateway:
+    """用于 main 测试的最小 Gateway."""
+
+    def __init__(self) -> None:
+        """初始化 fake gateway."""
+
+        self.handler = None
+
+    async def start(self) -> None:
+        """模拟启动 Gateway."""
+
+        return None
+
+    async def stop(self) -> None:
+        """模拟停止 Gateway."""
+
+        return None
+
+    async def send(self, action: Any) -> dict[str, object] | None:
+        """模拟发送动作.
+
+        Args:
+            action: 待发送动作.
+
+        Returns:
+            一份最小回执.
+        """
+
+        _ = action
+        return {"message_id": "msg-1"}
+
+    def on_event(self, handler) -> None:
+        """注册事件处理器.
+
+        Args:
+            handler: 标准事件处理函数.
+        """
+
+        self.handler = handler
 
 
-class TestBuildComponentsConfigPassthrough:
-    """config 的值能正确传递到各组件(不测默认值, 只测传递链路)."""
+@dataclass
+class FakeAgent:
+    """用于 main 测试的最小 legacy agent."""
 
-    def setup_method(self):
-        self.config = Config({
-            "gateway": {"host": "127.0.0.1", "port": 9090, "timeout": 30.0},
-            "agent": {
-                "default_model": "claude-3-haiku",
-                "max_tool_rounds": 10,
-                "system_prompt": "你是测试机器人",
+    default_model: str
+    max_tool_rounds: int
+
+    async def run(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        model: str | None = None,
+    ) -> Any:
+        """模拟执行一次 agent run.
+
+        Args:
+            system_prompt: 本次调用使用的 system prompt.
+            messages: 上下文消息列表.
+            model: 可选的模型名覆盖.
+
+        Returns:
+            一个最小响应对象.
+        """
+
+        return type(
+            "Response",
+            (),
+            {
+                "text": "ok",
+                "attachments": [],
+                "error": None,
+                "usage": {},
+                "tool_calls_made": [],
+                "model_used": model or self.default_model,
+                "raw": {"system_prompt": system_prompt, "messages": messages},
             },
-            "session": {"max_messages": 50},
-            "pipeline": {"error_reply": "系统繁忙"},
-        })
-        self.components = build_components(self.config)
-
-    def test_gateway_receives_config(self):
-        gw = self.components["gateway"]
-        assert gw.host == "127.0.0.1"
-        assert gw.port == 9090
-        assert gw.timeout == 30.0
-
-    def test_agent_receives_config(self):
-        agent = self.components["agent"]
-        assert agent.default_model == "claude-3-haiku"
-        assert agent.max_tool_rounds == 10
-
-    def test_session_receives_config(self):
-        assert self.components["session_mgr"].max_messages == 50
-
-    def test_pipeline_receives_config(self):
-        p = self.components["pipeline"]
-        assert p.error_reply == "系统繁忙"
-        assert p.system_prompt == "你是测试机器人"
-
-    def test_empty_config_does_not_crash(self):
-        """空配置不会报错(各组件有自己的默认值)."""
-        components = build_components(Config({}))
-        assert isinstance(components["gateway"], NapCatGateway)
-        assert isinstance(components["agent"], LitellmAgent)
+        )()
 
 
-# endregion
+def test_create_message_store_returns_in_memory_store() -> None:
+    """create_message_store 当前默认返回 InMemoryMessageStore."""
+
+    store = create_message_store(Config({}))
+
+    assert isinstance(store, InMemoryMessageStore)
 
 
-# region error_reply 边界
+def test_build_runtime_app_uses_factories_and_runtime_config() -> None:
+    """build_runtime_app 能把 factory 和 runtime config 正确接到新主线."""
+
+    seen: dict[str, Any] = {}
+
+    def gateway_factory(config: Config) -> FakeGateway:
+        """构造 fake gateway.
+
+        Args:
+            config: 已加载的 Config 对象.
+
+        Returns:
+            一个 fake gateway.
+        """
+
+        seen["gateway"] = config.get("gateway", {})
+        return FakeGateway()
+
+    def agent_factory(config: Config) -> FakeAgent:
+        """构造 fake legacy agent.
+
+        Args:
+            config: 已加载的 Config 对象.
+
+        Returns:
+            一个 fake legacy agent.
+        """
+
+        agent_conf = config.get("agent", {})
+        seen["agent"] = agent_conf
+        return FakeAgent(
+            default_model=agent_conf.get("default_model", "gpt-4o-mini"),
+            max_tool_rounds=agent_conf.get("max_tool_rounds", 5),
+        )
+
+    config = Config(
+        {
+            "gateway": {"host": "127.0.0.1", "port": 9100, "timeout": 30.0},
+            "agent": {
+                "default_model": "claude-test",
+                "max_tool_rounds": 9,
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "profiles": {
+                    "aca": {
+                        "name": "Aca",
+                        "prompt_ref": "prompt/aca",
+                    }
+                },
+                "prompts": {
+                    "prompt/aca": "You are Aca."
+                },
+            },
+        }
+    )
+
+    components = build_runtime_app(
+        config,
+        gateway_factory=gateway_factory,
+        agent_factory=agent_factory,
+    )
+    profile = components.profile_loader.load(
+        RouteDecision(
+            thread_id="qq:user:10001",
+            actor_id="qq:user:10001",
+            agent_id="aca",
+            channel_scope="qq:user:10001",
+        )
+    )
+
+    assert seen["gateway"]["port"] == 9100
+    assert seen["agent"]["default_model"] == "claude-test"
+    assert components.router.default_agent_id == "aca"
+    assert components.prompt_loader.load("prompt/aca") == "You are Aca."
+    assert profile.name == "Aca"
+    assert isinstance(components.message_store, InMemoryMessageStore)
 
 
-class TestErrorReplyConfig:
-    """error_reply 的 falsy 值处理 — 这是 main.py 自己的逻辑, 值得测."""
+async def test_run_starts_and_stops_runtime_app(monkeypatch) -> None:
+    """_run 会启动 RuntimeApp, 等待 shutdown, 然后停止 RuntimeApp."""
 
-    def test_empty_string_means_no_reply(self):
-        """空字符串 → None(不回复)."""
-        config = Config({"pipeline": {"error_reply": ""}})
-        components = build_components(config)
-        assert components["pipeline"].error_reply is None
+    from acabot import main as main_module
 
-    def test_null_means_no_reply(self):
-        """yaml 里写 null → Python None → 不回复."""
-        config = Config({"pipeline": {"error_reply": None}})
-        components = build_components(config)
-        assert components["pipeline"].error_reply is None
+    started: list[str] = []
+    stopped: list[str] = []
 
-    def test_custom_reply(self):
-        config = Config({"pipeline": {"error_reply": "哎呀出错了"}})
-        components = build_components(config)
-        assert components["pipeline"].error_reply == "哎呀出错了"
+    class FakeApp:
+        """用于 _run 测试的 fake app."""
+
+        async def start(self) -> None:
+            """记录 start 调用."""
+
+            started.append("start")
+
+        async def stop(self) -> None:
+            """记录 stop 调用."""
+
+            stopped.append("stop")
+
+    monkeypatch.setattr(main_module, "load_dotenv", lambda: None)
+    monkeypatch.setattr(main_module.Config, "from_file", classmethod(lambda cls: Config({})))
+    monkeypatch.setattr(main_module, "setup_logging", lambda config: None)
+    monkeypatch.setattr(
+        main_module,
+        "build_runtime_app",
+        lambda config: RuntimeComponents(
+            gateway=FakeGateway(),
+            router=None,  # type: ignore[arg-type]
+            thread_manager=None,  # type: ignore[arg-type]
+            run_manager=None,  # type: ignore[arg-type]
+            message_store=InMemoryMessageStore(),
+            prompt_loader=None,  # type: ignore[arg-type]
+            profile_loader=None,  # type: ignore[arg-type]
+            agent_runtime=None,  # type: ignore[arg-type]
+            outbox=None,  # type: ignore[arg-type]
+            pipeline=None,  # type: ignore[arg-type]
+            app=FakeApp(),
+        ),
+    )
+
+    async def fake_wait_for_shutdown_signal() -> None:
+        """让 _run 立即结束等待.
+
+        Returns:
+            无返回值.
+        """
+
+        return None
+
+    monkeypatch.setattr(main_module, "wait_for_shutdown_signal", fake_wait_for_shutdown_signal)
+
+    await main_module._run()
+
+    assert started == ["start"]
+    assert stopped == ["stop"]
 
 
-# endregion
+async def test_wait_for_shutdown_signal_returns_when_event_is_set(monkeypatch) -> None:
+    """wait_for_shutdown_signal 在 stop_event 被触发后返回."""
+
+    from acabot import main as main_module
+
+    class FakeEvent:
+        """用于 wait_for_shutdown_signal 测试的 fake event."""
+
+        def __init__(self) -> None:
+            """初始化 fake event."""
+
+            self.was_set = False
+
+        def set(self) -> None:
+            """模拟设置 event."""
+
+            self.was_set = True
+
+        async def wait(self) -> None:
+            """模拟 wait 立即返回."""
+
+            self.was_set = True
+
+    class FakeLoop:
+        """用于 wait_for_shutdown_signal 测试的 fake loop."""
+
+        def __init__(self) -> None:
+            """初始化 fake loop."""
+
+            self.handlers: list[Any] = []
+
+        def add_signal_handler(self, sig: Any, callback) -> None:
+            """记录 signal handler 注册.
+
+            Args:
+                sig: signal 值.
+                callback: 注册的回调函数.
+            """
+
+            self.handlers.append((sig, callback))
+
+    fake_event = FakeEvent()
+    fake_loop = FakeLoop()
+
+    monkeypatch.setattr(main_module.asyncio, "Event", lambda: fake_event)
+    monkeypatch.setattr(main_module.asyncio, "get_running_loop", lambda: fake_loop)
+
+    await wait_for_shutdown_signal()
+
+    assert fake_event.was_set is True
+    assert len(fake_loop.handlers) == 2
