@@ -6,6 +6,7 @@
 
 from .agent_runtime import AgentRuntime
 from .app import RuntimeApp
+from .legacy_agent_runtime import LegacyAgentRuntime
 from .models import (
     AgentProfile,
     AgentRuntimeResult,
@@ -25,6 +26,7 @@ from .models import (
 )
 from .outbox import Outbox
 from .pipeline import ThreadPipeline
+from .profile_loader import ProfileLoader, PromptLoader, StaticProfileLoader, StaticPromptLoader
 from .router import RuntimeRouter
 from .runs import InMemoryRunManager, RunManager
 from .stores import MessageStore, RunStore, ThreadStore
@@ -38,11 +40,14 @@ __all__ = [
     "DispatchReport",
     "InMemoryRunManager",
     "InMemoryThreadManager",
+    "LegacyAgentRuntime",
     "MessageRecord",
     "MessageStore",
     "OutboxItem",
     "PendingApproval",
     "PlannedAction",
+    "ProfileLoader",
+    "PromptLoader",
     "RouteDecision",
     "RuntimeApp",
     "RunContext",
@@ -53,6 +58,8 @@ __all__ = [
     "RunStore",
     "RuntimeRouter",
     "Outbox",
+    "StaticProfileLoader",
+    "StaticPromptLoader",
     "ThreadPipeline",
     "ThreadManager",
     "ThreadRecord",
