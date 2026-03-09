@@ -6,6 +6,8 @@
 
 from .agent_runtime import AgentRuntime
 from .app import RuntimeApp
+from .bootstrap import RuntimeComponents, build_runtime_components
+from .memory_store import InMemoryMessageStore
 from .legacy_agent_runtime import LegacyAgentRuntime
 from .models import (
     AgentProfile,
@@ -38,7 +40,9 @@ __all__ = [
     "AgentProfile",
     "DeliveryResult",
     "DispatchReport",
+    "build_runtime_components",
     "InMemoryRunManager",
+    "InMemoryMessageStore",
     "InMemoryThreadManager",
     "LegacyAgentRuntime",
     "MessageRecord",
@@ -49,6 +53,7 @@ __all__ = [
     "ProfileLoader",
     "PromptLoader",
     "RouteDecision",
+    "RuntimeComponents",
     "RuntimeApp",
     "RunContext",
     "RunManager",
