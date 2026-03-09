@@ -9,6 +9,17 @@ from acabot.agent.agent import LitellmAgent
 from acabot.agent import AgentResponse, ToolDef
 
 
+def _make_msg(**kwargs):
+    """构造带 model_dump() 的 mock message 对象."""
+    attrs = kwargs
+
+    def model_dump(self_=None):
+        return dict(attrs)
+
+    attrs["model_dump"] = model_dump
+    return type("MockMsg", (), attrs)()
+
+
 class TestLitellmAgent:
     @pytest.fixture
     def agent(self):
@@ -81,14 +92,16 @@ class TestToolCalling:
     async def test_tool_loop(self, agent):
         # 两轮调用: LLM 返回 tool_call → 执行 tool → LLM 拿到结果给最终回复
         # 第一轮: LLM 请求调用 get_time 工具
-        tc_resp = AsyncMock()
-        tc_resp.choices = [type("C", (), {"message": type("M", (), {
-            "content": None,
-            "tool_calls": [type("TC", (), {
+        tc_msg = _make_msg(
+            content=None,
+            role="assistant",
+            tool_calls=[type("TC", (), {
                 "id": "call_1", "type": "function",
                 "function": type("F", (), {"name": "get_time", "arguments": "{}"})(),
             })()],
-        })()})()]
+        )
+        tc_resp = AsyncMock()
+        tc_resp.choices = [type("C", (), {"message": tc_msg})()]
         tc_resp.usage = type("U", (), {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})()
 
         # 第二轮: LLM 拿到 tool 结果后给出最终文字回复

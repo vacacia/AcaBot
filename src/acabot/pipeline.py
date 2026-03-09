@@ -122,7 +122,9 @@ class Pipeline:
 
             # 记录用户消息(即使 skip_llm 也会记录, 保持上下文完整)
             await bridge.record_incoming(event)
-            ctx.messages.append({"role": "user", "content": event.text})
+            # 给 LLM 看的消息带发送者标识, session/store 存的是原始文本
+            user_content = self._build_user_content(event)
+            ctx.messages.append({"role": "user", "content": user_content})
 
             if not skip_llm:
                 # --- pre_llm ---
@@ -197,6 +199,19 @@ class Pipeline:
             separator = "\n\n---\n" if base else ""
             base += f"{separator}以下是之前部分对话的压缩摘要:\n{summary}"
         return base
+
+    # region 构建 user content
+    @staticmethod
+    def _build_user_content(event: StandardEvent) -> str:
+        """在用户消息前注入发送者标识, 让 LLM 知道谁在说话.
+
+        格式: [昵称/QQ号] 消息内容
+        群聊时 LLM 需要区分不同发言者; 私聊时 LLM 需要知道用户 QQ 号以便调用工具.
+        """
+        nickname = event.sender_nickname or ""
+        user_id = event.source.user_id
+        prefix = f"[{nickname}/{user_id}]" if nickname else f"[{user_id}]"
+        return f"{prefix} {event.text}"
 
     # region 构建 Action
     def _build_actions(

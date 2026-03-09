@@ -128,23 +128,13 @@ class LitellmAgent(BaseAgent):
             all_attachments: 累积的附件列表, 就地追加.
         """
         # 追加 assistant 的 tool_call 请求
-        full_messages.append(
-            {
-                "role": "assistant",
-                "content": msg.content,
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in msg.tool_calls
-                ],
-            }
-        )
+        # 用 model_dump() 保留 provider-specific 字段(如 Gemini 的 thought_signature),
+        # 过滤 None 值减少冗余, 但保留 content(即使为 None, 某些 provider 要求字段存在)
+        raw = msg.model_dump()
+        assistant_msg = {
+            k: v for k, v in raw.items() if v is not None or k == "content"
+        }
+        full_messages.append(assistant_msg)
 
         # 逐个执行 tool 并追加结果
         for tc in msg.tool_calls:
