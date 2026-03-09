@@ -10,6 +10,7 @@ RUN uv pip install --system -e "."
 
 
 COPY src/ src/
+COPY plugins/ plugins/
 
 EXPOSE 8080
 

@@ -17,7 +17,9 @@ services:
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - ./.env:/app/.env:ro
-      - ./data:/app/data     # 未来 SQLite 等数据存放
+      - ./data:/app/data     # SQLite 等数据存放
+      - ./src:/app/src       # 代码热更新
+      - ./plugins:/app/plugins
     environment:
       - TZ=Asia/Shanghai
     networks:
