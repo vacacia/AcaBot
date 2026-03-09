@@ -8,8 +8,13 @@ import logging
 import uuid
 from typing import Any, Callable, Awaitable
 
-import websockets
-from websockets.asyncio.server import serve, ServerConnection
+try:
+    import websockets
+    from websockets.asyncio.server import ServerConnection, serve
+except ImportError:
+    websockets = None
+    ServerConnection = Any
+    serve = None
 
 from .base import BaseGateway
 from acabot.types import StandardEvent, EventSource, MsgSegment, Action, ActionType
@@ -32,6 +37,14 @@ class NapCatGateway(BaseGateway):
     """
 
     def __init__(self, host: str = "0.0.0.0", port: int = 8080, timeout: float = 10.0):
+        """初始化 NapCatGateway.
+
+        Args:
+            host: WebSocket server 监听地址.
+            port: WebSocket server 监听端口.
+            timeout: send 和 call_api 等待响应的超时时间, 单位为秒.
+        """
+
         self.host = host
         self.port = port
         self.timeout = timeout
@@ -44,13 +57,29 @@ class NapCatGateway(BaseGateway):
     # region 生命周期
 
     def on_event(self, handler: Callable[[StandardEvent], Awaitable[None]]) -> None:
+        """注册 StandardEvent handler.
+
+        Args:
+            handler: 收到标准事件后要调用的 async handler.
+        """
+
         self._on_event = handler
 
     async def start(self) -> None:
+        """启动 WebSocket server.
+
+        Raises:
+            RuntimeError: 当 websockets dependency 不可用时抛出.
+        """
+
+        if serve is None:
+            raise RuntimeError("websockets dependency is required to start NapCatGateway")
         logger.info(f"Gateway listening on ws://{self.host}:{self.port}")
         self._server = await serve(self._handle_connection, self.host, self.port)
 
     async def stop(self) -> None:
+        """停止 WebSocket server."""
+
         if self._server:
             self._server.close()
             await self._server.wait_closed()
@@ -60,6 +89,14 @@ class NapCatGateway(BaseGateway):
     # region WS连接
 
     async def _handle_connection(self, ws: ServerConnection) -> None:
+        """处理单个 NapCat WebSocket 连接.
+
+        Args:
+            ws: 当前建立好的 server connection.
+        """
+
+        if websockets is None:
+            raise RuntimeError("websockets dependency is required to handle NapCat connections")
         self._ws = ws
         self._self_id = ws.request.headers.get("X-Self-ID")
         logger.info(f"NapCat connected, self_id={self._self_id}")

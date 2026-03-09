@@ -1,21 +1,18 @@
-"""MultimodalPreprocessHook — 多模态消息预处理.
+"""处理多模态消息的预处理 hook.
 
-on_receive hook, 在 Pipeline 记录消息前把非文本 segment 替换为文字描述 segment.
-
-处理策略:
-- image/mface → VLM 转述(配置了 vision_model 时) 或纯占位, 带 msg_id
-- face → 映射表翻译 ID 为名称(无 msg_id, 表情自身含义完整)
-- reply → 通过 gateway.call_api("get_msg") 获取被引用消息原文, 带 msg_id
-- record/video → 占位, 带 msg_id
-- 其他 → [{type} msg_id=xxx] 兜底
+把非文本 segment 转成 text segment.
+默认规则如下:
+- image/mface: 使用 VLM 描述, 或回退到占位文本.
+- face: 根据 face id 转成文字标签.
+- reply: 通过 gateway 拉取被引用消息的文本部分.
+- record/video: 生成带 msg_id 的占位文本.
+- 其他 segment: 生成兜底占位文本.
 """
 
 from __future__ import annotations
 
 import logging
 from typing import Any, TYPE_CHECKING
-
-from litellm import acompletion
 
 from acabot.hook.base import Hook
 from acabot.hook.face_map import EMCODE_TO_NAME
@@ -26,16 +23,23 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("acabot.hook.multimodal")
 
+try:
+    from litellm import acompletion as _litellm_acompletion
+except ImportError:  # pragma: no cover
+    _litellm_acompletion = None
+
+acompletion = _litellm_acompletion
+
 
 class MultimodalPreprocessHook(Hook):
-    """多模态预处理 — on_receive hook.
+    """在 on_receive 阶段把非文本 segment 转成 text.
 
-    把非文本 segment 替换为文字描述, 让 event.text 包含完整信息.
-    图片可选用 VLM 生成描述(vision_model), 否则纯占位.
+    这个 hook 的目标是让后续 Pipeline 和 Agent 只面对纯文本上下文.
+    如果配置了 `vision_model`, 图片会先走一次 VLM 描述.
 
     Attributes:
-        vision_model: 图片转述模型名. None 则不做 VLM 描述.
-        gateway: 用于 reply 获取被引用消息. None 则 reply 无原文.
+        vision_model: 用于描述图片的 VLM model name. None 表示只生成占位文本.
+        gateway: 用于补全 reply 原文的 Gateway. None 表示只保留 reply msg_id.
     """
 
     name = "multimodal_preprocess"
@@ -47,6 +51,12 @@ class MultimodalPreprocessHook(Hook):
         vision_model: str | None = None,
         gateway: BaseGateway | None = None,
     ):
+        """初始化 MultimodalPreprocessHook.
+
+        Args:
+            vision_model: 可选的 VLM model name. 配置后会为 image 和 mface 生成描述文本.
+            gateway: 可选的 Gateway 实例. 配置后 reply segment 可以补全原文.
+        """
         self.vision_model = vision_model
         self.gateway = gateway
         logger.info(
@@ -55,7 +65,14 @@ class MultimodalPreprocessHook(Hook):
         )
 
     async def handle(self, ctx: HookContext) -> HookResult:
-        """遍历 segments, 逐个替换为文字描述."""
+        """遍历 event.segments 并逐个转换成 text segment.
+
+        Args:
+            ctx: 当前 hook 上下文. 这个方法会原地修改 `ctx.event.segments`.
+
+        Returns:
+            默认返回 `HookResult()`, 不主动终止后续 hook 链路.
+        """
         event = ctx.event
         msg_id = event.raw_message_id
         new_segments: list[MsgSegment] = []
@@ -77,7 +94,15 @@ class MultimodalPreprocessHook(Hook):
     # region segment 转换
 
     async def _convert_segment(self, seg: MsgSegment, msg_id: str) -> MsgSegment:
-        """把单个 segment 转换为 text segment. 已是 text 则原样返回."""
+        """把单个 segment 转换为 text segment.
+
+        Args:
+            seg: 当前待处理的原始 segment.
+            msg_id: 当前消息的原始平台消息 id.
+
+        Returns:
+            转换后的 text segment. 如果原本就是 text, 则直接返回原对象.
+        """
         seg_type = seg.type
 
         if seg_type == "text":
@@ -102,7 +127,15 @@ class MultimodalPreprocessHook(Hook):
         return self._make_text(f"[{seg_type} msg_id={msg_id}]")
 
     async def _convert_image(self, seg: MsgSegment, msg_id: str) -> MsgSegment:
-        """图片/mface → VLM 描述 或 纯占位."""
+        """把 image 或 mface 转成描述文本或占位文本.
+
+        Args:
+            seg: 当前 image 或 mface segment.
+            msg_id: 当前消息的原始平台消息 id.
+
+        Returns:
+            包含图片描述或占位文本的 text segment.
+        """
         url = seg.data.get("url", "")
         logger.debug(
             "Image: data=%s, vision_model=%s",
@@ -126,7 +159,14 @@ class MultimodalPreprocessHook(Hook):
         return self._make_text(f"[图片 msg_id={msg_id}]")
 
     def _convert_face(self, seg: MsgSegment) -> MsgSegment:
-        """face → [表情:名称] 或 [表情]."""
+        """把 face segment 转成稳定的文字标签.
+
+        Args:
+            seg: 当前 face segment.
+
+        Returns:
+            映射成功时返回带表情名的 text segment, 否则返回通用占位文本.
+        """
         face_id = str(seg.data.get("id", ""))
         name = EMCODE_TO_NAME.get(face_id)
         if name:
@@ -134,7 +174,14 @@ class MultimodalPreprocessHook(Hook):
         return self._make_text("[表情]")
 
     async def _convert_reply(self, seg: MsgSegment) -> MsgSegment:
-        """reply → [回复 msg_id=xxx: 原文] 或 [回复 msg_id=xxx]."""
+        """把 reply segment 转成带原文或带 msg_id 的文本.
+
+        Args:
+            seg: 当前 reply segment.
+
+        Returns:
+            优先返回包含 reply 原文的 text segment. 获取失败时回退到带 msg_id 的占位文本.
+        """
         reply_msg_id = str(seg.data.get("id", ""))
         if not reply_msg_id:
             return self._make_text("[回复]")
@@ -156,12 +203,45 @@ class MultimodalPreprocessHook(Hook):
 
     @staticmethod
     def _make_text(text: str) -> MsgSegment:
-        """构造 text segment."""
+        """构造标准的 text segment.
+
+        Args:
+            text: 要写入 segment 的文本内容.
+
+        Returns:
+            标准化后的 text segment.
+        """
         return MsgSegment(type="text", data={"text": text})
 
+    @staticmethod
+    def _get_acompletion():
+        """返回可用的 litellm `acompletion` callable.
+
+        Returns:
+            可直接 await 的 `acompletion` callable.
+
+        Raises:
+            RuntimeError: 当前环境未安装 `litellm`, 但代码尝试执行 VLM 调用.
+        """
+        if acompletion is None:
+            raise RuntimeError("litellm dependency is required to describe images")
+        return acompletion
+
     async def _describe_image(self, url: str) -> str:
-        """调用 VLM 生成图片描述."""
-        response = await acompletion(
+        """用 VLM 生成图片描述.
+
+        Args:
+            url: 图片可访问 URL.
+
+        Returns:
+            去除首尾空白后的图片描述文本.
+
+        Raises:
+            RuntimeError: 当前环境缺少 `litellm`.
+            ValueError: VLM 返回空内容.
+        """
+        completion = self._get_acompletion()
+        response = await completion(
             model=self.vision_model,
             messages=[{
                 "role": "user",
@@ -177,7 +257,14 @@ class MultimodalPreprocessHook(Hook):
         return content.strip()
 
     async def _fetch_reply_text(self, reply_msg_id: str) -> str | None:
-        """通过 gateway.call_api 获取被引用消息的文本内容."""
+        """通过 gateway 获取被引用消息的文本内容.
+
+        Args:
+            reply_msg_id: 被引用消息的原始平台消息 id.
+
+        Returns:
+            被引用消息中的纯文本内容. 如果调用失败或没有文本, 返回 None.
+        """
         result = await self.gateway.call_api("get_msg", {"message_id": reply_msg_id})
         if result.get("status") != "ok":
             return None

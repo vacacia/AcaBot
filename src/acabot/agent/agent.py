@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import json
 import logging
+from inspect import isawaitable
 from typing import Any
-
-from litellm import acompletion
 
 from .base import BaseAgent
 from .response import AgentResponse, Attachment, ToolCallRecord
 from .tool import ToolDef
+
+try:
+    from litellm import acompletion as _litellm_acompletion
+except ImportError:
+    _litellm_acompletion = None
+
+acompletion = _litellm_acompletion
 
 logger = logging.getLogger("acabot.agent")
 
@@ -26,11 +32,24 @@ class LitellmAgent(BaseAgent):
     """
 
     def __init__(self, default_model: str = "gpt-4o-mini", max_tool_rounds: int = 5):
+        """初始化 LitellmAgent.
+
+        Args:
+            default_model: 默认使用的 model name.
+            max_tool_rounds: 最多允许多少轮 tool calling.
+        """
+
         self.default_model = default_model
         self.max_tool_rounds = max_tool_rounds
         self._tools: dict[str, ToolDef] = {}
 
     def register_tool(self, tool: ToolDef) -> None:
+        """注册一个 ToolDef.
+
+        Args:
+            tool: 要注册的 ToolDef.
+        """
+
         self._tools[tool.name] = tool
 
     def _build_tools_param(self) -> list[dict] | None:
@@ -59,6 +78,18 @@ class LitellmAgent(BaseAgent):
         messages: list[dict[str, Any]],
         model: str | None = None,
     ) -> AgentResponse:
+        """执行一次完整的 agent run.
+
+        Args:
+            system_prompt: 本次调用使用的 system prompt.
+            messages: 传给 model 的 message list.
+            model: 可选的 model override.
+
+        Returns:
+            一份 AgentResponse.
+        """
+
+        completion = self._get_acompletion()
         use_model = model or self.default_model
         full_messages = [{"role": "system", "content": system_prompt}] + list(messages)
         tools_param = self._build_tools_param()
@@ -72,7 +103,9 @@ class LitellmAgent(BaseAgent):
                 if tools_param:
                     kwargs["tools"] = tools_param
 
-                response = await acompletion(**kwargs)
+                response = completion(**kwargs)
+                if isawaitable(response):
+                    response = await response
                 choice = response.choices[0]
                 usage = response.usage
                 for k in total_usage:
@@ -118,11 +151,25 @@ class LitellmAgent(BaseAgent):
         messages: list[dict[str, Any]],
         model: str | None = None,
     ) -> AgentResponse:
+        """执行一次不带 tool loop 的 completion.
+
+        Args:
+            system_prompt: 本次调用使用的 system prompt.
+            messages: 传给 model 的 message list.
+            model: 可选的 model override.
+
+        Returns:
+            一份 AgentResponse.
+        """
+
+        completion = self._get_acompletion()
         use_model = model or self.default_model
         full_messages = [{"role": "system", "content": system_prompt}] + list(messages)
         try:
             # 不传 tools, 不进 loop, 只做一次 completion
-            response = await acompletion(model=use_model, messages=full_messages)
+            response = completion(model=use_model, messages=full_messages)
+            if isawaitable(response):
+                response = await response
             choice = response.choices[0]
             usage = response.usage
             return AgentResponse(
@@ -184,6 +231,21 @@ class LitellmAgent(BaseAgent):
             tool_calls_made.append(
                 ToolCallRecord(name=tool_name, arguments=params, result=result_content)
             )
+
+    @staticmethod
+    def _get_acompletion() -> Any:
+        """返回 litellm.acompletion callable.
+
+        Returns:
+            可 await 的 acompletion callable.
+
+        Raises:
+            RuntimeError: 当 litellm dependency 不可用时抛出.
+        """
+
+        if acompletion is None:
+            raise RuntimeError("litellm dependency is required to run LitellmAgent")
+        return acompletion
 
     async def _execute_tool(
         self, tool_name: str, params: dict,
