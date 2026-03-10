@@ -4,14 +4,21 @@
 - profile.enabled_tools 会过滤可见工具
 - ToolBroker 自己可以作为 tool_executor
 - legacy ToolDef 迁入 ToolBroker 后, 返回值会被标准化
+- policy 可以拒绝工具
+- audit 会记录完成和拒绝结果
 """
 
 from dataclasses import dataclass
 from typing import Any
 
 from acabot.agent import ToolDef, ToolExecutionResult, ToolSpec
-from acabot.runtime import AgentProfile, RunContext, ToolBroker, ToolResult
-from acabot.types import EventSource, MsgSegment, StandardEvent
+from acabot.runtime import (
+    AgentProfile,
+    InMemoryToolAudit,
+    ToolBroker,
+    ToolPolicyDecision,
+    ToolResult,
+)
 
 from .test_model_agent_runtime import _context
 
@@ -166,3 +173,43 @@ async def test_tool_broker_returns_error_when_tool_not_enabled() -> None:
     )
 
     assert '"error": "Tool not enabled for profile: dangerous_tool"' in result.llm_content
+
+
+async def test_tool_broker_policy_can_reject_tool() -> None:
+    class DenyAllPolicy:
+        async def allow(self, *, spec, arguments, ctx) -> ToolPolicyDecision:
+            _ = spec, arguments, ctx
+            return ToolPolicyDecision(
+                allowed=False,
+                reason="blocked by policy",
+                metadata={"policy": "deny-all"},
+            )
+
+    audit = InMemoryToolAudit()
+    broker = ToolBroker(policy=DenyAllPolicy(), audit=audit)
+
+    async def handler(arguments: dict[str, Any], ctx) -> dict[str, Any]:
+        _ = arguments, ctx
+        return {"ok": True}
+
+    broker.register_tool(
+        ToolSpec(
+            name="restricted",
+            description="Restricted tool",
+            parameters={"type": "object", "properties": {}},
+        ),
+        handler,
+    )
+    ctx = _context()
+    ctx.profile.enabled_tools = ["restricted"]
+
+    result = await broker.execute(
+        tool_name="restricted",
+        arguments={"x": 1},
+        ctx=broker._build_execution_context(ctx),
+    )
+
+    assert '"error": "blocked by policy"' in result.llm_content
+    record = next(iter(audit.records.values()))
+    assert record.status == "rejected"
+    assert record.metadata["policy"] == "deny-all"

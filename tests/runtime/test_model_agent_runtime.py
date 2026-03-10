@@ -8,19 +8,28 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-from acabot.agent import AgentResponse, Attachment, ToolCallRecord, ToolDef, ToolSpec
+from acabot.agent import (
+    AgentResponse,
+    Attachment,
+    ToolCallRecord,
+    ToolDef,
+    ToolSpec,
+)
 from acabot.runtime import (
     AgentProfile,
+    InMemoryToolAudit,
     ModelAgentRuntime,
+    PlannedAction,
     RouteDecision,
     RunContext,
     RunRecord,
     StaticPromptLoader,
     ThreadState,
     ToolBroker,
+    ToolResult,
     ToolRuntime,
 )
-from acabot.types import EventSource, MsgSegment, StandardEvent
+from acabot.types import Action, ActionType, EventSource, MsgSegment, StandardEvent
 
 
 @dataclass
@@ -67,6 +76,81 @@ class FakeAgent:
             }
         )
         return self.response
+
+
+@dataclass
+class ToolCallingAgent:
+    """会主动调用 tool_executor 的 fake agent.
+
+    Attributes:
+        response_text (str): 最终返回给用户的文本.
+        fail_after_tool (bool): tool 调用后是否返回失败.
+        calls (list[dict[str, Any]]): 调用记录.
+    """
+
+    response_text: str = ""
+    fail_after_tool: bool = False
+    calls: list[dict[str, Any]] = field(default_factory=list)
+
+    async def run(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        model: str | None = None,
+        *,
+        tools=None,
+        tool_executor=None,
+    ) -> AgentResponse:
+        """执行一次带 tool 的 fake run.
+
+        Args:
+            system_prompt: 本次调用使用的 system prompt.
+            messages: 上下文消息列表.
+            model: 模型名覆盖.
+            tools: 当前 run 暴露给模型的 tools.
+            tool_executor: 当前 run 的 tool executor.
+
+        Returns:
+            一份构造好的 AgentResponse.
+        """
+
+        self.calls.append(
+            {
+                "system_prompt": system_prompt,
+                "messages": list(messages),
+                "model": model,
+                "tools": list(tools or []),
+                "tool_executor": tool_executor,
+            }
+        )
+
+        if tool_executor is not None:
+            await tool_executor("announce", {"name": "Acacia"})
+
+        if self.fail_after_tool:
+            return AgentResponse(
+                error="tool flow failed",
+                model_used=model or "",
+                tool_calls_made=[
+                    ToolCallRecord(
+                        name="announce",
+                        arguments={"name": "Acacia"},
+                        result={"status": "failed"},
+                    )
+                ],
+            )
+
+        return AgentResponse(
+            text=self.response_text,
+            model_used=model or "",
+            tool_calls_made=[
+                ToolCallRecord(
+                    name="announce",
+                    arguments={"name": "Acacia"},
+                    result={"status": "ok"},
+                )
+            ],
+        )
 
 
 def _context() -> RunContext:
@@ -235,3 +319,106 @@ async def test_model_agent_runtime_can_use_tool_broker() -> None:
     assert execution.content == '{"time": "Asia/Shanghai"}'
     assert result.metadata["source"] == "tool_broker"
     assert result.metadata["tool_count"] == 1
+
+
+async def test_model_agent_runtime_merges_tool_user_actions_artifacts_and_audit() -> None:
+    audit = InMemoryToolAudit()
+    broker = ToolBroker(audit=audit)
+
+    async def announce(arguments: dict[str, Any], tool_ctx) -> Any:
+        return ToolResult(
+            llm_content=f'{{"announced": "{arguments["name"]}"}}',
+            user_actions=[
+                PlannedAction(
+                    action_id="action:tool:announce",
+                    action=Action(
+                        action_type=ActionType.SEND_TEXT,
+                        target=_context().event.source,
+                        payload={"text": f'已处理 {arguments["name"]}'},
+                    ),
+                    thread_content=f'已处理 {arguments["name"]}',
+                    commit_when="success",
+                    metadata={"origin": "tool_broker"},
+                )
+            ],
+            artifacts=[{"type": "notice", "name": arguments["name"]}],
+            metadata={"kind": "announce"},
+        )
+
+    broker.register_tool(
+        ToolSpec(
+            name="announce",
+            description="Announce a user",
+            parameters={"type": "object", "properties": {}},
+        ),
+        announce,
+    )
+    runtime = ModelAgentRuntime(
+        agent=ToolCallingAgent(response_text="final reply"),
+        prompt_loader=StaticPromptLoader({"prompt/default": "You are Aca."}),
+        tool_runtime_resolver=broker.build_tool_runtime,
+    )
+    ctx = _context()
+    ctx.profile.enabled_tools = ["announce"]
+
+    result = await runtime.execute(ctx)
+
+    assert [item.action.payload["text"] for item in result.actions] == [
+        "已处理 Acacia",
+        "final reply",
+    ]
+    assert result.artifacts[0]["type"] == "notice"
+    assert any(item.get("status") == "completed" for item in result.tool_calls)
+    assert result.metadata["tool_audit_count"] == 1
+
+
+async def test_model_agent_runtime_filters_tool_actions_for_failed_response() -> None:
+    broker = ToolBroker()
+
+    async def announce(arguments: dict[str, Any], tool_ctx) -> Any:
+        return ToolResult(
+            llm_content=f'{{"announced": "{arguments["name"]}"}}',
+            user_actions=[
+                PlannedAction(
+                    action_id="action:tool:success",
+                    action=Action(
+                        action_type=ActionType.SEND_TEXT,
+                        target=_context().event.source,
+                        payload={"text": "success action"},
+                    ),
+                    thread_content="success action",
+                    commit_when="success",
+                ),
+                PlannedAction(
+                    action_id="action:tool:failure",
+                    action=Action(
+                        action_type=ActionType.SEND_TEXT,
+                        target=_context().event.source,
+                        payload={"text": "failure action"},
+                    ),
+                    thread_content="failure action",
+                    commit_when="failure",
+                ),
+            ],
+        )
+
+    broker.register_tool(
+        ToolSpec(
+            name="announce",
+            description="Announce a user",
+            parameters={"type": "object", "properties": {}},
+        ),
+        announce,
+    )
+    runtime = ModelAgentRuntime(
+        agent=ToolCallingAgent(fail_after_tool=True),
+        prompt_loader=StaticPromptLoader({"prompt/default": "You are Aca."}),
+        tool_runtime_resolver=broker.build_tool_runtime,
+    )
+    ctx = _context()
+    ctx.profile.enabled_tools = ["announce"]
+
+    result = await runtime.execute(ctx)
+
+    assert result.status == "failed"
+    assert [item.action.payload["text"] for item in result.actions] == ["failure action"]

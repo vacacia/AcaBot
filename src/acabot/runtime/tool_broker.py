@@ -1,5 +1,7 @@
 """runtime.tool_broker 提供 runtime 侧的统一工具入口.
 
+组件关系:
+
     Plugin / Bootstrap
           |
           v
@@ -13,32 +15,98 @@
           |
           v
       ToolBroker.execute()
+          |
+          +-- ToolPolicy
+          `-- ToolAudit
 
+这个文件当前负责:
 - 工具注册
 - 按 profile 过滤可见 tools
 - 让 broker 自己成为唯一 tool_executor
+- 最小 policy 检查
+- 最小 audit 记录
+- 把 `ToolResult.user_actions/artifacts` 累积到 run 级别状态
 
 暂时不把 approval 状态机做进来.
-先把执行权从 agent 身上拿走, 后面再把审批和审计叠上来.
+先把执行权, policy, audit, user_actions 的基础链路收口, 后面再加审批.
 """
 
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass, field
 from inspect import isawaitable
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Literal, Protocol
 
 from acabot.agent import Attachment, ToolDef, ToolExecutionResult, ToolSpec
 from acabot.agent.tool import normalize_tool_result
 
-from .model_agent_runtime import ToolRuntime
+from .model_agent_runtime import ToolRuntime, ToolRuntimeState
 from .models import AgentProfile, PlannedAction, RunContext
 
 ToolHandler = Callable[[dict[str, Any], "ToolExecutionContext"], Awaitable[Any] | Any]
 
 
 # region 数据对象
+@dataclass(slots=True)
+class ToolPolicyDecision:
+    """ToolPolicy 的判定结果.
+
+    Attributes:
+        allowed (bool): 当前工具是否允许执行.
+        reason (str | None): 拒绝或备注原因.
+        metadata (dict[str, Any]): policy 附加元数据.
+    """
+
+    allowed: bool
+    reason: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class ToolAuditRecord:
+    """一次工具执行的最小审计记录.
+
+    Attributes:
+        tool_call_id (str): 当前工具调用的唯一标识.
+        run_id (str): 当前 run 标识.
+        tool_name (str): 工具名.
+        status (Literal["started", "completed", "rejected", "failed"]): 当前审计状态.
+        arguments (dict[str, Any]): 执行参数.
+        result (Any): 执行结果摘要.
+        error (str | None): 错误信息.
+        metadata (dict[str, Any]): 附加审计元数据.
+    """
+
+    tool_call_id: str
+    run_id: str
+    tool_name: str
+    status: Literal["started", "completed", "rejected", "failed"]
+    arguments: dict[str, Any] = field(default_factory=dict)
+    result: Any = None
+    error: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """把审计记录转成 runtime 侧可消费的 dict.
+
+        Returns:
+            一份适合写入 `AgentRuntimeResult.tool_calls` 的字典.
+        """
+
+        return {
+            "tool_call_id": self.tool_call_id,
+            "run_id": self.run_id,
+            "name": self.tool_name,
+            "status": self.status,
+            "arguments": dict(self.arguments),
+            "result": self.result,
+            "error": self.error,
+            "metadata": dict(self.metadata),
+        }
+
+
 @dataclass(slots=True)
 class ToolExecutionContext:
     """ToolBroker 执行工具时使用的上下文.
@@ -49,6 +117,7 @@ class ToolExecutionContext:
         actor_id (str): 当前消息发送者标识.
         agent_id (str): 当前处理消息的 agent 标识.
         profile (AgentProfile): 当前 run 命中的 profile.
+        state (ToolRuntimeState | None): 当前 run 的 tool 累积状态.
         metadata (dict[str, Any]): 执行阶段附加元数据.
     """
 
@@ -57,6 +126,7 @@ class ToolExecutionContext:
     actor_id: str
     agent_id: str
     profile: AgentProfile
+    state: ToolRuntimeState | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -65,7 +135,7 @@ class ToolResult:
     """ToolBroker 的标准化工具返回.
 
     Attributes:
-        llm_content (str | list[dict[str, Any]]): 传回给 LLM 上下文的内容, 让模型知道执行结果.
+        llm_content (str | list[dict[str, Any]]): 传回给 LLM 的结果内容.
         attachments (list[Attachment]): 工具产出的附件列表.
         user_actions (list[PlannedAction]): 工具建议的用户可见动作.
         artifacts (list[dict[str, Any]]): 工具产出的结构化 artifact.
@@ -116,18 +186,252 @@ class RegisteredTool:
 # endregion
 
 
+# region policy and audit
+class ToolPolicy(Protocol):
+    """ToolBroker 的动态策略协议.
+    
+    根据当前的上下文来返回一个 allowed 或 rejected 的判定
+    """
+
+    async def allow(
+        self,
+        *,
+        spec: ToolSpec,
+        arguments: dict[str, Any],
+        ctx: ToolExecutionContext,
+    ) -> ToolPolicyDecision:
+        """判断当前工具是否允许执行.
+
+        Args:
+            spec: 目标工具的 ToolSpec.
+            arguments: 本次调用参数.
+            ctx: 本次工具执行上下文.
+
+        Returns:
+            ToolPolicyDecision.
+        """
+
+        ...
+
+
+class ToolAudit(Protocol):
+    """ToolBroker 的最小审计协议."""
+
+    async def start(
+        self,
+        *,
+        tool_name: str,
+        arguments: dict[str, Any],
+        ctx: ToolExecutionContext,
+    ) -> ToolAuditRecord:
+        """创建一条 started 审计记录."""
+
+        ...
+
+    async def complete(
+        self,
+        record: ToolAuditRecord,
+        *,
+        result: ToolResult,
+    ) -> ToolAuditRecord:
+        """把审计记录收尾为 completed."""
+
+        ...
+
+    async def reject(
+        self,
+        record: ToolAuditRecord,
+        *,
+        reason: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> ToolAuditRecord:
+        """把审计记录收尾为 rejected."""
+
+        ...
+
+    async def fail(
+        self,
+        record: ToolAuditRecord,
+        *,
+        error: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> ToolAuditRecord:
+        """把审计记录收尾为 failed."""
+
+        ...
+
+
+class AllowAllToolPolicy:
+    """默认允许所有工具的最小 policy."""
+
+    async def allow(
+        self,
+        *,
+        spec: ToolSpec,
+        arguments: dict[str, Any],
+        ctx: ToolExecutionContext,
+    ) -> ToolPolicyDecision:
+        """始终返回允许.
+
+        Args:
+            spec: 目标工具的 ToolSpec.
+            arguments: 本次调用参数.
+            ctx: 本次工具执行上下文.
+
+        Returns:
+            一份允许执行的 ToolPolicyDecision.
+        """
+
+        _ = spec, arguments, ctx
+        return ToolPolicyDecision(allowed=True)
+
+
+class InMemoryToolAudit:
+    """内存版 ToolAudit.
+
+    Attributes:
+        records (dict[str, ToolAuditRecord]): 已记录的审计项.
+    """
+
+    def __init__(self) -> None:
+        """初始化空的内存审计表."""
+
+        self.records: dict[str, ToolAuditRecord] = {}
+
+    async def start(
+        self,
+        *,
+        tool_name: str,
+        arguments: dict[str, Any],
+        ctx: ToolExecutionContext,
+    ) -> ToolAuditRecord:
+        """创建一条 started 审计记录.
+
+        Args:
+            tool_name: 目标工具名.
+            arguments: 本次调用参数.
+            ctx: 本次工具执行上下文.
+
+        Returns:
+            新建的 ToolAuditRecord.
+        """
+
+        record = ToolAuditRecord(
+            tool_call_id=f"toolcall:{uuid.uuid4().hex[:12]}",
+            run_id=ctx.run_id,
+            tool_name=tool_name,
+            status="started",
+            arguments=dict(arguments),
+            metadata={
+                "thread_id": ctx.thread_id,
+                "actor_id": ctx.actor_id,
+                "agent_id": ctx.agent_id,
+                **dict(ctx.metadata),
+            },
+        )
+        self.records[record.tool_call_id] = record
+        return record
+
+    async def complete(
+        self,
+        record: ToolAuditRecord,
+        *,
+        result: ToolResult,
+    ) -> ToolAuditRecord:
+        """把审计记录收尾为 completed.
+
+        Args:
+            record: 目标审计记录.
+            result: 本次工具执行结果.
+
+        Returns:
+            更新后的 ToolAuditRecord.
+        """
+
+        record.status = "completed"
+        record.result = result.raw if result.raw is not None else result.llm_content
+        record.metadata.update(dict(result.metadata))
+        self.records[record.tool_call_id] = record
+        return record
+
+    async def reject(
+        self,
+        record: ToolAuditRecord,
+        *,
+        reason: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> ToolAuditRecord:
+        """把审计记录收尾为 rejected.
+
+        Args:
+            record: 目标审计记录.
+            reason: 拒绝原因.
+            metadata: 附加元数据.
+
+        Returns:
+            更新后的 ToolAuditRecord.
+        """
+
+        record.status = "rejected"
+        record.error = reason
+        record.metadata.update(dict(metadata or {}))
+        self.records[record.tool_call_id] = record
+        return record
+
+    async def fail(
+        self,
+        record: ToolAuditRecord,
+        *,
+        error: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> ToolAuditRecord:
+        """把审计记录收尾为 failed.
+
+        Args:
+            record: 目标审计记录.
+            error: 失败原因.
+            metadata: 附加元数据.
+
+        Returns:
+            更新后的 ToolAuditRecord.
+        """
+
+        record.status = "failed"
+        record.error = error
+        record.metadata.update(dict(metadata or {}))
+        self.records[record.tool_call_id] = record
+        return record
+
+
+# endregion
+
+
 # region broker
 class ToolBroker:
     """runtime 侧的统一工具入口.
 
     Attributes:
         _tools (dict[str, RegisteredTool]): 当前已注册的工具表.
+        policy (ToolPolicy): 当前 broker 使用的动态 policy.
+        audit (ToolAudit): 当前 broker 使用的 audit sink.
     """
 
-    def __init__(self) -> None:
-        """初始化空的 ToolBroker."""
+    def __init__(
+        self,
+        *,
+        policy: ToolPolicy | None = None,
+        audit: ToolAudit | None = None,
+    ) -> None:
+        """初始化 ToolBroker.
+
+        Args:
+            policy: 可选的动态 policy.
+            audit: 可选的审计 sink.
+        """
 
         self._tools: dict[str, RegisteredTool] = {}
+        self.policy = policy or AllowAllToolPolicy()
+        self.audit = audit or InMemoryToolAudit()
 
     def register_tool(
         self,
@@ -192,7 +496,7 @@ class ToolBroker:
             profile: 当前 run 命中的 AgentProfile.
 
         Returns:
-            一个按注册顺序过滤后的 ToolSpec 列表.
+            一个按 profile 声明顺序过滤后的 ToolSpec 列表.
         """
 
         if not profile.enabled_tools:
@@ -215,32 +519,31 @@ class ToolBroker:
         Returns:
             一份交给 ModelAgentRuntime 的 ToolRuntime.
         """
-        
-        # 筛选出当前 bot 有权使用的工具
+
         visible_tools = self.visible_tools(ctx.profile)
+        state = ToolRuntimeState()
         metadata = {
             "source": "tool_broker",
             "visible_tools": [tool.name for tool in visible_tools],
         }
         if not visible_tools:
-            return ToolRuntime(metadata=metadata)
+            return ToolRuntime(state=state, metadata=metadata)
 
         async def executor(
             tool_name: str,
             arguments: dict[str, Any],
         ) -> ToolExecutionResult:
-            # LLM 契约要求 executor 只能接收 (tool_name, arguments) 两个参数
-            # 为了带上背景信息使用闭包: 内层函数引用了外层的 ctx
             result = await self.execute(
                 tool_name=tool_name,
                 arguments=arguments,
-                ctx=self._build_execution_context(ctx),
+                ctx=self._build_execution_context(ctx, state=state),
             )
             return result.to_execution_result()
 
         return ToolRuntime(
             tools=visible_tools,
             tool_executor=executor,
+            state=state,
             metadata=metadata,
         )
 
@@ -261,36 +564,82 @@ class ToolBroker:
         Returns:
             一份标准化后的 ToolResult.
         """
-        # 工具存在?
+
+        audit_record = await self._audit_start(
+            tool_name=tool_name,
+            arguments=arguments,
+            ctx=ctx,
+        )
+
         registered = self._tools.get(tool_name)
         if registered is None:
-            return self._error_result(
-                f"Unknown tool: {tool_name}",
+            return await self._reject(
+                message=f"Unknown tool: {tool_name}",
+                audit_record=audit_record,
+                ctx=ctx,
                 tool_name=tool_name,
                 arguments=arguments,
             )
-        # 工具有权限?
+
         if tool_name not in ctx.profile.enabled_tools:
-            return self._error_result(
-                f"Tool not enabled for profile: {tool_name}",
+            return await self._reject(
+                message=f"Tool not enabled for profile: {tool_name}",
+                audit_record=audit_record,
+                ctx=ctx,
                 tool_name=tool_name,
                 arguments=arguments,
             )
-        # 执行
-        raw = registered.handler(arguments, ctx)
-        if isawaitable(raw):
-            raw = await raw
-        # 标注化为 ToolResult
+
+        decision = await self._allow(
+            spec=registered.spec,
+            arguments=arguments,
+            ctx=ctx,
+        )
+        if not decision.allowed:
+            return await self._reject(
+                message=decision.reason or f"Tool rejected by policy: {tool_name}",
+                audit_record=audit_record,
+                ctx=ctx,
+                tool_name=tool_name,
+                arguments=arguments,
+                metadata=dict(decision.metadata),
+            )
+
+        try:
+            raw = registered.handler(arguments, ctx)
+            if isawaitable(raw):
+                raw = await raw
+        except Exception as exc:
+            return await self._fail(
+                message=f"Tool execution failed: {exc}",
+                audit_record=audit_record,
+                ctx=ctx,
+                tool_name=tool_name,
+                arguments=arguments,
+            )
+
         normalized = self._normalize_result(raw)
         normalized.metadata.setdefault("tool_name", tool_name)
         normalized.metadata.setdefault("source", registered.source)
+        if ctx.state is not None:
+            ctx.state.user_actions.extend(normalized.user_actions)
+            ctx.state.artifacts.extend(normalized.artifacts)
+
+        audit_record = await self.audit.complete(audit_record, result=normalized)
+        self._append_audit(ctx, audit_record)
         return normalized
 
-    def _build_execution_context(self, ctx: RunContext) -> ToolExecutionContext:
+    def _build_execution_context(
+        self,
+        ctx: RunContext,
+        *,
+        state: ToolRuntimeState | None = None,
+    ) -> ToolExecutionContext:
         """从 RunContext 派生 ToolExecutionContext.
 
         Args:
             ctx: 当前 run 的完整执行上下文.
+            state: 当前 run 的 tool 累积状态.
 
         Returns:
             一份轻量的 ToolExecutionContext.
@@ -302,9 +651,12 @@ class ToolBroker:
             actor_id=ctx.decision.actor_id,
             agent_id=ctx.profile.agent_id,
             profile=ctx.profile,
+            state=state,
             metadata={
                 "channel_scope": ctx.decision.channel_scope,
                 "event_id": ctx.event.event_id,
+                "sender_role": ctx.event.sender_role or "",
+                "platform": ctx.event.platform,
             },
         )
 
@@ -317,11 +669,10 @@ class ToolBroker:
         Returns:
             一份标准化后的 ToolResult.
         """
-        # 1. 返回标准的 ToolResult, 直接通过
+
         if isinstance(raw, ToolResult):
             return raw
 
-        # 2. 强制转换为 ToolExecutionResult
         normalized = normalize_tool_result(raw)
         return ToolResult(
             llm_content=normalized.content,
@@ -329,12 +680,141 @@ class ToolBroker:
             raw=normalized.raw,
         )
 
+    async def _allow(
+        self,
+        *,
+        spec: ToolSpec,
+        arguments: dict[str, Any],
+        ctx: ToolExecutionContext,
+    ) -> ToolPolicyDecision:
+        """执行动态 policy 检查.
+
+        Args:
+            spec: 目标工具的 ToolSpec.
+            arguments: 本次调用参数.
+            ctx: 本次工具执行上下文.
+
+        Returns:
+            一份 ToolPolicyDecision.
+        """
+
+        decision = self.policy.allow(spec=spec, arguments=arguments, ctx=ctx)
+        if isawaitable(decision):
+            decision = await decision
+        return decision
+
+    async def _audit_start(
+        self,
+        *,
+        tool_name: str,
+        arguments: dict[str, Any],
+        ctx: ToolExecutionContext,
+    ) -> ToolAuditRecord:
+        """创建一条 started 审计记录.
+
+        Args:
+            tool_name: 目标工具名.
+            arguments: 本次调用参数.
+            ctx: 本次工具执行上下文.
+
+        Returns:
+            一条 started 状态的 ToolAuditRecord.
+        """
+
+        record = self.audit.start(
+            tool_name=tool_name,
+            arguments=arguments,
+            ctx=ctx,
+        )
+        if isawaitable(record):
+            record = await record
+        return record
+
+    async def _reject(
+        self,
+        *,
+        message: str,
+        audit_record: ToolAuditRecord,
+        ctx: ToolExecutionContext,
+        tool_name: str,
+        arguments: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
+    ) -> ToolResult:
+        """以 rejected 状态收尾一次工具调用.
+
+        Args:
+            message: 拒绝原因.
+            audit_record: 当前审计记录.
+            ctx: 当前工具执行上下文.
+            tool_name: 目标工具名.
+            arguments: 本次调用参数.
+            metadata: 附加元数据.
+
+        Returns:
+            一份错误 ToolResult.
+        """
+
+        result = self._error_result(
+            message,
+            tool_name=tool_name,
+            arguments=arguments,
+            metadata=metadata,
+        )
+        audit_record = await self.audit.reject(
+            audit_record,
+            reason=message,
+            metadata=metadata,
+        )
+        self._append_audit(ctx, audit_record)
+        return result
+
+    async def _fail(
+        self,
+        *,
+        message: str,
+        audit_record: ToolAuditRecord,
+        ctx: ToolExecutionContext,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> ToolResult:
+        """以 failed 状态收尾一次工具调用.
+
+        Args:
+            message: 失败原因.
+            audit_record: 当前审计记录.
+            ctx: 当前工具执行上下文.
+            tool_name: 目标工具名.
+            arguments: 本次调用参数.
+
+        Returns:
+            一份错误 ToolResult.
+        """
+
+        result = self._error_result(message, tool_name=tool_name, arguments=arguments)
+        audit_record = await self.audit.fail(audit_record, error=message)
+        self._append_audit(ctx, audit_record)
+        return result
+
+    @staticmethod
+    def _append_audit(ctx: ToolExecutionContext, record: ToolAuditRecord) -> None:
+        """把审计记录追加到当前 run 的 tool state.
+
+        Args:
+            ctx: 当前工具执行上下文.
+            record: 已经收尾的审计记录.
+        """
+
+        if ctx.state is None:
+            return
+        ctx.state.tool_audit.append(record.to_dict())
+
     @staticmethod
     def _error_result(
         message: str,
         *,
         tool_name: str,
         arguments: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
     ) -> ToolResult:
         """构造统一的错误 ToolResult.
 
@@ -342,6 +822,7 @@ class ToolBroker:
             message: 错误描述.
             tool_name: 目标工具名.
             arguments: 执行参数.
+            metadata: 附加元数据.
 
         Returns:
             一份用于返回给 LLM 的错误结果.
@@ -354,7 +835,11 @@ class ToolBroker:
         }
         return ToolResult(
             llm_content=json.dumps(payload, ensure_ascii=False),
-            metadata={"error": message, "tool_name": tool_name},
+            metadata={
+                "error": message,
+                "tool_name": tool_name,
+                **dict(metadata or {}),
+            },
             raw=payload,
         )
 

@@ -38,6 +38,23 @@ from .profile_loader import PromptLoader
 
 # region tool runtime
 @dataclass(slots=True)
+class ToolRuntimeState:
+    """一次 run 的 tool 执行累积状态.
+
+    负责收集 artifacts
+
+    Attributes:
+        user_actions (list[PlannedAction]): tool 产出的用户可见动作.
+        artifacts (list[dict[str, Any]]): tool 产出的结构化 artifact.
+        tool_audit (list[dict[str, Any]]): tool 执行审计记录.
+    """
+
+    user_actions: list[PlannedAction] = field(default_factory=list)
+    artifacts: list[dict[str, Any]] = field(default_factory=list)
+    tool_audit: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class ToolRuntime:
     """一次 run 的 tool runtime 视图.
 
@@ -46,11 +63,13 @@ class ToolRuntime:
     Attributes:
         tools (list[ToolSpec]): 当前暴露给模型的 tool schema 列表.
         tool_executor (ToolExecutor | None): 当前 run 使用的 tool executor.
+        state (ToolRuntimeState): 当前 run 的 tool 副产物累积状态.
         metadata (dict[str, Any]): tool runtime 附加元数据.
     """
 
     tools: list[ToolSpec] = field(default_factory=list)
     tool_executor: ToolExecutor | None = None
+    state: ToolRuntimeState = field(default_factory=ToolRuntimeState)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -193,16 +212,23 @@ class ModelAgentRuntime(AgentRuntime):
         """
 
         artifacts = self._extract_artifacts(response)
+        artifacts.extend(tool_runtime.state.artifacts)
         tool_calls = self._extract_tool_calls(response)
+        tool_calls.extend(tool_runtime.state.tool_audit)
         metadata = dict(tool_runtime.metadata)
         if metadata:
             metadata["tool_count"] = len(tool_runtime.tools)
+        if tool_runtime.state.tool_audit:
+            metadata["tool_audit_count"] = len(tool_runtime.state.tool_audit)
 
         if getattr(response, "error", None):
             return AgentRuntimeResult(
                 status="failed",
                 text="",
-                actions=[],
+                actions=self._select_committed_actions(
+                    list(tool_runtime.state.user_actions),
+                    status="failed",
+                ),
                 artifacts=artifacts,
                 usage=dict(getattr(response, "usage", {}) or {}),
                 tool_calls=tool_calls,
@@ -213,11 +239,13 @@ class ModelAgentRuntime(AgentRuntime):
             )
 
         text = str(getattr(response, "text", "") or "")
-        actions = [self._build_text_reply_action(ctx, text)] if text else []
+        actions = list(tool_runtime.state.user_actions)
+        if text:
+            actions.append(self._build_text_reply_action(ctx, text))
         return AgentRuntimeResult(
             status="completed",
             text=text,
-            actions=actions,
+            actions=self._select_committed_actions(actions, status="completed"),
             artifacts=artifacts,
             usage=dict(getattr(response, "usage", {}) or {}),
             tool_calls=tool_calls,
@@ -249,6 +277,29 @@ class ModelAgentRuntime(AgentRuntime):
             commit_when="success",
             metadata={"origin": "model_agent_text"},
         )
+
+    @staticmethod
+    def _select_committed_actions(
+        actions: list[PlannedAction],
+        *,
+        status: str,
+    ) -> list[PlannedAction]:
+        """按 run 终态过滤正式提交的动作.
+
+        Args:
+            actions: 待过滤的动作列表.
+            status: 当前 runtime 终态.
+
+        Returns:
+            当前终态允许正式出站的动作列表.
+        """
+
+        allowed = {
+            "completed": {"success", "always"},
+            "failed": {"failure", "always"},
+            "waiting_approval": {"waiting_approval", "always"},
+        }[status]
+        return [item for item in actions if item.commit_when in allowed]
 
     @staticmethod
     def _extract_artifacts(response: Any) -> list[dict[str, Any]]:
