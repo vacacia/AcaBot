@@ -5,12 +5,18 @@
 """
 
 from .agent_runtime import AgentRuntime
+from .approval_resumer import (
+    ApprovalResumeResult,
+    ApprovalResumer,
+    NoopApprovalResumer,
+)
 from .app import RuntimeApp
 from .bootstrap import RuntimeComponents, build_runtime_components
 from .memory_store import InMemoryMessageStore
 from .legacy_agent_runtime import LegacyAgentRuntime
 from .models import (
     AgentProfile,
+    ApprovalDecisionResult,
     AgentRuntimeResult,
     BindingRule,
     DeliveryResult,
@@ -49,6 +55,9 @@ __all__ = [
     "AgentRuntimeResult",
     "AgentProfile",
     "AgentProfileRegistry",
+    "ApprovalDecisionResult",
+    "ApprovalResumeResult",
+    "ApprovalResumer",
     "BindingRule",
     "DeliveryResult",
     "DispatchReport",
@@ -59,6 +68,7 @@ __all__ = [
     "LegacyAgentRuntime",
     "MessageRecord",
     "MessageStore",
+    "NoopApprovalResumer",
     "OutboxItem",
     "PendingApproval",
     "PendingApprovalRecord",

@@ -14,6 +14,7 @@ from acabot.main import build_runtime_app, create_message_store, wait_for_shutdo
 from acabot.runtime import (
     AgentProfile,
     InMemoryMessageStore,
+    NoopApprovalResumer,
     RouteDecision,
     RuntimeComponents,
 )
@@ -223,6 +224,7 @@ async def test_run_starts_and_stops_runtime_app(monkeypatch) -> None:
             prompt_loader=None,  # type: ignore[arg-type]
             profile_loader=None,  # type: ignore[arg-type]
             agent_runtime=None,  # type: ignore[arg-type]
+            approval_resumer=NoopApprovalResumer(),
             outbox=None,  # type: ignore[arg-type]
             pipeline=None,  # type: ignore[arg-type]
             app=FakeApp(),

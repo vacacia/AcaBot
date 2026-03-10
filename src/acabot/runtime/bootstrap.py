@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from acabot.config import Config
 
 from .agent_runtime import AgentRuntime
+from .approval_resumer import ApprovalResumer, NoopApprovalResumer
 from .app import RuntimeApp
 from .gateway_protocol import GatewayProtocol
 from .legacy_agent_runtime import LegacyAgentProtocol, LegacyAgentRuntime
@@ -46,6 +47,7 @@ class RuntimeComponents:
     prompt_loader: PromptLoader
     profile_loader: ProfileLoader
     agent_runtime: AgentRuntime
+    approval_resumer: ApprovalResumer
     outbox: Outbox
     pipeline: ThreadPipeline
     app: RuntimeApp
@@ -60,6 +62,7 @@ def build_runtime_components(
     router: RuntimeRouter | None = None,
     thread_manager: ThreadManager | None = None,
     run_manager: RunManager | None = None,
+    approval_resumer: ApprovalResumer | None = None,
 ) -> RuntimeComponents:
     """根据配置和注入依赖组装一套最小 runtime 组件.
 
@@ -71,6 +74,7 @@ def build_runtime_components(
         router: 可选的 RuntimeRouter 实现.
         thread_manager: 可选的 ThreadManager 实现.
         run_manager: 可选的 RunManager 实现.
+        approval_resumer: 可选的 approval resumer.
 
     Returns:
         一份包含 RuntimeApp 及其依赖组件的组装结果.
@@ -95,6 +99,7 @@ def build_runtime_components(
     runtime_thread_manager = thread_manager or _build_thread_manager(config)
     runtime_run_manager = run_manager or _build_run_manager(config)
     runtime_message_store = message_store or _build_message_store(config)
+    runtime_approval_resumer = approval_resumer or NoopApprovalResumer()
     agent_runtime = LegacyAgentRuntime(agent=agent, prompt_loader=prompt_loader)
     outbox = Outbox(gateway=gateway, store=runtime_message_store)
     pipeline = ThreadPipeline(
@@ -110,6 +115,7 @@ def build_runtime_components(
         run_manager=runtime_run_manager,
         pipeline=pipeline,
         profile_loader=profile_registry.load,
+        approval_resumer=runtime_approval_resumer,
     )
 
     return RuntimeComponents(
@@ -121,6 +127,7 @@ def build_runtime_components(
         prompt_loader=prompt_loader,
         profile_loader=profile_registry,
         agent_runtime=agent_runtime,
+        approval_resumer=runtime_approval_resumer,
         outbox=outbox,
         pipeline=pipeline,
         app=app,

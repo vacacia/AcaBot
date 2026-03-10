@@ -2,6 +2,8 @@ from acabot.runtime import (
     AgentProfile,
     AgentRuntime,
     AgentRuntimeResult,
+    ApprovalResumeResult,
+    ApprovalResumer,
     InMemoryRunManager,
     InMemoryThreadManager,
     Outbox,
@@ -60,6 +62,28 @@ class TrackingGateway(FakeGateway):
 
     async def start(self) -> None:
         self.started = True
+
+
+class FakeApprovalResumer(ApprovalResumer):
+    def __init__(self, result: ApprovalResumeResult) -> None:
+        self.result = result
+        self.calls: list[dict[str, object]] = []
+
+    async def resume(
+        self,
+        *,
+        run,
+        approval_context,
+        metadata,
+    ) -> ApprovalResumeResult:
+        self.calls.append(
+            {
+                "run_id": run.run_id,
+                "approval_context": dict(approval_context),
+                "metadata": dict(metadata),
+            }
+        )
+        return self.result
 
 
 async def test_runtime_app_installs_handler_and_processes_event() -> None:
@@ -228,3 +252,164 @@ async def test_runtime_app_recovery_keeps_pending_approval_visible() -> None:
     assert report.pending_approvals[0].run_id == run.run_id
     assert report.pending_approvals[0].approval_context["approval_id"] == "approval:1"
     assert app.list_pending_approvals()[0].run_id == run.run_id
+
+
+async def test_runtime_app_approve_pending_approval_completes_run() -> None:
+    gateway = FakeGateway()
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    outbox = Outbox(gateway=gateway, store=FakeMessageStore())
+    resumer = FakeApprovalResumer(ApprovalResumeResult(status="completed"))
+    app = RuntimeApp(
+        gateway=gateway,
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=thread_manager,
+        run_manager=run_manager,
+        pipeline=ThreadPipeline(
+            agent_runtime=FakeAgentRuntime(),
+            outbox=outbox,
+            run_manager=run_manager,
+            thread_manager=thread_manager,
+        ),
+        profile_loader=_profile_loader,
+        approval_resumer=resumer,
+    )
+    run = await run_manager.open(
+        event=_event(),
+        decision=RouteDecision(
+            thread_id="qq:user:10001",
+            actor_id="qq:user:10001",
+            agent_id="aca",
+            channel_scope="qq:user:10001",
+        ),
+    )
+    await run_manager.mark_waiting_approval(
+        run.run_id,
+        reason="tool needs approval",
+        approval_context={
+            "approval_id": "approval:1",
+            "tool_name": "shell.exec",
+            "tool_arguments": {"cmd": "ls"},
+        },
+    )
+    await app.recover_active_runs()
+
+    result = await app.approve_pending_approval(
+        run.run_id,
+        metadata={"approved_by": "qq:user:42"},
+    )
+
+    restored = await run_manager.get(run.run_id)
+    assert result.ok is True
+    assert result.run_status == "completed"
+    assert restored is not None
+    assert restored.status == "completed"
+    assert resumer.calls[0]["approval_context"]["approval_id"] == "approval:1"
+    assert resumer.calls[0]["metadata"]["approved_by"] == "qq:user:42"
+    assert app.list_pending_approvals() == []
+
+
+async def test_runtime_app_approve_pending_approval_can_reenter_waiting_state() -> None:
+    gateway = FakeGateway()
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    outbox = Outbox(gateway=gateway, store=FakeMessageStore())
+    resumer = FakeApprovalResumer(
+        ApprovalResumeResult(
+            status="waiting_approval",
+            message="need second approval",
+            approval_context={
+                "approval_id": "approval:2",
+                "tool_name": "shell.exec",
+                "tool_arguments": {"cmd": "rm -rf /tmp/demo"},
+            },
+        )
+    )
+    app = RuntimeApp(
+        gateway=gateway,
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=thread_manager,
+        run_manager=run_manager,
+        pipeline=ThreadPipeline(
+            agent_runtime=FakeAgentRuntime(),
+            outbox=outbox,
+            run_manager=run_manager,
+            thread_manager=thread_manager,
+        ),
+        profile_loader=_profile_loader,
+        approval_resumer=resumer,
+    )
+    run = await run_manager.open(
+        event=_event(),
+        decision=RouteDecision(
+            thread_id="qq:user:10001",
+            actor_id="qq:user:10001",
+            agent_id="aca",
+            channel_scope="qq:user:10001",
+        ),
+    )
+    await run_manager.mark_waiting_approval(
+        run.run_id,
+        reason="tool needs approval",
+        approval_context={"approval_id": "approval:1"},
+    )
+    await app.recover_active_runs()
+
+    result = await app.approve_pending_approval(run.run_id)
+
+    restored = await run_manager.get(run.run_id)
+    assert result.ok is True
+    assert result.run_status == "waiting_approval"
+    assert result.pending_approval is not None
+    assert result.pending_approval.approval_context["approval_id"] == "approval:2"
+    assert restored is not None
+    assert restored.status == "waiting_approval"
+    assert app.list_pending_approvals()[0].approval_context["approval_id"] == "approval:2"
+
+
+async def test_runtime_app_reject_pending_approval_cancels_run() -> None:
+    gateway = FakeGateway()
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    outbox = Outbox(gateway=gateway, store=FakeMessageStore())
+    app = RuntimeApp(
+        gateway=gateway,
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=thread_manager,
+        run_manager=run_manager,
+        pipeline=ThreadPipeline(
+            agent_runtime=FakeAgentRuntime(),
+            outbox=outbox,
+            run_manager=run_manager,
+            thread_manager=thread_manager,
+        ),
+        profile_loader=_profile_loader,
+    )
+    run = await run_manager.open(
+        event=_event(),
+        decision=RouteDecision(
+            thread_id="qq:user:10001",
+            actor_id="qq:user:10001",
+            agent_id="aca",
+            channel_scope="qq:user:10001",
+        ),
+    )
+    await run_manager.mark_waiting_approval(
+        run.run_id,
+        reason="tool needs approval",
+        approval_context={"approval_id": "approval:1"},
+    )
+    await app.recover_active_runs()
+
+    result = await app.reject_pending_approval(
+        run.run_id,
+        reason="operator denied shell access",
+    )
+
+    restored = await run_manager.get(run.run_id)
+    assert result.ok is True
+    assert result.run_status == "cancelled"
+    assert restored is not None
+    assert restored.status == "cancelled"
+    assert restored.error == "operator denied shell access"
+    assert app.list_pending_approvals() == []
