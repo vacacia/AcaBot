@@ -37,9 +37,10 @@ from .profile_loader import (
     StaticPromptLoader,
 )
 from .router import RuntimeRouter
-from .runs import InMemoryRunManager, RunManager
+from .runs import InMemoryRunManager, RunManager, StoreBackedRunManager
+from .sqlite_stores import SQLiteRunStore, SQLiteThreadStore
 from .stores import MessageStore, RunStore, ThreadStore
-from .threads import InMemoryThreadManager, ThreadManager
+from .threads import InMemoryThreadManager, StoreBackedThreadManager, ThreadManager
 
 __all__ = [
     "AgentRuntime",
@@ -72,8 +73,12 @@ __all__ = [
     "RunStore",
     "RuntimeRouter",
     "Outbox",
+    "SQLiteRunStore",
+    "SQLiteThreadStore",
     "StaticProfileLoader",
     "StaticPromptLoader",
+    "StoreBackedRunManager",
+    "StoreBackedThreadManager",
     "ThreadPipeline",
     "ThreadManager",
     "ThreadRecord",

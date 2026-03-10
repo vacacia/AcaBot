@@ -11,7 +11,7 @@ from .models import MessageRecord, RunRecord, RunStep, ThreadRecord
 
 
 class MessageStore(ABC):
-    """消息事实存储接口."""
+    """message 存储接口."""
 
     @abstractmethod
     async def save(self, msg: MessageRecord) -> None:
@@ -64,8 +64,25 @@ class RunStore(ABC):
         ...
 
     @abstractmethod
+    async def get_run(self, run_id: str) -> RunRecord | None:
+        """按 run_id 获取一条 run 记录."""
+
+        ...
+
+    @abstractmethod
     async def update_run(self, run: RunRecord) -> None:
         """更新一条已有的 run 记录."""
+
+        ...
+
+    @abstractmethod
+    async def list_active_runs(self, statuses: set[str]) -> list[RunRecord]:
+        """按状态集合列出所有活跃 run.
+        
+        Args:
+            statuses: 需要被视为活跃状态的 status 集合.
+            _ACTIVE_STATUSES: set[RunStatus] = {"queued", "running", "waiting_approval"}
+        """
 
         ...
 

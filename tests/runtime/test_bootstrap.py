@@ -1,8 +1,14 @@
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from acabot.config import Config
-from acabot.runtime import RouteDecision, build_runtime_components
+from acabot.runtime import (
+    RouteDecision,
+    StoreBackedRunManager,
+    StoreBackedThreadManager,
+    build_runtime_components,
+)
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
 from .test_outbox import FakeGateway
@@ -268,6 +274,47 @@ async def test_build_runtime_components_uses_admin_override_rule() -> None:
 
     assert agent.calls[0]["system_prompt"] == "You are the operator agent."
     assert agent.calls[0]["model"] == "model-o"
+
+
+async def test_build_runtime_components_uses_sqlite_persistence_when_configured(
+    tmp_path: Path,
+) -> None:
+    sqlite_path = tmp_path / "runtime.db"
+    config = Config(
+        {
+            "agent": {
+                "default_model": "test-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "default_prompt_ref": "prompt/default",
+                "persistence": {
+                    "sqlite_path": str(sqlite_path),
+                },
+            },
+        }
+    )
+    gateway1 = FakeGateway()
+    agent1 = FakeLegacyAgent(FakeLegacyResponse(text="hello back", model_used="test-model"))
+    components1 = build_runtime_components(config, gateway=gateway1, agent=agent1)
+
+    assert isinstance(components1.thread_manager, StoreBackedThreadManager)
+    assert isinstance(components1.run_manager, StoreBackedRunManager)
+
+    components1.app.install()
+    await gateway1.handler(_event())
+
+    gateway2 = FakeGateway()
+    agent2 = FakeLegacyAgent(FakeLegacyResponse(text="hello again", model_used="test-model"))
+    components2 = build_runtime_components(config, gateway=gateway2, agent=agent2)
+    restored = await components2.thread_manager.get("qq:user:10001")
+
+    assert restored is not None
+    assert restored.working_messages == [
+        {"role": "user", "content": "[acacia/10001] hello"},
+        {"role": "assistant", "content": "hello back"},
+    ]
 
 
 def test_build_runtime_components_rejects_thread_id_in_binding_rules() -> None:

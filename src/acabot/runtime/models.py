@@ -54,6 +54,7 @@ class ThreadRecord:
     thread_id: str# thread 标识
     channel_scope: str# 渠道范围
     thread_kind: str = "channel"
+    working_messages: list[dict[str, Any]] = field(default_factory=list)
     working_summary: str = ""# 工作记忆摘要
     last_event_at: int = 0# 最后事件时间戳
     metadata: dict[str, Any] = field(default_factory=dict)

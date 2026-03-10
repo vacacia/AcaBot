@@ -25,9 +25,10 @@ from .profile_loader import (
     StaticPromptLoader,
 )
 from .router import RuntimeRouter
-from .runs import InMemoryRunManager, RunManager
+from .runs import InMemoryRunManager, RunManager, StoreBackedRunManager
+from .sqlite_stores import SQLiteRunStore, SQLiteThreadStore
 from .stores import MessageStore
-from .threads import InMemoryThreadManager, ThreadManager
+from .threads import InMemoryThreadManager, StoreBackedThreadManager, ThreadManager
 
 
 @dataclass(slots=True)
@@ -91,8 +92,8 @@ def build_runtime_components(
         default_agent_id=default_agent_id,
         resolve_agent=profile_registry.resolve_agent,
     )
-    runtime_thread_manager = thread_manager or InMemoryThreadManager()
-    runtime_run_manager = run_manager or InMemoryRunManager()
+    runtime_thread_manager = thread_manager or _build_thread_manager(config)
+    runtime_run_manager = run_manager or _build_run_manager(config)
     runtime_message_store = message_store or InMemoryMessageStore()
     agent_runtime = LegacyAgentRuntime(agent=agent, prompt_loader=prompt_loader)
     outbox = Outbox(gateway=gateway, store=runtime_message_store)
@@ -228,6 +229,44 @@ def _build_binding_rules(config: Config) -> list[BindingRule]:
         )
 
     return rules
+
+
+def _build_thread_manager(config: Config) -> ThreadManager:
+    """根据配置构造 ThreadManager.
+    """
+
+    sqlite_path = _get_persistence_sqlite_path(config)
+    if sqlite_path is None:
+        return InMemoryThreadManager()
+    return StoreBackedThreadManager(SQLiteThreadStore(sqlite_path))
+
+
+def _build_run_manager(config: Config) -> RunManager:
+    """根据配置构造 RunManager.
+    """
+
+    sqlite_path = _get_persistence_sqlite_path(config)
+    if sqlite_path is None:
+        return InMemoryRunManager()
+    return StoreBackedRunManager(SQLiteRunStore(sqlite_path))
+
+
+def _get_persistence_sqlite_path(config: Config) -> str | None:
+    """读取 runtime persistence 的 SQLite 路径.
+
+    Args:
+        config: 项目配置对象.
+
+    Returns:
+        配置中的 SQLite 路径. 未配置时返回 None.
+    """
+
+    runtime_conf = config.get("runtime", {})
+    persistence_conf = runtime_conf.get("persistence", {})
+    sqlite_path = persistence_conf.get("sqlite_path")
+    if sqlite_path in (None, ""):
+        return None
+    return str(sqlite_path)
 
 
 def _optional_str(value: object) -> str | None:
