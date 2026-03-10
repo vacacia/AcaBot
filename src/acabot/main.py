@@ -1,7 +1,20 @@
 """acabot.main 是新的启动入口.
 
-当前版本负责组装并启动 RuntimeApp.
-不再使用旧的 Session + Pipeline 作为启动路径.
+组件关系:
+
+    Config
+      |
+      v
+    create_gateway / create_agent / create_message_store
+      |
+      v
+    build_runtime_components()
+      |
+      v
+    RuntimeApp.start()
+
+这个文件只负责启动组装.
+不再承担旧 `Session + Pipeline` 主线的业务职责.
 """
 
 from __future__ import annotations
@@ -11,10 +24,10 @@ import logging
 import signal
 from collections.abc import Callable
 
+from .agent import BaseAgent
 from .config import Config
-from .runtime import InMemoryMessageStore, RuntimeComponents, build_runtime_components
+from .runtime import RuntimeComponents, build_runtime_components
 from .runtime.gateway_protocol import GatewayProtocol
-from .runtime.legacy_agent_runtime import LegacyAgentProtocol
 from .runtime.stores import MessageStore
 
 try:
@@ -26,10 +39,11 @@ except ImportError:
 logger = logging.getLogger("acabot")
 
 GatewayFactory = Callable[[Config], GatewayProtocol]
-AgentFactory = Callable[[Config], LegacyAgentProtocol]
-MessageStoreFactory = Callable[[Config], MessageStore]
+AgentFactory = Callable[[Config], BaseAgent]
+MessageStoreFactory = Callable[[Config], MessageStore | None]
 
 
+# region factory
 def create_gateway(config: Config) -> GatewayProtocol:
     """根据 Config 创建 Gateway.
 
@@ -52,14 +66,14 @@ def create_gateway(config: Config) -> GatewayProtocol:
     )
 
 
-def create_legacy_agent(config: Config) -> LegacyAgentProtocol:
-    """根据 Config 创建 legacy agent.
+def create_agent(config: Config) -> BaseAgent:
+    """根据 Config 创建默认 agent.
 
     Args:
         config: 已加载的 Config 对象.
 
     Returns:
-        一个满足 LegacyAgentProtocol 的 agent 实例.
+        一个满足 `BaseAgent` 契约的 agent 实例.
     """
 
     agent_conf = config.get("agent", {})
@@ -73,28 +87,33 @@ def create_legacy_agent(config: Config) -> LegacyAgentProtocol:
     )
 
 
-def create_message_store(config: Config) -> MessageStore:
-    """根据 Config 创建 MessageStore.
+def create_message_store(config: Config) -> MessageStore | None:
+    """根据 Config 创建 MessageStore override.
 
-    当前重写阶段先使用 InMemoryMessageStore.
-    等新的 SQLite MessageStore 落地后, 这个 factory 再切到持久化实现.
+    默认返回 `None`, 让 `runtime.bootstrap` 按配置决定:
+    - 配了 SQLite persistence 时, 自动组装 `SQLiteMessageStore`
+    - 没配持久化时, 自动退回 `InMemoryMessageStore`
 
     Args:
         config: 已加载的 Config 对象.
 
     Returns:
-        一个满足 MessageStore 接口的 store 实例.
+        一个可选的 MessageStore override.
     """
 
     _ = config
-    return InMemoryMessageStore()
+    return None
 
 
+# endregion
+
+
+# region bootstrap
 def build_runtime_app(
     config: Config,
     *,
     gateway_factory: GatewayFactory = create_gateway,
-    agent_factory: AgentFactory = create_legacy_agent,
+    agent_factory: AgentFactory = create_agent,
     message_store_factory: MessageStoreFactory = create_message_store,
 ) -> RuntimeComponents:
     """根据 Config 组装 RuntimeComponents.
@@ -102,7 +121,7 @@ def build_runtime_app(
     Args:
         config: 已加载的 Config 对象.
         gateway_factory: 创建 Gateway 的 factory.
-        agent_factory: 创建 legacy agent 的 factory.
+        agent_factory: 创建默认 agent 的 factory.
         message_store_factory: 创建 MessageStore 的 factory.
 
     Returns:
@@ -112,6 +131,13 @@ def build_runtime_app(
     gateway = gateway_factory(config)
     agent = agent_factory(config)
     message_store = message_store_factory(config)
+    if message_store is None:
+        return build_runtime_components(
+            config,
+            gateway=gateway,
+            agent=agent,
+        )
+
     return build_runtime_components(
         config,
         gateway=gateway,
@@ -162,6 +188,9 @@ async def _run() -> None:
 
 def main() -> None:
     asyncio.run(_run())
+
+
+# endregion
 
 
 if __name__ == "__main__":

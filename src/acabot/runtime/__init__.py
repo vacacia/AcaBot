@@ -14,6 +14,7 @@ from .app import RuntimeApp
 from .bootstrap import RuntimeComponents, build_runtime_components
 from .memory_store import InMemoryMessageStore
 from .legacy_agent_runtime import LegacyAgentRuntime
+from .model_agent_runtime import ModelAgentRuntime, ToolRuntime, ToolRuntimeResolver
 from .models import (
     AgentProfile,
     ApprovalDecisionResult,
@@ -68,6 +69,7 @@ __all__ = [
     "LegacyAgentRuntime",
     "MessageRecord",
     "MessageStore",
+    "ModelAgentRuntime",
     "NoopApprovalResumer",
     "OutboxItem",
     "PendingApproval",
@@ -99,4 +101,6 @@ __all__ = [
     "ThreadRecord",
     "ThreadState",
     "ThreadStore",
+    "ToolRuntime",
+    "ToolRuntimeResolver",
 ]

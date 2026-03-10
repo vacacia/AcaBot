@@ -1,3 +1,10 @@
+"""bootstrap 组装测试.
+
+这一组测试验证默认 runtime 组件树是否按配置正确装配.
+当前主线已经切到 `ModelAgentRuntime`, 因此这里的 fake agent 只需要满足
+新的 `BaseAgent.run()` duck-typed 形状, 不再强调 legacy runtime.
+"""
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -16,7 +23,7 @@ from .test_outbox import FakeGateway
 
 
 @dataclass
-class FakeLegacyResponse:
+class FakeAgentResponse:
     text: str = ""
     attachments: list[Any] = field(default_factory=list)
     error: str | None = None
@@ -25,9 +32,9 @@ class FakeLegacyResponse:
     model_used: str = ""
     raw: Any = None
 
-
-class FakeLegacyAgent:
-    def __init__(self, response: FakeLegacyResponse) -> None:
+# region fake agent
+class FakeAgent:
+    def __init__(self, response: FakeAgentResponse) -> None:
         self.response = response
         self.calls: list[dict[str, Any]] = []
 
@@ -36,7 +43,7 @@ class FakeLegacyAgent:
         system_prompt: str,
         messages: list[dict[str, Any]],
         model: str | None = None,
-    ) -> FakeLegacyResponse:
+    ) -> FakeAgentResponse:
         self.calls.append(
             {
                 "system_prompt": system_prompt,
@@ -45,6 +52,9 @@ class FakeLegacyAgent:
             }
         )
         return self.response
+
+
+# endregion
 
 
 def _event() -> StandardEvent:
@@ -92,7 +102,7 @@ def test_build_runtime_components_uses_runtime_profiles_and_prompts() -> None:
     components = build_runtime_components(
         config,
         gateway=FakeGateway(),
-        agent=FakeLegacyAgent(FakeLegacyResponse(text="ok")),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
     )
     decision = RouteDecision(
         thread_id="qq:user:10001",
@@ -107,7 +117,7 @@ def test_build_runtime_components_uses_runtime_profiles_and_prompts() -> None:
     assert profile.default_model == "runtime-model"
 
 
-async def test_build_runtime_components_runs_app_with_legacy_agent() -> None:
+async def test_build_runtime_components_runs_app_with_model_agent_runtime() -> None:
     config = Config(
         {
             "agent": {
@@ -121,7 +131,7 @@ async def test_build_runtime_components_runs_app_with_legacy_agent() -> None:
         }
     )
     gateway = FakeGateway()
-    agent = FakeLegacyAgent(FakeLegacyResponse(text="hello back", model_used="test-model"))
+    agent = FakeAgent(FakeAgentResponse(text="hello back", model_used="test-model"))
     components = build_runtime_components(config, gateway=gateway, agent=agent)
 
     components.app.install()
@@ -171,7 +181,7 @@ async def test_build_runtime_components_uses_channel_binding_for_group_event() -
         }
     )
     gateway = FakeGateway()
-    agent = FakeLegacyAgent(FakeLegacyResponse(text="hello group", model_used="model-g"))
+    agent = FakeAgent(FakeAgentResponse(text="hello group", model_used="model-g"))
     components = build_runtime_components(config, gateway=gateway, agent=agent)
     event = StandardEvent(
         event_id="evt-group-1",
@@ -251,7 +261,7 @@ async def test_build_runtime_components_uses_admin_override_rule() -> None:
         }
     )
     gateway = FakeGateway()
-    agent = FakeLegacyAgent(FakeLegacyResponse(text="hello ops", model_used="model-o"))
+    agent = FakeAgent(FakeAgentResponse(text="hello ops", model_used="model-o"))
     components = build_runtime_components(config, gateway=gateway, agent=agent)
     event = StandardEvent(
         event_id="evt-group-admin-1",
@@ -297,7 +307,7 @@ async def test_build_runtime_components_uses_sqlite_persistence_when_configured(
         }
     )
     gateway1 = FakeGateway()
-    agent1 = FakeLegacyAgent(FakeLegacyResponse(text="hello back", model_used="test-model"))
+    agent1 = FakeAgent(FakeAgentResponse(text="hello back", model_used="test-model"))
     components1 = build_runtime_components(config, gateway=gateway1, agent=agent1)
 
     assert isinstance(components1.thread_manager, StoreBackedThreadManager)
@@ -308,7 +318,7 @@ async def test_build_runtime_components_uses_sqlite_persistence_when_configured(
     await gateway1.handler(_event())
 
     gateway2 = FakeGateway()
-    agent2 = FakeLegacyAgent(FakeLegacyResponse(text="hello again", model_used="test-model"))
+    agent2 = FakeAgent(FakeAgentResponse(text="hello again", model_used="test-model"))
     components2 = build_runtime_components(config, gateway=gateway2, agent=agent2)
     restored = await components2.thread_manager.get("qq:user:10001")
     delivered = await components2.message_store.get_thread_messages("qq:user:10001")
@@ -355,7 +365,7 @@ def test_build_runtime_components_rejects_thread_id_in_binding_rules() -> None:
         build_runtime_components(
             config,
             gateway=FakeGateway(),
-            agent=FakeLegacyAgent(FakeLegacyResponse(text="ok")),
+            agent=FakeAgent(FakeAgentResponse(text="ok")),
         )
     except ValueError as exc:
         assert "must not declare thread_id" in str(exc)

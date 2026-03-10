@@ -17,6 +17,7 @@ from acabot.runtime import (
     NoopApprovalResumer,
     RouteDecision,
     RuntimeComponents,
+    SQLiteMessageStore,
 )
 
 
@@ -63,7 +64,7 @@ class FakeGateway:
 
 @dataclass
 class FakeAgent:
-    """用于 main 测试的最小 legacy agent."""
+    """用于 main 测试的最小默认 agent."""
 
     default_model: str
     max_tool_rounds: int
@@ -100,12 +101,12 @@ class FakeAgent:
         )()
 
 
-def test_create_message_store_returns_in_memory_store() -> None:
-    """create_message_store 当前默认返回 InMemoryMessageStore."""
+def test_create_message_store_returns_none_by_default() -> None:
+    """create_message_store 默认不覆盖 bootstrap 的 MessageStore 选择."""
 
     store = create_message_store(Config({}))
 
-    assert isinstance(store, InMemoryMessageStore)
+    assert store is None
 
 
 def test_build_runtime_app_uses_factories_and_runtime_config() -> None:
@@ -127,13 +128,13 @@ def test_build_runtime_app_uses_factories_and_runtime_config() -> None:
         return FakeGateway()
 
     def agent_factory(config: Config) -> FakeAgent:
-        """构造 fake legacy agent.
+        """构造 fake agent.
 
         Args:
             config: 已加载的 Config 对象.
 
         Returns:
-            一个 fake legacy agent.
+            一个 fake agent.
         """
 
         agent_conf = config.get("agent", {})
@@ -186,6 +187,45 @@ def test_build_runtime_app_uses_factories_and_runtime_config() -> None:
     assert components.prompt_loader.load("prompt/aca") == "You are Aca."
     assert profile.name == "Aca"
     assert isinstance(components.message_store, InMemoryMessageStore)
+
+
+def test_build_runtime_app_keeps_bootstrap_sqlite_selection(tmp_path) -> None:
+    """build_runtime_app 不应短路 bootstrap 的 SQLite MessageStore 选择."""
+
+    config = Config(
+        {
+            "agent": {
+                "default_model": "claude-test",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "profiles": {
+                    "aca": {
+                        "name": "Aca",
+                        "prompt_ref": "prompt/aca",
+                    }
+                },
+                "prompts": {
+                    "prompt/aca": "You are Aca."
+                },
+                "persistence": {
+                    "sqlite_path": str(tmp_path / "runtime.sqlite3"),
+                },
+            },
+        }
+    )
+
+    components = build_runtime_app(
+        config,
+        gateway_factory=lambda config: FakeGateway(),
+        agent_factory=lambda config: FakeAgent(
+            default_model=config.get("agent", {}).get("default_model", "gpt-4o-mini"),
+            max_tool_rounds=config.get("agent", {}).get("max_tool_rounds", 5),
+        ),
+    )
+
+    assert isinstance(components.message_store, SQLiteMessageStore)
 
 
 async def test_run_starts_and_stops_runtime_app(monkeypatch) -> None:

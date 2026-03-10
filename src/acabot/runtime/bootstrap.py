@@ -1,21 +1,35 @@
-"""runtime.bootstrap 提供新的 runtime 组装入口.
+r"""runtime.bootstrap 提供 runtime 默认组装入口.
 
-把 Config, gateway 和 legacy agent 接到新的 RuntimeApp 上.
-让主线先能通过配置跑起来, 后续逐步替换旧 main 入口.
+组件关系:
+
+    Config
+      |
+      v
+    build_runtime_components()
+      |
+      +-- RuntimeRouter
+      +-- ThreadManager / RunManager / MessageStore
+      +-- ModelAgentRuntime
+      +-- Outbox
+      `-- RuntimeApp
+
+负责把默认主线接起来.
+不关心具体业务策略, 只决定默认组件如何装配.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from acabot.agent import BaseAgent
 from acabot.config import Config
 
 from .agent_runtime import AgentRuntime
 from .approval_resumer import ApprovalResumer, NoopApprovalResumer
 from .app import RuntimeApp
 from .gateway_protocol import GatewayProtocol
-from .legacy_agent_runtime import LegacyAgentProtocol, LegacyAgentRuntime
 from .memory_store import InMemoryMessageStore
+from .model_agent_runtime import ModelAgentRuntime
 from .models import AgentProfile, BindingRule
 from .outbox import Outbox
 from .pipeline import ThreadPipeline
@@ -36,7 +50,19 @@ from .threads import InMemoryThreadManager, StoreBackedThreadManager, ThreadMana
 class RuntimeComponents:
     """runtime 组装结果.
 
-    把会用到的关键组件集中返回, 便于 main 层接线和测试验证.
+    Attributes:
+        gateway (GatewayProtocol): 当前 runtime 使用的 gateway.
+        router (RuntimeRouter): 负责 route decision 的 router.
+        thread_manager (ThreadManager): 管理 thread state 的 manager.
+        run_manager (RunManager): 管理 run 生命周期的 manager.
+        message_store (MessageStore): 保存 delivered facts 的 MessageStore.
+        prompt_loader (PromptLoader): 按 `prompt_ref` 加载 system prompt 的 loader.
+        profile_loader (ProfileLoader): 按 `RouteDecision` 加载 profile 的 loader.
+        agent_runtime (AgentRuntime): 负责执行一次 run 的 agent runtime.
+        approval_resumer (ApprovalResumer): approval 通过后的续执行器.
+        outbox (Outbox): 唯一出站口.
+        pipeline (ThreadPipeline): 单次 run 执行器.
+        app (RuntimeApp): 对外暴露的 runtime 应用入口.
     """
 
     gateway: GatewayProtocol
@@ -57,7 +83,7 @@ def build_runtime_components(
     config: Config,
     *,
     gateway: GatewayProtocol,
-    agent: LegacyAgentProtocol,
+    agent: BaseAgent,
     message_store: MessageStore | None = None,
     router: RuntimeRouter | None = None,
     thread_manager: ThreadManager | None = None,
@@ -69,7 +95,7 @@ def build_runtime_components(
     Args:
         config: 项目配置对象.
         gateway: 平台 Gateway 实现.
-        agent: 旧 `BaseAgent` 形状的 legacy agent adapter.
+        agent: 满足新 `BaseAgent` 契约的 agent.
         message_store: 可选的 MessageStore 实现.
         router: 可选的 RuntimeRouter 实现.
         thread_manager: 可选的 ThreadManager 实现.
@@ -100,7 +126,10 @@ def build_runtime_components(
     runtime_run_manager = run_manager or _build_run_manager(config)
     runtime_message_store = message_store or _build_message_store(config)
     runtime_approval_resumer = approval_resumer or NoopApprovalResumer()
-    agent_runtime = LegacyAgentRuntime(agent=agent, prompt_loader=prompt_loader)
+    agent_runtime = ModelAgentRuntime(
+        agent=agent,
+        prompt_loader=prompt_loader,
+    )
     outbox = Outbox(gateway=gateway, store=runtime_message_store)
     pipeline = ThreadPipeline(
         agent_runtime=agent_runtime,
