@@ -1,4 +1,7 @@
-"""runtime.models 定义 runtime 的核心数据对象.只表达系统状态/约定, 不负责具体业务逻辑."""
+"""runtime.models 定义 runtime 的核心数据对象.
+
+这里的对象只表达系统状态和约定, 不负责具体业务逻辑.
+"""
 
 from __future__ import annotations
 
@@ -23,7 +26,7 @@ CommitWhen = Literal["success", "failure", "waiting_approval", "always"]
 
 @dataclass(slots=True)
 class MessageRecord:
-    """消息事实记录, 对应持久化层的 messages 表.
+    """MessageRecord, 对应持久化层的 messages 表.
 
     存储外部世界实际发生过的内容, 不是 working memory 里的草稿.
     """
@@ -86,6 +89,89 @@ class AgentProfile:
     default_model: str
     enabled_tools: list[str] = field(default_factory=list)
     config: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class BindingRule:
+    """一条用于 route 解析的 binding rule.
+
+    rule 通过显式 match 条件决定当前消息应该落到哪个 agent.
+    这比固定的 `thread > actor > channel > default` 更适合 QQ-first 场景.
+
+    常见用法:
+    - 只匹配 `channel_scope`, 表示某个群或私聊默认使用哪个 agent.
+    - 匹配 `actor_id + channel_scope`, 表示某个用户在某个群里走特殊 agent.
+    - 匹配 `channel_scope + sender_roles`, 表示群管理员在该群里走特殊 agent.
+    - 匹配 `thread_id`, 表示 runtime 临时 thread override.
+    """
+
+    rule_id: str
+    agent_id: str
+    priority: int = 100
+    thread_id: str | None = None
+    actor_id: str | None = None
+    channel_scope: str | None = None
+    sender_roles: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def matches(
+        self,
+        *,
+        event: StandardEvent,
+        thread_id: str,
+        actor_id: str,
+        channel_scope: str,
+    ) -> bool:
+        """判断这条 rule 是否命中当前消息.
+
+        Args:
+            event: 当前标准化消息事件.
+            thread_id: 当前消息所属 thread_id.
+            actor_id: 当前消息发送方的 actor_id.
+            channel_scope: 当前消息所在 channel_scope.
+
+        Returns:
+            当前 rule 是否命中.
+        """
+
+        if self.thread_id is not None and self.thread_id != thread_id:
+            return False
+        if self.actor_id is not None and self.actor_id != actor_id:
+            return False
+        if self.channel_scope is not None and self.channel_scope != channel_scope:
+            return False
+        if self.sender_roles:
+            sender_role = event.sender_role or ""
+            if sender_role not in self.sender_roles:
+                return False
+        return True
+
+    def match_keys(self) -> list[str]:
+        """返回这条 rule 当前声明了哪些 match 条件.
+
+        Returns:
+            当前 rule 使用的 match key 列表.
+        """
+
+        keys: list[str] = []
+        if self.thread_id is not None:
+            keys.append("thread_id")
+        if self.actor_id is not None:
+            keys.append("actor_id")
+        if self.channel_scope is not None:
+            keys.append("channel_scope")
+        if self.sender_roles:
+            keys.append("sender_roles")
+        return keys
+
+    def specificity(self) -> int:
+        """返回这条 rule 的匹配特异度.
+
+        Returns:
+            match 条件数量. 值越大表示规则越具体.
+        """
+
+        return len(self.match_keys())
 
 
 @dataclass(slots=True)

@@ -123,3 +123,148 @@ async def test_build_runtime_components_runs_app_with_legacy_agent() -> None:
     assert agent.calls[0]["system_prompt"] == "You are Aca."
     assert agent.calls[0]["model"] == "test-model"
     assert len(gateway.sent) == 1
+
+
+async def test_build_runtime_components_uses_channel_binding_for_group_event() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "fallback-model",
+                "system_prompt": "Fallback prompt.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "profiles": {
+                    "aca": {
+                        "name": "Aca",
+                        "prompt_ref": "prompt/aca",
+                        "default_model": "model-a",
+                    },
+                    "group": {
+                        "name": "Group",
+                        "prompt_ref": "prompt/group",
+                        "default_model": "model-g",
+                    },
+                },
+                "prompts": {
+                    "prompt/aca": "You are Aca.",
+                    "prompt/group": "You are the group agent.",
+                },
+                "binding_rules": [
+                    {
+                        "rule_id": "group-default",
+                        "agent_id": "group",
+                        "priority": 40,
+                        "match": {
+                            "channel_scope": "qq:group:20002",
+                        },
+                    }
+                ],
+            },
+        }
+    )
+    gateway = FakeGateway()
+    agent = FakeLegacyAgent(FakeLegacyResponse(text="hello group", model_used="model-g"))
+    components = build_runtime_components(config, gateway=gateway, agent=agent)
+    event = StandardEvent(
+        event_id="evt-group-1",
+        event_type="message",
+        platform="qq",
+        timestamp=456,
+        source=EventSource(
+            platform="qq",
+            message_type="group",
+            user_id="10001",
+            group_id="20002",
+        ),
+        segments=[MsgSegment(type="text", data={"text": "hello group"})],
+        raw_message_id="msg-group-1",
+        sender_nickname="acacia",
+        sender_role=None,
+    )
+
+    components.app.install()
+    await gateway.handler(event)
+
+    assert agent.calls[0]["system_prompt"] == "You are the group agent."
+    assert agent.calls[0]["model"] == "model-g"
+
+
+async def test_build_runtime_components_uses_admin_override_rule() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "fallback-model",
+                "system_prompt": "Fallback prompt.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "profiles": {
+                    "aca": {
+                        "name": "Aca",
+                        "prompt_ref": "prompt/aca",
+                        "default_model": "model-a",
+                    },
+                    "group": {
+                        "name": "Group",
+                        "prompt_ref": "prompt/group",
+                        "default_model": "model-g",
+                    },
+                    "ops": {
+                        "name": "Ops",
+                        "prompt_ref": "prompt/ops",
+                        "default_model": "model-o",
+                    },
+                },
+                "prompts": {
+                    "prompt/aca": "You are Aca.",
+                    "prompt/group": "You are the group agent.",
+                    "prompt/ops": "You are the operator agent.",
+                },
+                "binding_rules": [
+                    {
+                        "rule_id": "group-default",
+                        "agent_id": "group",
+                        "priority": 40,
+                        "match": {
+                            "channel_scope": "qq:group:20002",
+                        },
+                    },
+                    {
+                        "rule_id": "group-admins",
+                        "agent_id": "ops",
+                        "priority": 80,
+                        "match": {
+                            "channel_scope": "qq:group:20002",
+                            "sender_roles": ["admin", "owner"],
+                        },
+                    },
+                ],
+            },
+        }
+    )
+    gateway = FakeGateway()
+    agent = FakeLegacyAgent(FakeLegacyResponse(text="hello ops", model_used="model-o"))
+    components = build_runtime_components(config, gateway=gateway, agent=agent)
+    event = StandardEvent(
+        event_id="evt-group-admin-1",
+        event_type="message",
+        platform="qq",
+        timestamp=456,
+        source=EventSource(
+            platform="qq",
+            message_type="group",
+            user_id="10001",
+            group_id="20002",
+        ),
+        segments=[MsgSegment(type="text", data={"text": "hello ops"})],
+        raw_message_id="msg-group-admin-1",
+        sender_nickname="acacia",
+        sender_role="admin",
+    )
+
+    components.app.install()
+    await gateway.handler(event)
+
+    assert agent.calls[0]["system_prompt"] == "You are the operator agent."
+    assert agent.calls[0]["model"] == "model-o"
