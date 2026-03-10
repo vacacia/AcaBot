@@ -12,6 +12,7 @@ from .approval_resumer import (
 )
 from .app import RuntimeApp
 from .bootstrap import RuntimeComponents, build_runtime_components
+from .event_store import InMemoryChannelEventStore
 from .memory_store import InMemoryMessageStore
 from .legacy_agent_runtime import LegacyAgentRuntime
 from .model_agent_runtime import (
@@ -26,6 +27,7 @@ from .models import (
     ApprovalDecisionResult,
     AgentRuntimeResult,
     BindingRule,
+    ChannelEventRecord,
     DeliveryResult,
     DispatchReport,
     InboundRule,
@@ -54,8 +56,13 @@ from .profile_loader import (
 )
 from .router import InboundRuleRegistry, RuntimeRouter
 from .runs import InMemoryRunManager, RunManager, StoreBackedRunManager
-from .sqlite_stores import SQLiteMessageStore, SQLiteRunStore, SQLiteThreadStore
-from .stores import MessageStore, RunStore, ThreadStore
+from .sqlite_stores import (
+    SQLiteChannelEventStore,
+    SQLiteMessageStore,
+    SQLiteRunStore,
+    SQLiteThreadStore,
+)
+from .stores import ChannelEventStore, MessageStore, RunStore, ThreadStore
 from .tool_broker import (
     AllowAllToolPolicy,
     InMemoryToolAudit,
@@ -80,11 +87,14 @@ __all__ = [
     "ApprovalResumeResult",
     "ApprovalResumer",
     "BindingRule",
+    "ChannelEventRecord",
+    "ChannelEventStore",
     "DeliveryResult",
     "DispatchReport",
     "build_runtime_components",
     "InboundRule",
     "InboundRuleRegistry",
+    "InMemoryChannelEventStore",
     "InMemoryRunManager",
     "InMemoryMessageStore",
     "InMemoryThreadManager",
@@ -111,6 +121,7 @@ __all__ = [
     "RunStore",
     "RuntimeRouter",
     "Outbox",
+    "SQLiteChannelEventStore",
     "SQLiteMessageStore",
     "SQLiteRunStore",
     "SQLiteThreadStore",

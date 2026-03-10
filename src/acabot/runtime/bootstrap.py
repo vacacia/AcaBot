@@ -27,6 +27,7 @@ from acabot.config import Config
 from .agent_runtime import AgentRuntime
 from .approval_resumer import ApprovalResumer, NoopApprovalResumer
 from .app import RuntimeApp
+from .event_store import InMemoryChannelEventStore
 from .gateway_protocol import GatewayProtocol
 from .memory_store import InMemoryMessageStore
 from .model_agent_runtime import ModelAgentRuntime
@@ -41,8 +42,13 @@ from .profile_loader import (
 )
 from .router import InboundRuleRegistry, RuntimeRouter
 from .runs import InMemoryRunManager, RunManager, StoreBackedRunManager
-from .sqlite_stores import SQLiteMessageStore, SQLiteRunStore, SQLiteThreadStore
-from .stores import MessageStore
+from .sqlite_stores import (
+    SQLiteChannelEventStore,
+    SQLiteMessageStore,
+    SQLiteRunStore,
+    SQLiteThreadStore,
+)
+from .stores import ChannelEventStore, MessageStore
 from .tool_broker import ToolBroker
 from .threads import InMemoryThreadManager, StoreBackedThreadManager, ThreadManager
 
@@ -56,6 +62,7 @@ class RuntimeComponents:
         router (RuntimeRouter): 负责 route decision 的 router.
         thread_manager (ThreadManager): 管理 thread state 的 manager.
         run_manager (RunManager): 管理 run 生命周期的 manager.
+        channel_event_store (ChannelEventStore): 保存 inbound event facts 的 ChannelEventStore.
         message_store (MessageStore): 保存 delivered facts 的 MessageStore.
         prompt_loader (PromptLoader): 按 `prompt_ref` 加载 system prompt 的 loader.
         profile_loader (ProfileLoader): 按 `RouteDecision` 加载 profile 的 loader.
@@ -71,6 +78,7 @@ class RuntimeComponents:
     router: RuntimeRouter
     thread_manager: ThreadManager
     run_manager: RunManager
+    channel_event_store: ChannelEventStore
     message_store: MessageStore
     prompt_loader: PromptLoader
     profile_loader: ProfileLoader
@@ -91,6 +99,7 @@ def build_runtime_components(
     router: RuntimeRouter | None = None,
     thread_manager: ThreadManager | None = None,
     run_manager: RunManager | None = None,
+    channel_event_store: ChannelEventStore | None = None,
     tool_broker: ToolBroker | None = None,
     approval_resumer: ApprovalResumer | None = None,
 ) -> RuntimeComponents:
@@ -104,6 +113,7 @@ def build_runtime_components(
         router: 可选的 RuntimeRouter 实现.
         thread_manager: 可选的 ThreadManager 实现.
         run_manager: 可选的 RunManager 实现.
+        channel_event_store: 可选的 ChannelEventStore 实现.
         tool_broker: 可选的 ToolBroker 实现.
         approval_resumer: 可选的 approval resumer.
 
@@ -132,6 +142,7 @@ def build_runtime_components(
     )
     runtime_thread_manager = thread_manager or _build_thread_manager(config)
     runtime_run_manager = run_manager or _build_run_manager(config)
+    runtime_channel_event_store = channel_event_store or _build_channel_event_store(config)
     runtime_message_store = message_store or _build_message_store(config)
     runtime_tool_broker = tool_broker or ToolBroker()
     runtime_approval_resumer = approval_resumer or NoopApprovalResumer()
@@ -153,6 +164,7 @@ def build_runtime_components(
         router=runtime_router,
         thread_manager=runtime_thread_manager,
         run_manager=runtime_run_manager,
+        channel_event_store=runtime_channel_event_store,
         pipeline=pipeline,
         profile_loader=profile_registry.load,
         approval_resumer=runtime_approval_resumer,
@@ -163,6 +175,7 @@ def build_runtime_components(
         router=runtime_router,
         thread_manager=runtime_thread_manager,
         run_manager=runtime_run_manager,
+        channel_event_store=runtime_channel_event_store,
         message_store=runtime_message_store,
         prompt_loader=prompt_loader,
         profile_loader=profile_registry,
@@ -347,6 +360,22 @@ def _build_message_store(config: Config) -> MessageStore:
     if sqlite_path is None:
         return InMemoryMessageStore()
     return SQLiteMessageStore(sqlite_path)
+
+
+def _build_channel_event_store(config: Config) -> ChannelEventStore:
+    """根据配置构造 ChannelEventStore.
+
+    Args:
+        config: 项目配置对象.
+
+    Returns:
+        默认的 ChannelEventStore 实现.
+    """
+
+    sqlite_path = _get_persistence_sqlite_path(config)
+    if sqlite_path is None:
+        return InMemoryChannelEventStore()
+    return SQLiteChannelEventStore(sqlite_path)
 
 
 def _get_persistence_sqlite_path(config: Config) -> str | None:

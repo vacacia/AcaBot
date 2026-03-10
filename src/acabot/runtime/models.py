@@ -27,6 +27,47 @@ ApprovalDecision = Literal["approved", "rejected"]
 
 
 @dataclass(slots=True)
+class ChannelEventRecord:
+    """ChannelEventRecord, 对应持久化层的 channel_events 表.
+
+    Attributes:
+        event_uid (str): 平台事件唯一 ID.
+        thread_id (str): 当前事件归属的 thread ID.
+        actor_id (str): 当前事件主 actor 标识.
+        channel_scope (str): 当前事件所在 channel scope.
+        platform (str): 平台名.
+        event_type (str): canonical 事件类型.
+        message_type (str): 会话类型, 例如 `private` 或 `group`.
+        content_text (str): 便于检索的简短文本投影.
+        payload_json (dict[str, Any]): 结构化 canonical event payload.
+        timestamp (int): 事件时间戳.
+        run_id (str | None): 关联 run_id. `silent_drop` 之外通常会有值.
+        raw_message_id (str): 平台 message_id. notice event 可能为空.
+        operator_id (str | None): 操作者 ID.
+        target_message_id (str | None): 目标消息 ID.
+        metadata (dict[str, Any]): 控制面附加元数据.
+        raw_event (dict[str, Any]): 平台原始 payload.
+    """
+
+    event_uid: str
+    thread_id: str
+    actor_id: str
+    channel_scope: str
+    platform: str
+    event_type: str
+    message_type: str
+    content_text: str
+    payload_json: dict[str, Any]
+    timestamp: int
+    run_id: str | None = None
+    raw_message_id: str = ""
+    operator_id: str | None = None
+    target_message_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    raw_event: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class MessageRecord:
     """MessageRecord, 对应持久化层的 messages 表.
 

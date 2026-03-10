@@ -13,6 +13,7 @@ from acabot.agent import ToolDef
 from acabot.config import Config
 from acabot.runtime import (
     RouteDecision,
+    SQLiteChannelEventStore,
     SQLiteMessageStore,
     StoreBackedRunManager,
     StoreBackedThreadManager,
@@ -370,6 +371,63 @@ async def test_build_runtime_components_applies_inbound_rules() -> None:
 
     assert agent.calls == []
     assert gateway.sent == []
+    assert await components.channel_event_store.get_thread_events("qq:user:10001") == []
+
+
+async def test_build_runtime_components_records_record_only_notice_event() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "test-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "default_prompt_ref": "prompt/default",
+                "inbound_rules": [
+                    {
+                        "rule_id": "record-recall",
+                        "run_mode": "record_only",
+                        "match": {
+                            "platform": "qq",
+                            "event_type": "recall",
+                        },
+                    }
+                ],
+            },
+        }
+    )
+    gateway = FakeGateway()
+    agent = FakeAgent(FakeAgentResponse(text="should not send"))
+    components = build_runtime_components(config, gateway=gateway, agent=agent)
+    event = StandardEvent(
+        event_id="evt-recall-1",
+        event_type="recall",
+        platform="qq",
+        timestamp=456,
+        source=EventSource(
+            platform="qq",
+            message_type="group",
+            user_id="10001",
+            group_id="20002",
+        ),
+        segments=[],
+        raw_message_id="",
+        sender_nickname="acacia",
+        sender_role="member",
+        operator_id="10002",
+        target_message_id="msg-42",
+    )
+
+    components.app.install()
+    await gateway.handler(event)
+
+    assert agent.calls == []
+    assert gateway.sent == []
+    saved = await components.channel_event_store.get_thread_events("qq:group:20002")
+    assert saved[0].event_type == "recall"
+    assert saved[0].content_text == "[recall]"
+    assert saved[0].metadata["run_mode"] == "record_only"
 
 
 async def test_build_runtime_components_wires_tool_broker_into_agent_runtime() -> None:
@@ -451,6 +509,7 @@ async def test_build_runtime_components_uses_sqlite_persistence_when_configured(
     assert isinstance(components1.thread_manager, StoreBackedThreadManager)
     assert isinstance(components1.run_manager, StoreBackedRunManager)
     assert isinstance(components1.message_store, SQLiteMessageStore)
+    assert isinstance(components1.channel_event_store, SQLiteChannelEventStore)
 
     components1.app.install()
     await gateway1.handler(_event())
@@ -460,6 +519,7 @@ async def test_build_runtime_components_uses_sqlite_persistence_when_configured(
     components2 = build_runtime_components(config, gateway=gateway2, agent=agent2)
     restored = await components2.thread_manager.get("qq:user:10001")
     delivered = await components2.message_store.get_thread_messages("qq:user:10001")
+    events = await components2.channel_event_store.get_thread_events("qq:user:10001")
 
     assert restored is not None
     assert restored.working_messages == [
@@ -468,6 +528,7 @@ async def test_build_runtime_components_uses_sqlite_persistence_when_configured(
     ]
     assert [msg.content_text for msg in delivered] == ["hello back"]
     assert delivered[0].metadata["thread_content"] == "hello back"
+    assert [event.content_text for event in events] == ["hello"]
 
 
 def test_build_runtime_components_rejects_thread_id_in_binding_rules() -> None:

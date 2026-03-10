@@ -1,6 +1,7 @@
 """runtime.sqlite_stores 提供 runtime store 的 SQLite 实现.
 
-目前覆盖三类持久化:
+目前覆盖四类持久化:
+- ChannelEventStore
 - MessageStore
 - ThreadStore
 - RunStore
@@ -14,8 +15,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from .models import MessageRecord, RunRecord, RunStep, ThreadRecord
-from .stores import MessageStore, RunStore, ThreadStore
+from .models import ChannelEventRecord, MessageRecord, RunRecord, RunStep, ThreadRecord
+from .stores import ChannelEventStore, MessageStore, RunStore, ThreadStore
 
 
 # region base
@@ -188,6 +189,222 @@ class SQLiteThreadStore(_SQLiteStoreBase, ThreadStore):
             """
         )
         self._conn.commit()
+
+
+# endregion
+
+
+# region event store
+class SQLiteChannelEventStore(_SQLiteStoreBase, ChannelEventStore):
+    """基于 SQLite 的 ChannelEventStore."""
+
+    def __init__(self, db_path: str | Path) -> None:
+        """初始化 SQLiteChannelEventStore.
+
+        Args:
+            db_path: SQLite 数据库文件路径.
+        """
+
+        super().__init__(db_path)
+        self._ensure_schema()
+
+    async def save(self, event: ChannelEventRecord) -> None:
+        """保存一条 ChannelEventRecord.
+
+        Args:
+            event: 待写入的 ChannelEventRecord.
+        """
+
+        async with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO channel_events (
+                    event_uid,
+                    thread_id,
+                    actor_id,
+                    channel_scope,
+                    platform,
+                    event_type,
+                    message_type,
+                    content_text,
+                    payload_json,
+                    timestamp,
+                    run_id,
+                    raw_message_id,
+                    operator_id,
+                    target_message_id,
+                    metadata_json,
+                    raw_event_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(event_uid) DO UPDATE SET
+                    thread_id = excluded.thread_id,
+                    actor_id = excluded.actor_id,
+                    channel_scope = excluded.channel_scope,
+                    platform = excluded.platform,
+                    event_type = excluded.event_type,
+                    message_type = excluded.message_type,
+                    content_text = excluded.content_text,
+                    payload_json = excluded.payload_json,
+                    timestamp = excluded.timestamp,
+                    run_id = excluded.run_id,
+                    raw_message_id = excluded.raw_message_id,
+                    operator_id = excluded.operator_id,
+                    target_message_id = excluded.target_message_id,
+                    metadata_json = excluded.metadata_json,
+                    raw_event_json = excluded.raw_event_json
+                """,
+                (
+                    event.event_uid,
+                    event.thread_id,
+                    event.actor_id,
+                    event.channel_scope,
+                    event.platform,
+                    event.event_type,
+                    event.message_type,
+                    event.content_text,
+                    self._encode_json(event.payload_json),
+                    event.timestamp,
+                    event.run_id,
+                    event.raw_message_id,
+                    event.operator_id,
+                    event.target_message_id,
+                    self._encode_json(event.metadata),
+                    self._encode_json(event.raw_event),
+                ),
+            )
+            self._conn.commit()
+
+    async def get_thread_events(
+        self,
+        thread_id: str,
+        *,
+        limit: int | None = None,
+        since: int | None = None,
+        event_types: list[str] | None = None,
+    ) -> list[ChannelEventRecord]:
+        """按 thread 查询 channel event 记录.
+
+        Args:
+            thread_id: 目标 thread_id.
+            limit: 最多返回多少条事件.
+            since: 只返回晚于该时间戳的事件.
+            event_types: 可选事件类型过滤列表.
+
+        Returns:
+            满足条件的 ChannelEventRecord 列表.
+        """
+
+        query = [
+            """
+            SELECT
+                event_uid,
+                thread_id,
+                actor_id,
+                channel_scope,
+                platform,
+                event_type,
+                message_type,
+                content_text,
+                payload_json,
+                timestamp,
+                run_id,
+                raw_message_id,
+                operator_id,
+                target_message_id,
+                metadata_json,
+                raw_event_json
+            FROM channel_events
+            WHERE thread_id = ?
+            """
+        ]
+        params: list[object] = [thread_id]
+
+        if since is not None:
+            query.append("AND timestamp > ?")
+            params.append(since)
+
+        if event_types:
+            placeholders = ", ".join("?" for _ in event_types)
+            query.append(f"AND event_type IN ({placeholders})")
+            params.extend(event_types)
+
+        if limit is None:
+            query.append("ORDER BY timestamp ASC, event_uid ASC")
+            async with self._lock:
+                rows = self._conn.execute("\n".join(query), tuple(params)).fetchall()
+            return [self._row_to_event(row) for row in rows]
+
+        query.append("ORDER BY timestamp DESC, event_uid DESC")
+        query.append("LIMIT ?")
+        params.append(limit)
+        async with self._lock:
+            rows = self._conn.execute("\n".join(query), tuple(params)).fetchall()
+        rows.reverse()
+        return [self._row_to_event(row) for row in rows]
+
+    def _ensure_schema(self) -> None:
+        """初始化 channel_events 表结构."""
+
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS channel_events (
+                event_uid TEXT PRIMARY KEY,
+                thread_id TEXT NOT NULL,
+                actor_id TEXT NOT NULL,
+                channel_scope TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                message_type TEXT NOT NULL,
+                content_text TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                run_id TEXT,
+                raw_message_id TEXT NOT NULL,
+                operator_id TEXT,
+                target_message_id TEXT,
+                metadata_json TEXT NOT NULL,
+                raw_event_json TEXT NOT NULL
+            )
+            """
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_channel_events_thread_timestamp ON channel_events(thread_id, timestamp)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_channel_events_run_id ON channel_events(run_id)"
+        )
+        self._conn.commit()
+
+    def _row_to_event(self, row: sqlite3.Row) -> ChannelEventRecord:
+        """把 SQLite 行对象转换成 ChannelEventRecord.
+
+        Args:
+            row: SQLite 查询返回的行对象.
+
+        Returns:
+            对应的 ChannelEventRecord.
+        """
+
+        return ChannelEventRecord(
+            event_uid=str(row["event_uid"]),
+            thread_id=str(row["thread_id"]),
+            actor_id=str(row["actor_id"]),
+            channel_scope=str(row["channel_scope"]),
+            platform=str(row["platform"]),
+            event_type=str(row["event_type"]),
+            message_type=str(row["message_type"]),
+            content_text=str(row["content_text"]),
+            payload_json=dict(self._decode_json(row["payload_json"])),
+            timestamp=int(row["timestamp"]),
+            run_id=str(row["run_id"]) if row["run_id"] is not None else None,
+            raw_message_id=str(row["raw_message_id"]),
+            operator_id=str(row["operator_id"]) if row["operator_id"] is not None else None,
+            target_message_id=(
+                str(row["target_message_id"]) if row["target_message_id"] is not None else None
+            ),
+            metadata=dict(self._decode_json(row["metadata_json"])),
+            raw_event=dict(self._decode_json(row["raw_event_json"])),
+        )
 
 
 # endregion

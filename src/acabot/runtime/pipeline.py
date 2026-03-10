@@ -246,4 +246,13 @@ class ThreadPipeline:
         nickname = ctx.event.sender_nickname or ""
         user_id = ctx.event.source.user_id
         prefix = f"[{nickname}/{user_id}]" if nickname else f"[{user_id}]"
-        return f"{prefix} {ctx.event.text}"
+        if ctx.event.is_message:
+            return f"{prefix} {ctx.event.text}"
+
+        event_label = ctx.event.event_type
+        if ctx.event.event_type == "poke":
+            event_label = "notice:poke"
+        elif ctx.event.event_type == "recall":
+            target = ctx.event.target_message_id or ""
+            event_label = f"notice:recall target={target}".strip()
+        return f"{prefix} [{event_label}]"

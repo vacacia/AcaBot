@@ -18,6 +18,7 @@ from .gateway_protocol import GatewayProtocol
 from .models import (
     ApprovalDecisionResult,
     AgentProfile,
+    ChannelEventRecord,
     PendingApprovalRecord,
     RecoveryReport,
     RouteDecision,
@@ -28,6 +29,7 @@ from .models import (
 from .pipeline import ThreadPipeline
 from .router import RuntimeRouter
 from .runs import RunManager
+from .stores import ChannelEventStore
 from .threads import ThreadManager
 
 logger = logging.getLogger("acabot.runtime.app")
@@ -47,6 +49,7 @@ class RuntimeApp:
         router: RuntimeRouter,
         thread_manager: ThreadManager,
         run_manager: RunManager,
+        channel_event_store: ChannelEventStore,
         pipeline: ThreadPipeline,
         profile_loader: Callable[[RouteDecision], AgentProfile],
         approval_resumer: ApprovalResumer | None = None,
@@ -58,6 +61,7 @@ class RuntimeApp:
             router: event 到 runtime world 的路由器.
             thread_manager: thread 状态管理器.
             run_manager: run 生命周期管理器.
+            channel_event_store: inbound event log 持久化组件.
             pipeline: 真正执行一次 run 的 ThreadPipeline.
             profile_loader: 根据 RouteDecision 加载 AgentProfile 的回调.
             approval_resumer: approval 通过后的续执行器.
@@ -67,6 +71,7 @@ class RuntimeApp:
         self.router = router
         self.thread_manager = thread_manager
         self.run_manager = run_manager
+        self.channel_event_store = channel_event_store
         self.pipeline = pipeline
         self.profile_loader = profile_loader
         self.approval_resumer = approval_resumer or NoopApprovalResumer()
@@ -108,7 +113,14 @@ class RuntimeApp:
             )
             run = await self.run_manager.open(event=event, decision=decision)
             run_id = run.run_id
-            profile = self.profile_loader(decision)
+            await self.channel_event_store.save(
+                self._build_channel_event_record(
+                    event=event,
+                    decision=decision,
+                    run_id=run.run_id,
+                )
+            )
+            profile = self._load_profile_for_event(decision)
             ctx = RunContext(
                 run=run,
                 event=event,
@@ -121,6 +133,103 @@ class RuntimeApp:
             logger.exception("Failed to handle event: event_id=%s", event.event_id)
             if run_id is not None:
                 await self._mark_failed_safely(run_id, f"runtime app crashed: {exc}")
+
+    # region inbound事件
+    def _load_profile_for_event(self, decision: RouteDecision) -> AgentProfile:
+        """按事件模式加载当前 run 使用的 profile.
+
+        Args:
+            decision: 当前事件对应的 RouteDecision.
+
+        Returns:
+            一份 AgentProfile.
+        """
+
+        if decision.run_mode == "record_only":
+            return AgentProfile(
+                agent_id=decision.agent_id,
+                name=decision.agent_id,
+                prompt_ref="prompt/record_only",
+                default_model="record-only",
+            )
+        return self.profile_loader(decision)
+
+    @staticmethod
+    def _build_channel_event_record(
+        *,
+        event: StandardEvent,
+        decision: RouteDecision,
+        run_id: str,
+    ) -> ChannelEventRecord:
+        """把 StandardEvent 投影成可持久化的 ChannelEventRecord.
+
+        Args:
+            event: 当前标准化事件.
+            decision: 当前事件对应的 RouteDecision.
+            run_id: 关联的 run_id.
+
+        Returns:
+            一份 ChannelEventRecord.
+        """
+
+        return ChannelEventRecord(
+            event_uid=event.event_id,
+            thread_id=decision.thread_id,
+            actor_id=decision.actor_id,
+            channel_scope=decision.channel_scope,
+            platform=event.platform,
+            event_type=event.event_type,
+            message_type=event.source.message_type,
+            content_text=RuntimeApp._event_text_projection(event),
+            payload_json={
+                "source": {
+                    "platform": event.source.platform,
+                    "message_type": event.source.message_type,
+                    "user_id": event.source.user_id,
+                    "group_id": event.source.group_id,
+                },
+                "segments": [
+                    {"type": segment.type, "data": dict(segment.data)}
+                    for segment in event.segments
+                ],
+                "sender_nickname": event.sender_nickname,
+                "sender_role": event.sender_role,
+                "operator_id": event.operator_id,
+                "target_message_id": event.target_message_id,
+                "metadata": dict(event.metadata),
+            },
+            timestamp=event.timestamp,
+            run_id=run_id,
+            raw_message_id=event.raw_message_id,
+            operator_id=event.operator_id,
+            target_message_id=event.target_message_id,
+            metadata={
+                "run_mode": decision.run_mode,
+                "agent_id": decision.agent_id,
+                **dict(decision.metadata),
+            },
+            raw_event=dict(event.raw_event),
+        )
+
+    @staticmethod
+    def _event_text_projection(event: StandardEvent) -> str:
+        """把 StandardEvent 投影成便于检索的简短文本.
+
+        Args:
+            event: 当前标准化事件.
+
+        Returns:
+            一条简短的文本投影.
+        """
+
+        text = event.text.strip()
+        if text:
+            return text
+        if event.event_type == "poke":
+            return "[poke]"
+        if event.event_type == "recall":
+            return "[recall]"
+        return f"[{event.event_type}]"
 
     # region recovery
     async def recover_active_runs(self) -> RecoveryReport:

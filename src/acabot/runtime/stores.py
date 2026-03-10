@@ -1,13 +1,56 @@
 """运行时依赖的持久化接口.
 
 只声明协议, 不绑定具体数据库实现.
+
+当前覆盖四类持久化:
+- ChannelEventStore
+- MessageStore
+- ThreadStore
+- RunStore
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from .models import MessageRecord, RunRecord, RunStep, ThreadRecord
+from .models import ChannelEventRecord, MessageRecord, RunRecord, RunStep, ThreadRecord
+
+
+class ChannelEventStore(ABC):
+    """channel event 存储接口."""
+
+    @abstractmethod
+    async def save(self, event: ChannelEventRecord) -> None:
+        """保存一条 channel event 记录.
+
+        Args:
+            event: 待写入的 ChannelEventRecord.
+        """
+
+        ...
+
+    @abstractmethod
+    async def get_thread_events(
+        self,
+        thread_id: str,
+        *,
+        limit: int | None = None,
+        since: int | None = None,
+        event_types: list[str] | None = None,
+    ) -> list[ChannelEventRecord]:
+        """按 thread 查询 channel event 记录.
+
+        Args:
+            thread_id: 要查询的 thread 标识.
+            limit: 最多返回多少条事件.
+            since: 只返回晚于该时间戳的事件.
+            event_types: 可选事件类型过滤列表.
+
+        Returns:
+            满足条件的 ChannelEventRecord 列表.
+        """
+
+        ...
 
 
 class MessageStore(ABC):

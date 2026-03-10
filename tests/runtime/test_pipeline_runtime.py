@@ -97,10 +97,10 @@ class NoAckGateway(FakeGateway):
         return None
 
 
-def _event() -> StandardEvent:
+def _event(event_type: str = "message") -> StandardEvent:
     return StandardEvent(
         event_id="evt-1",
-        event_type="message",
+        event_type=event_type,
         platform="qq",
         timestamp=123,
         source=EventSource(
@@ -109,10 +109,11 @@ def _event() -> StandardEvent:
             user_id="10001",
             group_id=None,
         ),
-        segments=[MsgSegment(type="text", data={"text": "hello"})],
-        raw_message_id="msg-1",
+        segments=[MsgSegment(type="text", data={"text": "hello"})] if event_type == "message" else [],
+        raw_message_id="msg-1" if event_type == "message" else "",
         sender_nickname="acacia",
         sender_role=None,
+        target_message_id="msg-42" if event_type == "recall" else None,
     )
 
 
@@ -211,6 +212,40 @@ async def test_thread_pipeline_marks_run_failed_when_agent_runtime_crashes() -> 
     assert gateway.sent == []
     assert thread_manager.save_calls == 1
     assert thread.working_messages[0]["role"] == "user"
+
+
+async def test_thread_pipeline_projects_notice_event_into_working_memory() -> None:
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    gateway = FakeGateway()
+    store = FakeMessageStore()
+    outbox = Outbox(gateway=gateway, store=store)
+    pipeline = ThreadPipeline(
+        agent_runtime=FakeAgentRuntime(),
+        outbox=outbox,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+    )
+
+    event = _event("poke")
+    decision = _decision()
+    thread = await thread_manager.get_or_create(
+        thread_id=decision.thread_id,
+        channel_scope=decision.channel_scope,
+        last_event_at=event.timestamp,
+    )
+    run = await run_manager.open(event=event, decision=decision)
+    ctx = RunContext(
+        run=run,
+        event=event,
+        decision=decision,
+        thread=thread,
+        profile=_profile(),
+    )
+
+    await pipeline.execute(ctx)
+
+    assert thread.working_messages[0]["content"] == "[acacia/10001] [notice:poke]"
 
 
 async def test_thread_pipeline_dispatches_failure_actions_before_marking_failed() -> None:

@@ -4,6 +4,7 @@ from acabot.runtime import (
     AgentRuntimeResult,
     ApprovalResumeResult,
     ApprovalResumer,
+    InMemoryChannelEventStore,
     InMemoryRunManager,
     InMemoryThreadManager,
     Outbox,
@@ -90,6 +91,7 @@ async def test_runtime_app_installs_handler_and_processes_event() -> None:
     gateway = FakeGateway()
     thread_manager = InMemoryThreadManager()
     run_manager = InMemoryRunManager()
+    channel_event_store = InMemoryChannelEventStore()
     outbox = Outbox(gateway=gateway, store=FakeMessageStore())
     pipeline = ThreadPipeline(
         agent_runtime=FakeAgentRuntime(),
@@ -102,6 +104,7 @@ async def test_runtime_app_installs_handler_and_processes_event() -> None:
         router=RuntimeRouter(default_agent_id="aca"),
         thread_manager=thread_manager,
         run_manager=run_manager,
+        channel_event_store=channel_event_store,
         pipeline=pipeline,
         profile_loader=_profile_loader,
     )
@@ -113,12 +116,16 @@ async def test_runtime_app_installs_handler_and_processes_event() -> None:
     active = await run_manager.list_active()
     assert active == []
     assert len(gateway.sent) == 1
+    saved = await channel_event_store.get_thread_events("qq:user:10001")
+    assert saved[0].event_type == "message"
+    assert saved[0].content_text == "hello"
 
 
 async def test_runtime_app_skips_silent_drop_events() -> None:
     gateway = FakeGateway()
     thread_manager = InMemoryThreadManager()
     run_manager = InMemoryRunManager()
+    channel_event_store = InMemoryChannelEventStore()
     outbox = Outbox(gateway=gateway, store=FakeMessageStore())
     pipeline = ThreadPipeline(
         agent_runtime=FakeAgentRuntime(),
@@ -134,6 +141,7 @@ async def test_runtime_app_skips_silent_drop_events() -> None:
         ),
         thread_manager=thread_manager,
         run_manager=run_manager,
+        channel_event_store=channel_event_store,
         pipeline=pipeline,
         profile_loader=_profile_loader,
     )
@@ -143,12 +151,49 @@ async def test_runtime_app_skips_silent_drop_events() -> None:
 
     assert run_manager._runs == {}
     assert gateway.sent == []
+    assert await channel_event_store.get_thread_events("qq:user:10001") == []
+
+
+async def test_runtime_app_records_record_only_event_without_loading_profile() -> None:
+    gateway = FakeGateway()
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    channel_event_store = InMemoryChannelEventStore()
+    outbox = Outbox(gateway=gateway, store=FakeMessageStore())
+    pipeline = ThreadPipeline(
+        agent_runtime=FakeAgentRuntime(),
+        outbox=outbox,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+    )
+    app = RuntimeApp(
+        gateway=gateway,
+        router=RuntimeRouter(
+            default_agent_id="aca",
+            decide_run_mode=lambda event: ("record_only", {"inbound_rule_id": "record"}),
+        ),
+        thread_manager=thread_manager,
+        run_manager=run_manager,
+        channel_event_store=channel_event_store,
+        pipeline=pipeline,
+        profile_loader=_broken_profile_loader,
+    )
+
+    app.install()
+    await gateway.handler(_event())
+
+    run = next(iter(run_manager._runs.values()))
+    assert run.status == "completed"
+    assert gateway.sent == []
+    saved = await channel_event_store.get_thread_events("qq:user:10001")
+    assert saved[0].metadata["run_mode"] == "record_only"
 
 
 async def test_runtime_app_marks_run_failed_when_profile_loader_crashes() -> None:
     gateway = FakeGateway()
     thread_manager = InMemoryThreadManager()
     run_manager = InMemoryRunManager()
+    channel_event_store = InMemoryChannelEventStore()
     outbox = Outbox(gateway=gateway, store=FakeMessageStore())
     pipeline = ThreadPipeline(
         agent_runtime=FakeAgentRuntime(),
@@ -161,6 +206,7 @@ async def test_runtime_app_marks_run_failed_when_profile_loader_crashes() -> Non
         router=RuntimeRouter(default_agent_id="aca"),
         thread_manager=thread_manager,
         run_manager=run_manager,
+        channel_event_store=channel_event_store,
         pipeline=pipeline,
         profile_loader=_broken_profile_loader,
     )
@@ -177,6 +223,7 @@ async def test_runtime_app_keeps_failed_run_terminal_when_pipeline_crashes() -> 
     gateway = FakeGateway()
     thread_manager = InMemoryThreadManager()
     run_manager = InMemoryRunManager()
+    channel_event_store = InMemoryChannelEventStore()
     outbox = Outbox(gateway=gateway, store=FakeMessageStore())
     pipeline = ThreadPipeline(
         agent_runtime=BrokenAgentRuntime(),
@@ -189,6 +236,7 @@ async def test_runtime_app_keeps_failed_run_terminal_when_pipeline_crashes() -> 
         router=RuntimeRouter(default_agent_id="aca"),
         thread_manager=thread_manager,
         run_manager=run_manager,
+        channel_event_store=channel_event_store,
         pipeline=pipeline,
         profile_loader=_profile_loader,
     )
@@ -205,6 +253,7 @@ async def test_runtime_app_recovery_interrupts_stale_running_runs_on_start() -> 
     gateway = TrackingGateway()
     thread_manager = InMemoryThreadManager()
     run_manager = InMemoryRunManager()
+    channel_event_store = InMemoryChannelEventStore()
     outbox = Outbox(gateway=gateway, store=FakeMessageStore())
     pipeline = ThreadPipeline(
         agent_runtime=FakeAgentRuntime(),
@@ -217,6 +266,7 @@ async def test_runtime_app_recovery_interrupts_stale_running_runs_on_start() -> 
         router=RuntimeRouter(default_agent_id="aca"),
         thread_manager=thread_manager,
         run_manager=run_manager,
+        channel_event_store=channel_event_store,
         pipeline=pipeline,
         profile_loader=_profile_loader,
     )
@@ -241,6 +291,7 @@ async def test_runtime_app_recovery_keeps_pending_approval_visible() -> None:
     gateway = FakeGateway()
     thread_manager = InMemoryThreadManager()
     run_manager = InMemoryRunManager()
+    channel_event_store = InMemoryChannelEventStore()
     outbox = Outbox(gateway=gateway, store=FakeMessageStore())
     pipeline = ThreadPipeline(
         agent_runtime=FakeAgentRuntime(),
@@ -253,6 +304,7 @@ async def test_runtime_app_recovery_keeps_pending_approval_visible() -> None:
         router=RuntimeRouter(default_agent_id="aca"),
         thread_manager=thread_manager,
         run_manager=run_manager,
+        channel_event_store=channel_event_store,
         pipeline=pipeline,
         profile_loader=_profile_loader,
     )
@@ -288,6 +340,7 @@ async def test_runtime_app_approve_pending_approval_completes_run() -> None:
     gateway = FakeGateway()
     thread_manager = InMemoryThreadManager()
     run_manager = InMemoryRunManager()
+    channel_event_store = InMemoryChannelEventStore()
     outbox = Outbox(gateway=gateway, store=FakeMessageStore())
     resumer = FakeApprovalResumer(ApprovalResumeResult(status="completed"))
     app = RuntimeApp(
@@ -295,6 +348,7 @@ async def test_runtime_app_approve_pending_approval_completes_run() -> None:
         router=RuntimeRouter(default_agent_id="aca"),
         thread_manager=thread_manager,
         run_manager=run_manager,
+        channel_event_store=channel_event_store,
         pipeline=ThreadPipeline(
             agent_runtime=FakeAgentRuntime(),
             outbox=outbox,
@@ -343,6 +397,7 @@ async def test_runtime_app_approve_pending_approval_can_reenter_waiting_state() 
     gateway = FakeGateway()
     thread_manager = InMemoryThreadManager()
     run_manager = InMemoryRunManager()
+    channel_event_store = InMemoryChannelEventStore()
     outbox = Outbox(gateway=gateway, store=FakeMessageStore())
     resumer = FakeApprovalResumer(
         ApprovalResumeResult(
@@ -360,6 +415,7 @@ async def test_runtime_app_approve_pending_approval_can_reenter_waiting_state() 
         router=RuntimeRouter(default_agent_id="aca"),
         thread_manager=thread_manager,
         run_manager=run_manager,
+        channel_event_store=channel_event_store,
         pipeline=ThreadPipeline(
             agent_runtime=FakeAgentRuntime(),
             outbox=outbox,
@@ -401,12 +457,14 @@ async def test_runtime_app_reject_pending_approval_cancels_run() -> None:
     gateway = FakeGateway()
     thread_manager = InMemoryThreadManager()
     run_manager = InMemoryRunManager()
+    channel_event_store = InMemoryChannelEventStore()
     outbox = Outbox(gateway=gateway, store=FakeMessageStore())
     app = RuntimeApp(
         gateway=gateway,
         router=RuntimeRouter(default_agent_id="aca"),
         thread_manager=thread_manager,
         run_manager=run_manager,
+        channel_event_store=channel_event_store,
         pipeline=ThreadPipeline(
             agent_runtime=FakeAgentRuntime(),
             outbox=outbox,

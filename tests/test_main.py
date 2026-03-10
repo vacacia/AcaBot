@@ -13,6 +13,7 @@ from acabot.config import Config
 from acabot.main import build_runtime_app, create_message_store, wait_for_shutdown_signal
 from acabot.runtime import (
     AgentProfile,
+    InMemoryChannelEventStore,
     InMemoryMessageStore,
     NoopApprovalResumer,
     RouteDecision,
@@ -260,6 +261,7 @@ async def test_run_starts_and_stops_runtime_app(monkeypatch) -> None:
             router=None,  # type: ignore[arg-type]
             thread_manager=None,  # type: ignore[arg-type]
             run_manager=None,  # type: ignore[arg-type]
+            channel_event_store=InMemoryChannelEventStore(),
             message_store=InMemoryMessageStore(),
             prompt_loader=None,  # type: ignore[arg-type]
             profile_loader=None,  # type: ignore[arg-type]
