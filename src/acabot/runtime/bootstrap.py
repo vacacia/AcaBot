@@ -143,6 +143,7 @@ def build_runtime_components(
         outbox=outbox,
         run_manager=runtime_run_manager,
         thread_manager=runtime_thread_manager,
+        tool_broker=runtime_tool_broker,
     )
     app = RuntimeApp(
         gateway=gateway,

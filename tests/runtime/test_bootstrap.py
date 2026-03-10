@@ -172,6 +172,7 @@ async def test_build_runtime_components_runs_app_with_model_agent_runtime() -> N
 
     assert agent.calls[0]["system_prompt"] == "You are Aca."
     assert agent.calls[0]["model"] == "test-model"
+    assert components.pipeline.tool_broker is components.tool_broker
     assert len(gateway.sent) == 1
 
 

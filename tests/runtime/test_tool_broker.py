@@ -5,19 +5,24 @@
 - ToolBroker 自己可以作为 tool_executor
 - legacy ToolDef 迁入 ToolBroker 后, 返回值会被标准化
 - policy 可以拒绝工具
+- policy 也可以把工具打断到 waiting_approval
 - audit 会记录完成和拒绝结果
 """
 
 from dataclasses import dataclass
 from typing import Any
 
+import pytest
+
 from acabot.agent import ToolDef, ToolExecutionResult, ToolSpec
 from acabot.runtime import (
     AgentProfile,
+    ApprovalRequired,
     InMemoryToolAudit,
     ToolBroker,
     ToolPolicyDecision,
     ToolResult,
+    ToolRuntimeState,
 )
 
 from .test_model_agent_runtime import _context
@@ -213,3 +218,50 @@ async def test_tool_broker_policy_can_reject_tool() -> None:
     record = next(iter(audit.records.values()))
     assert record.status == "rejected"
     assert record.metadata["policy"] == "deny-all"
+
+
+async def test_tool_broker_policy_can_request_approval() -> None:
+    class ApprovalPolicy:
+        async def allow(self, *, spec, arguments, ctx) -> ToolPolicyDecision:
+            _ = spec, arguments, ctx
+            return ToolPolicyDecision(
+                allowed=True,
+                requires_approval=True,
+                reason="needs admin approval",
+                metadata={"risk_level": "dangerous"},
+            )
+
+    audit = InMemoryToolAudit()
+    broker = ToolBroker(policy=ApprovalPolicy(), audit=audit)
+
+    async def handler(arguments: dict[str, Any], ctx) -> dict[str, Any]:
+        _ = arguments, ctx
+        return {"ok": True}
+
+    broker.register_tool(
+        ToolSpec(
+            name="restricted",
+            description="Restricted tool",
+            parameters={"type": "object", "properties": {}},
+        ),
+        handler,
+    )
+    ctx = _context()
+    ctx.profile.enabled_tools = ["restricted"]
+    state = ToolRuntimeState()
+
+    with pytest.raises(ApprovalRequired) as exc_info:
+        await broker.execute(
+            tool_name="restricted",
+            arguments={"x": 1},
+            ctx=broker._build_execution_context(ctx, state=state),
+        )
+
+    pending = exc_info.value.pending_approval
+    assert pending.tool_name == "restricted"
+    assert pending.reason == "needs admin approval"
+    assert state.pending_approval is not None
+    assert state.user_actions[0].commit_when == "waiting_approval"
+    record = audit.records[pending.tool_call_id]
+    assert record.status == "waiting_approval"
+    assert record.metadata["approval_id"] == pending.approval_id

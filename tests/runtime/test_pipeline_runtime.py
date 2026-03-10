@@ -1,14 +1,20 @@
+from acabot.agent import ToolSpec
 from acabot.runtime import (
     AgentProfile,
     AgentRuntime,
     AgentRuntimeResult,
     InMemoryRunManager,
     InMemoryThreadManager,
+    InMemoryToolAudit,
+    ModelAgentRuntime,
     Outbox,
     PlannedAction,
     RouteDecision,
     RunContext,
+    StaticPromptLoader,
     ThreadPipeline,
+    ToolBroker,
+    ToolPolicyDecision,
 )
 from acabot.types import Action, ActionType, EventSource, MsgSegment, StandardEvent
 
@@ -59,6 +65,22 @@ class FailureActionAgentRuntime(AgentRuntime):
         )
 
 
+class ApprovalToolAgent:
+    async def run(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, object]],
+        model: str | None = None,
+        *,
+        tools=None,
+        tool_executor=None,
+    ):
+        _ = system_prompt, messages, model, tools
+        if tool_executor is not None:
+            await tool_executor("restricted", {"danger": True})
+        raise AssertionError("approval interrupt should stop the agent loop")
+
+
 class CountingThreadManager(InMemoryThreadManager):
     def __init__(self) -> None:
         super().__init__()
@@ -67,6 +89,12 @@ class CountingThreadManager(InMemoryThreadManager):
     async def save(self, thread) -> None:
         self.save_calls += 1
         await super().save(thread)
+
+
+class NoAckGateway(FakeGateway):
+    async def send(self, action: Action) -> dict[str, object] | None:
+        self.sent.append(action)
+        return None
 
 
 def _event() -> StandardEvent:
@@ -221,3 +249,143 @@ async def test_thread_pipeline_dispatches_failure_actions_before_marking_failed(
     assert updated_run.status == "failed"
     assert len(gateway.sent) == 1
     assert gateway.sent[0].payload["text"] == "failure action"
+
+
+async def test_thread_pipeline_enters_waiting_approval_after_prompt_delivery() -> None:
+    class ApprovalPolicy:
+        async def allow(self, *, spec, arguments, ctx) -> ToolPolicyDecision:
+            _ = spec, arguments, ctx
+            return ToolPolicyDecision(
+                allowed=True,
+                requires_approval=True,
+                reason="needs admin approval",
+                metadata={"risk_level": "dangerous"},
+            )
+
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    gateway = FakeGateway()
+    store = FakeMessageStore()
+    outbox = Outbox(gateway=gateway, store=store)
+    audit = InMemoryToolAudit()
+    broker = ToolBroker(policy=ApprovalPolicy(), audit=audit)
+
+    async def restricted(arguments: dict[str, object], ctx) -> dict[str, object]:
+        _ = arguments, ctx
+        return {"ok": True}
+
+    broker.register_tool(
+        ToolSpec(
+            name="restricted",
+            description="Restricted tool",
+            parameters={"type": "object", "properties": {}},
+        ),
+        restricted,
+    )
+    pipeline = ThreadPipeline(
+        agent_runtime=ModelAgentRuntime(
+            agent=ApprovalToolAgent(),
+            prompt_loader=StaticPromptLoader({"prompt/default": "You are Aca."}),
+            tool_runtime_resolver=broker.build_tool_runtime,
+        ),
+        outbox=outbox,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+        tool_broker=broker,
+    )
+
+    event = _event()
+    decision = _decision()
+    thread = await thread_manager.get_or_create(
+        thread_id=decision.thread_id,
+        channel_scope=decision.channel_scope,
+        last_event_at=event.timestamp,
+    )
+    run = await run_manager.open(event=event, decision=decision)
+    ctx = RunContext(
+        run=run,
+        event=event,
+        decision=decision,
+        thread=thread,
+        profile=_profile(),
+    )
+    ctx.profile.enabled_tools = ["restricted"]
+
+    await pipeline.execute(ctx)
+
+    updated_run = await run_manager.get(run.run_id)
+    assert updated_run is not None
+    assert updated_run.status == "waiting_approval"
+    assert len(gateway.sent) == 1
+    record = next(iter(audit.records.values()))
+    assert record.status == "waiting_approval"
+    assert record.metadata["approval_prompt_delivered"] is True
+
+
+async def test_thread_pipeline_fails_when_approval_prompt_not_delivered() -> None:
+    class ApprovalPolicy:
+        async def allow(self, *, spec, arguments, ctx) -> ToolPolicyDecision:
+            _ = spec, arguments, ctx
+            return ToolPolicyDecision(
+                allowed=True,
+                requires_approval=True,
+                reason="needs admin approval",
+            )
+
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    gateway = NoAckGateway()
+    store = FakeMessageStore()
+    outbox = Outbox(gateway=gateway, store=store)
+    audit = InMemoryToolAudit()
+    broker = ToolBroker(policy=ApprovalPolicy(), audit=audit)
+
+    async def restricted(arguments: dict[str, object], ctx) -> dict[str, object]:
+        _ = arguments, ctx
+        return {"ok": True}
+
+    broker.register_tool(
+        ToolSpec(
+            name="restricted",
+            description="Restricted tool",
+            parameters={"type": "object", "properties": {}},
+        ),
+        restricted,
+    )
+    pipeline = ThreadPipeline(
+        agent_runtime=ModelAgentRuntime(
+            agent=ApprovalToolAgent(),
+            prompt_loader=StaticPromptLoader({"prompt/default": "You are Aca."}),
+            tool_runtime_resolver=broker.build_tool_runtime,
+        ),
+        outbox=outbox,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+        tool_broker=broker,
+    )
+
+    event = _event()
+    decision = _decision()
+    thread = await thread_manager.get_or_create(
+        thread_id=decision.thread_id,
+        channel_scope=decision.channel_scope,
+        last_event_at=event.timestamp,
+    )
+    run = await run_manager.open(event=event, decision=decision)
+    ctx = RunContext(
+        run=run,
+        event=event,
+        decision=decision,
+        thread=thread,
+        profile=_profile(),
+    )
+    ctx.profile.enabled_tools = ["restricted"]
+
+    await pipeline.execute(ctx)
+
+    updated_run = await run_manager.get(run.run_id)
+    assert updated_run is not None
+    assert updated_run.status == "failed"
+    record = next(iter(audit.records.values()))
+    assert record.status == "failed"
+    assert record.error == "approval prompt not delivered"

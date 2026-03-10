@@ -172,35 +172,35 @@ class LitellmAgent(BaseAgent):
                 usage = response.usage
                 for key in total_usage:
                     total_usage[key] += getattr(usage, key, 0)
-
-                msg = choice.message
-                if msg.tool_calls:
-                    if active_executor is None:
-                        return AgentResponse(
-                            error="LLM requested tool calls without tool_executor",
-                            model_used=use_model,
-                            raw=response,
-                        )
-                    await self._handle_tool_calls(
-                        msg=msg,
-                        full_messages=full_messages,
-                        tool_calls_made=tool_calls_made,
-                        all_attachments=all_attachments,
-                        tool_executor=active_executor,
-                    )
-                    continue
-
-                return AgentResponse(
-                    text=msg.content or "",
-                    attachments=all_attachments,
-                    usage=total_usage,
-                    tool_calls_made=tool_calls_made,
-                    model_used=use_model,
-                    raw=response,
-                )
             except Exception as exc:
                 logger.error("LLM call failed: %s", exc)
                 return AgentResponse(error=str(exc), model_used=use_model)
+
+            msg = choice.message
+            if msg.tool_calls:
+                if active_executor is None:
+                    return AgentResponse(
+                        error="LLM requested tool calls without tool_executor",
+                        model_used=use_model,
+                        raw=response,
+                    )
+                await self._handle_tool_calls(
+                    msg=msg,
+                    full_messages=full_messages,
+                    tool_calls_made=tool_calls_made,
+                    all_attachments=all_attachments,
+                    tool_executor=active_executor,
+                )
+                continue
+
+            return AgentResponse(
+                text=msg.content or "",
+                attachments=all_attachments,
+                usage=total_usage,
+                tool_calls_made=tool_calls_made,
+                model_used=use_model,
+                raw=response,
+            )
 
         return AgentResponse(
             error=f"Tool calling exceeded max rounds ({self.max_tool_rounds})",

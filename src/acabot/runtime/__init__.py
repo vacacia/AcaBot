@@ -22,6 +22,7 @@ from .model_agent_runtime import (
 )
 from .models import (
     AgentProfile,
+    ApprovalRequired,
     ApprovalDecisionResult,
     AgentRuntimeResult,
     BindingRule,
@@ -73,6 +74,7 @@ __all__ = [
     "AgentRuntimeResult",
     "AgentProfile",
     "AgentProfileRegistry",
+    "ApprovalRequired",
     "ApprovalDecisionResult",
     "ApprovalResumeResult",
     "ApprovalResumer",

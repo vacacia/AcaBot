@@ -13,6 +13,7 @@ from .agent_runtime import AgentRuntime
 from .models import DispatchReport, PlannedAction, RunContext
 from .outbox import Outbox
 from .runs import RunManager
+from .tool_broker import ToolBroker
 from .threads import ThreadManager
 
 logger = logging.getLogger("acabot.runtime.pipeline")
@@ -21,8 +22,8 @@ logger = logging.getLogger("acabot.runtime.pipeline")
 class ThreadPipeline:
     """一次 run 的最小执行器.
 
-    当前版本只负责最小链路, 不接 hook, memory broker 或 tool broker.
-    先验证新 runtime 主线是通的.
+    当前版本仍然不接 hook 或 memory broker.
+    但 approval prompt 的 audit 回写已经接到 ToolBroker.
     """
 
     def __init__(
@@ -32,6 +33,7 @@ class ThreadPipeline:
         outbox: Outbox,
         run_manager: RunManager,
         thread_manager: ThreadManager,
+        tool_broker: ToolBroker | None = None,
     ) -> None:
         """初始化 ThreadPipeline.
 
@@ -40,12 +42,14 @@ class ThreadPipeline:
             outbox: 统一出站组件.
             run_manager: run 生命周期管理器.
             thread_manager: thread 状态管理器.
+            tool_broker: 可选的 ToolBroker. 用于 approval prompt 的 audit 回写.
         """
 
         self.agent_runtime = agent_runtime
         self.outbox = outbox
         self.run_manager = run_manager
         self.thread_manager = thread_manager
+        self.tool_broker = tool_broker
 
     async def execute(self, ctx: RunContext) -> None:
         """执行一条最小 runtime 主线.
@@ -160,9 +164,19 @@ class ThreadPipeline:
                 item.plan.action_id for item in (ctx.delivery_report or DispatchReport()).delivered_items
             }
             if not set(pending.required_action_ids).issubset(delivered_action_ids):
+                if self.tool_broker is not None:
+                    await self.tool_broker.fail_pending_approval(
+                        pending,
+                        error="approval prompt not delivered",
+                    )
                 await self.run_manager.mark_failed(ctx.run.run_id, "approval prompt not delivered")
                 return
 
+            if self.tool_broker is not None:
+                await self.tool_broker.confirm_pending_approval(
+                    pending,
+                    delivery_report=ctx.delivery_report or DispatchReport(),
+                )
             await self.run_manager.mark_waiting_approval(
                 ctx.run.run_id,
                 reason=pending.reason,

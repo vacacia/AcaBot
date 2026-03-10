@@ -224,6 +224,24 @@ class PendingApproval:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+class ApprovalRequired(Exception):
+    """表示当前 run 被工具打断并进入待审批状态.
+
+    Attributes:
+        pending_approval (PendingApproval): 当前待审批上下文.
+    """
+
+    def __init__(self, *, pending_approval: PendingApproval) -> None:
+        """初始化 ApprovalRequired.
+
+        Args:
+            pending_approval: 当前待审批上下文.
+        """
+
+        super().__init__(pending_approval.reason)
+        self.pending_approval = pending_approval
+
+
 @dataclass(slots=True)
 class AgentRuntimeResult:
     """一次 agent runtime 执行后的系统级结果.

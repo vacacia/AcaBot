@@ -26,6 +26,7 @@ from acabot.runtime import (
     StaticPromptLoader,
     ThreadState,
     ToolBroker,
+    ToolPolicyDecision,
     ToolResult,
     ToolRuntime,
 )
@@ -422,3 +423,47 @@ async def test_model_agent_runtime_filters_tool_actions_for_failed_response() ->
 
     assert result.status == "failed"
     assert [item.action.payload["text"] for item in result.actions] == ["failure action"]
+
+
+async def test_model_agent_runtime_builds_waiting_approval_result() -> None:
+    class ApprovalPolicy:
+        async def allow(self, *, spec, arguments, ctx) -> ToolPolicyDecision:
+            _ = spec, arguments, ctx
+            return ToolPolicyDecision(
+                allowed=True,
+                requires_approval=True,
+                reason="needs admin approval",
+                metadata={"risk_level": "dangerous"},
+            )
+
+    audit = InMemoryToolAudit()
+    broker = ToolBroker(policy=ApprovalPolicy(), audit=audit)
+
+    async def announce(arguments: dict[str, Any], tool_ctx) -> Any:
+        _ = arguments, tool_ctx
+        return {"ok": True}
+
+    broker.register_tool(
+        ToolSpec(
+            name="announce",
+            description="Announce a user",
+            parameters={"type": "object", "properties": {}},
+        ),
+        announce,
+    )
+    runtime = ModelAgentRuntime(
+        agent=ToolCallingAgent(response_text="should not reach"),
+        prompt_loader=StaticPromptLoader({"prompt/default": "You are Aca."}),
+        tool_runtime_resolver=broker.build_tool_runtime,
+    )
+    ctx = _context()
+    ctx.profile.enabled_tools = ["announce"]
+
+    result = await runtime.execute(ctx)
+
+    assert result.status == "waiting_approval"
+    assert result.pending_approval is not None
+    assert result.pending_approval.tool_name == "announce"
+    assert [item.metadata["origin"] for item in result.actions] == ["approval_prompt"]
+    assert any(item.get("status") == "waiting_approval" for item in result.tool_calls)
+    assert result.metadata["tool_audit_count"] == 1

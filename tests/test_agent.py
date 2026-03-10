@@ -192,6 +192,52 @@ class TestToolCalling:
         assert isinstance(resp, AgentResponse)
         assert resp.error == "tool_executor is required when tools are provided"
 
+    async def test_tool_executor_exceptions_are_not_swallowed(self, agent):
+        tool_spec = ToolSpec(
+            name="restricted",
+            description="Restricted tool",
+            parameters={"type": "object", "properties": {}},
+        )
+        tc_msg = _make_msg(
+            content=None,
+            role="assistant",
+            tool_calls=[
+                type(
+                    "TC",
+                    (),
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": type(
+                            "F",
+                            (),
+                            {"name": "restricted", "arguments": "{}"},
+                        )(),
+                    },
+                )()
+            ],
+        )
+        tc_resp = AsyncMock()
+        tc_resp.choices = [type("C", (), {"message": tc_msg})()]
+        tc_resp.usage = type(
+            "U",
+            (),
+            {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        )()
+
+        async def tool_executor(tool_name, arguments):
+            _ = tool_name, arguments
+            raise RuntimeError("tool interrupted")
+
+        with patch("acabot.agent.agent.acompletion", return_value=tc_resp):
+            with pytest.raises(RuntimeError, match="tool interrupted"):
+                await agent.run(
+                    system_prompt="test",
+                    messages=[{"role": "user", "content": "time?"}],
+                    tools=[tool_spec],
+                    tool_executor=tool_executor,
+                )
+
     async def test_registered_tools_still_work_without_explicit_executor(self, agent):
         async def get_time(params):
             return {"time": "2026-03-03 12:00:00"}

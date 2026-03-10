@@ -17,6 +17,7 @@
       ToolBroker.execute()
           |
           +-- ToolPolicy
+          +-- ApprovalRequired
           `-- ToolAudit
 
 这个文件当前负责:
@@ -25,10 +26,8 @@
 - 让 broker 自己成为唯一 tool_executor
 - 最小 policy 检查
 - 最小 audit 记录
+- approval 触发和 prompt 生成
 - 把 `ToolResult.user_actions/artifacts` 累积到 run 级别状态
-
-暂时不把 approval 状态机做进来.
-先把执行权, policy, audit, user_actions 的基础链路收口, 后面再加审批.
 """
 
 from __future__ import annotations
@@ -41,9 +40,17 @@ from typing import Any, Awaitable, Callable, Literal, Protocol
 
 from acabot.agent import Attachment, ToolDef, ToolExecutionResult, ToolSpec
 from acabot.agent.tool import normalize_tool_result
+from acabot.types import Action, ActionType, EventSource
 
 from .model_agent_runtime import ToolRuntime, ToolRuntimeState
-from .models import AgentProfile, PlannedAction, RunContext
+from .models import (
+    AgentProfile,
+    ApprovalRequired,
+    DispatchReport,
+    PendingApproval,
+    PlannedAction,
+    RunContext,
+)
 
 ToolHandler = Callable[[dict[str, Any], "ToolExecutionContext"], Awaitable[Any] | Any]
 
@@ -55,11 +62,13 @@ class ToolPolicyDecision:
 
     Attributes:
         allowed (bool): 当前工具是否允许执行.
+        requires_approval (bool): 当前工具是否需要先进入审批.
         reason (str | None): 拒绝或备注原因.
         metadata (dict[str, Any]): policy 附加元数据.
     """
 
     allowed: bool
+    requires_approval: bool = False
     reason: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -72,7 +81,7 @@ class ToolAuditRecord:
         tool_call_id (str): 当前工具调用的唯一标识.
         run_id (str): 当前 run 标识.
         tool_name (str): 工具名.
-        status (Literal["started", "completed", "rejected", "failed"]): 当前审计状态.
+        status (Literal["started", "waiting_approval", "completed", "rejected", "failed"]): 当前审计状态.
         arguments (dict[str, Any]): 执行参数.
         result (Any): 执行结果摘要.
         error (str | None): 错误信息.
@@ -82,7 +91,7 @@ class ToolAuditRecord:
     tool_call_id: str
     run_id: str
     tool_name: str
-    status: Literal["started", "completed", "rejected", "failed"]
+    status: Literal["started", "waiting_approval", "completed", "rejected", "failed"]
     arguments: dict[str, Any] = field(default_factory=dict)
     result: Any = None
     error: str | None = None
@@ -116,6 +125,7 @@ class ToolExecutionContext:
         thread_id (str): 当前 thread 标识.
         actor_id (str): 当前消息发送者标识.
         agent_id (str): 当前处理消息的 agent 标识.
+        target (EventSource): 当前默认回复目标.
         profile (AgentProfile): 当前 run 命中的 profile.
         state (ToolRuntimeState | None): 当前 run 的 tool 累积状态.
         metadata (dict[str, Any]): 执行阶段附加元数据.
@@ -125,6 +135,7 @@ class ToolExecutionContext:
     thread_id: str
     actor_id: str
     agent_id: str
+    target: EventSource
     profile: AgentProfile
     state: ToolRuntimeState | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -249,6 +260,29 @@ class ToolAudit(Protocol):
 
         ...
 
+    async def waiting_approval(
+        self,
+        record: ToolAuditRecord,
+        *,
+        approval_id: str,
+        required_action_ids: list[str],
+        reason: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> ToolAuditRecord:
+        """把审计记录切到 waiting_approval."""
+
+        ...
+
+    async def confirm_pending_approval(
+        self,
+        *,
+        tool_call_id: str,
+        delivery_report: DispatchReport,
+    ) -> ToolAuditRecord | None:
+        """回写审批提示已送达."""
+
+        ...
+
     async def fail(
         self,
         record: ToolAuditRecord,
@@ -257,6 +291,17 @@ class ToolAudit(Protocol):
         metadata: dict[str, Any] | None = None,
     ) -> ToolAuditRecord:
         """把审计记录收尾为 failed."""
+
+        ...
+
+    async def fail_pending_approval(
+        self,
+        *,
+        tool_call_id: str,
+        error: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> ToolAuditRecord | None:
+        """把等待审批中的审计记录收尾为 failed."""
 
         ...
 
@@ -378,6 +423,73 @@ class InMemoryToolAudit:
         self.records[record.tool_call_id] = record
         return record
 
+    async def waiting_approval(
+        self,
+        record: ToolAuditRecord,
+        *,
+        approval_id: str,
+        required_action_ids: list[str],
+        reason: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> ToolAuditRecord:
+        """把审计记录切到 waiting_approval.
+
+        Args:
+            record: 目标审计记录.
+            approval_id: 当前审批 ID.
+            required_action_ids: 审批提示动作列表.
+            reason: 等待审批原因.
+            metadata: 附加元数据.
+
+        Returns:
+            更新后的 ToolAuditRecord.
+        """
+
+        record.status = "waiting_approval"
+        record.error = reason
+        record.metadata.update(
+            {
+                "approval_id": approval_id,
+                "required_action_ids": list(required_action_ids),
+                "approval_prompt_delivered": False,
+                **dict(metadata or {}),
+            }
+        )
+        self.records[record.tool_call_id] = record
+        return record
+
+    async def confirm_pending_approval(
+        self,
+        *,
+        tool_call_id: str,
+        delivery_report: DispatchReport,
+    ) -> ToolAuditRecord | None:
+        """回写审批提示已送达.
+
+        Args:
+            tool_call_id: 待回写的 tool_call_id.
+            delivery_report: 当前审批提示的投递报告.
+
+        Returns:
+            更新后的 ToolAuditRecord. 找不到时返回 None.
+        """
+
+        record = self.records.get(tool_call_id)
+        if record is None:
+            return None
+        record.metadata["approval_prompt_delivered"] = True
+        record.metadata["approval_delivery_results"] = [
+            {
+                "action_id": item.action_id,
+                "ok": item.ok,
+                "platform_message_id": item.platform_message_id,
+                "error": item.error,
+            }
+            for item in delivery_report.results
+        ]
+        self.records[tool_call_id] = record
+        return record
+
     async def fail(
         self,
         record: ToolAuditRecord,
@@ -400,6 +512,33 @@ class InMemoryToolAudit:
         record.error = error
         record.metadata.update(dict(metadata or {}))
         self.records[record.tool_call_id] = record
+        return record
+
+    async def fail_pending_approval(
+        self,
+        *,
+        tool_call_id: str,
+        error: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> ToolAuditRecord | None:
+        """把等待审批中的记录收尾为 failed.
+
+        Args:
+            tool_call_id: 待回写的 tool_call_id.
+            error: 失败原因.
+            metadata: 附加元数据.
+
+        Returns:
+            更新后的 ToolAuditRecord. 找不到时返回 None.
+        """
+
+        record = self.records.get(tool_call_id)
+        if record is None:
+            return None
+        record.status = "failed"
+        record.error = error
+        record.metadata.update(dict(metadata or {}))
+        self.records[tool_call_id] = record
         return record
 
 
@@ -547,6 +686,53 @@ class ToolBroker:
             metadata=metadata,
         )
 
+    async def confirm_pending_approval(
+        self,
+        pending: PendingApproval,
+        *,
+        delivery_report: DispatchReport,
+    ) -> ToolAuditRecord | None:
+        """回写审批提示已经真实送达.
+
+        Args:
+            pending: 当前待审批上下文.
+            delivery_report: 当前审批提示的投递报告.
+
+        Returns:
+            更新后的 ToolAuditRecord. 找不到时返回 None.
+        """
+
+        if not pending.tool_call_id:
+            return None
+        return await self.audit.confirm_pending_approval(
+            tool_call_id=pending.tool_call_id,
+            delivery_report=delivery_report,
+        )
+
+    async def fail_pending_approval(
+        self,
+        pending: PendingApproval,
+        *,
+        error: str,
+    ) -> ToolAuditRecord | None:
+        """把审批提示送达失败回写到 tool audit.
+
+        Args:
+            pending: 当前待审批上下文.
+            error: 失败原因.
+
+        Returns:
+            更新后的 ToolAuditRecord. 找不到时返回 None.
+        """
+
+        if not pending.tool_call_id:
+            return None
+        return await self.audit.fail_pending_approval(
+            tool_call_id=pending.tool_call_id,
+            error=error,
+            metadata={"approval_id": pending.approval_id},
+        )
+
     async def execute(
         self,
         *,
@@ -595,6 +781,15 @@ class ToolBroker:
             arguments=arguments,
             ctx=ctx,
         )
+        if decision.allowed and decision.requires_approval:
+            raise await self._raise_approval_required(
+                tool_name=tool_name,
+                arguments=arguments,
+                ctx=ctx,
+                audit_record=audit_record,
+                metadata=dict(decision.metadata),
+                reason=decision.reason or f"Tool requires approval: {tool_name}",
+            )
         if not decision.allowed:
             return await self._reject(
                 message=decision.reason or f"Tool rejected by policy: {tool_name}",
@@ -650,6 +845,7 @@ class ToolBroker:
             thread_id=ctx.thread.thread_id,
             actor_id=ctx.decision.actor_id,
             agent_id=ctx.profile.agent_id,
+            target=ctx.event.source,
             profile=ctx.profile,
             state=state,
             metadata={
@@ -678,6 +874,48 @@ class ToolBroker:
             llm_content=normalized.content,
             attachments=list(normalized.attachments),
             raw=normalized.raw,
+        )
+
+    @staticmethod
+    def _build_approval_action(
+        *,
+        tool_name: str,
+        ctx: ToolExecutionContext,
+        approval_id: str,
+        reason: str,
+    ) -> PlannedAction:
+        """构造一条审批提示动作.
+
+        Args:
+            tool_name: 目标工具名.
+            ctx: 当前工具执行上下文.
+            approval_id: 当前审批 ID.
+            reason: 等待审批原因.
+
+        Returns:
+            一条 `commit_when="waiting_approval"` 的审批提示动作.
+        """
+
+        return PlannedAction(
+            action_id=f"action:{approval_id}:prompt",
+            action=Action(
+                action_type=ActionType.SEND_TEXT,
+                target=ctx.target,
+                payload={
+                    "text": (
+                        f"[审批] 工具 {tool_name} 需要批准.\n"
+                        f"原因: {reason}\n"
+                        f"approval_id: {approval_id}"
+                    )
+                },
+            ),
+            thread_content=f"[审批提示] 工具 {tool_name} 等待批准",
+            commit_when="waiting_approval",
+            metadata={
+                "origin": "approval_prompt",
+                "approval_id": approval_id,
+                "tool_name": tool_name,
+            },
         )
 
     async def _allow(
@@ -729,6 +967,69 @@ class ToolBroker:
         if isawaitable(record):
             record = await record
         return record
+
+    async def _raise_approval_required(
+        self,
+        *,
+        tool_name: str,
+        arguments: dict[str, Any],
+        ctx: ToolExecutionContext,
+        audit_record: ToolAuditRecord,
+        metadata: dict[str, Any],
+        reason: str,
+    ) -> ApprovalRequired:
+        """构造并返回一条 ApprovalRequired.
+
+        Args:
+            tool_name: 目标工具名.
+            arguments: 本次调用参数.
+            ctx: 当前工具执行上下文.
+            audit_record: 已创建的审计记录.
+            metadata: policy 附加元数据.
+            reason: 等待审批原因.
+
+        Returns:
+            一条构造完成的 ApprovalRequired.
+        """
+
+        approval_id = metadata.get("approval_id")
+        if not approval_id:
+            approval_id = f"approval:{ctx.run_id}:{tool_name}:{uuid.uuid4().hex[:8]}"
+
+        approval_action = self._build_approval_action(
+            tool_name=tool_name,
+            ctx=ctx,
+            approval_id=str(approval_id),
+            reason=reason,
+        )
+        pending = PendingApproval(
+            approval_id=str(approval_id),
+            reason=reason,
+            tool_name=tool_name,
+            tool_call_id=audit_record.tool_call_id,
+            tool_arguments=dict(arguments),
+            required_action_ids=[approval_action.action_id],
+            metadata={
+                "tool_name": tool_name,
+                **metadata,
+            },
+        )
+
+        audit_record = await self.audit.waiting_approval(
+            audit_record,
+            approval_id=pending.approval_id,
+            required_action_ids=list(pending.required_action_ids),
+            reason=pending.reason,
+            metadata={
+                "tool_name": tool_name,
+                **metadata,
+            },
+        )
+        if ctx.state is not None:
+            ctx.state.user_actions.append(approval_action)
+            ctx.state.pending_approval = pending
+        self._append_audit(ctx, audit_record)
+        return ApprovalRequired(pending_approval=pending)
 
     async def _reject(
         self,

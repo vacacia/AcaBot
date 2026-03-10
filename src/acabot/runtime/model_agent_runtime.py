@@ -16,8 +16,8 @@
 
 
 - 负责把 `RunContext` 转成一次 `BaseAgent.run()` 调用.
-- 负责把 `AgentResponse` 转成 runtime 认识的 `AgentRuntimeResult`.
-- 不负责审批, 不负责 tool 权限, 不负责 memory 检索.
+- 负责把 `AgentResponse` 和 `ApprovalRequired` 转成 runtime 认识的结果.
+- 不负责审批策略, 不负责 tool 权限, 不负责 memory 检索.
 
 `ToolBroker` 完成时, 只需要把它接到 `ToolRuntimeResolver`.
 """
@@ -32,7 +32,7 @@ from acabot.agent import Attachment, BaseAgent, ToolExecutor, ToolSpec
 from acabot.types import Action, ActionType
 
 from .agent_runtime import AgentRuntime
-from .models import AgentRuntimeResult, PlannedAction, RunContext
+from .models import AgentRuntimeResult, ApprovalRequired, PendingApproval, PlannedAction, RunContext
 from .profile_loader import PromptLoader
 
 
@@ -41,17 +41,17 @@ from .profile_loader import PromptLoader
 class ToolRuntimeState:
     """一次 run 的 tool 执行累积状态.
 
-    负责收集 artifacts
-
     Attributes:
         user_actions (list[PlannedAction]): tool 产出的用户可见动作.
         artifacts (list[dict[str, Any]]): tool 产出的结构化 artifact.
         tool_audit (list[dict[str, Any]]): tool 执行审计记录.
+        pending_approval (PendingApproval | None): 当前 run 是否被 tool 中断到审批态.
     """
 
     user_actions: list[PlannedAction] = field(default_factory=list)
     artifacts: list[dict[str, Any]] = field(default_factory=list)
     tool_audit: list[dict[str, Any]] = field(default_factory=list)
+    pending_approval: PendingApproval | None = None
 
 
 @dataclass(slots=True)
@@ -142,7 +142,10 @@ class ModelAgentRuntime(AgentRuntime):
 
         ctx.system_prompt = self.prompt_loader.load(ctx.profile.prompt_ref)
         tool_runtime = await self._resolve_tool_runtime(ctx)
-        response = await self._call_agent(ctx, tool_runtime)
+        try:
+            response = await self._call_agent(ctx, tool_runtime)
+        except ApprovalRequired as exc:
+            return self._build_waiting_approval_result(tool_runtime, exc)
         return self._to_runtime_result(ctx, response, tool_runtime)
 
     async def _resolve_tool_runtime(self, ctx: RunContext) -> ToolRuntime:
@@ -252,6 +255,40 @@ class ModelAgentRuntime(AgentRuntime):
             model_used=str(getattr(response, "model_used", "") or ""),
             metadata=metadata,
             raw=getattr(response, "raw", None),
+        )
+
+    def _build_waiting_approval_result(
+        self,
+        tool_runtime: ToolRuntime,
+        exc: ApprovalRequired,
+    ) -> AgentRuntimeResult:
+        """把 ApprovalRequired 转成 waiting_approval runtime result.
+
+        Args:
+            tool_runtime: 当前 run 的 tool runtime.
+            exc: 由 ToolBroker 抛出的 ApprovalRequired.
+
+        Returns:
+            一份 waiting_approval 状态的 AgentRuntimeResult.
+        """
+
+        metadata = dict(tool_runtime.metadata)
+        if metadata:
+            metadata["tool_count"] = len(tool_runtime.tools)
+        if tool_runtime.state.tool_audit:
+            metadata["tool_audit_count"] = len(tool_runtime.state.tool_audit)
+
+        return AgentRuntimeResult(
+            status="waiting_approval",
+            text="",
+            actions=self._select_committed_actions(
+                list(tool_runtime.state.user_actions),
+                status="waiting_approval",
+            ),
+            artifacts=list(tool_runtime.state.artifacts),
+            tool_calls=list(tool_runtime.state.tool_audit),
+            pending_approval=tool_runtime.state.pending_approval or exc.pending_approval,
+            metadata=metadata,
         )
 
     @staticmethod
