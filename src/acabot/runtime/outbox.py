@@ -1,11 +1,20 @@
 """runtime.outbox 负责统一出站和 bot 消息入库.
 
-这一版只支持纯文本和简单 payload 写回.
+这一版已经支持:
+- `SEND_TEXT`
+- `SEND_SEGMENTS`
+- richer action 的统一发送
+
+同时明确:
+- 只有真正产生日志事实的消息动作才写入 MessageStore
+- 控制动作如 `GROUP_BAN` 不应伪装成 assistant message
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+from acabot.types import Action, ActionType
 
 from .gateway_protocol import GatewayProtocol
 from .models import (
@@ -81,8 +90,10 @@ class Outbox:
                 )
                 report.results.append(result)
                 report.delivered_items.append(item)
-                # 把成功送达的 assistant 消息写入 MessageStore
-                await self._persist_success(item=item, result=result)
+                # region message落库
+                if self._should_persist_action(item.plan.action):
+                    await self._persist_success(item=item, result=result)
+                # endregion
             except Exception as exc:
                 report.results.append(
                     DeliveryResult(
@@ -134,8 +145,8 @@ class Outbox:
                 actor_id=f"agent:{item.agent_id}",
                 platform=action.target.platform,
                 role="assistant",
-                content_text=self._extract_text_content(action.payload),
-                content_json=dict(action.payload),
+                content_text=self._extract_text_content(action),
+                content_json=self._extract_content_json(action),
                 platform_message_id=result.platform_message_id,
                 timestamp=self._extract_timestamp(result.raw),
                 metadata={
@@ -147,21 +158,59 @@ class Outbox:
         )
 
     @staticmethod
-    def _extract_text_content(payload: dict[str, Any]) -> str:
+    def _should_persist_action(action: Action) -> bool:
+        """判断一个动作是否应该写入 MessageStore.
+
+        Args:
+            action: 已成功送达的动作.
+
+        Returns:
+            只有真正产生消息事实的动作才返回 True.
+        """
+
+        return action.action_type in {ActionType.SEND_TEXT, ActionType.SEND_SEGMENTS}
+
+    @staticmethod
+    def _extract_text_content(action: Action) -> str:
         """从 action payload 中提取便于查询的文本内容.
 
         Args:
-            payload: action 的 payload 数据.
+            action: 已送达的动作.
 
         Returns:
             一个尽量稳定的纯文本表示.
         """
 
-        if "text" in payload:
+        payload = action.payload
+        if action.action_type == ActionType.SEND_TEXT:
             return str(payload.get("text", ""))
-        if "segments" in payload:
-            return str(payload.get("segments", ""))
-        return str(payload)
+        if action.action_type != ActionType.SEND_SEGMENTS:
+            return ""
+
+        parts: list[str] = []
+        for seg in payload.get("segments", []):
+            seg_type = str(seg.get("type", "") or "")
+            seg_data = dict(seg.get("data", {}) or {})
+            if seg_type == "text":
+                parts.append(str(seg_data.get("text", "")))
+            elif seg_type == "image":
+                parts.append("[图片]")
+            else:
+                parts.append(f"[{seg_type}]")
+        return "".join(parts)
+
+    @staticmethod
+    def _extract_content_json(action: Action) -> dict[str, Any]:
+        """返回适合写入事实表的结构化内容.
+
+        Args:
+            action: 已送达的动作.
+
+        Returns:
+            对应的 payload 副本.
+        """
+
+        return dict(action.payload)
 
     @staticmethod
     def _extract_timestamp(raw: dict[str, Any] | None) -> int:

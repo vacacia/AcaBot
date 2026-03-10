@@ -245,6 +245,7 @@ class ModelAgentRuntime(AgentRuntime):
         actions = list(tool_runtime.state.user_actions)
         if text:
             actions.append(self._build_text_reply_action(ctx, text))
+        actions.extend(self._attachment_to_actions(ctx, getattr(response, "attachments", []) or []))
         return AgentRuntimeResult(
             status="completed",
             text=text,
@@ -313,6 +314,79 @@ class ModelAgentRuntime(AgentRuntime):
             thread_content=text,
             commit_when="success",
             metadata={"origin": "model_agent_text"},
+        )
+
+    @staticmethod
+    def _attachment_to_actions(
+        ctx: RunContext,
+        attachments: list[Attachment | Any],
+    ) -> list[PlannedAction]:
+        """把 attachment 列表转换成 SEND_SEGMENTS 动作.
+
+        Args:
+            ctx: 当前 run 的执行上下文.
+            attachments: model 返回的附件列表.
+
+        Returns:
+            一组可直接交给 Outbox 的 PlannedAction.
+        """
+
+        actions: list[PlannedAction] = []
+        for index, item in enumerate(attachments):
+            plan = ModelAgentRuntime._attachment_to_action(ctx, item, index=index)
+            if plan is not None:
+                actions.append(plan)
+        return actions
+
+    @staticmethod
+    def _attachment_to_action(
+        ctx: RunContext,
+        attachment: Attachment | Any,
+        *,
+        index: int,
+    ) -> PlannedAction | None:
+        """把单个 attachment 转成一条 PlannedAction.
+
+        Args:
+            ctx: 当前 run 的执行上下文.
+            attachment: 单个附件对象.
+            index: 当前附件在结果中的顺序.
+
+        Returns:
+            转换后的 PlannedAction. 无法表达时返回 None.
+        """
+
+        att_type = str(getattr(attachment, "type", "") or "")
+        att_url = str(getattr(attachment, "url", "") or "")
+        att_data = str(getattr(attachment, "data", "") or "")
+
+        if att_type == "image":
+            if att_url:
+                file_value = att_url
+            elif att_data:
+                file_value = f"base64://{att_data}"
+            else:
+                return None
+            segments = [{"type": "image", "data": {"file": file_value}}]
+            thread_content = "[图片]"
+        else:
+            placeholder = f"[{att_type or 'file'}: {att_url or '(no url)'}]"
+            segments = [{"type": "text", "data": {"text": placeholder}}]
+            thread_content = placeholder
+
+        return PlannedAction(
+            action_id=f"action:{ctx.run.run_id}:attachment:{index}",
+            action=Action(
+                action_type=ActionType.SEND_SEGMENTS,
+                target=ctx.event.source,
+                payload={"segments": segments},
+            ),
+            thread_content=thread_content,
+            commit_when="success",
+            metadata={
+                "origin": "model_attachment",
+                "attachment_type": att_type or "file",
+            },
         )
 
     @staticmethod

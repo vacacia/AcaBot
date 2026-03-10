@@ -425,6 +425,32 @@ async def test_model_agent_runtime_filters_tool_actions_for_failed_response() ->
     assert [item.action.payload["text"] for item in result.actions] == ["failure action"]
 
 
+async def test_model_agent_runtime_turns_attachments_into_actions() -> None:
+    agent = FakeAgent(
+        AgentResponse(
+            text="看图",
+            attachments=[
+                Attachment(type="image", url="https://example.com/cat.jpg"),
+                Attachment(type="audio", url="https://example.com/a.mp3"),
+            ],
+            model_used="test-model",
+        )
+    )
+    runtime = ModelAgentRuntime(
+        agent=agent,
+        prompt_loader=StaticPromptLoader({"prompt/default": "You are Aca."}),
+    )
+    ctx = _context()
+
+    result = await runtime.execute(ctx)
+
+    assert result.status == "completed"
+    assert result.actions[0].action.payload["text"] == "看图"
+    assert result.actions[1].action.action_type == ActionType.SEND_SEGMENTS
+    assert result.actions[1].action.payload["segments"][0]["type"] == "image"
+    assert result.actions[2].action.payload["segments"][0]["data"]["text"] == "[audio: https://example.com/a.mp3]"
+
+
 async def test_model_agent_runtime_builds_waiting_approval_result() -> None:
     class ApprovalPolicy:
         async def allow(self, *, spec, arguments, ctx) -> ToolPolicyDecision:
