@@ -1,30 +1,32 @@
+"""agent.base 定义 BaseAgent 的正式契约."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import Any
 
 from .response import AgentResponse
-from .tool import ToolDef
+from .tool import ToolDef, ToolExecutor, ToolSpec
 
 
 class BaseAgent(ABC):
-    """Agent 接口 — 封装 LLM 调用 + tool calling loop.
+    """Agent 接口.
 
-    Pipeline 只调一次 run(), 内部可能经历多轮 tool call.
-    v0.3 实现 LitellmAgent(基于 litellm.acompletion).
+    这一版把:
+    - 模型可见的 `tools`
+    - 真正执行的 `tool_executor`
 
-    Note:
-        max_tool_rounds 等实现细节由具体 Agent 子类控制,
-        不在接口层约束.
+    从 agent 内部拆出来.
     """
 
     @abstractmethod
     def register_tool(self, tool: ToolDef) -> None:
-        """注册工具供 LLM 调用.
+        """注册一条 legacy convenience tool.
 
         Args:
-            tool: 工具定义, 包含 name/description/parameters/handler.
+            tool: schema 和 handler 打包在一起的 ToolDef.
         """
+
         ...
 
     @abstractmethod
@@ -33,20 +35,23 @@ class BaseAgent(ABC):
         system_prompt: str,
         messages: list[dict[str, Any]],
         model: str | None = None,
+        *,
+        tools: list[ToolSpec] | None = None,
+        tool_executor: ToolExecutor | None = None,
     ) -> AgentResponse:
-        """执行一次完整的 LLM 调用(含 tool calling loop).
+        """执行一次完整的 LLM 调用.
 
         Args:
             system_prompt: 系统提示词.
-            messages: 上下文消息列表(OpenAI messages 格式).
-                - 直接传给 litellm , litellm 期望 list[dict]
-                - 不结构化
-            model: 模型名, None 则用 Agent 默认模型.
-                hook 可通过 HookContext.model 覆盖, 实现热切换.
+            messages: 上下文消息列表.
+            model: 模型名覆盖.
+            tools: 当前 run 可见的 tool schema 列表.
+            tool_executor: 当前 run 的外部 tool executor.
 
         Returns:
-            AgentResponse, 包含文本回复、附件、token 用量等.
+            一份 AgentResponse.
         """
+
         ...
 
     @abstractmethod
@@ -56,17 +61,15 @@ class BaseAgent(ABC):
         messages: list[dict[str, Any]],
         model: str | None = None,
     ) -> AgentResponse:
-        """单次 LLM completion, 不带 tool calling loop.
-
-        适用场景: 插件调 VLM 识图 / 提取关键信息 / 生成摘要等,
-        不需要工具调用, 只要一次 LLM 回复.
+        """执行一次不带 tool loop 的单次 completion.
 
         Args:
             system_prompt: 系统提示词.
-            messages: 上下文消息列表(OpenAI messages 格式).
-            model: 模型名, None 则用 Agent 默认模型.
+            messages: 上下文消息列表.
+            model: 模型名覆盖.
 
         Returns:
-            AgentResponse, 只有 text/error/usage/model_used, 无 tool_calls_made.
+            一份 AgentResponse.
         """
+
         ...

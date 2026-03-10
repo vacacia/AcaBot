@@ -6,13 +6,22 @@
 
 from .base import BaseAgent
 from .response import AgentResponse, Attachment, ToolCallRecord
-from .tool import ToolDef, ToolHandler
+from .tool import (
+    ToolDef,
+    ToolExecutionResult,
+    ToolExecutor,
+    ToolHandler,
+    ToolSpec,
+)
 
 __all__ = [
     "AgentResponse",
     "Attachment",
     "BaseAgent",
+    "ToolExecutionResult",
+    "ToolExecutor",
     "ToolCallRecord",
     "ToolDef",
     "ToolHandler",
+    "ToolSpec",
 ]

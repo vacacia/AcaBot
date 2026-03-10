@@ -323,15 +323,15 @@ class RunRecord:
 class PendingApprovalRecord:
     """重启恢复后识别出的 pending approval 记录.
 
-    这是 RuntimeApp 暴露给上层查看的稳定对象
+    这是 RuntimeApp 暴露给上层查看的稳定对象, 用于 Web 界面展示待审批列表
 
-    Args:
-        run_id: 关联的 run ID, 标识本次待审批的执行记录。
-        thread_id: 关联的 thread ID, 用于定位对话上下文。
-        actor_id: 触发本次审批请求的用户/实体标识。
-        agent_id: 请求执行操作的 agent ID。
-        reason: 需要审批的原因说明
-        approval_context: 审批上下文数据, 包含 tool 信息、参数等执行细节。
+    Attributes:
+        run_id (str): 关联的 run ID, 标识本次待审批的执行记录
+        thread_id (str): 关联的 thread ID, 用于定位对话上下文
+        actor_id (str): 触发本次审批请求的用户/实体标识
+        agent_id (str): 请求执行操作的 agent ID
+        reason (str): 需要审批的原因说明
+        approval_context (dict[str, Any]): 审批上下文数据, 包含 tool 信息、参数等执行细节
     """
 
     run_id: str
@@ -346,11 +346,11 @@ class PendingApprovalRecord:
 class RecoveryReport:
     """一次 startup recovery 的汇总结果.
 
-    系统重启后, RuntimeApp 通过此报告告知上层有哪些中断的 run 需要处理。
+    系统重启后, RuntimeApp 通过此报告告知上层有哪些中断的 run 需要处理.
 
-    Args:
-        interrupted_run_ids: 状态异常的非自然结束 run ID 列表。
-        pending_approvals: 重启前等待审批、重启后需恢复的审批记录列表。
+    Attributes:
+        interrupted_run_ids (list[str]): 状态异常的非自然结束 run ID 列表.
+        pending_approvals (list[PendingApprovalRecord]): 重启前等待审批、重启后需恢复的审批记录列表.
     """
 
     interrupted_run_ids: list[str] = field(default_factory=list)
@@ -361,15 +361,15 @@ class RecoveryReport:
 class ApprovalDecisionResult:
     """一次 approval decision 的返回结果.
 
-    管理员批准或拒绝 run 后, RuntimeApp 返回此结果说明操作是否成功及最终状态。
+    管理员批准或拒绝 run 后, RuntimeApp 返回此结果说明操作是否成功及最终状态.
 
-    Args:
-        run_id: 被操作的 run ID。
-        decision: 决策类型(approved/rejected)
-        ok: 操作是否成功完成
-        run_status: 操作后的 run 最终状态 (completed/failed/cancelled 等), 失败时可能为 None。
-        message: 附加说明信息, 失败原因或成功提示。
-        pending_approval: 如果 run 再次进入 waiting_approval 状态, 返回新的待审批记录。
+    Attributes:
+        run_id (str): 被操作的 run ID.
+        decision (ApprovalDecision): 决策类型 (approved/rejected).
+        ok (bool): 操作是否成功完成.
+        run_status (RunStatus | None): 操作后的 run 最终状态 (completed/failed/cancelled 等), 失败时可能为 None.
+        message (str): 附加说明信息, 失败原因或成功提示.
+        pending_approval (PendingApprovalRecord | None): 如果 run 再次进入 waiting_approval 状态, 返回新的待审批记录.
     """
 
     run_id: str
