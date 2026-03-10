@@ -9,7 +9,7 @@ from typing import Any, Callable
 
 from acabot.types import StandardEvent
 
-from .models import InboundRule, RouteDecision, RunMode
+from .models import EventPolicyDecision, InboundRule, RouteDecision, RunMode
 
 
 # region inbound规则
@@ -119,6 +119,7 @@ class RuntimeRouter:
         default_agent_id: str = "default",
         decide_run_mode: Callable[..., RunMode | tuple[RunMode, dict[str, Any]]] | None = None,
         resolve_agent: Callable[..., tuple[str, dict[str, Any]]] | None = None,
+        resolve_event_policy: Callable[..., EventPolicyDecision] | None = None,
     ) -> None:
         """初始化最小路由器.
 
@@ -126,11 +127,13 @@ class RuntimeRouter:
             default_agent_id: 未命中特殊规则时使用的默认 agent.
             decide_run_mode: 可选回调, 用于决定这条消息是 `respond`, `record_only` 还是 `silent_drop`.
             resolve_agent: 可选回调, 用于根据 canonical id 解析最终 agent_id 和 binding metadata.
+            resolve_event_policy: 可选回调, 用于解析 event log 和 memory extraction 策略.
         """
 
         self.default_agent_id = default_agent_id
         self.decide_run_mode = decide_run_mode
         self.resolve_agent = resolve_agent
+        self.resolve_event_policy = resolve_event_policy
 
     async def route(self, event: StandardEvent) -> RouteDecision:
         """把一条标准事件解析成 RouteDecision.
@@ -156,13 +159,18 @@ class RuntimeRouter:
             actor_id=actor_id,
             channel_scope=channel_scope,
         )
+        event_policy_metadata = self._resolve_event_policy(
+            event=event,
+            actor_id=actor_id,
+            channel_scope=channel_scope,
+        )
         return RouteDecision(
             thread_id=thread_id, # 走哪个 thread
             actor_id=actor_id, # 谁发的消息
             agent_id=agent_id, # 用哪个 agent 处理
             channel_scope=channel_scope,
             run_mode=run_mode,
-            metadata={**metadata, **run_mode_metadata},
+            metadata={**metadata, **run_mode_metadata, **event_policy_metadata},
         )
 
     @staticmethod
@@ -225,6 +233,36 @@ class RuntimeRouter:
             "inbound_match_keys": [],
             "inbound_run_mode": decision,
         }
+
+    def _resolve_event_policy(
+        self,
+        *,
+        event: StandardEvent,
+        actor_id: str,
+        channel_scope: str,
+    ) -> dict[str, Any]:
+        """解析当前事件的 event policy 元数据.
+
+        Args:
+            event: 当前标准化事件.
+            actor_id: 当前事件的 actor_id.
+            channel_scope: 当前事件的 channel_scope.
+
+        Returns:
+            一份可并入 RouteDecision.metadata 的 event policy metadata.
+        """
+
+        if self.resolve_event_policy is None:
+            return EventPolicyDecision().to_metadata()
+        try:
+            decision = self.resolve_event_policy(
+                event=event,
+                actor_id=actor_id,
+                channel_scope=channel_scope,
+            )
+        except TypeError:
+            decision = self.resolve_event_policy(event)
+        return decision.to_metadata()
 
     def _resolve_agent(
         self,

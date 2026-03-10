@@ -2,6 +2,8 @@ from acabot.runtime import (
     AgentProfile,
     AgentProfileRegistry,
     BindingRule,
+    EventPolicy,
+    EventPolicyRegistry,
     InboundRule,
     InboundRuleRegistry,
     RuntimeRouter,
@@ -174,3 +176,38 @@ async def test_runtime_router_supports_inbound_run_mode_rules() -> None:
     assert decision.run_mode == "silent_drop"
     assert decision.metadata["inbound_rule_id"] == "poke-ignore"
     assert decision.metadata["inbound_run_mode"] == "silent_drop"
+
+
+async def test_runtime_router_merges_event_policy_metadata() -> None:
+    policies = EventPolicyRegistry(
+        [
+            EventPolicy(
+                policy_id="group-poke-memory",
+                priority=70,
+                platform="qq",
+                event_type="poke",
+                channel_scope="qq:group:20002",
+                extract_to_memory=True,
+                memory_scopes=["episodic"],
+                tags=["notice"],
+            )
+        ]
+    )
+    router = RuntimeRouter(
+        default_agent_id="aca",
+        resolve_event_policy=policies.resolve,
+    )
+
+    decision = await router.route(
+        _event(
+            event_type="poke",
+            message_type="group",
+            user_id="10001",
+            group_id="20002",
+        )
+    )
+
+    assert decision.metadata["event_policy_id"] == "group-poke-memory"
+    assert decision.metadata["event_extract_to_memory"] is True
+    assert decision.metadata["event_memory_scopes"] == ["episodic"]
+    assert decision.metadata["event_tags"] == ["notice"]

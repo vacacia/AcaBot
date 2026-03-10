@@ -4,6 +4,7 @@ from acabot.runtime import (
     AgentRuntimeResult,
     ApprovalResumeResult,
     ApprovalResumer,
+    EventPolicyDecision,
     InMemoryChannelEventStore,
     InMemoryRunManager,
     InMemoryThreadManager,
@@ -187,6 +188,48 @@ async def test_runtime_app_records_record_only_event_without_loading_profile() -
     assert gateway.sent == []
     saved = await channel_event_store.get_thread_events("qq:user:10001")
     assert saved[0].metadata["run_mode"] == "record_only"
+
+
+async def test_runtime_app_skips_event_log_when_event_policy_disables_persist() -> None:
+    gateway = FakeGateway()
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    channel_event_store = InMemoryChannelEventStore()
+    outbox = Outbox(gateway=gateway, store=FakeMessageStore())
+    pipeline = ThreadPipeline(
+        agent_runtime=FakeAgentRuntime(),
+        outbox=outbox,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+    )
+    app = RuntimeApp(
+        gateway=gateway,
+        router=RuntimeRouter(
+            default_agent_id="aca",
+            decide_run_mode=lambda event: ("respond", {}),
+            resolve_event_policy=lambda event, actor_id, channel_scope: EventPolicyDecision(
+                policy_id="no-log",
+                persist_event=False,
+                extract_to_memory=True,
+                memory_scopes=["episodic"],
+                tags=["ephemeral"],
+            ),
+        ),
+        thread_manager=thread_manager,
+        run_manager=run_manager,
+        channel_event_store=channel_event_store,
+        pipeline=pipeline,
+        profile_loader=_profile_loader,
+    )
+
+    app.install()
+    await gateway.handler(_event())
+
+    run = next(iter(run_manager._runs.values()))
+    assert run.metadata["event_policy_id"] == "no-log"
+    assert run.metadata["event_extract_to_memory"] is True
+    assert run.metadata["event_memory_scopes"] == ["episodic"]
+    assert await channel_event_store.get_thread_events("qq:user:10001") == []
 
 
 async def test_runtime_app_marks_run_failed_when_profile_loader_crashes() -> None:

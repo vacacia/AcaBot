@@ -113,13 +113,14 @@ class RuntimeApp:
             )
             run = await self.run_manager.open(event=event, decision=decision)
             run_id = run.run_id
-            await self.channel_event_store.save(
-                self._build_channel_event_record(
-                    event=event,
-                    decision=decision,
-                    run_id=run.run_id,
+            if decision.metadata.get("event_persist", True):
+                await self.channel_event_store.save(
+                    self._build_channel_event_record(
+                        event=event,
+                        decision=decision,
+                        run_id=run.run_id,
+                    )
                 )
-            )
             profile = self._load_profile_for_event(decision)
             ctx = RunContext(
                 run=run,

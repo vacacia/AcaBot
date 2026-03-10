@@ -12,6 +12,7 @@ from .approval_resumer import (
 )
 from .app import RuntimeApp
 from .bootstrap import RuntimeComponents, build_runtime_components
+from .event_policy import EventPolicyRegistry
 from .event_store import InMemoryChannelEventStore
 from .memory_store import InMemoryMessageStore
 from .legacy_agent_runtime import LegacyAgentRuntime
@@ -30,6 +31,8 @@ from .models import (
     ChannelEventRecord,
     DeliveryResult,
     DispatchReport,
+    EventPolicy,
+    EventPolicyDecision,
     InboundRule,
     MessageRecord,
     OutboxItem,
@@ -92,6 +95,9 @@ __all__ = [
     "DeliveryResult",
     "DispatchReport",
     "build_runtime_components",
+    "EventPolicy",
+    "EventPolicyDecision",
+    "EventPolicyRegistry",
     "InboundRule",
     "InboundRuleRegistry",
     "InMemoryChannelEventStore",

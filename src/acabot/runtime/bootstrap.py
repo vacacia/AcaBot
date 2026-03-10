@@ -27,11 +27,12 @@ from acabot.config import Config
 from .agent_runtime import AgentRuntime
 from .approval_resumer import ApprovalResumer, NoopApprovalResumer
 from .app import RuntimeApp
+from .event_policy import EventPolicyRegistry
 from .event_store import InMemoryChannelEventStore
 from .gateway_protocol import GatewayProtocol
 from .memory_store import InMemoryMessageStore
 from .model_agent_runtime import ModelAgentRuntime
-from .models import AgentProfile, BindingRule, InboundRule
+from .models import AgentProfile, BindingRule, EventPolicy, InboundRule
 from .outbox import Outbox
 from .pipeline import ThreadPipeline
 from .profile_loader import (
@@ -127,6 +128,7 @@ def build_runtime_components(
     default_agent_id = runtime_conf.get("default_agent_id", next(iter(profiles)))
     rules = _build_binding_rules(config)
     inbound_rules = _build_inbound_rules(config)
+    event_policies = _build_event_policies(config)
     profile_registry = AgentProfileRegistry(
         profiles=profiles,
         default_agent_id=default_agent_id,
@@ -134,11 +136,13 @@ def build_runtime_components(
     for rule in rules:
         profile_registry.add_rule(rule)
     inbound_registry = InboundRuleRegistry(inbound_rules)
+    event_policy_registry = EventPolicyRegistry(event_policies)
 
     runtime_router = router or RuntimeRouter(
         default_agent_id=default_agent_id,
         decide_run_mode=inbound_registry.resolve,
         resolve_agent=profile_registry.resolve_agent,
+        resolve_event_policy=event_policy_registry.resolve,
     )
     runtime_thread_manager = thread_manager or _build_thread_manager(config)
     runtime_run_manager = run_manager or _build_run_manager(config)
@@ -324,6 +328,42 @@ def _build_inbound_rules(config: Config) -> list[InboundRule]:
         )
 
     return rules
+
+
+def _build_event_policies(config: Config) -> list[EventPolicy]:
+    """从配置对象构造 event policy 列表.
+
+    Args:
+        config: 项目配置对象.
+
+    Returns:
+        一个按配置声明顺序展开的 EventPolicy 列表.
+    """
+
+    runtime_conf = config.get("runtime", {})
+    policies_conf = runtime_conf.get("event_policies", [])
+    policies: list[EventPolicy] = []
+
+    for index, policy_conf in enumerate(policies_conf):
+        match_conf = dict(policy_conf.get("match", {}))
+        policies.append(
+            EventPolicy(
+                policy_id=str(policy_conf.get("policy_id", f"event_policy:{index}")),
+                priority=int(policy_conf.get("priority", 100)),
+                platform=_optional_str(match_conf.get("platform")),
+                event_type=_optional_str(match_conf.get("event_type")),
+                actor_id=_optional_str(match_conf.get("actor_id")),
+                channel_scope=_optional_str(match_conf.get("channel_scope")),
+                sender_roles=[str(role) for role in match_conf.get("sender_roles", [])],
+                persist_event=bool(policy_conf.get("persist_event", True)),
+                extract_to_memory=bool(policy_conf.get("extract_to_memory", False)),
+                memory_scopes=[str(scope) for scope in policy_conf.get("memory_scopes", [])],
+                tags=[str(tag) for tag in policy_conf.get("tags", [])],
+                metadata=dict(policy_conf.get("metadata", {})),
+            )
+        )
+
+    return policies
 
 
 # region persistence builders
