@@ -180,6 +180,7 @@ class AgentProfileRegistry(ProfileLoader):
         self.profiles = dict(profiles)
         self.default_agent_id = default_agent_id
         self.rules: list[BindingRule] = []
+        self._rule_ids: set[str] = set()
 
         for rule in rules or []:
             self.add_rule(rule)
@@ -192,14 +193,18 @@ class AgentProfileRegistry(ProfileLoader):
 
         Raises:
             KeyError: rule 指向未知 agent_id.
-            ValueError: rule 没有任何 match 条件.
+            ValueError: rule 没有任何 match 条件, rule_id 重复, 或与已有 rule 形成歧义冲突.
         """
 
         if rule.agent_id not in self.profiles:
             raise KeyError(f"Unknown agent_id in rule: {rule.agent_id}")
         if not rule.match_keys():
             raise ValueError("BindingRule must declare at least one match condition")
+        if rule.rule_id in self._rule_ids:
+            raise ValueError(f"Duplicate rule_id: {rule.rule_id}")
+        self._validate_no_conflict(rule)
         self.rules.append(rule)
+        self._rule_ids.add(rule.rule_id)
 
     def resolve_agent(
         self,
@@ -292,3 +297,79 @@ class AgentProfileRegistry(ProfileLoader):
             "binding_priority": rule.priority,
             "binding_match_keys": rule.match_keys(),
         }
+
+    def _validate_no_conflict(self, candidate: BindingRule) -> None:
+        """检查新 rule 是否和已有 rule 形成歧义冲突.
+
+        Args:
+            candidate: 待注册的 rule.
+
+        Raises:
+            ValueError: 当新 rule 会和已有 rule 产生不稳定 tie-break 时抛出.
+        """
+
+        for existing in self.rules:
+            if not self._rules_conflict(existing, candidate):
+                continue
+            raise ValueError(
+                "Ambiguous binding rules: "
+                f"{existing.rule_id} conflicts with {candidate.rule_id}"
+            )
+
+    @staticmethod
+    def _rules_conflict(left: BindingRule, right: BindingRule) -> bool:
+        """判断两条 rule 是否会形成歧义冲突.
+
+        Args:
+            left: 已存在的 rule.
+            right: 待注册的 rule.
+
+        Returns:
+            如果两条 rule 在当前选择策略下会形成不稳定冲突, 返回 True.
+        """
+
+        if left.priority != right.priority:
+            return False
+        if left.specificity() != right.specificity():
+            return False
+        if not AgentProfileRegistry._scalar_overlap(left.thread_id, right.thread_id):
+            return False
+        if not AgentProfileRegistry._scalar_overlap(left.actor_id, right.actor_id):
+            return False
+        if not AgentProfileRegistry._scalar_overlap(left.channel_scope, right.channel_scope):
+            return False
+        if not AgentProfileRegistry._roles_overlap(left.sender_roles, right.sender_roles):
+            return False
+        return True
+
+    @staticmethod
+    def _scalar_overlap(left: str | None, right: str | None) -> bool:
+        """判断两个标量匹配条件是否有重叠空间.
+
+        Args:
+            left: 左侧标量匹配值.
+            right: 右侧标量匹配值.
+
+        Returns:
+            如果存在某种输入能同时满足这两个条件, 返回 True.
+        """
+
+        if left is None or right is None:
+            return True
+        return left == right
+
+    @staticmethod
+    def _roles_overlap(left: list[str], right: list[str]) -> bool:
+        """判断两个 sender_roles 条件是否有重叠空间.
+
+        Args:
+            left: 左侧 sender_roles.
+            right: 右侧 sender_roles.
+
+        Returns:
+            如果存在某个 sender_role 能同时满足两条 rule, 返回 True.
+        """
+
+        if not left or not right:
+            return True
+        return bool(set(left) & set(right))

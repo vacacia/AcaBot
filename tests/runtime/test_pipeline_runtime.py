@@ -34,6 +34,21 @@ class FakeAgentRuntime(AgentRuntime):
         )
 
 
+class FailingAgentRuntime(AgentRuntime):
+    async def execute(self, ctx: RunContext) -> AgentRuntimeResult:
+        raise RuntimeError("agent runtime exploded")
+
+
+class CountingThreadManager(InMemoryThreadManager):
+    def __init__(self) -> None:
+        super().__init__()
+        self.save_calls = 0
+
+    async def save(self, thread) -> None:
+        self.save_calls += 1
+        await super().save(thread)
+
+
 def _event() -> StandardEvent:
     return StandardEvent(
         event_id="evt-1",
@@ -108,3 +123,43 @@ async def test_thread_pipeline_runs_minimal_text_flow() -> None:
     assert len(gateway.sent) == 1
     assert thread.working_messages[0]["role"] == "user"
     assert thread.working_messages[1]["content"] == "hello back"
+
+
+async def test_thread_pipeline_marks_run_failed_when_agent_runtime_crashes() -> None:
+    thread_manager = CountingThreadManager()
+    run_manager = InMemoryRunManager()
+    gateway = FakeGateway()
+    store = FakeMessageStore()
+    outbox = Outbox(gateway=gateway, store=store)
+    pipeline = ThreadPipeline(
+        agent_runtime=FailingAgentRuntime(),
+        outbox=outbox,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+    )
+
+    event = _event()
+    decision = _decision()
+    thread = await thread_manager.get_or_create(
+        thread_id=decision.thread_id,
+        channel_scope=decision.channel_scope,
+        last_event_at=event.timestamp,
+    )
+    run = await run_manager.open(event=event, decision=decision)
+    ctx = RunContext(
+        run=run,
+        event=event,
+        decision=decision,
+        thread=thread,
+        profile=_profile(),
+    )
+
+    await pipeline.execute(ctx)
+
+    updated_run = await run_manager.get(run.run_id)
+    assert updated_run is not None
+    assert updated_run.status == "failed"
+    assert "pipeline crashed" in (updated_run.error or "")
+    assert gateway.sent == []
+    assert thread_manager.save_calls == 1
+    assert thread.working_messages[0]["role"] == "user"

@@ -196,3 +196,65 @@ def test_registry_loads_profile_from_route_decision() -> None:
     profile = registry.load(decision)
 
     assert profile.agent_id == "vip"
+
+
+def test_registry_rejects_duplicate_rule_id() -> None:
+    registry = AgentProfileRegistry(
+        profiles=_profiles(),
+        default_agent_id="aca",
+    )
+
+    registry.add_rule(
+        BindingRule(
+            rule_id="group-default",
+            agent_id="group",
+            priority=40,
+            channel_scope="qq:group:20002",
+        )
+    )
+
+    try:
+        registry.add_rule(
+            BindingRule(
+                rule_id="group-default",
+                agent_id="ops",
+                priority=80,
+                actor_id="qq:user:10001",
+            )
+        )
+    except ValueError as exc:
+        assert "Duplicate rule_id" in str(exc)
+        return
+
+    raise AssertionError("Expected duplicate rule_id to raise ValueError")
+
+
+def test_registry_rejects_ambiguous_rules_with_same_priority() -> None:
+    registry = AgentProfileRegistry(
+        profiles=_profiles(),
+        default_agent_id="aca",
+    )
+
+    registry.add_rule(
+        BindingRule(
+            rule_id="actor-user",
+            agent_id="vip",
+            priority=60,
+            actor_id="qq:user:10001",
+        )
+    )
+
+    try:
+        registry.add_rule(
+            BindingRule(
+                rule_id="channel-group",
+                agent_id="group",
+                priority=60,
+                channel_scope="qq:group:20002",
+            )
+        )
+    except ValueError as exc:
+        assert "Ambiguous binding rules" in str(exc)
+        return
+
+    raise AssertionError("Expected ambiguous rules to raise ValueError")

@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from acabot.types import Action, ActionType
 
 from .agent_runtime import AgentRuntime
@@ -12,6 +14,8 @@ from .models import DispatchReport, PlannedAction, RunContext
 from .outbox import Outbox
 from .runs import RunManager
 from .threads import ThreadManager
+
+logger = logging.getLogger("acabot.runtime.pipeline")
 
 
 class ThreadPipeline:
@@ -51,26 +55,33 @@ class ThreadPipeline:
         """
 
         await self.run_manager.mark_running(ctx.run.run_id)
+        try:
+            async with ctx.thread.lock:
+                self._append_incoming_message(ctx)
+                ctx.messages = list(ctx.thread.working_messages)
 
-        async with ctx.thread.lock:
-            self._append_incoming_message(ctx)
-            ctx.messages = list(ctx.thread.working_messages)
+            if ctx.decision.run_mode == "record_only":
+                await self.thread_manager.save(ctx.thread)
+                await self.run_manager.mark_completed(ctx.run.run_id)
+                return
 
-        if ctx.decision.run_mode == "record_only":
-            await self.thread_manager.save(ctx.thread)
-            await self.run_manager.mark_completed(ctx.run.run_id)
-            return
+            ctx.response = await self.agent_runtime.execute(ctx)
+            ctx.actions = list(ctx.response.actions)
 
-        ctx.response = await self.agent_runtime.execute(ctx)
-        ctx.actions = list(ctx.response.actions)
+            if ctx.actions:
+                ctx.delivery_report = await self.outbox.dispatch(ctx)
+            else:
+                ctx.delivery_report = DispatchReport()
 
-        if ctx.actions:
-            ctx.delivery_report = await self.outbox.dispatch(ctx)
-        else:
-            ctx.delivery_report = DispatchReport()
-
-        await self._update_thread_after_send(ctx)
-        await self._finish_run(ctx)
+            await self._update_thread_after_send(ctx)
+            await self._finish_run(ctx)
+        except Exception as exc:
+            logger.exception("ThreadPipeline crashed: run_id=%s", ctx.run.run_id)
+            await self._save_thread_safely(ctx)
+            await self._mark_failed_safely(
+                ctx.run.run_id,
+                f"pipeline crashed: {exc}",
+            )
 
     def build_text_reply_action(self, ctx: RunContext, text: str) -> PlannedAction:
         """为当前上下文构造一个最小纯文本回复动作.
@@ -181,6 +192,31 @@ class ThreadPipeline:
             return
 
         await self.run_manager.mark_completed(ctx.run.run_id)
+
+    async def _mark_failed_safely(self, run_id: str, error: str) -> None:
+        """尽力把 run 收尾为 failed.
+
+        Args:
+            run_id: 需要收尾的 run_id.
+            error: 要写入 run 的错误摘要.
+        """
+
+        try:
+            await self.run_manager.mark_failed(run_id, error)
+        except Exception:
+            logger.exception("Failed to mark run as failed: run_id=%s", run_id)
+
+    async def _save_thread_safely(self, ctx: RunContext) -> None:
+        """尽力保存当前 thread 状态.
+
+        Args:
+            ctx: 当前 run 的执行上下文.
+        """
+
+        try:
+            await self.thread_manager.save(ctx.thread)
+        except Exception:
+            logger.exception("Failed to save thread after crash: thread_id=%s", ctx.thread.thread_id)
 
     @staticmethod
     def _build_user_content(ctx: RunContext) -> str:

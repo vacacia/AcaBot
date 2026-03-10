@@ -268,3 +268,45 @@ async def test_build_runtime_components_uses_admin_override_rule() -> None:
 
     assert agent.calls[0]["system_prompt"] == "You are the operator agent."
     assert agent.calls[0]["model"] == "model-o"
+
+
+def test_build_runtime_components_rejects_thread_id_in_binding_rules() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "fallback-model",
+                "system_prompt": "Fallback prompt.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "profiles": {
+                    "aca": {
+                        "name": "Aca",
+                        "prompt_ref": "prompt/aca",
+                        "default_model": "model-a",
+                    },
+                },
+                "binding_rules": [
+                    {
+                        "rule_id": "bad-thread-rule",
+                        "agent_id": "aca",
+                        "match": {
+                            "thread_id": "thread:temporary",
+                        },
+                    }
+                ],
+            },
+        }
+    )
+
+    try:
+        build_runtime_components(
+            config,
+            gateway=FakeGateway(),
+            agent=FakeLegacyAgent(FakeLegacyResponse(text="ok")),
+        )
+    except ValueError as exc:
+        assert "must not declare thread_id" in str(exc)
+        return
+
+    raise AssertionError("Expected thread_id in binding_rules to raise ValueError")

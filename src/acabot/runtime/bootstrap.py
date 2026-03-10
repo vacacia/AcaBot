@@ -62,6 +62,15 @@ def build_runtime_components(
 ) -> RuntimeComponents:
     """根据配置和注入依赖组装一套最小 runtime 组件.
 
+    Args:
+        config: 项目配置对象.
+        gateway: 平台 Gateway 实现.
+        agent: 旧 `BaseAgent` 形状的 legacy agent adapter.
+        message_store: 可选的 MessageStore 实现.
+        router: 可选的 RuntimeRouter 实现.
+        thread_manager: 可选的 ThreadManager 实现.
+        run_manager: 可选的 RunManager 实现.
+
     Returns:
         一份包含 RuntimeApp 及其依赖组件的组装结果.
     """
@@ -190,6 +199,9 @@ def _build_binding_rules(config: Config) -> list[BindingRule]:
 
     Returns:
         一个按配置声明顺序展开的 rule 列表.
+
+    Raises:
+        ValueError: 配置文件试图声明 runtime internal 的 `thread_id` rule.
     """
 
     runtime_conf = config.get("runtime", {})
@@ -198,12 +210,16 @@ def _build_binding_rules(config: Config) -> list[BindingRule]:
 
     for index, rule_conf in enumerate(rules_conf):
         match_conf = dict(rule_conf.get("match", {}))
+        if "thread_id" in match_conf:
+            # thread_id 是 runtime internal
+            # 配置文件只允许声明稳定的匹配条件 -> actor_id, channel_scope, sender_roles
+            raise ValueError("binding_rules in config must not declare thread_id")
         rules.append(
             BindingRule(
                 rule_id=str(rule_conf.get("rule_id", f"rule:{index}")),
                 agent_id=str(rule_conf["agent_id"]),
                 priority=int(rule_conf.get("priority", 100)),
-                thread_id=_optional_str(match_conf.get("thread_id")),
+                thread_id=None,
                 actor_id=_optional_str(match_conf.get("actor_id")),
                 channel_scope=_optional_str(match_conf.get("channel_scope")),
                 sender_roles=[str(role) for role in match_conf.get("sender_roles", [])],
