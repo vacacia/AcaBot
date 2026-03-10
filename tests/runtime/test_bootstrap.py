@@ -5,6 +5,7 @@ from typing import Any
 from acabot.config import Config
 from acabot.runtime import (
     RouteDecision,
+    SQLiteMessageStore,
     StoreBackedRunManager,
     StoreBackedThreadManager,
     build_runtime_components,
@@ -301,6 +302,7 @@ async def test_build_runtime_components_uses_sqlite_persistence_when_configured(
 
     assert isinstance(components1.thread_manager, StoreBackedThreadManager)
     assert isinstance(components1.run_manager, StoreBackedRunManager)
+    assert isinstance(components1.message_store, SQLiteMessageStore)
 
     components1.app.install()
     await gateway1.handler(_event())
@@ -309,12 +311,15 @@ async def test_build_runtime_components_uses_sqlite_persistence_when_configured(
     agent2 = FakeLegacyAgent(FakeLegacyResponse(text="hello again", model_used="test-model"))
     components2 = build_runtime_components(config, gateway=gateway2, agent=agent2)
     restored = await components2.thread_manager.get("qq:user:10001")
+    delivered = await components2.message_store.get_thread_messages("qq:user:10001")
 
     assert restored is not None
     assert restored.working_messages == [
         {"role": "user", "content": "[acacia/10001] hello"},
         {"role": "assistant", "content": "hello back"},
     ]
+    assert [msg.content_text for msg in delivered] == ["hello back"]
+    assert delivered[0].metadata["thread_content"] == "hello back"
 
 
 def test_build_runtime_components_rejects_thread_id_in_binding_rules() -> None:

@@ -1,10 +1,9 @@
-"""runtime.sqlite_stores 提供 thread 和 run 的 SQLite 实现.
+"""runtime.sqlite_stores 提供 runtime store 的 SQLite 实现.
 
-目前只有两类持久化:
+目前覆盖三类持久化:
+- MessageStore
 - ThreadStore
 - RunStore
-
-MessageStore 仍独立实现.
 """
 
 from __future__ import annotations
@@ -15,10 +14,11 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from .models import RunRecord, RunStep, ThreadRecord
-from .stores import RunStore, ThreadStore
+from .models import MessageRecord, RunRecord, RunStep, ThreadRecord
+from .stores import MessageStore, RunStore, ThreadStore
 
 
+# region base
 class _SQLiteStoreBase:
     """SQLite store 的共享基础设施.
 
@@ -77,6 +77,10 @@ class _SQLiteStoreBase:
         return json.loads(raw)
 
 
+# endregion
+
+
+# region thread store
 class SQLiteThreadStore(_SQLiteStoreBase, ThreadStore):
     """基于 SQLite 的 ThreadStore."""
 
@@ -186,6 +190,193 @@ class SQLiteThreadStore(_SQLiteStoreBase, ThreadStore):
         self._conn.commit()
 
 
+# endregion
+
+
+# region message store
+class SQLiteMessageStore(_SQLiteStoreBase, MessageStore):
+    """基于 SQLite 的 MessageStore."""
+
+    def __init__(self, db_path: str | Path) -> None:
+        """初始化 SQLiteMessageStore.
+
+        Args:
+            db_path: SQLite 数据库文件路径.
+        """
+
+        super().__init__(db_path)
+        self._ensure_schema()
+
+    async def save(self, msg: MessageRecord) -> None:
+        """保存一条 MessageRecord.
+
+        Args:
+            msg: 待写入的 MessageRecord.
+        """
+
+        async with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO messages (
+                    message_uid,
+                    thread_id,
+                    actor_id,
+                    platform,
+                    role,
+                    content_text,
+                    content_json,
+                    timestamp,
+                    run_id,
+                    platform_message_id,
+                    metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(message_uid) DO UPDATE SET
+                    thread_id = excluded.thread_id,
+                    actor_id = excluded.actor_id,
+                    platform = excluded.platform,
+                    role = excluded.role,
+                    content_text = excluded.content_text,
+                    content_json = excluded.content_json,
+                    timestamp = excluded.timestamp,
+                    run_id = excluded.run_id,
+                    platform_message_id = excluded.platform_message_id,
+                    metadata_json = excluded.metadata_json
+                """,
+                (
+                    msg.message_uid,
+                    msg.thread_id,
+                    msg.actor_id,
+                    msg.platform,
+                    msg.role,
+                    msg.content_text,
+                    self._encode_json(msg.content_json),
+                    msg.timestamp,
+                    msg.run_id,
+                    msg.platform_message_id,
+                    self._encode_json(msg.metadata),
+                ),
+            )
+            self._conn.commit()
+
+    async def get_thread_messages(
+        self,
+        thread_id: str,
+        *,
+        limit: int | None = None,
+        since: int | None = None,
+    ) -> list[MessageRecord]:
+        """按 thread 查询消息事实记录.
+
+        Args:
+            thread_id: 目标 thread_id.
+            limit: 最多返回多少条消息.
+            since: 只返回晚于该时间戳的消息.
+
+        Returns:
+            满足条件的 MessageRecord 列表.
+        """
+
+        query = [
+            """
+            SELECT
+                message_uid,
+                thread_id,
+                actor_id,
+                platform,
+                role,
+                content_text,
+                content_json,
+                timestamp,
+                run_id,
+                platform_message_id,
+                metadata_json
+            FROM messages
+            WHERE thread_id = ?
+            """
+        ]
+        params: list[object] = [thread_id]
+
+        if since is not None:
+            query.append("AND timestamp > ?")
+            params.append(since)
+
+        if limit is None:
+            query.append("ORDER BY timestamp ASC, message_uid ASC")
+            async with self._lock:
+                rows = self._conn.execute(
+                    "\n".join(query),
+                    tuple(params),
+                ).fetchall()
+            return [self._row_to_message(row) for row in rows]
+
+        query.append("ORDER BY timestamp DESC, message_uid DESC")
+        query.append("LIMIT ?")
+        params.append(limit)
+        async with self._lock:
+            rows = self._conn.execute(
+                "\n".join(query),
+                tuple(params),
+            ).fetchall()
+        rows.reverse()
+        return [self._row_to_message(row) for row in rows]
+
+    def _ensure_schema(self) -> None:
+        """初始化 messages 表结构."""
+
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS messages (
+                message_uid TEXT PRIMARY KEY,
+                thread_id TEXT NOT NULL,
+                actor_id TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content_text TEXT NOT NULL,
+                content_json TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                run_id TEXT,
+                platform_message_id TEXT NOT NULL,
+                metadata_json TEXT NOT NULL
+            )
+            """
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_thread_timestamp ON messages(thread_id, timestamp)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_run_id ON messages(run_id)"
+        )
+        self._conn.commit()
+
+    def _row_to_message(self, row: sqlite3.Row) -> MessageRecord:
+        """把 SQLite 行对象转换成 MessageRecord.
+
+        Args:
+            row: SQLite 查询返回的行对象.
+
+        Returns:
+            对应的 MessageRecord.
+        """
+
+        return MessageRecord(
+            message_uid=str(row["message_uid"]),
+            thread_id=str(row["thread_id"]),
+            actor_id=str(row["actor_id"]),
+            platform=str(row["platform"]),
+            role=str(row["role"]),
+            content_text=str(row["content_text"]),
+            content_json=dict(self._decode_json(row["content_json"])),
+            timestamp=int(row["timestamp"]),
+            run_id=None if row["run_id"] is None else str(row["run_id"]),
+            platform_message_id=str(row["platform_message_id"]),
+            metadata=dict(self._decode_json(row["metadata_json"])),
+        )
+
+
+# endregion
+
+
+# region run store
 class SQLiteRunStore(_SQLiteStoreBase, RunStore):
     """基于 SQLite 的 RunStore."""
 
@@ -442,3 +633,6 @@ class SQLiteRunStore(_SQLiteStoreBase, RunStore):
             approval_context=dict(self._decode_json(row["approval_context_json"])),
             metadata=dict(self._decode_json(row["metadata_json"])),
         )
+
+
+# endregion

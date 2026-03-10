@@ -38,7 +38,7 @@ from .profile_loader import (
 )
 from .router import RuntimeRouter
 from .runs import InMemoryRunManager, RunManager, StoreBackedRunManager
-from .sqlite_stores import SQLiteRunStore, SQLiteThreadStore
+from .sqlite_stores import SQLiteMessageStore, SQLiteRunStore, SQLiteThreadStore
 from .stores import MessageStore, RunStore, ThreadStore
 from .threads import InMemoryThreadManager, StoreBackedThreadManager, ThreadManager
 
@@ -73,6 +73,7 @@ __all__ = [
     "RunStore",
     "RuntimeRouter",
     "Outbox",
+    "SQLiteMessageStore",
     "SQLiteRunStore",
     "SQLiteThreadStore",
     "StaticProfileLoader",

@@ -78,3 +78,36 @@ async def test_outbox_sends_and_persists_success() -> None:
     assert len(gateway.sent) == 1
     assert store.saved[0].content_text == "hello"
     assert store.saved[0].actor_id == "agent:aca"
+
+
+async def test_outbox_persists_delivered_content_instead_of_thread_content() -> None:
+    gateway = FakeGateway()
+    store = FakeMessageStore()
+    outbox = Outbox(gateway=gateway, store=store)
+
+    item = OutboxItem(
+        thread_id="qq:user:10001",
+        run_id="run:1",
+        agent_id="aca",
+        plan=PlannedAction(
+            action_id="action:1",
+            action=Action(
+                action_type=ActionType.SEND_TEXT,
+                target=EventSource(
+                    platform="qq",
+                    message_type="private",
+                    user_id="10001",
+                    group_id=None,
+                ),
+                payload={"text": "delivered text"},
+            ),
+            thread_content="draft text",
+        ),
+    )
+
+    report = await outbox.send_items([item])
+
+    assert report.has_failures is False
+    assert store.saved[0].content_text == "delivered text"
+    assert store.saved[0].content_json == {"text": "delivered text"}
+    assert store.saved[0].metadata["thread_content"] == "draft text"
