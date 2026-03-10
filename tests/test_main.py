@@ -263,6 +263,7 @@ async def test_run_starts_and_stops_runtime_app(monkeypatch) -> None:
             message_store=InMemoryMessageStore(),
             prompt_loader=None,  # type: ignore[arg-type]
             profile_loader=None,  # type: ignore[arg-type]
+            tool_broker=None,  # type: ignore[arg-type]
             agent_runtime=None,  # type: ignore[arg-type]
             approval_resumer=NoopApprovalResumer(),
             outbox=None,  # type: ignore[arg-type]

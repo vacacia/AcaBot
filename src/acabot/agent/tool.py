@@ -31,7 +31,10 @@ class ToolSpec:
 
 @dataclass(slots=True)
 class ToolExecutionResult:
-    """一次 tool 执行后的标准化结果."""
+    """一次 tool 执行后的标准化结果.
+    
+    Agent 侧的标准接口协议, 不依赖 AcaBot 运行
+    """
 
     content: str | list[dict[str, Any]] = ""
     attachments: list[Attachment] = field(default_factory=list)

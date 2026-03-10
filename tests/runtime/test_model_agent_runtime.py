@@ -8,7 +8,7 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-from acabot.agent import AgentResponse, Attachment, ToolCallRecord, ToolSpec
+from acabot.agent import AgentResponse, Attachment, ToolCallRecord, ToolDef, ToolSpec
 from acabot.runtime import (
     AgentProfile,
     ModelAgentRuntime,
@@ -17,6 +17,7 @@ from acabot.runtime import (
     RunRecord,
     StaticPromptLoader,
     ThreadState,
+    ToolBroker,
     ToolRuntime,
 )
 from acabot.types import EventSource, MsgSegment, StandardEvent
@@ -197,4 +198,40 @@ async def test_model_agent_runtime_passes_tools_from_resolver() -> None:
     assert agent.calls[0]["tools"][0].name == "get_time"
     assert agent.calls[0]["tool_executor"] is not None
     assert result.metadata["source"] == "resolver"
+    assert result.metadata["tool_count"] == 1
+
+
+async def test_model_agent_runtime_can_use_tool_broker() -> None:
+    agent = FakeAgent(AgentResponse(text="ok"))
+    broker = ToolBroker()
+
+    async def get_time(arguments: dict[str, Any]) -> dict[str, Any]:
+        return {"time": arguments.get("timezone", "UTC")}
+
+    broker.register_legacy_tool(
+        ToolDef(
+            name="get_time",
+            description="Get current time",
+            parameters={"type": "object", "properties": {}},
+            handler=get_time,
+        )
+    )
+
+    runtime = ModelAgentRuntime(
+        agent=agent,
+        prompt_loader=StaticPromptLoader({"prompt/default": "You are Aca."}),
+        tool_runtime_resolver=broker.build_tool_runtime,
+    )
+    ctx = _context()
+    ctx.profile.enabled_tools = ["get_time"]
+
+    result = await runtime.execute(ctx)
+    execution = await agent.calls[0]["tool_executor"](
+        "get_time",
+        {"timezone": "Asia/Shanghai"},
+    )
+
+    assert agent.calls[0]["tools"][0].name == "get_time"
+    assert execution.content == '{"time": "Asia/Shanghai"}'
+    assert result.metadata["source"] == "tool_broker"
     assert result.metadata["tool_count"] == 1

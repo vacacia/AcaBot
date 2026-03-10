@@ -43,6 +43,7 @@ from .router import RuntimeRouter
 from .runs import InMemoryRunManager, RunManager, StoreBackedRunManager
 from .sqlite_stores import SQLiteMessageStore, SQLiteRunStore, SQLiteThreadStore
 from .stores import MessageStore
+from .tool_broker import ToolBroker
 from .threads import InMemoryThreadManager, StoreBackedThreadManager, ThreadManager
 
 
@@ -58,6 +59,7 @@ class RuntimeComponents:
         message_store (MessageStore): 保存 delivered facts 的 MessageStore.
         prompt_loader (PromptLoader): 按 `prompt_ref` 加载 system prompt 的 loader.
         profile_loader (ProfileLoader): 按 `RouteDecision` 加载 profile 的 loader.
+        tool_broker (ToolBroker): runtime 侧统一工具入口.
         agent_runtime (AgentRuntime): 负责执行一次 run 的 agent runtime.
         approval_resumer (ApprovalResumer): approval 通过后的续执行器.
         outbox (Outbox): 唯一出站口.
@@ -72,6 +74,7 @@ class RuntimeComponents:
     message_store: MessageStore
     prompt_loader: PromptLoader
     profile_loader: ProfileLoader
+    tool_broker: ToolBroker
     agent_runtime: AgentRuntime
     approval_resumer: ApprovalResumer
     outbox: Outbox
@@ -88,6 +91,7 @@ def build_runtime_components(
     router: RuntimeRouter | None = None,
     thread_manager: ThreadManager | None = None,
     run_manager: RunManager | None = None,
+    tool_broker: ToolBroker | None = None,
     approval_resumer: ApprovalResumer | None = None,
 ) -> RuntimeComponents:
     """根据配置和注入依赖组装一套最小 runtime 组件.
@@ -100,6 +104,7 @@ def build_runtime_components(
         router: 可选的 RuntimeRouter 实现.
         thread_manager: 可选的 ThreadManager 实现.
         run_manager: 可选的 RunManager 实现.
+        tool_broker: 可选的 ToolBroker 实现.
         approval_resumer: 可选的 approval resumer.
 
     Returns:
@@ -125,10 +130,12 @@ def build_runtime_components(
     runtime_thread_manager = thread_manager or _build_thread_manager(config)
     runtime_run_manager = run_manager or _build_run_manager(config)
     runtime_message_store = message_store or _build_message_store(config)
+    runtime_tool_broker = tool_broker or ToolBroker()
     runtime_approval_resumer = approval_resumer or NoopApprovalResumer()
     agent_runtime = ModelAgentRuntime(
         agent=agent,
         prompt_loader=prompt_loader,
+        tool_runtime_resolver=runtime_tool_broker.build_tool_runtime,
     )
     outbox = Outbox(gateway=gateway, store=runtime_message_store)
     pipeline = ThreadPipeline(
@@ -155,6 +162,7 @@ def build_runtime_components(
         message_store=runtime_message_store,
         prompt_loader=prompt_loader,
         profile_loader=profile_registry,
+        tool_broker=runtime_tool_broker,
         agent_runtime=agent_runtime,
         approval_resumer=runtime_approval_resumer,
         outbox=outbox,

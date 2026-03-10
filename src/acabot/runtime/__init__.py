@@ -49,6 +49,12 @@ from .router import RuntimeRouter
 from .runs import InMemoryRunManager, RunManager, StoreBackedRunManager
 from .sqlite_stores import SQLiteMessageStore, SQLiteRunStore, SQLiteThreadStore
 from .stores import MessageStore, RunStore, ThreadStore
+from .tool_broker import (
+    RegisteredTool,
+    ToolBroker,
+    ToolExecutionContext,
+    ToolResult,
+)
 from .threads import InMemoryThreadManager, StoreBackedThreadManager, ThreadManager
 
 __all__ = [
@@ -103,4 +109,8 @@ __all__ = [
     "ThreadStore",
     "ToolRuntime",
     "ToolRuntimeResolver",
+    "RegisteredTool",
+    "ToolBroker",
+    "ToolExecutionContext",
+    "ToolResult",
 ]

@@ -9,12 +9,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from acabot.agent import ToolDef
 from acabot.config import Config
 from acabot.runtime import (
     RouteDecision,
     SQLiteMessageStore,
     StoreBackedRunManager,
     StoreBackedThreadManager,
+    ToolBroker,
     build_runtime_components,
 )
 from acabot.types import EventSource, MsgSegment, StandardEvent
@@ -34,7 +36,20 @@ class FakeAgentResponse:
 
 # region fake agent
 class FakeAgent:
+    """用于 bootstrap 测试的最小 fake agent.
+
+    Attributes:
+        response (FakeAgentResponse): 预设返回值.
+        calls (list[dict[str, Any]]): 调用记录.
+    """
+
     def __init__(self, response: FakeAgentResponse) -> None:
+        """初始化 fake agent.
+
+        Args:
+            response: 预设返回值.
+        """
+
         self.response = response
         self.calls: list[dict[str, Any]] = []
 
@@ -43,12 +58,30 @@ class FakeAgent:
         system_prompt: str,
         messages: list[dict[str, Any]],
         model: str | None = None,
+        *,
+        tools=None,
+        tool_executor=None,
     ) -> FakeAgentResponse:
+        """记录一次 run 调用.
+
+        Args:
+            system_prompt: 本次调用使用的 system prompt.
+            messages: 传给模型的消息列表.
+            model: 模型覆盖.
+            tools: 当前 run 可见工具.
+            tool_executor: 当前 run 的工具执行器.
+
+        Returns:
+            预设的响应对象.
+        """
+
         self.calls.append(
             {
                 "system_prompt": system_prompt,
                 "messages": list(messages),
                 "model": model,
+                "tools": list(tools or []),
+                "tool_executor": tool_executor,
             }
         )
         return self.response
@@ -285,6 +318,59 @@ async def test_build_runtime_components_uses_admin_override_rule() -> None:
 
     assert agent.calls[0]["system_prompt"] == "You are the operator agent."
     assert agent.calls[0]["model"] == "model-o"
+
+
+async def test_build_runtime_components_wires_tool_broker_into_agent_runtime() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "runtime-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "profiles": {
+                    "aca": {
+                        "name": "Aca",
+                        "prompt_ref": "prompt/aca",
+                        "default_model": "runtime-model",
+                        "enabled_tools": ["get_time"],
+                    }
+                },
+                "prompts": {
+                    "prompt/aca": "You are Aca."
+                },
+            },
+        }
+    )
+    broker = ToolBroker()
+
+    async def get_time(arguments: dict[str, Any]) -> dict[str, Any]:
+        return {"time": arguments.get("timezone", "UTC")}
+
+    broker.register_legacy_tool(
+        ToolDef(
+            name="get_time",
+            description="Get current time",
+            parameters={"type": "object", "properties": {}},
+            handler=get_time,
+        )
+    )
+    gateway = FakeGateway()
+    agent = FakeAgent(FakeAgentResponse(text="hello back", model_used="runtime-model"))
+    components = build_runtime_components(
+        config,
+        gateway=gateway,
+        agent=agent,
+        tool_broker=broker,
+    )
+
+    components.app.install()
+    await gateway.handler(_event())
+
+    assert components.tool_broker is broker
+    assert agent.calls[0]["tools"][0].name == "get_time"
+    assert agent.calls[0]["tool_executor"] is not None
 
 
 async def test_build_runtime_components_uses_sqlite_persistence_when_configured(
