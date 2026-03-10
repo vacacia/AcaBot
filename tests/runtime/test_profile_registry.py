@@ -33,6 +33,7 @@ def _profiles() -> dict[str, AgentProfile]:
 
 def _event(
     *,
+    event_type: str = "message",
     message_type: str,
     user_id: str,
     group_id: str | None = None,
@@ -40,7 +41,7 @@ def _event(
 ) -> StandardEvent:
     return StandardEvent(
         event_id="evt-1",
-        event_type="message",
+        event_type=event_type,
         platform="qq",
         timestamp=123,
         source=EventSource(
@@ -49,8 +50,8 @@ def _event(
             user_id=user_id,
             group_id=group_id,
         ),
-        segments=[MsgSegment(type="text", data={"text": "hello"})],
-        raw_message_id="msg-1",
+        segments=[MsgSegment(type="text", data={"text": "hello"})] if event_type == "message" else [],
+        raw_message_id="msg-1" if event_type == "message" else "",
         sender_nickname="acacia",
         sender_role=sender_role,
     )
@@ -164,6 +165,43 @@ def test_registry_supports_sender_role_rules() -> None:
     assert metadata["binding_rule_id"] == "group-admins"
 
 
+def test_registry_supports_event_type_override_rules() -> None:
+    registry = AgentProfileRegistry(
+        profiles=_profiles(),
+        default_agent_id="aca",
+        rules=[
+            BindingRule(
+                rule_id="group-default",
+                agent_id="group",
+                priority=40,
+                channel_scope="qq:group:20002",
+            ),
+            BindingRule(
+                rule_id="group-poke",
+                agent_id="ops",
+                priority=70,
+                event_type="poke",
+                channel_scope="qq:group:20002",
+            ),
+        ],
+    )
+
+    agent_id, metadata = registry.resolve_agent(
+        event=_event(
+            event_type="poke",
+            message_type="group",
+            user_id="10001",
+            group_id="20002",
+        ),
+        thread_id="qq:group:20002",
+        actor_id="qq:user:10001",
+        channel_scope="qq:group:20002",
+    )
+
+    assert agent_id == "ops"
+    assert metadata["binding_match_keys"] == ["event_type", "channel_scope"]
+
+
 def test_registry_falls_back_to_default_agent() -> None:
     registry = AgentProfileRegistry(
         profiles=_profiles(),
@@ -258,3 +296,44 @@ def test_registry_rejects_ambiguous_rules_with_same_priority() -> None:
         return
 
     raise AssertionError("Expected ambiguous rules to raise ValueError")
+
+
+def test_registry_allows_same_scope_rules_for_different_event_types() -> None:
+    registry = AgentProfileRegistry(
+        profiles=_profiles(),
+        default_agent_id="aca",
+    )
+
+    registry.add_rule(
+        BindingRule(
+            rule_id="group-message",
+            agent_id="group",
+            priority=60,
+            event_type="message",
+            channel_scope="qq:group:20002",
+        )
+    )
+    registry.add_rule(
+        BindingRule(
+            rule_id="group-poke",
+            agent_id="ops",
+            priority=60,
+            event_type="poke",
+            channel_scope="qq:group:20002",
+        )
+    )
+
+    agent_id, metadata = registry.resolve_agent(
+        event=_event(
+            event_type="poke",
+            message_type="group",
+            user_id="10001",
+            group_id="20002",
+        ),
+        thread_id="qq:group:20002",
+        actor_id="qq:user:10001",
+        channel_scope="qq:group:20002",
+    )
+
+    assert agent_id == "ops"
+    assert metadata["binding_rule_id"] == "group-poke"

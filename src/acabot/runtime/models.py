@@ -146,6 +146,7 @@ class BindingRule:
     - 只匹配 `channel_scope`, 表示某个群或私聊默认使用哪个 agent.
     - 匹配 `actor_id + channel_scope`, 表示某个用户在某个群里走特殊 agent.
     - 匹配 `channel_scope + sender_roles`, 表示群管理员在该群里走特殊 agent.
+    - 匹配 `event_type + channel_scope`, 表示某类平台事件在某个群里走特殊 agent.
     - 匹配 `thread_id`, 表示 runtime 临时 thread override.
     """
 
@@ -153,6 +154,7 @@ class BindingRule:
     agent_id: str
     priority: int = 100
     thread_id: str | None = None
+    event_type: str | None = None
     actor_id: str | None = None
     channel_scope: str | None = None
     sender_roles: list[str] = field(default_factory=list)
@@ -180,6 +182,8 @@ class BindingRule:
 
         if self.thread_id is not None and self.thread_id != thread_id:
             return False
+        if self.event_type is not None and self.event_type != event.event_type:
+            return False
         if self.actor_id is not None and self.actor_id != actor_id:
             return False
         if self.channel_scope is not None and self.channel_scope != channel_scope:
@@ -200,6 +204,8 @@ class BindingRule:
         keys: list[str] = []
         if self.thread_id is not None:
             keys.append("thread_id")
+        if self.event_type is not None:
+            keys.append("event_type")
         if self.actor_id is not None:
             keys.append("actor_id")
         if self.channel_scope is not None:

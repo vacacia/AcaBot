@@ -95,6 +95,42 @@ class TestNapCatTranslation:
         assert event.target_message_id == "555"
         assert event.metadata["recalled_user_id"] == "222"
 
+    def test_translate_group_increase_notice(self, gw):
+        raw = {
+            "post_type": "notice",
+            "notice_type": "group_increase",
+            "sub_type": "approve",
+            "time": 1700000003,
+            "group_id": 444,
+            "user_id": 222,
+            "operator_id": 333,
+        }
+        event = gw.translate(raw)
+        assert event is not None
+        assert event.event_type == "member_join"
+        assert event.source.group_id == "444"
+        assert event.source.user_id == "222"
+        assert event.operator_id == "333"
+        assert event.metadata["sub_type"] == "approve"
+
+    def test_translate_group_decrease_notice(self, gw):
+        raw = {
+            "post_type": "notice",
+            "notice_type": "group_decrease",
+            "sub_type": "kick",
+            "time": 1700000004,
+            "group_id": 444,
+            "user_id": 222,
+            "operator_id": 333,
+        }
+        event = gw.translate(raw)
+        assert event is not None
+        assert event.event_type == "member_leave"
+        assert event.source.group_id == "444"
+        assert event.source.user_id == "222"
+        assert event.operator_id == "333"
+        assert event.metadata["notice_type"] == "group_decrease"
+
     # --- build_send_payload: 发消息方向 ---
     # NOTE: 验证能否把 Action 对象正确转换成 NapCat 格式的 JSON
     

@@ -125,7 +125,7 @@ class NapCatGateway(BaseGateway):
 
         当前支持:
         - post_type="message"
-        - 部分 notice event, 例如 `poke`, `recall`
+        - 部分 notice event, 例如 `poke`, `recall`, `member_join`, `member_leave`
         """
         post_type = raw.get("post_type")
         if post_type == "message":
@@ -188,6 +188,18 @@ class NapCatGateway(BaseGateway):
             return self._translate_poke_notice(raw)
         if notice_type in {"group_recall", "friend_recall"}:
             return self._translate_recall_notice(raw, notice_type=notice_type)
+        if notice_type == "group_increase":
+            return self._translate_group_membership_notice(
+                raw,
+                event_type="member_join",
+                notice_type=notice_type,
+            )
+        if notice_type == "group_decrease":
+            return self._translate_group_membership_notice(
+                raw,
+                event_type="member_leave",
+                notice_type=notice_type,
+            )
         return None
 
     def _translate_poke_notice(self, raw: dict[str, Any]) -> StandardEvent:
@@ -266,6 +278,56 @@ class NapCatGateway(BaseGateway):
             metadata={
                 "notice_type": notice_type,
                 "recalled_user_id": recalled_user_id,
+            },
+            raw_event=dict(raw),
+        )
+
+    def _translate_group_membership_notice(
+        self,
+        raw: dict[str, Any],
+        *,
+        event_type: str,
+        notice_type: str,
+    ) -> StandardEvent:
+        """翻译 group membership notice.
+
+        Args:
+            raw: group membership 原始事件.
+            event_type: canonical 事件类型.
+            notice_type: OneBot v11 notice 类型.
+
+        Returns:
+            统一的 membership StandardEvent.
+        """
+
+        affected_user_id = str(raw.get("user_id", "") or "")
+        operator_id = str(raw.get("operator_id", "") or "") or None
+        group_id = str(raw.get("group_id", "") or "") or None
+        sub_type = str(raw.get("sub_type", "") or "")
+        source = EventSource(
+            platform="qq",
+            message_type="group",
+            user_id=affected_user_id,
+            group_id=group_id,
+        )
+        return StandardEvent(
+            event_id=(
+                f"evt_{event_type}_{raw.get('time', 0)}_"
+                f"{group_id or ''}_{affected_user_id}_{sub_type}"
+            ),
+            event_type=event_type,
+            platform="qq",
+            timestamp=raw.get("time", 0),
+            source=source,
+            segments=[],
+            raw_message_id="",
+            sender_nickname="",
+            sender_role=None,
+            operator_id=operator_id,
+            metadata={
+                "notice_type": notice_type,
+                "sub_type": sub_type,
+                "affected_user_id": affected_user_id,
             },
             raw_event=dict(raw),
         )

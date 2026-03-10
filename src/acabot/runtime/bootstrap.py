@@ -274,7 +274,7 @@ def _build_binding_rules(config: Config) -> list[BindingRule]:
         match_conf = dict(rule_conf.get("match", {}))
         if "thread_id" in match_conf:
             # thread_id 是 runtime internal
-            # 配置文件只允许声明稳定的匹配条件 -> actor_id, channel_scope, sender_roles
+            # 配置文件只允许声明稳定的匹配条件 -> event_type, actor_id, channel_scope, sender_roles
             raise ValueError("binding_rules in config must not declare thread_id")
         rules.append(
             BindingRule(
@@ -282,6 +282,7 @@ def _build_binding_rules(config: Config) -> list[BindingRule]:
                 agent_id=str(rule_conf["agent_id"]),
                 priority=int(rule_conf.get("priority", 100)),
                 thread_id=None,
+                event_type=_optional_str(match_conf.get("event_type")),
                 actor_id=_optional_str(match_conf.get("actor_id")),
                 channel_scope=_optional_str(match_conf.get("channel_scope")),
                 sender_roles=[str(role) for role in match_conf.get("sender_roles", [])],

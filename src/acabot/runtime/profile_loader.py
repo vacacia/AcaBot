@@ -334,6 +334,8 @@ class AgentProfileRegistry(ProfileLoader):
             return False
         if not AgentProfileRegistry._scalar_overlap(left.thread_id, right.thread_id):
             return False
+        if not AgentProfileRegistry._scalar_overlap(left.event_type, right.event_type):
+            return False
         if not AgentProfileRegistry._scalar_overlap(left.actor_id, right.actor_id):
             return False
         if not AgentProfileRegistry._scalar_overlap(left.channel_scope, right.channel_scope):

@@ -322,6 +322,87 @@ async def test_build_runtime_components_uses_admin_override_rule() -> None:
     assert agent.calls[0]["model"] == "model-o"
 
 
+async def test_build_runtime_components_supports_event_type_binding_override() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "fallback-model",
+                "system_prompt": "Fallback prompt.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "profiles": {
+                    "aca": {
+                        "name": "Aca",
+                        "prompt_ref": "prompt/aca",
+                        "default_model": "model-a",
+                    },
+                    "group": {
+                        "name": "Group",
+                        "prompt_ref": "prompt/group",
+                        "default_model": "model-g",
+                    },
+                    "notice": {
+                        "name": "Notice",
+                        "prompt_ref": "prompt/notice",
+                        "default_model": "model-n",
+                    },
+                },
+                "prompts": {
+                    "prompt/aca": "You are Aca.",
+                    "prompt/group": "You are the group agent.",
+                    "prompt/notice": "You are the notice agent.",
+                },
+                "binding_rules": [
+                    {
+                        "rule_id": "group-default",
+                        "agent_id": "group",
+                        "priority": 40,
+                        "match": {
+                            "channel_scope": "qq:group:20002",
+                        },
+                    },
+                    {
+                        "rule_id": "group-poke",
+                        "agent_id": "notice",
+                        "priority": 70,
+                        "match": {
+                            "event_type": "poke",
+                            "channel_scope": "qq:group:20002",
+                        },
+                    },
+                ],
+            },
+        }
+    )
+    gateway = FakeGateway()
+    agent = FakeAgent(FakeAgentResponse(text="noticed", model_used="model-n"))
+    components = build_runtime_components(config, gateway=gateway, agent=agent)
+    event = StandardEvent(
+        event_id="evt-poke-2",
+        event_type="poke",
+        platform="qq",
+        timestamp=789,
+        source=EventSource(
+            platform="qq",
+            message_type="group",
+            user_id="10001",
+            group_id="20002",
+        ),
+        segments=[],
+        raw_message_id="",
+        sender_nickname="acacia",
+        sender_role="member",
+        operator_id="10001",
+    )
+
+    components.app.install()
+    await gateway.handler(event)
+
+    assert agent.calls[0]["system_prompt"] == "You are the notice agent."
+    assert agent.calls[0]["model"] == "model-n"
+
+
 async def test_build_runtime_components_applies_inbound_rules() -> None:
     config = Config(
         {
