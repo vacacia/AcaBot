@@ -88,3 +88,17 @@ async def test_run_manager_tracks_steps_and_cancellation() -> None:
 
     assert cancelled is True
     assert manager.is_cancel_requested(run.run_id) is True
+
+
+async def test_run_manager_marks_interrupted_as_terminal_state() -> None:
+    manager = InMemoryRunManager()
+    run = await manager.open(event=_event(), decision=_decision())
+
+    await manager.mark_running(run.run_id)
+    await manager.mark_interrupted(run.run_id, "process restarted before run finished")
+
+    updated = await manager.get(run.run_id)
+    assert updated is not None
+    assert updated.status == "interrupted"
+    assert updated.error == "process restarted before run finished"
+    assert updated.finished_at is not None

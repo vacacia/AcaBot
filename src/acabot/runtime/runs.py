@@ -80,6 +80,15 @@ class RunManager(ABC):
         ...
 
     @abstractmethod
+    async def mark_interrupted(self, run_id: str, reason: str) -> None:
+        """把 run 标记为 interrupted.
+
+        interrupted 表示这次执行因进程重启或宿主中断而被动结束.
+        """
+
+        ...
+
+    @abstractmethod
     async def append_step(self, step: RunStep) -> None:
         """追加一条 run 内部步骤记录."""
 
@@ -206,6 +215,20 @@ class InMemoryRunManager(RunManager):
 
         run = self._require_run(run_id)
         run.status = "cancelled"
+        run.error = reason
+        run.finished_at = self._now()
+        run.approval_context = {}
+
+    async def mark_interrupted(self, run_id: str, reason: str) -> None:
+        """把 run 收尾为 interrupted.
+
+        Args:
+            run_id: 目标 run_id.
+            reason: 中断原因.
+        """
+
+        run = self._require_run(run_id)
+        run.status = "interrupted"
         run.error = reason
         run.finished_at = self._now()
         run.approval_context = {}
@@ -415,6 +438,21 @@ class StoreBackedRunManager(RunManager):
 
         run = await self._require_run(run_id)
         run.status = "cancelled"
+        run.error = reason
+        run.finished_at = self._now()
+        run.approval_context = {}
+        await self.store.update_run(run)
+
+    async def mark_interrupted(self, run_id: str, reason: str) -> None:
+        """把 run 收尾为 interrupted.
+
+        Args:
+            run_id: 目标 run_id.
+            reason: 中断原因.
+        """
+
+        run = await self._require_run(run_id)
+        run.status = "interrupted"
         run.error = reason
         run.finished_at = self._now()
         run.approval_context = {}

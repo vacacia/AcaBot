@@ -91,3 +91,28 @@ async def test_store_backed_run_manager_clears_approval_context_on_terminal_stat
     assert restored.status == "completed"
     assert restored.approval_context == {}
     assert active_runs == []
+
+
+async def test_store_backed_run_manager_persists_interrupted_state(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "runtime.db"
+    store = SQLiteRunStore(db_path)
+    manager = StoreBackedRunManager(store)
+    run = await manager.open(event=_event(), decision=_decision())
+
+    try:
+        await manager.mark_running(run.run_id)
+        await manager.mark_interrupted(
+            run.run_id,
+            "process restarted before run finished",
+        )
+        restored = await manager.get(run.run_id)
+        active_runs = await manager.list_active()
+    finally:
+        store.close()
+
+    assert restored is not None
+    assert restored.status == "interrupted"
+    assert restored.error == "process restarted before run finished"
+    assert active_runs == []

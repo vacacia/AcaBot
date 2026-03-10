@@ -11,7 +11,13 @@ from typing import Callable
 from acabot.types import StandardEvent
 
 from .gateway_protocol import GatewayProtocol
-from .models import AgentProfile, RouteDecision, RunContext
+from .models import (
+    AgentProfile,
+    PendingApprovalRecord,
+    RecoveryReport,
+    RouteDecision,
+    RunContext,
+)
 from .pipeline import ThreadPipeline
 from .router import RuntimeRouter
 from .runs import RunManager
@@ -54,6 +60,8 @@ class RuntimeApp:
         self.run_manager = run_manager
         self.pipeline = pipeline
         self.profile_loader = profile_loader
+        self.last_recovery_report = RecoveryReport()
+        self._pending_approvals: dict[str, PendingApprovalRecord] = {}
 
     def install(self) -> None:
         """把 RuntimeApp 注册到 gateway 事件流上."""
@@ -63,6 +71,7 @@ class RuntimeApp:
     async def start(self) -> None:
         """安装事件处理器并启动 gateway."""
 
+        await self.recover_active_runs()
         self.install()
         await self.gateway.start()
 
@@ -100,6 +109,56 @@ class RuntimeApp:
             logger.exception("Failed to handle event: event_id=%s", event.event_id)
             if run_id is not None:
                 await self._mark_failed_safely(run_id, f"runtime app crashed: {exc}")
+
+    # region recovery
+    async def recover_active_runs(self) -> RecoveryReport:
+        """扫描并收尾重启前遗留的 active runs.
+
+        当前策略:
+        - `queued` 和 `running` 无法无缝继续, 统一收尾为 `interrupted`
+        - `waiting_approval` 保留原状态, 并暴露为 pending approvals
+
+        Returns:
+            本次 recovery 的汇总结果.
+        """
+
+        report = RecoveryReport()
+        self._pending_approvals = {}
+        active_runs = await self.run_manager.list_active()
+
+        for run in active_runs:
+            if run.status == "waiting_approval":
+                pending = PendingApprovalRecord(
+                    run_id=run.run_id,
+                    thread_id=run.thread_id,
+                    actor_id=run.actor_id,
+                    agent_id=run.agent_id,
+                    reason=run.error or "waiting approval",
+                    approval_context=dict(run.approval_context),
+                )
+                report.pending_approvals.append(pending)
+                self._pending_approvals[run.run_id] = pending
+                continue
+
+            await self.run_manager.mark_interrupted(
+                run.run_id,
+                "process restarted before run finished",
+            )
+            report.interrupted_run_ids.append(run.run_id)
+
+        self.last_recovery_report = report
+        return report
+
+    def list_pending_approvals(self) -> list[PendingApprovalRecord]:
+        """返回当前进程已识别出的 pending approvals.
+
+        Returns:
+            当前缓存的 pending approval 列表.
+        """
+
+        return list(self._pending_approvals.values())
+
+    # endregion
 
     async def _mark_failed_safely(self, run_id: str, error: str) -> None:
         """尽力把 run 收尾为 failed.

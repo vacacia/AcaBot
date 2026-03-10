@@ -15,6 +15,7 @@ RunStatus = Literal[
     "queued",
     "running",
     "waiting_approval",
+    "interrupted",
     "completed",
     "completed_with_errors",
     "failed",
@@ -301,6 +302,33 @@ class RunRecord:
     error: str | None = None
     approval_context: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+# region recovery
+@dataclass(slots=True)
+class PendingApprovalRecord:
+    """重启恢复后识别出的 pending approval 记录.
+
+    这是 RuntimeApp 暴露给上层查看的稳定对象.
+    """
+
+    run_id: str
+    thread_id: str
+    actor_id: str
+    agent_id: str
+    reason: str
+    approval_context: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class RecoveryReport:
+    """一次 startup recovery 的汇总结果."""
+
+    interrupted_run_ids: list[str] = field(default_factory=list)
+    pending_approvals: list[PendingApprovalRecord] = field(default_factory=list)
+
+
+# endregion
 
 
 @dataclass(slots=True)
