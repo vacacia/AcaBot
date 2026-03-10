@@ -1,9 +1,17 @@
-from acabot.runtime import AgentProfile, AgentProfileRegistry, BindingRule, RuntimeRouter
+from acabot.runtime import (
+    AgentProfile,
+    AgentProfileRegistry,
+    BindingRule,
+    InboundRule,
+    InboundRuleRegistry,
+    RuntimeRouter,
+)
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
 
 def _event(
     *,
+    event_type: str = "message",
     message_type: str,
     user_id: str,
     group_id: str | None = None,
@@ -11,7 +19,7 @@ def _event(
 ) -> StandardEvent:
     return StandardEvent(
         event_id="evt-1",
-        event_type="message",
+        event_type=event_type,
         platform="qq",
         timestamp=123,
         source=EventSource(
@@ -134,3 +142,35 @@ async def test_runtime_router_supports_role_based_rules() -> None:
 
     assert decision.agent_id == "ops"
     assert decision.metadata["binding_rule_id"] == "admins-in-group"
+
+
+async def test_runtime_router_supports_inbound_run_mode_rules() -> None:
+    inbound = InboundRuleRegistry(
+        [
+            InboundRule(
+                rule_id="poke-ignore",
+                run_mode="silent_drop",
+                priority=90,
+                platform="qq",
+                event_type="poke",
+                channel_scope="qq:group:20002",
+            )
+        ]
+    )
+    router = RuntimeRouter(
+        default_agent_id="aca",
+        decide_run_mode=inbound.resolve,
+    )
+
+    decision = await router.route(
+        _event(
+            event_type="poke",
+            message_type="group",
+            user_id="10001",
+            group_id="20002",
+        )
+    )
+
+    assert decision.run_mode == "silent_drop"
+    assert decision.metadata["inbound_rule_id"] == "poke-ignore"
+    assert decision.metadata["inbound_run_mode"] == "silent_drop"

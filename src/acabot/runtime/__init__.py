@@ -28,6 +28,7 @@ from .models import (
     BindingRule,
     DeliveryResult,
     DispatchReport,
+    InboundRule,
     MessageRecord,
     OutboxItem,
     PendingApproval,
@@ -51,7 +52,7 @@ from .profile_loader import (
     StaticProfileLoader,
     StaticPromptLoader,
 )
-from .router import RuntimeRouter
+from .router import InboundRuleRegistry, RuntimeRouter
 from .runs import InMemoryRunManager, RunManager, StoreBackedRunManager
 from .sqlite_stores import SQLiteMessageStore, SQLiteRunStore, SQLiteThreadStore
 from .stores import MessageStore, RunStore, ThreadStore
@@ -82,6 +83,8 @@ __all__ = [
     "DeliveryResult",
     "DispatchReport",
     "build_runtime_components",
+    "InboundRule",
+    "InboundRuleRegistry",
     "InMemoryRunManager",
     "InMemoryMessageStore",
     "InMemoryThreadManager",

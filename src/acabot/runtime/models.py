@@ -21,7 +21,7 @@ RunStatus = Literal[
     "failed",
     "cancelled",
 ]
-RunMode = Literal["respond", "record_only"]
+RunMode = Literal["respond", "record_only", "silent_drop"]
 CommitWhen = Literal["success", "failure", "waiting_approval", "always"]
 ApprovalDecision = Literal["approved", "rejected"]
 
@@ -178,10 +178,98 @@ class BindingRule:
 
 
 @dataclass(slots=True)
+class InboundRule:
+    """一条 inbound 事件控制规则.
+
+    Attributes:
+        rule_id (str): 当前规则唯一 ID.
+        run_mode (RunMode): 命中后的运行模式.
+        priority (int): 优先级. 越大越先命中.
+        platform (str | None): 平台过滤条件.
+        event_type (str | None): 事件类型过滤条件.
+        actor_id (str | None): actor 过滤条件.
+        channel_scope (str | None): channel 过滤条件.
+        sender_roles (list[str]): 群角色过滤条件.
+        metadata (dict[str, Any]): 附加元数据.
+    """
+
+    rule_id: str
+    run_mode: RunMode
+    priority: int = 100
+    platform: str | None = None
+    event_type: str | None = None
+    actor_id: str | None = None
+    channel_scope: str | None = None
+    sender_roles: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def matches(
+        self,
+        *,
+        event: StandardEvent,
+        actor_id: str,
+        channel_scope: str,
+    ) -> bool:
+        """判断这条 inbound rule 是否命中当前事件.
+
+        Args:
+            event: 当前标准化事件.
+            actor_id: 当前事件的 actor_id.
+            channel_scope: 当前事件的 channel_scope.
+
+        Returns:
+            当前 rule 是否命中.
+        """
+
+        if self.platform is not None and self.platform != event.platform:
+            return False
+        if self.event_type is not None and self.event_type != event.event_type:
+            return False
+        if self.actor_id is not None and self.actor_id != actor_id:
+            return False
+        if self.channel_scope is not None and self.channel_scope != channel_scope:
+            return False
+        if self.sender_roles:
+            sender_role = event.sender_role or ""
+            if sender_role not in self.sender_roles:
+                return False
+        return True
+
+    def match_keys(self) -> list[str]:
+        """返回当前 inbound rule 使用的 match key 列表.
+
+        Returns:
+            当前规则的 match key 列表.
+        """
+
+        keys: list[str] = []
+        if self.platform is not None:
+            keys.append("platform")
+        if self.event_type is not None:
+            keys.append("event_type")
+        if self.actor_id is not None:
+            keys.append("actor_id")
+        if self.channel_scope is not None:
+            keys.append("channel_scope")
+        if self.sender_roles:
+            keys.append("sender_roles")
+        return keys
+
+    def specificity(self) -> int:
+        """返回当前 inbound rule 的特异度.
+
+        Returns:
+            当前规则声明的 match key 数量.
+        """
+
+        return len(self.match_keys())
+
+
+@dataclass(slots=True)
 class RouteDecision:
     """router 的解析结果.
 
-    这条消息属于哪个 thread? 由哪个 agent 处理? 这次 run 是 respond 还是 record_only?
+    这条消息属于哪个 thread? 由哪个 agent 处理? 这次 run 是 respond, record_only 还是 silent_drop?
     """
 
     thread_id: str

@@ -60,6 +60,41 @@ class TestNapCatTranslation:
         # 非消息事件(notice/request等)直接返回 None
         assert gw.translate({"post_type": "notice"}) is None
 
+    def test_translate_poke_notice(self, gw):
+        raw = {
+            "post_type": "notice",
+            "notice_type": "notify",
+            "sub_type": "poke",
+            "time": 1700000001,
+            "user_id": 222,
+            "group_id": 444,
+            "target_id": 111,
+        }
+        event = gw.translate(raw)
+        assert event is not None
+        assert event.event_type == "poke"
+        assert event.is_notice
+        assert event.source.group_id == "444"
+        assert event.operator_id == "222"
+        assert event.metadata["target_id"] == "111"
+
+    def test_translate_group_recall_notice(self, gw):
+        raw = {
+            "post_type": "notice",
+            "notice_type": "group_recall",
+            "time": 1700000002,
+            "user_id": 222,
+            "operator_id": 333,
+            "group_id": 444,
+            "message_id": 555,
+        }
+        event = gw.translate(raw)
+        assert event is not None
+        assert event.event_type == "recall"
+        assert event.source.user_id == "333"
+        assert event.target_message_id == "555"
+        assert event.metadata["recalled_user_id"] == "222"
+
     # --- build_send_payload: 发消息方向 ---
     # NOTE: 验证能否把 Action 对象正确转换成 NapCat 格式的 JSON
     

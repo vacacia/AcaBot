@@ -321,6 +321,57 @@ async def test_build_runtime_components_uses_admin_override_rule() -> None:
     assert agent.calls[0]["model"] == "model-o"
 
 
+async def test_build_runtime_components_applies_inbound_rules() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "test-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "default_prompt_ref": "prompt/default",
+                "inbound_rules": [
+                    {
+                        "rule_id": "ignore-poke",
+                        "run_mode": "silent_drop",
+                        "match": {
+                            "platform": "qq",
+                            "event_type": "poke",
+                        },
+                    }
+                ],
+            },
+        }
+    )
+    gateway = FakeGateway()
+    agent = FakeAgent(FakeAgentResponse(text="should not send"))
+    components = build_runtime_components(config, gateway=gateway, agent=agent)
+    event = StandardEvent(
+        event_id="evt-poke-1",
+        event_type="poke",
+        platform="qq",
+        timestamp=123,
+        source=EventSource(
+            platform="qq",
+            message_type="private",
+            user_id="10001",
+            group_id=None,
+        ),
+        segments=[],
+        raw_message_id="",
+        sender_nickname="",
+        sender_role=None,
+        operator_id="10001",
+    )
+
+    components.app.install()
+    await gateway.handler(event)
+
+    assert agent.calls == []
+    assert gateway.sent == []
+
+
 async def test_build_runtime_components_wires_tool_broker_into_agent_runtime() -> None:
     config = Config(
         {

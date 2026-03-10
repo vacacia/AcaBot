@@ -30,7 +30,7 @@ from .app import RuntimeApp
 from .gateway_protocol import GatewayProtocol
 from .memory_store import InMemoryMessageStore
 from .model_agent_runtime import ModelAgentRuntime
-from .models import AgentProfile, BindingRule
+from .models import AgentProfile, BindingRule, InboundRule
 from .outbox import Outbox
 from .pipeline import ThreadPipeline
 from .profile_loader import (
@@ -39,7 +39,7 @@ from .profile_loader import (
     PromptLoader,
     StaticPromptLoader,
 )
-from .router import RuntimeRouter
+from .router import InboundRuleRegistry, RuntimeRouter
 from .runs import InMemoryRunManager, RunManager, StoreBackedRunManager
 from .sqlite_stores import SQLiteMessageStore, SQLiteRunStore, SQLiteThreadStore
 from .stores import MessageStore
@@ -116,15 +116,18 @@ def build_runtime_components(
     runtime_conf = config.get("runtime", {})
     default_agent_id = runtime_conf.get("default_agent_id", next(iter(profiles)))
     rules = _build_binding_rules(config)
+    inbound_rules = _build_inbound_rules(config)
     profile_registry = AgentProfileRegistry(
         profiles=profiles,
         default_agent_id=default_agent_id,
     )
     for rule in rules:
         profile_registry.add_rule(rule)
+    inbound_registry = InboundRuleRegistry(inbound_rules)
 
     runtime_router = router or RuntimeRouter(
         default_agent_id=default_agent_id,
+        decide_run_mode=inbound_registry.resolve,
         resolve_agent=profile_registry.resolve_agent,
     )
     runtime_thread_manager = thread_manager or _build_thread_manager(config)
@@ -276,6 +279,39 @@ def _build_binding_rules(config: Config) -> list[BindingRule]:
     return rules
 
 
+def _build_inbound_rules(config: Config) -> list[InboundRule]:
+    """从配置对象构造 inbound rule 列表.
+
+    Args:
+        config: 项目配置对象.
+
+    Returns:
+        一个按配置声明顺序展开的 inbound rule 列表.
+    """
+
+    runtime_conf = config.get("runtime", {})
+    rules_conf = runtime_conf.get("inbound_rules", [])
+    rules: list[InboundRule] = []
+
+    for index, rule_conf in enumerate(rules_conf):
+        match_conf = dict(rule_conf.get("match", {}))
+        rules.append(
+            InboundRule(
+                rule_id=str(rule_conf.get("rule_id", f"inbound:{index}")),
+                run_mode=_parse_run_mode(rule_conf.get("run_mode", "respond")),
+                priority=int(rule_conf.get("priority", 100)),
+                platform=_optional_str(match_conf.get("platform")),
+                event_type=_optional_str(match_conf.get("event_type")),
+                actor_id=_optional_str(match_conf.get("actor_id")),
+                channel_scope=_optional_str(match_conf.get("channel_scope")),
+                sender_roles=[str(role) for role in match_conf.get("sender_roles", [])],
+                metadata=dict(rule_conf.get("metadata", {})),
+            )
+        )
+
+    return rules
+
+
 # region persistence builders
 def _build_thread_manager(config: Config) -> ThreadManager:
     """根据配置构造 ThreadManager.
@@ -345,3 +381,22 @@ def _optional_str(value: object) -> str | None:
     if value in (None, ""):
         return None
     return str(value)
+
+
+def _parse_run_mode(value: object) -> str:
+    """校验并规范化 run_mode 配置值.
+
+    Args:
+        value: 原始配置值.
+
+    Returns:
+        合法的 run_mode 字符串.
+
+    Raises:
+        ValueError: run_mode 不合法.
+    """
+
+    normalized = str(value)
+    if normalized not in {"respond", "record_only", "silent_drop"}:
+        raise ValueError(f"Unsupported run_mode: {normalized}")
+    return normalized

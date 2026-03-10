@@ -115,6 +115,36 @@ async def test_runtime_app_installs_handler_and_processes_event() -> None:
     assert len(gateway.sent) == 1
 
 
+async def test_runtime_app_skips_silent_drop_events() -> None:
+    gateway = FakeGateway()
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    outbox = Outbox(gateway=gateway, store=FakeMessageStore())
+    pipeline = ThreadPipeline(
+        agent_runtime=FakeAgentRuntime(),
+        outbox=outbox,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+    )
+    app = RuntimeApp(
+        gateway=gateway,
+        router=RuntimeRouter(
+            default_agent_id="aca",
+            decide_run_mode=lambda event: ("silent_drop", {"inbound_rule_id": "ignore"}),
+        ),
+        thread_manager=thread_manager,
+        run_manager=run_manager,
+        pipeline=pipeline,
+        profile_loader=_profile_loader,
+    )
+
+    app.install()
+    await gateway.handler(_event())
+
+    assert run_manager._runs == {}
+    assert gateway.sent == []
+
+
 async def test_runtime_app_marks_run_failed_when_profile_loader_crashes() -> None:
     gateway = FakeGateway()
     thread_manager = InMemoryThreadManager()

@@ -9,7 +9,103 @@ from typing import Any, Callable
 
 from acabot.types import StandardEvent
 
-from .models import RouteDecision, RunMode
+from .models import InboundRule, RouteDecision, RunMode
+
+
+# region inbound规则
+class InboundRuleRegistry:
+    """基于规则的 inbound run_mode 解析器.
+
+    当前层只负责两件事:
+    - 判断当前 event 应该用哪个 run_mode
+    - 把命中的规则元数据写回 RouteDecision.metadata
+    """
+
+    def __init__(self, rules: list[InboundRule] | None = None) -> None:
+        """初始化 InboundRuleRegistry.
+
+        Args:
+            rules: 预加载的 inbound rule 列表.
+
+        Raises:
+            ValueError: rule_id 重复或 rule 没有任何 match 条件.
+        """
+
+        self.rules: list[InboundRule] = []
+        self._rule_ids: set[str] = set()
+        for rule in rules or []:
+            self.add_rule(rule)
+
+    def add_rule(self, rule: InboundRule) -> None:
+        """注册一条 inbound rule.
+
+        Args:
+            rule: 待注册规则.
+
+        Raises:
+            ValueError: rule_id 重复或 rule 没有任何 match 条件.
+        """
+
+        if rule.rule_id in self._rule_ids:
+            raise ValueError(f"Duplicate inbound rule_id: {rule.rule_id}")
+        if not rule.match_keys():
+            raise ValueError("InboundRule must declare at least one match condition")
+        self.rules.append(rule)
+        self._rule_ids.add(rule.rule_id)
+
+    def resolve(
+        self,
+        *,
+        event: StandardEvent,
+        actor_id: str,
+        channel_scope: str,
+    ) -> tuple[RunMode, dict[str, Any]]:
+        """根据规则解析当前事件的 run_mode.
+
+        Args:
+            event: 当前标准化事件.
+            actor_id: 当前事件的 actor_id.
+            channel_scope: 当前事件的 channel_scope.
+
+        Returns:
+            二元组 `(run_mode, metadata)`.
+        """
+
+        best_rule: InboundRule | None = None
+        for rule in self.rules:
+            if not rule.matches(
+                event=event,
+                actor_id=actor_id,
+                channel_scope=channel_scope,
+            ):
+                continue
+            if best_rule is None:
+                best_rule = rule
+                continue
+            if rule.priority > best_rule.priority:
+                best_rule = rule
+                continue
+            if rule.priority == best_rule.priority and rule.specificity() > best_rule.specificity():
+                best_rule = rule
+
+        if best_rule is None:
+            return "respond", {
+                "inbound_rule_id": "",
+                "inbound_priority": -1,
+                "inbound_match_keys": [],
+                "inbound_run_mode": "respond",
+            }
+
+        return best_rule.run_mode, {
+            "inbound_rule_id": best_rule.rule_id,
+            "inbound_priority": best_rule.priority,
+            "inbound_match_keys": best_rule.match_keys(),
+            "inbound_run_mode": best_rule.run_mode,
+            **dict(best_rule.metadata),
+        }
+
+
+# endregion
 
 
 class RuntimeRouter:
@@ -21,14 +117,14 @@ class RuntimeRouter:
         self,
         *,
         default_agent_id: str = "default",
-        decide_run_mode: Callable[[StandardEvent], RunMode] | None = None,
+        decide_run_mode: Callable[..., RunMode | tuple[RunMode, dict[str, Any]]] | None = None,
         resolve_agent: Callable[..., tuple[str, dict[str, Any]]] | None = None,
     ) -> None:
         """初始化最小路由器.
 
         Args:
             default_agent_id: 未命中特殊规则时使用的默认 agent.
-            decide_run_mode: 可选回调, 用于决定这条消息是 `respond` 还是 `record_only`.
+            decide_run_mode: 可选回调, 用于决定这条消息是 `respond`, `record_only` 还是 `silent_drop`.
             resolve_agent: 可选回调, 用于根据 canonical id 解析最终 agent_id 和 binding metadata.
         """
 
@@ -55,13 +151,18 @@ class RuntimeRouter:
             actor_id=actor_id,
             channel_scope=channel_scope,
         )
+        run_mode, run_mode_metadata = self._decide_run_mode(
+            event=event,
+            actor_id=actor_id,
+            channel_scope=channel_scope,
+        )
         return RouteDecision(
             thread_id=thread_id, # 走哪个 thread
             actor_id=actor_id, # 谁发的消息
             agent_id=agent_id, # 用哪个 agent 处理
             channel_scope=channel_scope,
-            run_mode=self._decide_run_mode(event),
-            metadata=metadata,
+            run_mode=run_mode,
+            metadata={**metadata, **run_mode_metadata},
         )
 
     @staticmethod
@@ -87,7 +188,13 @@ class RuntimeRouter:
 
         return cls.build_channel_scope(event)
 
-    def _decide_run_mode(self, event: StandardEvent) -> RunMode:
+    def _decide_run_mode(
+        self,
+        *,
+        event: StandardEvent,
+        actor_id: str,
+        channel_scope: str,
+    ) -> tuple[RunMode, dict[str, Any]]:
         """决定本次 run 的模式.
 
         默认全部进入 `respond`.
@@ -95,8 +202,29 @@ class RuntimeRouter:
         """
 
         if self.decide_run_mode is None:
-            return "respond"
-        return self.decide_run_mode(event)
+            return "respond", {
+                "inbound_rule_id": "",
+                "inbound_priority": -1,
+                "inbound_match_keys": [],
+                "inbound_run_mode": "respond",
+            }
+        try:
+            decision = self.decide_run_mode(
+                event=event,
+                actor_id=actor_id,
+                channel_scope=channel_scope,
+            )
+        except TypeError:
+            # 兼容旧签名, 只接受 event
+            decision = self.decide_run_mode(event)
+        if isinstance(decision, tuple):
+            return decision
+        return decision, {
+            "inbound_rule_id": "",
+            "inbound_priority": -1,
+            "inbound_match_keys": [],
+            "inbound_run_mode": decision,
+        }
 
     def _resolve_agent(
         self,

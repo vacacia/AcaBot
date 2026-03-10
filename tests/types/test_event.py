@@ -41,3 +41,25 @@ def test_text_extraction_multi_segment():
         ],
     )
     assert event.text == "hello world"
+
+
+def test_notice_event_keeps_metadata_and_empty_text():
+    source = EventSource(platform="qq", message_type="group", user_id="123", group_id="456")
+    event = StandardEvent(
+        event_id="evt_poke_1",
+        event_type="poke",
+        platform="qq",
+        timestamp=1700000000,
+        source=source,
+        segments=[],
+        raw_message_id="",
+        sender_nickname="",
+        sender_role=None,
+        operator_id="123",
+        metadata={"target_id": "999"},
+        raw_event={"notice_type": "notify", "sub_type": "poke"},
+    )
+    assert event.is_notice
+    assert not event.is_message
+    assert event.text == ""
+    assert event.metadata["target_id"] == "999"

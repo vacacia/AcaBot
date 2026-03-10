@@ -123,10 +123,26 @@ class NapCatGateway(BaseGateway):
     def translate(self, raw: dict[str, Any]) -> StandardEvent | None:
         """将 OneBot v11 原始 JSON 翻译为 StandardEvent.
 
-        只处理 post_type="message" 的事件, 其他类型返回 None.
+        当前支持:
+        - post_type="message"
+        - 部分 notice event, 例如 `poke`, `recall`
         """
-        if raw.get("post_type") != "message":
-            return None
+        post_type = raw.get("post_type")
+        if post_type == "message":
+            return self._translate_message(raw)
+        if post_type == "notice":
+            return self._translate_notice(raw)
+        return None
+
+    def _translate_message(self, raw: dict[str, Any]) -> StandardEvent:
+        """翻译普通消息事件.
+
+        Args:
+            raw: OneBot v11 原始消息事件.
+
+        Returns:
+            统一的 StandardEvent.
+        """
 
         sender = raw.get("sender", {})
         source = EventSource(
@@ -154,6 +170,104 @@ class NapCatGateway(BaseGateway):
             raw_message_id=str(raw.get("message_id", "")),
             sender_nickname=sender.get("nickname", ""),
             sender_role=sender.get("role"),
+            raw_event=dict(raw),
+        )
+
+    def _translate_notice(self, raw: dict[str, Any]) -> StandardEvent | None:
+        """翻译 notice 事件.
+
+        Args:
+            raw: OneBot v11 notice 事件.
+
+        Returns:
+            可识别时返回 StandardEvent, 否则返回 None.
+        """
+
+        notice_type = str(raw.get("notice_type", "") or "")
+        if notice_type == "notify" and raw.get("sub_type") == "poke":
+            return self._translate_poke_notice(raw)
+        if notice_type in {"group_recall", "friend_recall"}:
+            return self._translate_recall_notice(raw, notice_type=notice_type)
+        return None
+
+    def _translate_poke_notice(self, raw: dict[str, Any]) -> StandardEvent:
+        """翻译 poke notice.
+
+        Args:
+            raw: poke 原始事件.
+
+        Returns:
+            统一的 poke StandardEvent.
+        """
+
+        group_id = str(raw["group_id"]) if "group_id" in raw else None
+        operator_id = str(raw.get("user_id", "") or "")
+        source = EventSource(
+            platform="qq",
+            message_type="group" if group_id is not None else "private",
+            user_id=operator_id,
+            group_id=group_id,
+        )
+        return StandardEvent(
+            event_id=f"evt_poke_{raw.get('time', 0)}_{operator_id}",
+            event_type="poke",
+            platform="qq",
+            timestamp=raw.get("time", 0),
+            source=source,
+            segments=[],
+            raw_message_id="",
+            sender_nickname="",
+            sender_role=None,
+            operator_id=operator_id or None,
+            metadata={
+                "notice_type": "poke",
+                "target_id": str(raw.get("target_id", "") or ""),
+            },
+            raw_event=dict(raw),
+        )
+
+    def _translate_recall_notice(
+        self,
+        raw: dict[str, Any],
+        *,
+        notice_type: str,
+    ) -> StandardEvent:
+        """翻译 recall notice.
+
+        Args:
+            raw: recall 原始事件.
+            notice_type: OneBot v11 recall 类型.
+
+        Returns:
+            统一的 recall StandardEvent.
+        """
+
+        group_id = str(raw["group_id"]) if "group_id" in raw else None
+        operator_id = str(raw.get("operator_id") or raw.get("user_id") or "")
+        recalled_user_id = str(raw.get("user_id", "") or "")
+        source = EventSource(
+            platform="qq",
+            message_type="group" if group_id is not None else "private",
+            user_id=operator_id,
+            group_id=group_id,
+        )
+        return StandardEvent(
+            event_id=f"evt_recall_{raw.get('time', 0)}_{raw.get('message_id', '')}",
+            event_type="recall",
+            platform="qq",
+            timestamp=raw.get("time", 0),
+            source=source,
+            segments=[],
+            raw_message_id="",
+            sender_nickname="",
+            sender_role=None,
+            operator_id=operator_id or None,
+            target_message_id=str(raw.get("message_id", "") or "") or None,
+            metadata={
+                "notice_type": notice_type,
+                "recalled_user_id": recalled_user_id,
+            },
+            raw_event=dict(raw),
         )
 
     # endregion

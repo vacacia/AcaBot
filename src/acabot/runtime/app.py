@@ -99,6 +99,8 @@ class RuntimeApp:
         run_id: str | None = None
         try:
             decision = await self.router.route(event)
+            if decision.run_mode == "silent_drop":
+                return
             thread = await self.thread_manager.get_or_create(
                 thread_id=decision.thread_id,
                 channel_scope=decision.channel_scope,
