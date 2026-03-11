@@ -6,6 +6,8 @@ from acabot.runtime import (
     InMemoryRunManager,
     InMemoryThreadManager,
     InMemoryToolAudit,
+    MemoryBlock,
+    MemoryBroker,
     ModelAgentRuntime,
     Outbox,
     PlannedAction,
@@ -97,6 +99,21 @@ class NoAckGateway(FakeGateway):
         return None
 
 
+class RecordingMemoryBroker(MemoryBroker):
+    def __init__(self, *, blocks: list[MemoryBlock] | None = None) -> None:
+        super().__init__()
+        self.blocks = list(blocks or [])
+        self.retrieve_calls: list[RunContext] = []
+        self.extract_calls: list[RunContext] = []
+
+    async def retrieve(self, ctx: RunContext) -> list[MemoryBlock]:
+        self.retrieve_calls.append(ctx)
+        return list(self.blocks)
+
+    async def extract_after_run(self, ctx: RunContext) -> None:
+        self.extract_calls.append(ctx)
+
+
 def _event(event_type: str = "message") -> StandardEvent:
     return StandardEvent(
         event_id="evt-1",
@@ -172,6 +189,99 @@ async def test_thread_pipeline_runs_minimal_text_flow() -> None:
     assert len(gateway.sent) == 1
     assert thread.working_messages[0]["role"] == "user"
     assert thread.working_messages[1]["content"] == "hello back"
+
+
+async def test_thread_pipeline_injects_memory_blocks_before_agent_runtime() -> None:
+    class InspectingAgentRuntime(AgentRuntime):
+        def __init__(self) -> None:
+            self.captured_messages = []
+
+        async def execute(self, ctx: RunContext) -> AgentRuntimeResult:
+            self.captured_messages = list(ctx.messages)
+            return AgentRuntimeResult(status="completed", text="hello back")
+
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    gateway = FakeGateway()
+    store = FakeMessageStore()
+    outbox = Outbox(gateway=gateway, store=store)
+    memory_broker = RecordingMemoryBroker(
+        blocks=[
+            MemoryBlock(
+                title="User Profile",
+                content="用户喜欢直接回答",
+                scope="user",
+            )
+        ]
+    )
+    agent_runtime = InspectingAgentRuntime()
+    pipeline = ThreadPipeline(
+        agent_runtime=agent_runtime,
+        outbox=outbox,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+        memory_broker=memory_broker,
+    )
+
+    event = _event()
+    decision = _decision()
+    thread = await thread_manager.get_or_create(
+        thread_id=decision.thread_id,
+        channel_scope=decision.channel_scope,
+        last_event_at=event.timestamp,
+    )
+    run = await run_manager.open(event=event, decision=decision)
+    ctx = RunContext(
+        run=run,
+        event=event,
+        decision=decision,
+        thread=thread,
+        profile=_profile(),
+    )
+
+    await pipeline.execute(ctx)
+
+    assert memory_broker.retrieve_calls == [ctx]
+    assert ctx.memory_blocks[0].title == "User Profile"
+    assert agent_runtime.captured_messages[0]["role"] == "system"
+    assert "User Profile" in str(agent_runtime.captured_messages[0]["content"])
+
+
+async def test_thread_pipeline_triggers_memory_extraction_after_run() -> None:
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    gateway = FakeGateway()
+    store = FakeMessageStore()
+    outbox = Outbox(gateway=gateway, store=store)
+    memory_broker = RecordingMemoryBroker()
+    pipeline = ThreadPipeline(
+        agent_runtime=FakeAgentRuntime(),
+        outbox=outbox,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+        memory_broker=memory_broker,
+    )
+
+    event = _event()
+    decision = _decision()
+    thread = await thread_manager.get_or_create(
+        thread_id=decision.thread_id,
+        channel_scope=decision.channel_scope,
+        last_event_at=event.timestamp,
+    )
+    run = await run_manager.open(event=event, decision=decision)
+    ctx = RunContext(
+        run=run,
+        event=event,
+        decision=decision,
+        thread=thread,
+        profile=_profile(),
+    )
+
+    await pipeline.execute(ctx)
+
+    assert memory_broker.extract_calls == [ctx]
+    assert ctx.run.status == "completed"
 
 
 async def test_thread_pipeline_marks_run_failed_when_agent_runtime_crashes() -> None:

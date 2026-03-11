@@ -30,6 +30,7 @@ from .app import RuntimeApp
 from .event_policy import EventPolicyRegistry
 from .event_store import InMemoryChannelEventStore
 from .gateway_protocol import GatewayProtocol
+from .memory_broker import MemoryBroker
 from .memory_store import InMemoryMessageStore
 from .model_agent_runtime import ModelAgentRuntime
 from .models import AgentProfile, BindingRule, EventPolicy, InboundRule
@@ -65,6 +66,7 @@ class RuntimeComponents:
         run_manager (RunManager): 管理 run 生命周期的 manager.
         channel_event_store (ChannelEventStore): 保存 inbound event facts 的 ChannelEventStore.
         message_store (MessageStore): 保存 delivered facts 的 MessageStore.
+        memory_broker (MemoryBroker): 长期记忆统一入口.
         prompt_loader (PromptLoader): 按 `prompt_ref` 加载 system prompt 的 loader.
         profile_loader (ProfileLoader): 按 `RouteDecision` 加载 profile 的 loader.
         tool_broker (ToolBroker): runtime 侧统一工具入口.
@@ -81,6 +83,7 @@ class RuntimeComponents:
     run_manager: RunManager
     channel_event_store: ChannelEventStore
     message_store: MessageStore
+    memory_broker: MemoryBroker
     prompt_loader: PromptLoader
     profile_loader: ProfileLoader
     tool_broker: ToolBroker
@@ -101,6 +104,7 @@ def build_runtime_components(
     thread_manager: ThreadManager | None = None,
     run_manager: RunManager | None = None,
     channel_event_store: ChannelEventStore | None = None,
+    memory_broker: MemoryBroker | None = None,
     tool_broker: ToolBroker | None = None,
     approval_resumer: ApprovalResumer | None = None,
 ) -> RuntimeComponents:
@@ -115,6 +119,7 @@ def build_runtime_components(
         thread_manager: 可选的 ThreadManager 实现.
         run_manager: 可选的 RunManager 实现.
         channel_event_store: 可选的 ChannelEventStore 实现.
+        memory_broker: 可选的 MemoryBroker 实现.
         tool_broker: 可选的 ToolBroker 实现.
         approval_resumer: 可选的 approval resumer.
 
@@ -148,6 +153,7 @@ def build_runtime_components(
     runtime_run_manager = run_manager or _build_run_manager(config)
     runtime_channel_event_store = channel_event_store or _build_channel_event_store(config)
     runtime_message_store = message_store or _build_message_store(config)
+    runtime_memory_broker = memory_broker or _build_memory_broker(config)
     runtime_tool_broker = tool_broker or ToolBroker()
     runtime_approval_resumer = approval_resumer or NoopApprovalResumer()
     agent_runtime = ModelAgentRuntime(
@@ -161,6 +167,7 @@ def build_runtime_components(
         outbox=outbox,
         run_manager=runtime_run_manager,
         thread_manager=runtime_thread_manager,
+        memory_broker=runtime_memory_broker,
         tool_broker=runtime_tool_broker,
     )
     app = RuntimeApp(
@@ -181,6 +188,7 @@ def build_runtime_components(
         run_manager=runtime_run_manager,
         channel_event_store=runtime_channel_event_store,
         message_store=runtime_message_store,
+        memory_broker=runtime_memory_broker,
         prompt_loader=prompt_loader,
         profile_loader=profile_registry,
         tool_broker=runtime_tool_broker,
@@ -417,6 +425,20 @@ def _build_channel_event_store(config: Config) -> ChannelEventStore:
     if sqlite_path is None:
         return InMemoryChannelEventStore()
     return SQLiteChannelEventStore(sqlite_path)
+
+
+def _build_memory_broker(config: Config) -> MemoryBroker:
+    """根据配置构造 MemoryBroker.
+
+    Args:
+        config: 项目配置对象.
+
+    Returns:
+        默认的 MemoryBroker 实现.
+    """
+
+    _ = config
+    return MemoryBroker()
 
 
 def _get_persistence_sqlite_path(config: Config) -> str | None:

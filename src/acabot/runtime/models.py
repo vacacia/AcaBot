@@ -703,6 +703,7 @@ class RunContext:
     thread: ThreadState
     profile: AgentProfile
     messages: list[dict[str, Any]] = field(default_factory=list)
+    memory_blocks: list["MemoryBlock"] = field(default_factory=list)
     system_prompt: str = ""
     response: Any | None = None
     actions: list[PlannedAction] = field(default_factory=list)

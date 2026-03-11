@@ -15,6 +15,7 @@ from acabot.runtime import (
     AgentProfile,
     InMemoryChannelEventStore,
     InMemoryMessageStore,
+    MemoryBroker,
     NoopApprovalResumer,
     RouteDecision,
     RuntimeComponents,
@@ -263,6 +264,7 @@ async def test_run_starts_and_stops_runtime_app(monkeypatch) -> None:
             run_manager=None,  # type: ignore[arg-type]
             channel_event_store=InMemoryChannelEventStore(),
             message_store=InMemoryMessageStore(),
+            memory_broker=MemoryBroker(),
             prompt_loader=None,  # type: ignore[arg-type]
             profile_loader=None,  # type: ignore[arg-type]
             tool_broker=None,  # type: ignore[arg-type]

@@ -14,6 +14,16 @@ from .app import RuntimeApp
 from .bootstrap import RuntimeComponents, build_runtime_components
 from .event_policy import EventPolicyRegistry
 from .event_store import InMemoryChannelEventStore
+from .memory_broker import (
+    MemoryBlock,
+    MemoryBroker,
+    MemoryExtractor,
+    MemoryRetrievalRequest,
+    MemoryRetriever,
+    MemoryWriteRequest,
+    NullMemoryExtractor,
+    NullMemoryRetriever,
+)
 from .memory_store import InMemoryMessageStore
 from .legacy_agent_runtime import LegacyAgentRuntime
 from .model_agent_runtime import (
@@ -105,10 +115,18 @@ __all__ = [
     "InMemoryMessageStore",
     "InMemoryThreadManager",
     "LegacyAgentRuntime",
+    "MemoryBlock",
+    "MemoryBroker",
+    "MemoryExtractor",
     "MessageRecord",
     "MessageStore",
+    "MemoryRetrievalRequest",
+    "MemoryRetriever",
+    "MemoryWriteRequest",
     "ModelAgentRuntime",
     "NoopApprovalResumer",
+    "NullMemoryExtractor",
+    "NullMemoryRetriever",
     "OutboxItem",
     "PendingApproval",
     "PendingApprovalRecord",

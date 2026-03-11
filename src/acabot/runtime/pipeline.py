@@ -6,11 +6,13 @@
 from __future__ import annotations
 
 import logging
+from textwrap import dedent
 
 from acabot.types import Action, ActionType
 
 from .agent_runtime import AgentRuntime
 from .models import DispatchReport, PlannedAction, RunContext
+from .memory_broker import MemoryBlock, MemoryBroker
 from .outbox import Outbox
 from .runs import RunManager
 from .tool_broker import ToolBroker
@@ -22,8 +24,11 @@ logger = logging.getLogger("acabot.runtime.pipeline")
 class ThreadPipeline:
     """一次 run 的最小执行器.
 
-    当前版本仍然不接 hook 或 memory broker.
-    但 approval prompt 的 audit 回写已经接到 ToolBroker.
+    当前版本已经接入:
+    - MemoryBroker retrieval / extraction skeleton
+    - ToolBroker approval audit 回写
+
+    仍然不接 hook registry.
     """
 
     def __init__(
@@ -33,6 +38,7 @@ class ThreadPipeline:
         outbox: Outbox,
         run_manager: RunManager,
         thread_manager: ThreadManager,
+        memory_broker: MemoryBroker | None = None,
         tool_broker: ToolBroker | None = None,
     ) -> None:
         """初始化 ThreadPipeline.
@@ -42,6 +48,7 @@ class ThreadPipeline:
             outbox: 统一出站组件.
             run_manager: run 生命周期管理器.
             thread_manager: thread 状态管理器.
+            memory_broker: 可选的 MemoryBroker. 用于 retrieval 和 extraction.
             tool_broker: 可选的 ToolBroker. 用于 approval prompt 的 audit 回写.
         """
 
@@ -49,6 +56,7 @@ class ThreadPipeline:
         self.outbox = outbox
         self.run_manager = run_manager
         self.thread_manager = thread_manager
+        self.memory_broker = memory_broker
         self.tool_broker = tool_broker
 
     async def execute(self, ctx: RunContext) -> None:
@@ -67,8 +75,10 @@ class ThreadPipeline:
             if ctx.decision.run_mode == "record_only":
                 await self.thread_manager.save(ctx.thread)
                 await self.run_manager.mark_completed(ctx.run.run_id)
+                await self._extract_memory_safely(ctx)
                 return
 
+            await self._inject_memories(ctx)
             ctx.response = await self.agent_runtime.execute(ctx)
             ctx.actions = list(ctx.response.actions)
 
@@ -79,6 +89,7 @@ class ThreadPipeline:
 
             await self._update_thread_after_send(ctx)
             await self._finish_run(ctx)
+            await self._extract_memory_safely(ctx)
         except Exception as exc:
             logger.exception("ThreadPipeline crashed: run_id=%s", ctx.run.run_id)
             await self._save_thread_safely(ctx)
@@ -120,6 +131,21 @@ class ThreadPipeline:
         content = self._build_user_content(ctx)
         ctx.thread.working_messages.append({"role": "user", "content": content})
         ctx.thread.last_event_at = ctx.event.timestamp
+
+    async def _inject_memories(self, ctx: RunContext) -> None:
+        """通过 MemoryBroker 检索并注入长期记忆.
+
+        Args:
+            ctx: 当前 run 的执行上下文.
+        """
+
+        if self.memory_broker is None:
+            return
+
+        ctx.memory_blocks = await self.memory_broker.retrieve(ctx)
+        if not ctx.memory_blocks:
+            return
+        ctx.messages = self._inject_memory_blocks(ctx.messages, ctx.memory_blocks)
 
     async def _update_thread_after_send(self, ctx: RunContext) -> None:
         """根据实际送达结果更新 thread working memory.
@@ -207,6 +233,26 @@ class ThreadPipeline:
 
         await self.run_manager.mark_completed(ctx.run.run_id)
 
+    async def _extract_memory_safely(self, ctx: RunContext) -> None:
+        """尽力触发一次 memory write-back.
+
+        Args:
+            ctx: 当前 run 的执行上下文.
+        """
+
+        if self.memory_broker is None:
+            return
+        if ctx.response is not None and ctx.response.status == "waiting_approval":
+            return
+
+        try:
+            await self.memory_broker.extract_after_run(ctx)
+        except Exception:
+            logger.exception(
+                "Failed to extract memory after run: run_id=%s",
+                ctx.run.run_id,
+            )
+
     async def _mark_failed_safely(self, run_id: str, error: str) -> None:
         """尽力把 run 收尾为 failed.
 
@@ -256,3 +302,38 @@ class ThreadPipeline:
             target = ctx.event.target_message_id or ""
             event_label = f"notice:recall target={target}".strip()
         return f"{prefix} [{event_label}]"
+
+    @staticmethod
+    def _inject_memory_blocks(
+        messages: list[dict[str, object]],
+        blocks: list[MemoryBlock],
+    ) -> list[dict[str, object]]:
+        """把 MemoryBlock 注入到发送给模型的消息列表里.
+
+        Args:
+            messages: 原始消息列表.
+            blocks: MemoryBroker 返回的 MemoryBlock 列表.
+
+        Returns:
+            一份带记忆注入的新消息列表.
+        """
+
+        if not blocks:
+            return list(messages)
+
+        memory_text = "\n\n".join(
+            f"[{block.title}]\n{block.content}"
+            for block in blocks
+        )
+        memory_message = {
+            "role": "system",
+            "content": dedent(
+                f"""\
+                以下记忆来自系统检索, 可能不完全准确.
+                你需要结合当前上下文判断是否采用:
+
+                {memory_text}
+                """
+            ).strip(),
+        }
+        return [memory_message, *list(messages)]
