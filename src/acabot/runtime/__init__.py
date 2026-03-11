@@ -12,6 +12,14 @@ from .approval_resumer import (
 )
 from .app import RuntimeApp
 from .bootstrap import RuntimeComponents, build_runtime_components
+from .context_compactor import (
+    ContextCompactionConfig,
+    ContextCompactionResult,
+    ContextCompactor,
+    ContextSummarizer,
+    ModelContextSummarizer,
+    NullContextSummarizer,
+)
 from .event_policy import EventPolicyRegistry
 from .event_store import InMemoryChannelEventStore
 from .memory_broker import (
@@ -52,7 +60,9 @@ from .models import (
     PendingApproval,
     PendingApprovalRecord,
     PlannedAction,
+    PromptSlot,
     RecoveryReport,
+    RetrievalPlan,
     RouteDecision,
     RunContext,
     RunRecord,
@@ -84,6 +94,7 @@ from .reference_backend import (
     ReferenceProviderMode,
     ReferenceSpace,
 )
+from .retrieval_planner import PromptAssemblyConfig, RetrievalPlanner
 from .router import InboundRuleRegistry, RuntimeRouter
 from .runs import InMemoryRunManager, RunManager, StoreBackedRunManager
 from .sqlite_stores import (
@@ -121,6 +132,11 @@ __all__ = [
     "BindingRule",
     "ChannelEventRecord",
     "ChannelEventStore",
+    "ContextCompactionConfig",
+    "ContextCompactionResult",
+    "ContextCompactor",
+    "ContextSummarizer",
+    "ModelContextSummarizer",
     "DeliveryResult",
     "DispatchReport",
     "build_runtime_components",
@@ -148,6 +164,7 @@ __all__ = [
     "ModelAgentRuntime",
     "InMemoryMemoryStore",
     "NoopApprovalResumer",
+    "NullContextSummarizer",
     "NullMemoryExtractor",
     "NullMemoryRetriever",
     "NullReferenceBackend",
@@ -157,7 +174,9 @@ __all__ = [
     "PendingApprovalRecord",
     "PlannedAction",
     "ProfileLoader",
+    "PromptAssemblyConfig",
     "PromptLoader",
+    "PromptSlot",
     "RouteDecision",
     "RecoveryReport",
     "RuntimeComponents",
@@ -169,6 +188,8 @@ __all__ = [
     "RunStep",
     "RunStore",
     "RuntimeRouter",
+    "RetrievalPlan",
+    "RetrievalPlanner",
     "Outbox",
     "SQLiteChannelEventStore",
     "SQLiteMemoryStore",

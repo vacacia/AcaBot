@@ -81,7 +81,10 @@ class StoreBackedMemoryRetriever:
             一组可注入给 runtime 的 MemoryBlock.
         """
 
-        hints = _parse_requested_memory_hints(request.requested_scopes)
+        hints = _parse_requested_memory_hints(
+            request.requested_scopes,
+            requested_memory_types=request.requested_memory_types,
+        )
         blocks: list[MemoryBlock] = []
 
         for scope in hints.scopes:
@@ -237,18 +240,25 @@ class StructuredMemoryExtractor:
 
 
 # region 共享helper
-def _parse_requested_memory_hints(values: list[str]) -> _RequestedMemoryHints:
+def _parse_requested_memory_hints(
+    values: list[str],
+    *,
+    requested_memory_types: list[str] | None = None,
+) -> _RequestedMemoryHints:
     """把 control plane 给出的 hint 拆成 scopes 和 memory_types.
 
     Args:
         values: `event_memory_scopes` 当前携带的 hint 列表.
+        requested_memory_types: 显式声明的 memory types.
 
     Returns:
         一份拆分后的 _RequestedMemoryHints.
     """
 
     scopes = [value for value in values if value in _KNOWN_MEMORY_SCOPES]
-    memory_types = [value for value in values if value in _KNOWN_MEMORY_TYPES]
+    memory_types = list(requested_memory_types or [])
+    if not memory_types:
+        memory_types = [value for value in values if value in _KNOWN_MEMORY_TYPES]
     if not scopes:
         scopes = ["relationship", "user", "channel", "global"]
     return _RequestedMemoryHints(scopes=scopes, memory_types=memory_types)

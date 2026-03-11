@@ -1,19 +1,24 @@
-"""runtime.pipeline 实现最小 ThreadPipeline.
+"""runtime.pipeline 实现 ThreadPipeline.
 
-这一版先跑通一条最短执行链路, 即 user event -> agent runtime -> outbox -> run 收尾.
+这一版已经接入:
+- retrieval planning
+- context compaction
+- prompt slot assembly
+- user event -> agent runtime -> outbox -> run 收尾
 """
 
 from __future__ import annotations
 
 import logging
-from textwrap import dedent
 
 from acabot.types import Action, ActionType
 
 from .agent_runtime import AgentRuntime
+from .context_compactor import ContextCompactor
 from .models import DispatchReport, PlannedAction, RunContext
-from .memory_broker import MemoryBlock, MemoryBroker
+from .memory_broker import MemoryBroker
 from .outbox import Outbox
+from .retrieval_planner import RetrievalPlanner
 from .runs import RunManager
 from .tool_broker import ToolBroker
 from .threads import ThreadManager
@@ -39,6 +44,8 @@ class ThreadPipeline:
         run_manager: RunManager,
         thread_manager: ThreadManager,
         memory_broker: MemoryBroker | None = None,
+        retrieval_planner: RetrievalPlanner | None = None,
+        context_compactor: ContextCompactor | None = None,
         tool_broker: ToolBroker | None = None,
     ) -> None:
         """初始化 ThreadPipeline.
@@ -49,6 +56,8 @@ class ThreadPipeline:
             run_manager: run 生命周期管理器.
             thread_manager: thread 状态管理器.
             memory_broker: 可选的 MemoryBroker. 用于 retrieval 和 extraction.
+            retrieval_planner: 可选的 RetrievalPlanner. 用于 planning 和 prompt assembly.
+            context_compactor: 可选的 ContextCompactor. 用于 working memory compaction.
             tool_broker: 可选的 ToolBroker. 用于 approval prompt 的 audit 回写.
         """
 
@@ -57,36 +66,104 @@ class ThreadPipeline:
         self.run_manager = run_manager
         self.thread_manager = thread_manager
         self.memory_broker = memory_broker
+        self.retrieval_planner = retrieval_planner
+        self.context_compactor = context_compactor
         self.tool_broker = tool_broker
-
+    # region execute
     async def execute(self, ctx: RunContext) -> None:
         """执行一条最小 runtime 主线.
 
         Args:
             ctx: 当前 run 的完整执行上下文.
         """
-
+        # 标记 run 状态为 running
         await self.run_manager.mark_running(ctx.run.run_id)
         try:
+            # -----------------------------------------------------
+            # 准备 compaction
+            # -----------------------------------------------------
+            compaction_result = None
+            compaction_snapshot = None
+            # 锁内: 写入用户消息 + 创建 thread 快照
             async with ctx.thread.lock:
                 self._append_incoming_message(ctx)
-                ctx.messages = list(ctx.thread.working_messages)
-
+                if self.context_compactor is not None:
+                    compaction_snapshot = self.context_compactor.snapshot_thread(ctx.thread)
+            # -----------------------------------------------------
+            # 锁外执行 Context Compaction
+            # -----------------------------------------------------
+            """NOTE: 
+            压缩期间 thread 被修改, 会拒绝回写; 但本次 run 依然使用压缩的结果
+                - user:A -> run-1 -> user:A append 到共享 thread -> run-1 snapshot 后开始 compaction
+                - user:B -> run-2 -> user:B append 到共享 thread -> run-2 snapshot 后开始 compaction
+                - run-1 用自己的 effective_* 结果调用 LLM, append assistant:reply_to_A
+                - run-2 用自己的 effective_* 结果调用 LLM, append assistant:reply_to_B
+            所以: 
+                - 同一个 thread 的 run 之间是并行的
+                - 单个 run 的 append_incoming_message, compaction 是阻塞的
+                - 虽然 compaction 可能有重复的工作量, 但好处是能并行回复
+            TODO: single-flight thread compaction with append-only rebase
+            """
+            if self.context_compactor is not None and compaction_snapshot is not None:
+                compaction_result = await self.context_compactor.compact(
+                    ctx,
+                    snapshot=compaction_snapshot,
+                )
+                # 压缩结果存入 ctx.metadata
+                ctx.metadata["effective_working_summary"] = compaction_result.summary_text
+                ctx.metadata["effective_compacted_messages"] = list(compaction_result.compressed_messages)
+                ctx.metadata["effective_dropped_messages"] = list(compaction_result.dropped_messages)
+                # 重新获取锁, 将 compaction 结果应用到 thread
+                async with ctx.thread.lock:
+                    applied = self.context_compactor.apply_to_thread(
+                        ctx.thread,
+                        snapshot=compaction_snapshot,
+                        result=compaction_result,
+                        timestamp=ctx.event.timestamp,
+                    )
+                ctx.metadata["compaction_applied_to_thread"] = applied
+            else:
+                ctx.metadata["effective_working_summary"] = ctx.thread.working_summary
+                ctx.metadata["effective_compacted_messages"] = list(ctx.thread.working_messages)
+                ctx.metadata["effective_dropped_messages"] = []
+            # -----------------------------------------------------
+            # 准备 Retrieval Plan
+            # -----------------------------------------------------
+            async with ctx.thread.lock:
+                if self.retrieval_planner is not None:
+                    # prepare 会读取 ctx.metadata["effective_*"] 字段
+                    ctx.retrieval_plan = self.retrieval_planner.prepare(ctx)
+                    ctx.messages = list(ctx.retrieval_plan.compressed_messages)
+                else:
+                    # 没有 planner, 直接使用 compaction 后的消息
+                    ctx.messages = list(ctx.metadata.get("effective_compacted_messages", ctx.thread.working_messages))
+            # -----------------------------------------------------
+            # record_only 模式
+            # -----------------------------------------------------
             if ctx.decision.run_mode == "record_only":
                 await self.thread_manager.save(ctx.thread)
                 await self.run_manager.mark_completed(ctx.run.run_id)
                 await self._extract_memory_safely(ctx)
-                return
+                return # 不调用 LLM
 
+            # -----------------------------------------------------
+            # 注入记忆, 调用 Agent
+            # -----------------------------------------------------
             await self._inject_memories(ctx)
             ctx.response = await self.agent_runtime.execute(ctx)
             ctx.actions = list(ctx.response.actions)
 
+            # -----------------------------------------------------
+            # 发送回复
+            # -----------------------------------------------------
             if ctx.actions:
+                # 通过 Outbox 发送
                 ctx.delivery_report = await self.outbox.dispatch(ctx)
             else:
                 ctx.delivery_report = DispatchReport()
-
+            # -----------------------------------------------------
+            # 收尾
+            # -----------------------------------------------------
             await self._update_thread_after_send(ctx)
             await self._finish_run(ctx)
             await self._extract_memory_safely(ctx)
@@ -140,12 +217,19 @@ class ThreadPipeline:
         """
 
         if self.memory_broker is None:
+            ctx.memory_blocks = []
+        else:
+            ctx.memory_blocks = await self.memory_broker.retrieve(ctx)
+
+        if self.retrieval_planner is not None:
+            ctx.messages = self.retrieval_planner.assemble(
+                ctx,
+                memory_blocks=ctx.memory_blocks,
+            )
             return
 
-        ctx.memory_blocks = await self.memory_broker.retrieve(ctx)
-        if not ctx.memory_blocks:
-            return
-        ctx.messages = self._inject_memory_blocks(ctx.messages, ctx.memory_blocks)
+        if ctx.memory_blocks:
+            ctx.messages = self._inject_memory_blocks(ctx.messages, ctx.memory_blocks)
 
     async def _update_thread_after_send(self, ctx: RunContext) -> None:
         """根据实际送达结果更新 thread working memory.
@@ -306,9 +390,9 @@ class ThreadPipeline:
     @staticmethod
     def _inject_memory_blocks(
         messages: list[dict[str, object]],
-        blocks: list[MemoryBlock],
+        blocks: list[dict[str, object]] | list[object],
     ) -> list[dict[str, object]]:
-        """把 MemoryBlock 注入到发送给模型的消息列表里.
+        """兼容旧路径的 memory block 注入 helper.
 
         Args:
             messages: 原始消息列表.
@@ -320,20 +404,18 @@ class ThreadPipeline:
 
         if not blocks:
             return list(messages)
-
         memory_text = "\n\n".join(
-            f"[{block.title}]\n{block.content}"
+            f"[{getattr(block, 'title', '')}]\n{getattr(block, 'content', '')}"
             for block in blocks
         )
-        memory_message = {
-            "role": "system",
-            "content": dedent(
-                f"""\
-                以下记忆来自系统检索, 可能不完全准确.
-                你需要结合当前上下文判断是否采用:
-
-                {memory_text}
-                """
-            ).strip(),
-        }
-        return [memory_message, *list(messages)]
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "以下记忆来自系统检索, 可能不完全准确.\n"
+                    "你需要结合当前上下文判断是否采用:\n\n"
+                    f"{memory_text}"
+                ).strip(),
+            },
+            *list(messages),
+        ]

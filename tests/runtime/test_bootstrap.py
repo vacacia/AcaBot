@@ -13,9 +13,12 @@ from acabot.agent import ToolDef
 from acabot.config import Config
 from acabot.runtime import (
     InMemoryMemoryStore,
+    ContextCompactor,
+    ModelContextSummarizer,
     LocalReferenceBackend,
     NullReferenceBackend,
     OpenVikingReferenceBackend,
+    RetrievalPlanner,
     RouteDecision,
     SQLiteChannelEventStore,
     SQLiteMemoryStore,
@@ -180,6 +183,7 @@ async def test_build_runtime_components_runs_app_with_model_agent_runtime() -> N
     assert agent.calls[0]["model"] == "test-model"
     assert components.pipeline.tool_broker is components.tool_broker
     assert components.pipeline.memory_broker is components.memory_broker
+    assert components.pipeline.retrieval_planner is components.retrieval_planner
     assert isinstance(components.memory_store, InMemoryMemoryStore)
     assert len(gateway.sent) == 1
 
@@ -747,6 +751,80 @@ def test_build_runtime_components_defaults_to_null_reference_backend() -> None:
     )
 
     assert isinstance(components.reference_backend, NullReferenceBackend)
+    assert isinstance(components.retrieval_planner, RetrievalPlanner)
+    assert isinstance(components.context_compactor, ContextCompactor)
+    assert isinstance(components.context_compactor.summarizer, ModelContextSummarizer)
+
+
+def test_build_runtime_components_applies_prompt_assembly_config() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "runtime-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "default_prompt_ref": "prompt/default",
+                "prompt_assembly": {
+                    "sticky_intro": "稳定规则如下",
+                    "summary_slot_position": "history_prefix",
+                    "summary_message_role": "system",
+                },
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+
+    assert components.retrieval_planner.config.sticky_intro == "稳定规则如下"
+    assert components.retrieval_planner.config.summary_slot_position == "history_prefix"
+    assert components.retrieval_planner.config.summary_message_role == "system"
+
+
+def test_build_runtime_components_applies_context_compaction_config() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "runtime-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "default_prompt_ref": "prompt/default",
+                "context_compaction": {
+                    "enabled": True,
+                    "strategy": "summarize",
+                    "max_context_ratio": 0.55,
+                    "preserve_recent_turns": 4,
+                    "system_prompt_reserve_tokens": 1200,
+                    "prompt_slot_reserve_tokens": 2200,
+                    "tool_schema_reserve_tokens": 3300,
+                    "fallback_context_window": 32000,
+                },
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+
+    assert components.context_compactor.config.enabled is True
+    assert components.context_compactor.config.strategy == "summarize"
+    assert components.context_compactor.config.max_context_ratio == 0.55
+    assert components.context_compactor.config.preserve_recent_turns == 4
+    assert components.context_compactor.config.system_prompt_reserve_tokens == 1200
+    assert components.context_compactor.config.prompt_slot_reserve_tokens == 2200
+    assert components.context_compactor.config.tool_schema_reserve_tokens == 3300
+    assert components.context_compactor.config.fallback_context_window == 32000
+    assert components.context_compactor.config.summary_model == ""
 
 
 def test_build_runtime_components_selects_local_reference_backend(tmp_path: Path) -> None:

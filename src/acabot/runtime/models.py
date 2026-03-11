@@ -25,6 +25,7 @@ RunMode = Literal["respond", "record_only", "silent_drop"]
 CommitWhen = Literal["success", "failure", "waiting_approval", "always"]
 ApprovalDecision = Literal["approved", "rejected"]
 MemoryEditMode = Literal["readonly", "draft", "private"]
+PromptSlotPosition = Literal["system_message", "history_prefix", "tool_result", "private_scratchpad"]
 
 
 @dataclass(slots=True)
@@ -714,6 +715,52 @@ class ApprovalDecisionResult:
 
 
 @dataclass(slots=True)
+class PromptSlot:
+    """一次 prompt assembly 中的动态槽位.
+
+    Attributes:
+        slot_id (str): 当前 slot 的稳定标识.
+        slot_type (str): 当前 slot 类型, 例如 `sticky_notes`, `thread_summary`, `retrieved_memory`.
+        title (str): 当前 slot 标题.
+        content (str): 注入给模型的正文内容.
+        position (PromptSlotPosition): 当前 slot 的注入位置.
+        message_role (str): 注入到 messages 时使用的 role.
+        stable (bool): 当前 slot 是否相对稳定.
+        metadata (dict[str, Any]): 附加元数据.
+    """
+
+    slot_id: str
+    slot_type: str
+    title: str
+    content: str
+    position: PromptSlotPosition = "system_message"
+    message_role: str = "system"
+    stable: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class RetrievalPlan:
+    """进入模型前的 retrieval 和 prompt assembly 计划.
+
+    Attributes:
+        requested_scopes (list[str]): 当前 run 需要读取的 memory scopes.
+        requested_memory_types (list[str]): 当前 run 需要读取的 memory types.
+        compressed_messages (list[dict[str, Any]]): 压缩后的 working memory.
+        dropped_messages (list[dict[str, Any]]): 因压缩而临时移出的历史消息.
+        prompt_slots (list[PromptSlot]): 当前 run 生成的动态 prompt slots.
+        metadata (dict[str, Any]): 附加 planning 元数据.
+    """
+
+    requested_scopes: list[str] = field(default_factory=list)
+    requested_memory_types: list[str] = field(default_factory=list)
+    compressed_messages: list[dict[str, Any]] = field(default_factory=list)
+    dropped_messages: list[dict[str, Any]] = field(default_factory=list)
+    prompt_slots: list[PromptSlot] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class RunStep:
     """run 内部的可审计步骤记录.
 
@@ -741,7 +788,9 @@ class RunContext:
     thread: ThreadState
     profile: AgentProfile
     messages: list[dict[str, Any]] = field(default_factory=list)
+    retrieval_plan: RetrievalPlan | None = None
     memory_blocks: list["MemoryBlock"] = field(default_factory=list)
+    prompt_slots: list[PromptSlot] = field(default_factory=list)
     system_prompt: str = ""
     response: Any | None = None
     actions: list[PlannedAction] = field(default_factory=list)

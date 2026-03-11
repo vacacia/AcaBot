@@ -1,5 +1,5 @@
 from acabot.runtime import MemoryBlock, MemoryBroker, RunContext
-from acabot.runtime.models import AgentProfile, RouteDecision, RunRecord, ThreadState
+from acabot.runtime.models import AgentProfile, RetrievalPlan, RouteDecision, RunRecord, ThreadState
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
 
@@ -81,6 +81,11 @@ def _ctx() -> RunContext:
             prompt_ref="prompt/default",
             default_model="test-model",
         ),
+        retrieval_plan=RetrievalPlan(
+            requested_scopes=["relationship", "user"],
+            requested_memory_types=["sticky_note", "episodic"],
+            compressed_messages=[{"role": "user", "content": "[acacia/10001] [notice:poke]"}],
+        ),
     )
 
 
@@ -96,9 +101,11 @@ async def test_memory_broker_builds_retrieval_request_from_context() -> None:
     assert request.event_id == "evt-1"
     assert request.event_type == "poke"
     assert request.event_timestamp == 123
-    assert request.requested_scopes == ["episodic", "relationship"]
+    assert request.requested_scopes == ["relationship", "user"]
+    assert request.requested_memory_types == ["sticky_note", "episodic"]
     assert request.event_tags == ["notice", "poke"]
     assert request.metadata["event_policy_id"] == "poke-memory"
+    assert request.metadata["prompt_slot_count"] == 0
 
 
 async def test_memory_broker_builds_write_request_from_context() -> None:

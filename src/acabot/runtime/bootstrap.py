@@ -28,6 +28,11 @@ from acabot.config import Config
 from .agent_runtime import AgentRuntime
 from .approval_resumer import ApprovalResumer, NoopApprovalResumer
 from .app import RuntimeApp
+from .context_compactor import (
+    ContextCompactionConfig,
+    ContextCompactor,
+    ModelContextSummarizer,
+)
 from .event_policy import EventPolicyRegistry
 from .event_store import InMemoryChannelEventStore
 from .gateway_protocol import GatewayProtocol
@@ -50,6 +55,7 @@ from .reference_backend import (
     OpenVikingReferenceBackend,
     ReferenceBackend,
 )
+from .retrieval_planner import PromptAssemblyConfig, RetrievalPlanner
 from .router import InboundRuleRegistry, RuntimeRouter
 from .runs import InMemoryRunManager, RunManager, StoreBackedRunManager
 from .sqlite_stores import (
@@ -78,6 +84,8 @@ class RuntimeComponents:
         message_store (MessageStore): 保存 delivered facts 的 MessageStore.
         memory_store (MemoryStore): 保存长期记忆项的 MemoryStore.
         memory_broker (MemoryBroker): 长期记忆统一入口.
+        context_compactor (ContextCompactor): 负责 token-aware working memory compaction 的 compactor.
+        retrieval_planner (RetrievalPlanner): 负责 retrieval planning 和 prompt assembly 的 planner.
         reference_backend (ReferenceBackend): on-demand `reference / notebook` provider.
         prompt_loader (PromptLoader): 按 `prompt_ref` 加载 system prompt 的 loader.
         profile_loader (ProfileLoader): 按 `RouteDecision` 加载 profile 的 loader.
@@ -97,6 +105,8 @@ class RuntimeComponents:
     message_store: MessageStore
     memory_store: MemoryStore
     memory_broker: MemoryBroker
+    context_compactor: ContextCompactor
+    retrieval_planner: RetrievalPlanner
     reference_backend: ReferenceBackend
     prompt_loader: PromptLoader
     profile_loader: ProfileLoader
@@ -120,6 +130,8 @@ def build_runtime_components(
     run_manager: RunManager | None = None,
     channel_event_store: ChannelEventStore | None = None,
     memory_broker: MemoryBroker | None = None,
+    context_compactor: ContextCompactor | None = None,
+    retrieval_planner: RetrievalPlanner | None = None,
     reference_backend: ReferenceBackend | None = None,
     tool_broker: ToolBroker | None = None,
     approval_resumer: ApprovalResumer | None = None,
@@ -137,6 +149,8 @@ def build_runtime_components(
         run_manager: 可选的 RunManager 实现.
         channel_event_store: 可选的 ChannelEventStore 实现.
         memory_broker: 可选的 MemoryBroker 实现.
+        context_compactor: 可选的 ContextCompactor 实现.
+        retrieval_planner: 可选的 RetrievalPlanner 实现.
         reference_backend: 可选的 ReferenceBackend 实现.
         tool_broker: 可选的 ToolBroker 实现.
         approval_resumer: 可选的 approval resumer.
@@ -176,6 +190,11 @@ def build_runtime_components(
         config,
         memory_store=runtime_memory_store,
     )
+    runtime_context_compactor = context_compactor or _build_context_compactor(
+        config,
+        agent=agent,
+    )
+    runtime_retrieval_planner = retrieval_planner or _build_retrieval_planner(config)
     runtime_reference_backend = reference_backend or _build_reference_backend(config)
     runtime_tool_broker = tool_broker or ToolBroker()
     runtime_approval_resumer = approval_resumer or NoopApprovalResumer()
@@ -191,6 +210,8 @@ def build_runtime_components(
         run_manager=runtime_run_manager,
         thread_manager=runtime_thread_manager,
         memory_broker=runtime_memory_broker,
+        retrieval_planner=runtime_retrieval_planner,
+        context_compactor=runtime_context_compactor,
         tool_broker=runtime_tool_broker,
     )
     app = RuntimeApp(
@@ -214,6 +235,8 @@ def build_runtime_components(
         message_store=runtime_message_store,
         memory_store=runtime_memory_store,
         memory_broker=runtime_memory_broker,
+        context_compactor=runtime_context_compactor,
+        retrieval_planner=runtime_retrieval_planner,
         reference_backend=runtime_reference_backend,
         prompt_loader=prompt_loader,
         profile_loader=profile_registry,
@@ -526,6 +549,134 @@ def _build_reference_backend(config: Config) -> ReferenceBackend:
         )
 
     raise ValueError(f"unsupported runtime.reference provider: {provider}")
+
+
+def _build_retrieval_planner(config: Config) -> RetrievalPlanner:
+    """根据配置构造 RetrievalPlanner.
+
+    Args:
+        config: 项目配置对象.
+
+    Returns:
+        默认的 RetrievalPlanner 实现.
+    """
+
+    runtime_conf = config.get("runtime", {})
+    # prompt_assembly 配置
+    prompt_conf = dict(runtime_conf.get("prompt_assembly", {}))
+    
+    return RetrievalPlanner(
+        PromptAssemblyConfig(
+            # sticky_notes 插入位置：默认 system_message
+            sticky_slot_position=str(prompt_conf.get("sticky_slot_position", "system_message")),
+            # summary 插入位置：默认 history_prefix 历史消息之前
+            summary_slot_position=str(prompt_conf.get("summary_slot_position", "history_prefix")),
+            # retrieved_memory 插入位置：默认 system_message
+            retrieval_slot_position=str(
+                prompt_conf.get("retrieval_slot_position", "system_message")
+            ),
+            sticky_message_role=str(prompt_conf.get("sticky_message_role", "system")),
+            summary_message_role=str(prompt_conf.get("summary_message_role", "user")),
+            retrieval_message_role=str(prompt_conf.get("retrieval_message_role", "system")),
+            sticky_intro=str(
+                prompt_conf.get(
+                    "sticky_intro",
+                    "以下是稳定事实和长期规则. 默认可信, 除非当前上下文明确冲突.",
+                )
+            ),
+            summary_prefix=str(
+                prompt_conf.get(
+                    "summary_prefix",
+                    (
+                        "The conversation history before this point was compacted into the following "
+                        "summary:\n\n<summary>\n"
+                    ),
+                )
+            ),
+            summary_suffix=str(prompt_conf.get("summary_suffix", "\n</summary>")),
+            retrieval_intro=str(
+                prompt_conf.get(
+                    "retrieval_intro",
+                    "以下是按需检索到的记忆. 可能不完全准确, 需要结合当前上下文判断.",
+                )
+            ),
+            # 默认检索范围(未指定时使用)
+            default_scopes=[
+                str(value) for value in prompt_conf.get(
+                    "default_scopes",
+                    ["relationship", "user", "channel", "global"],
+                )
+            ],
+            # 默认读取的记忆类型
+            default_memory_types=[
+                str(value) for value in prompt_conf.get(
+                    "default_memory_types",
+                    ["sticky_note", "semantic", "relationship", "episodic"],
+                )
+            ],
+        )
+    )
+
+
+def _build_context_compactor(
+    config: Config,
+    *,
+    agent: BaseAgent,
+) -> ContextCompactor:
+    """根据配置构造 ContextCompactor.
+
+    Args:
+        config: 项目配置对象.
+        agent: 当前 runtime 使用的默认 agent.
+
+    Returns:
+        默认的 ContextCompactor 实现.
+    """
+
+    runtime_conf = config.get("runtime", {})
+    compaction_conf = dict(runtime_conf.get("context_compaction", {}))
+    compaction_config = ContextCompactionConfig(
+        enabled=bool(compaction_conf.get("enabled", True)),
+        strategy=str(compaction_conf.get("strategy", "truncate")),
+        max_context_ratio=float(compaction_conf.get("max_context_ratio", 0.7)),
+        preserve_recent_turns=int(compaction_conf.get("preserve_recent_turns", 6)),
+        # 为固定 system prompt 预留的 token
+        system_prompt_reserve_tokens=int(
+            compaction_conf.get("system_prompt_reserve_tokens", 1500)
+        ),
+        # 为动态 prompt slots 预留的 token
+        prompt_slot_reserve_tokens=int(
+            compaction_conf.get("prompt_slot_reserve_tokens", 2500)
+        ),
+        # 为 tool schema 预留的 token
+        tool_schema_reserve_tokens=int(
+            compaction_conf.get("tool_schema_reserve_tokens", 3000)
+        ),
+        summary_model=str(compaction_conf.get("summary_model", "")),
+        # 摘要最大字符数
+        summary_max_chars=int(compaction_conf.get("summary_max_chars", 2400)),
+        # 首次摘要的 system prompt
+        summary_system_prompt=str(
+            compaction_conf.get(
+                "summary_system_prompt",
+                ContextCompactionConfig.summary_system_prompt,
+            )
+        ),
+        # 增量摘要的 system prompt
+        update_summary_system_prompt=str(
+            compaction_conf.get(
+                "update_summary_system_prompt",
+                ContextCompactionConfig.update_summary_system_prompt,
+            )
+        ),
+        fallback_context_window=int(
+            compaction_conf.get("fallback_context_window", 64000)
+        ),
+    )
+    return ContextCompactor(
+        compaction_config,
+        summarizer=ModelContextSummarizer(agent=agent, config=compaction_config),
+    )
 
 
 def _get_persistence_sqlite_path(config: Config) -> str | None:

@@ -64,6 +64,7 @@ class MemoryRetrievalRequest:
         query_text (str): 当前事件的简短检索文本.
         working_summary (str): 当前 thread 的 working summary.
         requested_scopes (list[str]): control plane 建议读取的 memory scope 列表.
+        requested_memory_types (list[str]): control plane 建议读取的 memory_type 列表.
         event_tags (list[str]): 当前事件的 event tags.
         metadata (dict[str, Any]): 其他 retrieval 元数据.
     """
@@ -79,6 +80,7 @@ class MemoryRetrievalRequest:
     query_text: str
     working_summary: str
     requested_scopes: list[str] = field(default_factory=list)
+    requested_memory_types: list[str] = field(default_factory=list)
     event_tags: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -263,13 +265,20 @@ class MemoryBroker:
             event_type=ctx.event.event_type,
             event_timestamp=ctx.event.timestamp,
             query_text=self._user_content(ctx),
-            working_summary=ctx.thread.working_summary,
-            requested_scopes=list(ctx.decision.metadata.get("event_memory_scopes", [])),
+            working_summary=self._working_summary(ctx),
+            requested_scopes=list(
+                (ctx.retrieval_plan.requested_scopes if ctx.retrieval_plan is not None else [])
+                or ctx.decision.metadata.get("event_memory_scopes", [])
+            ),
+            requested_memory_types=list(
+                ctx.retrieval_plan.requested_memory_types if ctx.retrieval_plan is not None else []
+            ),
             event_tags=list(ctx.decision.metadata.get("event_tags", [])),
             metadata={
                 "run_mode": ctx.decision.run_mode,
                 "sender_role": ctx.event.sender_role,
                 "event_policy_id": ctx.decision.metadata.get("event_policy_id", ""),
+                "prompt_slot_count": len(ctx.prompt_slots),
             },
         )
 
@@ -301,7 +310,7 @@ class MemoryBroker:
             metadata={
                 "event_policy_id": ctx.decision.metadata.get("event_policy_id", ""),
                 "extract_to_memory": ctx.decision.metadata.get("event_extract_to_memory", False),
-                "thread_summary": ctx.thread.working_summary,
+                "thread_summary": self._working_summary(ctx),
             },
         )
 
@@ -350,6 +359,19 @@ class MemoryBroker:
             event_label = f"notice:recall target={target}".strip()
         # [昵称/用户ID] [notice:recall target=msg_789]
         return f"{prefix} [{event_label}]"
+
+    @staticmethod
+    def _working_summary(ctx: RunContext) -> str:
+        """读取当前 run 的有效 working summary.
+
+        Args:
+            ctx: 当前 run 的执行上下文.
+
+        Returns:
+            当前 run 应使用的 working summary.
+        """
+
+        return str(ctx.metadata.get("effective_working_summary", ctx.thread.working_summary) or "")
 
     # endregion
 

@@ -1,18 +1,25 @@
+from unittest.mock import AsyncMock, patch
+
 from acabot.agent import ToolSpec
 from acabot.runtime import (
     AgentProfile,
     AgentRuntime,
     AgentRuntimeResult,
+    ContextCompactionConfig,
+    ContextCompactor,
     InMemoryRunManager,
     InMemoryThreadManager,
     InMemoryToolAudit,
     MemoryBlock,
     MemoryBroker,
     ModelAgentRuntime,
+    ModelContextSummarizer,
     Outbox,
     PlannedAction,
+    PromptAssemblyConfig,
     RouteDecision,
     RunContext,
+    RetrievalPlanner,
     StaticPromptLoader,
     ThreadPipeline,
     ToolBroker,
@@ -114,6 +121,20 @@ class RecordingMemoryBroker(MemoryBroker):
         self.extract_calls.append(ctx)
 
 
+def _mock_token_counter(model: str = "", messages=None, **kwargs) -> int:
+    _ = model, kwargs
+    if messages is None:
+        return 0
+    total = 0
+    for message in messages:
+        content = message.get("content", "")
+        if isinstance(content, str):
+            total += len(content)
+        if "tool_calls" in message:
+            total += 20
+    return total
+
+
 def _event(event_type: str = "message") -> StandardEvent:
     return StandardEvent(
         event_id="evt-1",
@@ -211,6 +232,7 @@ async def test_thread_pipeline_injects_memory_blocks_before_agent_runtime() -> N
                 title="User Profile",
                 content="用户喜欢直接回答",
                 scope="user",
+                metadata={"memory_type": "semantic", "edit_mode": "draft"},
             )
         ]
     )
@@ -221,6 +243,7 @@ async def test_thread_pipeline_injects_memory_blocks_before_agent_runtime() -> N
         run_manager=run_manager,
         thread_manager=thread_manager,
         memory_broker=memory_broker,
+        retrieval_planner=RetrievalPlanner(PromptAssemblyConfig()),
     )
 
     event = _event()
@@ -243,8 +266,238 @@ async def test_thread_pipeline_injects_memory_blocks_before_agent_runtime() -> N
 
     assert memory_broker.retrieve_calls == [ctx]
     assert ctx.memory_blocks[0].title == "User Profile"
+    assert ctx.prompt_slots[0].slot_type == "retrieved_memory"
     assert agent_runtime.captured_messages[0]["role"] == "system"
     assert "User Profile" in str(agent_runtime.captured_messages[0]["content"])
+
+
+async def test_thread_pipeline_assembles_sticky_summary_and_retrieval_slots() -> None:
+    class InspectingAgentRuntime(AgentRuntime):
+        def __init__(self) -> None:
+            self.captured_messages = []
+
+        async def execute(self, ctx: RunContext) -> AgentRuntimeResult:
+            self.captured_messages = list(ctx.messages)
+            return AgentRuntimeResult(status="completed", text="ok")
+
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    gateway = FakeGateway()
+    outbox = Outbox(gateway=gateway, store=FakeMessageStore())
+    memory_broker = RecordingMemoryBroker(
+        blocks=[
+            MemoryBlock(
+                title="Rule",
+                content="十个月实习只需要成果鉴定",
+                scope="channel",
+                metadata={"memory_type": "sticky_note", "edit_mode": "readonly"},
+            ),
+            MemoryBlock(
+                title="Relationship Memory",
+                content="用户最近在问实习材料",
+                scope="relationship",
+                metadata={"memory_type": "episodic", "edit_mode": "draft"},
+            ),
+        ]
+    )
+    agent_runtime = InspectingAgentRuntime()
+    pipeline = ThreadPipeline(
+        agent_runtime=agent_runtime,
+        outbox=outbox,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+        memory_broker=memory_broker,
+        retrieval_planner=RetrievalPlanner(PromptAssemblyConfig()),
+    )
+
+    event = _event()
+    decision = _decision()
+    thread = await thread_manager.get_or_create(
+        thread_id=decision.thread_id,
+        channel_scope=decision.channel_scope,
+        last_event_at=event.timestamp,
+    )
+    thread.working_summary = "群里最近一直在讨论实习材料"
+    run = await run_manager.open(event=event, decision=decision)
+    ctx = RunContext(
+        run=run,
+        event=event,
+        decision=decision,
+        thread=thread,
+        profile=_profile(),
+    )
+
+    await pipeline.execute(ctx)
+
+    slot_types = [slot.slot_type for slot in ctx.prompt_slots]
+    assert slot_types == ["sticky_notes", "thread_summary", "retrieved_memory"]
+    assert "十个月实习只需要成果鉴定" in str(agent_runtime.captured_messages[0]["content"])
+    assert agent_runtime.captured_messages[1]["role"] == "user"
+    assert "<summary>" in str(agent_runtime.captured_messages[1]["content"])
+    assert "群里最近一直在讨论实习材料" in str(agent_runtime.captured_messages[1]["content"])
+    assert "Relationship Memory" in str(agent_runtime.captured_messages[2]["content"])
+
+
+async def test_thread_pipeline_compresses_working_memory_before_model_call() -> None:
+    class InspectingAgentRuntime(AgentRuntime):
+        def __init__(self) -> None:
+            self.captured_messages = []
+
+        async def execute(self, ctx: RunContext) -> AgentRuntimeResult:
+            self.captured_messages = list(ctx.messages)
+            return AgentRuntimeResult(status="completed", text="ok")
+
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    gateway = FakeGateway()
+    outbox = Outbox(gateway=gateway, store=FakeMessageStore())
+    agent_runtime = InspectingAgentRuntime()
+    pipeline = ThreadPipeline(
+        agent_runtime=agent_runtime,
+        outbox=outbox,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+        context_compactor=ContextCompactor(
+            ContextCompactionConfig(
+                max_context_ratio=0.02,
+                preserve_recent_turns=1,
+            )
+        ),
+        retrieval_planner=RetrievalPlanner(PromptAssemblyConfig()),
+    )
+
+    event = _event()
+    decision = _decision()
+    thread = await thread_manager.get_or_create(
+        thread_id=decision.thread_id,
+        channel_scope=decision.channel_scope,
+        last_event_at=event.timestamp,
+    )
+    thread.working_messages = [
+        {"role": "user", "content": "u1"},
+        {"role": "assistant", "content": "a1"},
+        {"role": "user", "content": "u2"},
+        {"role": "assistant", "content": "a2"},
+        {"role": "user", "content": "u3"},
+    ]
+    run = await run_manager.open(event=event, decision=decision)
+    ctx = RunContext(
+        run=run,
+        event=event,
+        decision=decision,
+        thread=thread,
+        profile=_profile(),
+    )
+
+    with (
+        patch(
+            "acabot.runtime.context_compactor.token_counter",
+            side_effect=_mock_token_counter,
+        ),
+        patch(
+            "acabot.runtime.context_compactor.get_model_info",
+            return_value={"max_input_tokens": 1000},
+        ),
+        ):
+            await pipeline.execute(ctx)
+
+    assert ctx.thread.working_summary == ""
+    assert len(ctx.retrieval_plan.compressed_messages) == 1
+    assert ctx.retrieval_plan.compressed_messages[0]["content"].endswith("hello")
+    assert ctx.metadata["token_stats"]["strategy_used"] == "truncate"
+
+
+async def test_thread_pipeline_uses_compaction_override_when_thread_apply_is_skipped() -> None:
+    class InspectingAgentRuntime(AgentRuntime):
+        def __init__(self) -> None:
+            self.captured_messages = []
+
+        async def execute(self, ctx: RunContext) -> AgentRuntimeResult:
+            self.captured_messages = list(ctx.messages)
+            return AgentRuntimeResult(status="completed", text="ok")
+
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    gateway = FakeGateway()
+    outbox = Outbox(gateway=gateway, store=FakeMessageStore())
+    agent_runtime = InspectingAgentRuntime()
+    summary_agent = AsyncMock()
+    summary_agent.complete = AsyncMock(
+        return_value=type(
+            "Response",
+            (),
+            {
+                "text": "summary override",
+                "error": None,
+                "usage": {},
+                "model_used": "test-model",
+            },
+        )()
+    )
+    compactor = ContextCompactor(
+        ContextCompactionConfig(
+            strategy="summarize",
+            max_context_ratio=0.02,
+            preserve_recent_turns=1,
+        ),
+        summarizer=ModelContextSummarizer(
+            agent=summary_agent,
+            config=ContextCompactionConfig(
+                strategy="summarize",
+                max_context_ratio=0.02,
+                preserve_recent_turns=1,
+            ),
+        ),
+    )
+    pipeline = ThreadPipeline(
+        agent_runtime=agent_runtime,
+        outbox=outbox,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+        context_compactor=compactor,
+        retrieval_planner=RetrievalPlanner(PromptAssemblyConfig()),
+    )
+
+    event = _event()
+    decision = _decision()
+    thread = await thread_manager.get_or_create(
+        thread_id=decision.thread_id,
+        channel_scope=decision.channel_scope,
+        last_event_at=event.timestamp,
+    )
+    thread.working_messages = [
+        {"role": "user", "content": "u1"},
+        {"role": "assistant", "content": "a1"},
+        {"role": "user", "content": "u2"},
+        {"role": "assistant", "content": "a2"},
+        {"role": "user", "content": "u3"},
+    ]
+    run = await run_manager.open(event=event, decision=decision)
+    ctx = RunContext(
+        run=run,
+        event=event,
+        decision=decision,
+        thread=thread,
+        profile=_profile(),
+    )
+
+    with (
+        patch(
+            "acabot.runtime.context_compactor.token_counter",
+            side_effect=_mock_token_counter,
+        ),
+        patch(
+            "acabot.runtime.context_compactor.get_model_info",
+            return_value={"max_input_tokens": 1000},
+        ),
+        patch.object(compactor, "apply_to_thread", return_value=False),
+    ):
+        await pipeline.execute(ctx)
+
+    assert ctx.metadata["compaction_applied_to_thread"] is False
+    assert ctx.thread.working_summary == ""
+    assert ctx.prompt_slots[0].slot_type == "thread_summary"
+    assert "summary override" in str(agent_runtime.captured_messages[0]["content"])
 
 
 async def test_thread_pipeline_triggers_memory_extraction_after_run() -> None:

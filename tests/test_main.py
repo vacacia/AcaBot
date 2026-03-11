@@ -13,12 +13,16 @@ from acabot.config import Config
 from acabot.main import build_runtime_app, create_message_store, wait_for_shutdown_signal
 from acabot.runtime import (
     AgentProfile,
+    ContextCompactionConfig,
+    ContextCompactor,
     InMemoryChannelEventStore,
     InMemoryMemoryStore,
     InMemoryMessageStore,
     MemoryBroker,
     NoopApprovalResumer,
     NullReferenceBackend,
+    PromptAssemblyConfig,
+    RetrievalPlanner,
     RouteDecision,
     RuntimeComponents,
     SQLiteMessageStore,
@@ -268,6 +272,8 @@ async def test_run_starts_and_stops_runtime_app(monkeypatch) -> None:
             message_store=InMemoryMessageStore(),
             memory_store=InMemoryMemoryStore(),
             memory_broker=MemoryBroker(),
+            context_compactor=ContextCompactor(ContextCompactionConfig()),
+            retrieval_planner=RetrievalPlanner(PromptAssemblyConfig()),
             reference_backend=NullReferenceBackend(),
             prompt_loader=None,  # type: ignore[arg-type]
             profile_loader=None,  # type: ignore[arg-type]
