@@ -344,22 +344,7 @@ class MemoryBroker:
             一条简短的用户内容字符串.
         """
 
-        nickname = ctx.event.sender_nickname or ""
-        user_id = ctx.event.source.user_id
-        prefix = f"[{nickname}/{user_id}]" if nickname else f"[{user_id}]"
-        
-        if ctx.event.is_message:
-            message_preview = ctx.event.message_preview
-            return f"{prefix} {message_preview}".strip()
-
-        event_label = ctx.event.event_type
-        if ctx.event.event_type == "poke":
-            event_label = "notice:poke"
-        elif ctx.event.event_type == "recall":
-            target = ctx.event.target_message_id or ""
-            event_label = f"notice:recall target={target}".strip()
-        # [昵称/用户ID] [notice:recall target=msg_789]
-        return f"{prefix} [{event_label}]"
+        return ctx.event.working_memory_text
 
     @staticmethod
     def _working_summary(ctx: RunContext) -> str:

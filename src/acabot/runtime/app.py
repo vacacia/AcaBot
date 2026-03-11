@@ -210,6 +210,16 @@ class RuntimeApp:
                     for segment in event.segments
                 ],
                 "reply_to_message_id": event.reply_to_message_id,
+                "reply_reference": (
+                    {
+                        "message_id": event.reply_reference.message_id,
+                        "sender_user_id": event.reply_reference.sender_user_id,
+                        "text_preview": event.reply_reference.text_preview,
+                        "metadata": dict(event.reply_reference.metadata),
+                    }
+                    if event.reply_reference is not None
+                    else None
+                ),
                 "mentioned_user_ids": list(event.mentioned_user_ids),
                 "attachments": [
                     {
@@ -251,13 +261,9 @@ class RuntimeApp:
             一条简短的文本投影.
         """
 
-        text = event.message_preview.strip()
+        text = event.content_preview.strip()
         if text:
             return text
-        if event.event_type == "poke":
-            return "[poke]"
-        if event.event_type == "recall":
-            return "[recall]"
         return f"[{event.event_type}]"
 
     # region recovery

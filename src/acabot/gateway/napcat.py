@@ -17,7 +17,15 @@ except ImportError:
     serve = None
 
 from .base import BaseGateway
-from acabot.types import StandardEvent, EventSource, MsgSegment, EventAttachment, Action, ActionType
+from acabot.types import (
+    StandardEvent,
+    EventSource,
+    MsgSegment,
+    EventAttachment,
+    ReplyReference,
+    Action,
+    ActionType,
+)
 
 logger = logging.getLogger("acabot.gateway")
 
@@ -146,7 +154,7 @@ class NapCatGateway(BaseGateway):
 
         sender = raw.get("sender", {})
         raw_segments = list(raw.get("message", []))
-        reply_to_message_id, mentioned_user_ids, attachments = self._extract_message_features(raw_segments)
+        reply_reference, mentioned_user_ids, attachments = self._extract_message_features(raw_segments)
         source = EventSource(
             platform="qq",
             message_type=raw.get("message_type", ""),
@@ -172,7 +180,8 @@ class NapCatGateway(BaseGateway):
             raw_message_id=str(raw.get("message_id", "")),
             sender_nickname=sender.get("nickname", ""),
             sender_role=sender.get("role"),
-            reply_to_message_id=reply_to_message_id,
+            reply_to_message_id=reply_reference.message_id if reply_reference is not None else None,
+            reply_reference=reply_reference,
             mentioned_user_ids=mentioned_user_ids,
             attachments=attachments,
             raw_event=dict(raw),
@@ -340,7 +349,7 @@ class NapCatGateway(BaseGateway):
     def _extract_message_features(
         self,
         raw_segments: list[dict[str, Any]],
-    ) -> tuple[str | None, list[str], list[EventAttachment]]:
+    ) -> tuple[ReplyReference | None, list[str], list[EventAttachment]]:
         """从 OneBot message segments 提取 canonical message feature.
 
         OneBot v11 的 message 是 segment 数组, 每个 segment 有 type 和 data.
@@ -350,13 +359,13 @@ class NapCatGateway(BaseGateway):
             raw_segments: OneBot v11 message 字段里的原始 segments.
 
         Returns:
-            (reply_to_message_id, mentioned_user_ids, attachments).
-            - reply_to_message_id: 回复的目标消息 ID, 从 reply segment 提取
+            (reply_reference, mentioned_user_ids, attachments).
+            - reply_reference: 回复的目标消息引用信息, 从 reply segment 提取
             - mentioned_user_ids: 被 @ 的用户 ID 列表, 从 at segment 提取
             - attachments: 附件列表(图片/文件/语音/视频), 从对应 segment 转换
         """
 
-        reply_to_message_id: str | None = None
+        reply_reference: ReplyReference | None = None
         mentioned_user_ids: list[str] = []
         attachments: list[EventAttachment] = []
 
@@ -366,7 +375,18 @@ class NapCatGateway(BaseGateway):
 
             # reply segment: 是一条回复消息, data.id 是被回复的消息 ID
             if seg_type == "reply":
-                reply_to_message_id = str(data.get("id", "") or "") or None
+                reply_message_id = str(data.get("id", "") or "") or ""
+                if reply_message_id:
+                    reply_reference = ReplyReference(
+                        message_id=reply_message_id,
+                        sender_user_id=str(
+                            data.get("user_id")
+                            or data.get("qq")
+                            or ""
+                        ),
+                        text_preview=str(data.get("text", "") or ""),
+                        metadata=dict(data),
+                    )
                 continue  # reply 不生成 attachment
 
             # at segment: data.qq 是被 @ 的用户 ID
@@ -382,7 +402,7 @@ class NapCatGateway(BaseGateway):
             if attachment is not None:
                 attachments.append(attachment)
 
-        return reply_to_message_id, mentioned_user_ids, attachments
+        return reply_reference, mentioned_user_ids, attachments
 
     def _segment_to_attachment(
         self,

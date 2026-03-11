@@ -518,7 +518,7 @@ async def test_build_runtime_components_records_record_only_notice_event() -> No
     assert gateway.sent == []
     saved = await components.channel_event_store.get_thread_events("qq:group:20002")
     assert saved[0].event_type == "recall"
-    assert saved[0].content_text == "[recall]"
+    assert saved[0].content_text == "[notice:recall target=msg-42]"
     assert saved[0].metadata["run_mode"] == "record_only"
 
 

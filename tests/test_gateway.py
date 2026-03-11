@@ -71,6 +71,8 @@ class TestNapCatTranslation:
         }
         event = gw.translate(raw)
         assert event.reply_to_message_id == "999"
+        assert event.reply_reference is not None
+        assert event.reply_reference.message_id == "999"
         assert event.mentioned_user_ids == ["111"]
         assert len(event.attachments) == 1
         assert event.attachments[0].type == "image"
