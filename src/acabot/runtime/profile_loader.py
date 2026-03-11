@@ -336,9 +336,19 @@ class AgentProfileRegistry(ProfileLoader):
             return False
         if not AgentProfileRegistry._scalar_overlap(left.event_type, right.event_type):
             return False
+        if not AgentProfileRegistry._scalar_overlap(left.message_subtype, right.message_subtype):
+            return False
+        if not AgentProfileRegistry._scalar_overlap(left.notice_type, right.notice_type):
+            return False
+        if not AgentProfileRegistry._scalar_overlap(left.notice_subtype, right.notice_subtype):
+            return False
         if not AgentProfileRegistry._scalar_overlap(left.actor_id, right.actor_id):
             return False
         if not AgentProfileRegistry._scalar_overlap(left.channel_scope, right.channel_scope):
+            return False
+        if not AgentProfileRegistry._scalar_overlap(left.targets_self, right.targets_self):
+            return False
+        if not AgentProfileRegistry._scalar_overlap(left.mentioned_everyone, right.mentioned_everyone):
             return False
         if not AgentProfileRegistry._roles_overlap(left.sender_roles, right.sender_roles):
             return False

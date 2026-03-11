@@ -38,6 +38,8 @@ def _event(
     user_id: str,
     group_id: str | None = None,
     sender_role: str | None = None,
+    message_subtype: str | None = None,
+    targets_self: bool = False,
 ) -> StandardEvent:
     return StandardEvent(
         event_id="evt-1",
@@ -54,6 +56,8 @@ def _event(
         raw_message_id="msg-1" if event_type == "message" else "",
         sender_nickname="acacia",
         sender_role=sender_role,
+        message_subtype=message_subtype,
+        targets_self=targets_self,
     )
 
 
@@ -200,6 +204,45 @@ def test_registry_supports_event_type_override_rules() -> None:
 
     assert agent_id == "ops"
     assert metadata["binding_match_keys"] == ["event_type", "channel_scope"]
+
+
+def test_registry_supports_targets_self_rules() -> None:
+    registry = AgentProfileRegistry(
+        profiles=_profiles(),
+        default_agent_id="aca",
+        rules=[
+            BindingRule(
+                rule_id="group-default",
+                agent_id="group",
+                priority=40,
+                channel_scope="qq:group:20002",
+            ),
+            BindingRule(
+                rule_id="group-directed",
+                agent_id="ops",
+                priority=70,
+                event_type="message",
+                channel_scope="qq:group:20002",
+                targets_self=True,
+            ),
+        ],
+    )
+
+    agent_id, metadata = registry.resolve_agent(
+        event=_event(
+            event_type="message",
+            message_type="group",
+            user_id="10001",
+            group_id="20002",
+            targets_self=True,
+        ),
+        thread_id="qq:group:20002",
+        actor_id="qq:user:10001",
+        channel_scope="qq:group:20002",
+    )
+
+    assert agent_id == "ops"
+    assert metadata["binding_match_keys"] == ["event_type", "channel_scope", "targets_self"]
 
 
 def test_registry_falls_back_to_default_agent() -> None:

@@ -9,6 +9,10 @@ def _event(
     user_id: str,
     group_id: str | None = None,
     sender_role: str | None = None,
+    message_subtype: str | None = None,
+    notice_type: str | None = None,
+    notice_subtype: str | None = None,
+    targets_self: bool = False,
 ) -> StandardEvent:
     return StandardEvent(
         event_id="evt-1",
@@ -25,6 +29,10 @@ def _event(
         raw_message_id="msg-1" if event_type == "message" else "",
         sender_nickname="acacia",
         sender_role=sender_role,
+        message_subtype=message_subtype,
+        notice_type=notice_type,
+        notice_subtype=notice_subtype,
+        targets_self=targets_self,
     )
 
 
@@ -89,3 +97,43 @@ def test_event_policy_registry_rejects_ambiguous_policies() -> None:
         return
 
     raise AssertionError("Expected ambiguous event policies to raise ValueError")
+
+
+def test_event_policy_registry_supports_targets_self_and_message_subtype() -> None:
+    registry = EventPolicyRegistry(
+        [
+            EventPolicy(
+                policy_id="group-mention-memory",
+                priority=80,
+                platform="qq",
+                event_type="message",
+                message_subtype="normal",
+                channel_scope="qq:group:20002",
+                targets_self=True,
+                extract_to_memory=True,
+                memory_scopes=["relationship"],
+            )
+        ]
+    )
+
+    decision = registry.resolve(
+        event=_event(
+            event_type="message",
+            message_type="group",
+            user_id="10001",
+            group_id="20002",
+            message_subtype="normal",
+            targets_self=True,
+        ),
+        actor_id="qq:user:10001",
+        channel_scope="qq:group:20002",
+    )
+
+    assert decision.policy_id == "group-mention-memory"
+    assert decision.match_keys == [
+        "platform",
+        "event_type",
+        "message_subtype",
+        "channel_scope",
+        "targets_self",
+    ]

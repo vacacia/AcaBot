@@ -24,6 +24,7 @@ class TestNapCatTranslation:
 
     def test_translate_private_message(self, gw):
         # 私聊消息: user_id 转 str, is_private=True, text 提取正确
+        gw._self_id = "111"
         raw = {
             "post_type": "message", "message_type": "private", "sub_type": "friend",
             "time": 1700000000, "self_id": 111, "user_id": 222, "message_id": 333,
@@ -35,10 +36,13 @@ class TestNapCatTranslation:
         assert isinstance(event, StandardEvent)
         assert event.is_private
         assert event.source.user_id == "222"
+        assert event.message_subtype == "friend"
+        assert event.targets_self is True
         assert event.text == "hello"
 
     def test_translate_group_message(self, gw):
         # 群消息: group_id 转 str, 多段消息(at+text), sender_role 保留
+        gw._self_id = "111"
         raw = {
             "post_type": "message", "message_type": "group", "sub_type": "normal",
             "time": 1700000000, "self_id": 111, "user_id": 222, "group_id": 444,
@@ -55,8 +59,10 @@ class TestNapCatTranslation:
         assert event.source.group_id == "444"
         assert len(event.segments) == 2
         assert event.sender_role == "member"
+        assert event.targets_self is True
 
     def test_translate_message_extracts_reply_mentions_and_attachments(self, gw):
+        gw._self_id = "111"
         raw = {
             "post_type": "message", "message_type": "group", "sub_type": "normal",
             "time": 1700000000, "self_id": 111, "user_id": 222, "group_id": 444,
@@ -74,15 +80,33 @@ class TestNapCatTranslation:
         assert event.reply_reference is not None
         assert event.reply_reference.message_id == "999"
         assert event.mentioned_user_ids == ["111"]
+        assert event.targets_self is True
         assert len(event.attachments) == 1
         assert event.attachments[0].type == "image"
         assert event.attachments[0].source == "https://example.com/cat.jpg"
+
+    def test_translate_message_tracks_everyone_mentions(self, gw):
+        gw._self_id = "111"
+        raw = {
+            "post_type": "message", "message_type": "group", "sub_type": "normal",
+            "time": 1700000000, "self_id": 111, "user_id": 222, "group_id": 444,
+            "message_id": 333,
+            "message": [
+                {"type": "at", "data": {"qq": "all"}},
+                {"type": "text", "data": {"text": " 注意公告"}},
+            ],
+            "sender": {"user_id": 222, "nickname": "Bob", "role": "member"},
+        }
+        event = gw.translate(raw)
+        assert event.mentioned_everyone is True
+        assert event.targets_self is True
 
     def test_translate_ignores_non_message(self, gw):
         # 非消息事件(notice/request等)如果未识别到具体 notice, 返回 None
         assert gw.translate({"post_type": "notice"}) is None
 
     def test_translate_poke_notice(self, gw):
+        gw._self_id = "111"
         raw = {
             "post_type": "notice",
             "notice_type": "notify",
@@ -101,6 +125,7 @@ class TestNapCatTranslation:
         assert event.subject_user_id == "111"
         assert event.notice_type == "notify"
         assert event.notice_subtype == "poke"
+        assert event.targets_self is True
         assert event.metadata["target_id"] == "111"
 
     def test_translate_group_recall_notice(self, gw):

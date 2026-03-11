@@ -18,6 +18,11 @@ def _event(
     user_id: str,
     group_id: str | None = None,
     sender_role: str | None = None,
+    message_subtype: str | None = None,
+    notice_type: str | None = None,
+    notice_subtype: str | None = None,
+    targets_self: bool = False,
+    mentioned_everyone: bool = False,
 ) -> StandardEvent:
     return StandardEvent(
         event_id="evt-1",
@@ -34,6 +39,11 @@ def _event(
         raw_message_id="msg-1",
         sender_nickname="acacia",
         sender_role=sender_role,
+        message_subtype=message_subtype,
+        notice_type=notice_type,
+        notice_subtype=notice_subtype,
+        targets_self=targets_self,
+        mentioned_everyone=mentioned_everyone,
     )
 
 
@@ -178,6 +188,39 @@ async def test_runtime_router_supports_inbound_run_mode_rules() -> None:
     assert decision.metadata["inbound_run_mode"] == "silent_drop"
 
 
+async def test_runtime_router_supports_targets_self_inbound_rules() -> None:
+    inbound = InboundRuleRegistry(
+        [
+            InboundRule(
+                rule_id="group-directed-only",
+                run_mode="record_only",
+                priority=90,
+                platform="qq",
+                event_type="message",
+                channel_scope="qq:group:20002",
+                targets_self=True,
+            )
+        ]
+    )
+    router = RuntimeRouter(
+        default_agent_id="aca",
+        decide_run_mode=inbound.resolve,
+    )
+
+    decision = await router.route(
+        _event(
+            event_type="message",
+            message_type="group",
+            user_id="10001",
+            group_id="20002",
+            targets_self=True,
+        )
+    )
+
+    assert decision.run_mode == "record_only"
+    assert decision.metadata["inbound_match_keys"] == ["platform", "event_type", "channel_scope", "targets_self"]
+
+
 async def test_runtime_router_merges_event_policy_metadata() -> None:
     policies = EventPolicyRegistry(
         [
@@ -211,3 +254,43 @@ async def test_runtime_router_merges_event_policy_metadata() -> None:
     assert decision.metadata["event_extract_to_memory"] is True
     assert decision.metadata["event_memory_scopes"] == ["episodic"]
     assert decision.metadata["event_tags"] == ["notice"]
+
+
+async def test_runtime_router_supports_notice_subtype_policy_rules() -> None:
+    policies = EventPolicyRegistry(
+        [
+            EventPolicy(
+                policy_id="group-join-approve",
+                priority=70,
+                platform="qq",
+                event_type="member_join",
+                notice_subtype="approve",
+                channel_scope="qq:group:20002",
+                extract_to_memory=True,
+                memory_scopes=["relationship"],
+            )
+        ]
+    )
+    router = RuntimeRouter(
+        default_agent_id="aca",
+        resolve_event_policy=policies.resolve,
+    )
+
+    decision = await router.route(
+        _event(
+            event_type="member_join",
+            message_type="group",
+            user_id="10001",
+            group_id="20002",
+            notice_type="group_increase",
+            notice_subtype="approve",
+        )
+    )
+
+    assert decision.metadata["event_policy_id"] == "group-join-approve"
+    assert decision.metadata["event_policy_match_keys"] == [
+        "platform",
+        "event_type",
+        "notice_subtype",
+        "channel_scope",
+    ]

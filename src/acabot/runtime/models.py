@@ -194,8 +194,13 @@ class BindingRule:
     priority: int = 100
     thread_id: str | None = None
     event_type: str | None = None
+    message_subtype: str | None = None
+    notice_type: str | None = None
+    notice_subtype: str | None = None
     actor_id: str | None = None
     channel_scope: str | None = None
+    targets_self: bool | None = None
+    mentioned_everyone: bool | None = None
     sender_roles: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -223,9 +228,19 @@ class BindingRule:
             return False
         if self.event_type is not None and self.event_type != event.event_type:
             return False
+        if self.message_subtype is not None and self.message_subtype != event.message_subtype:
+            return False
+        if self.notice_type is not None and self.notice_type != event.notice_type:
+            return False
+        if self.notice_subtype is not None and self.notice_subtype != event.notice_subtype:
+            return False
         if self.actor_id is not None and self.actor_id != actor_id:
             return False
         if self.channel_scope is not None and self.channel_scope != channel_scope:
+            return False
+        if self.targets_self is not None and self.targets_self != event.targets_self:
+            return False
+        if self.mentioned_everyone is not None and self.mentioned_everyone != event.mentioned_everyone:
             return False
         if self.sender_roles:
             sender_role = event.sender_role or ""
@@ -245,10 +260,20 @@ class BindingRule:
             keys.append("thread_id")
         if self.event_type is not None:
             keys.append("event_type")
+        if self.message_subtype is not None:
+            keys.append("message_subtype")
+        if self.notice_type is not None:
+            keys.append("notice_type")
+        if self.notice_subtype is not None:
+            keys.append("notice_subtype")
         if self.actor_id is not None:
             keys.append("actor_id")
         if self.channel_scope is not None:
             keys.append("channel_scope")
+        if self.targets_self is not None:
+            keys.append("targets_self")
+        if self.mentioned_everyone is not None:
+            keys.append("mentioned_everyone")
         if self.sender_roles:
             keys.append("sender_roles")
         return keys
@@ -284,8 +309,13 @@ class InboundRule:
     priority: int = 100
     platform: str | None = None
     event_type: str | None = None
+    message_subtype: str | None = None
+    notice_type: str | None = None
+    notice_subtype: str | None = None
     actor_id: str | None = None
     channel_scope: str | None = None
+    targets_self: bool | None = None
+    mentioned_everyone: bool | None = None
     sender_roles: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -311,9 +341,19 @@ class InboundRule:
             return False
         if self.event_type is not None and self.event_type != event.event_type:
             return False
+        if self.message_subtype is not None and self.message_subtype != event.message_subtype:
+            return False
+        if self.notice_type is not None and self.notice_type != event.notice_type:
+            return False
+        if self.notice_subtype is not None and self.notice_subtype != event.notice_subtype:
+            return False
         if self.actor_id is not None and self.actor_id != actor_id:
             return False
         if self.channel_scope is not None and self.channel_scope != channel_scope:
+            return False
+        if self.targets_self is not None and self.targets_self != event.targets_self:
+            return False
+        if self.mentioned_everyone is not None and self.mentioned_everyone != event.mentioned_everyone:
             return False
         if self.sender_roles:
             sender_role = event.sender_role or ""
@@ -333,10 +373,20 @@ class InboundRule:
             keys.append("platform")
         if self.event_type is not None:
             keys.append("event_type")
+        if self.message_subtype is not None:
+            keys.append("message_subtype")
+        if self.notice_type is not None:
+            keys.append("notice_type")
+        if self.notice_subtype is not None:
+            keys.append("notice_subtype")
         if self.actor_id is not None:
             keys.append("actor_id")
         if self.channel_scope is not None:
             keys.append("channel_scope")
+        if self.targets_self is not None:
+            keys.append("targets_self")
+        if self.mentioned_everyone is not None:
+            keys.append("mentioned_everyone")
         if self.sender_roles:
             keys.append("sender_roles")
         return keys
@@ -374,8 +424,13 @@ class EventPolicy:
     priority: int = 100
     platform: str | None = None
     event_type: str | None = None
+    message_subtype: str | None = None
+    notice_type: str | None = None
+    notice_subtype: str | None = None
     actor_id: str | None = None
     channel_scope: str | None = None
+    targets_self: bool | None = None
+    mentioned_everyone: bool | None = None
     sender_roles: list[str] = field(default_factory=list)
     persist_event: bool = True
     extract_to_memory: bool = False
@@ -407,9 +462,19 @@ class EventPolicy:
             return False
         if self.event_type is not None and self.event_type != event.event_type:
             return False
+        if self.message_subtype is not None and self.message_subtype != event.message_subtype:
+            return False
+        if self.notice_type is not None and self.notice_type != event.notice_type:
+            return False
+        if self.notice_subtype is not None and self.notice_subtype != event.notice_subtype:
+            return False
         if self.actor_id is not None and self.actor_id != actor_id:
             return False
         if self.channel_scope is not None and self.channel_scope != channel_scope:
+            return False
+        if self.targets_self is not None and self.targets_self != event.targets_self:
+            return False
+        if self.mentioned_everyone is not None and self.mentioned_everyone != event.mentioned_everyone:
             return False
         if self.sender_roles:
             sender_role = event.sender_role or ""
@@ -429,10 +494,20 @@ class EventPolicy:
             keys.append("platform")
         if self.event_type is not None:
             keys.append("event_type")
+        if self.message_subtype is not None:
+            keys.append("message_subtype")
+        if self.notice_type is not None:
+            keys.append("notice_type")
+        if self.notice_subtype is not None:
+            keys.append("notice_subtype")
         if self.actor_id is not None:
             keys.append("actor_id")
         if self.channel_scope is not None:
             keys.append("channel_scope")
+        if self.targets_self is not None:
+            keys.append("targets_self")
+        if self.mentioned_everyone is not None:
+            keys.append("mentioned_everyone")
         if self.sender_roles:
             keys.append("sender_roles")
         return keys

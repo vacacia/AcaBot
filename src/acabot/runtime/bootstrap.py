@@ -335,7 +335,9 @@ def _build_binding_rules(config: Config) -> list[BindingRule]:
         match_conf = dict(rule_conf.get("match", {}))
         if "thread_id" in match_conf:
             # thread_id 是 runtime internal
-            # 配置文件只允许声明稳定的匹配条件 -> event_type, actor_id, channel_scope, sender_roles
+            # 配置文件只允许声明稳定的匹配条件, 例如:
+            # event_type, message_subtype, notice_type, notice_subtype,
+            # actor_id, channel_scope, targets_self, mentioned_everyone, sender_roles
             raise ValueError("binding_rules in config must not declare thread_id")
         rules.append(
             BindingRule(
@@ -344,8 +346,13 @@ def _build_binding_rules(config: Config) -> list[BindingRule]:
                 priority=int(rule_conf.get("priority", 100)),
                 thread_id=None,
                 event_type=_optional_str(match_conf.get("event_type")),
+                message_subtype=_optional_str(match_conf.get("message_subtype")),
+                notice_type=_optional_str(match_conf.get("notice_type")),
+                notice_subtype=_optional_str(match_conf.get("notice_subtype")),
                 actor_id=_optional_str(match_conf.get("actor_id")),
                 channel_scope=_optional_str(match_conf.get("channel_scope")),
+                targets_self=_optional_bool(match_conf.get("targets_self")),
+                mentioned_everyone=_optional_bool(match_conf.get("mentioned_everyone")),
                 sender_roles=[str(role) for role in match_conf.get("sender_roles", [])],
                 metadata=dict(rule_conf.get("metadata", {})),
             )
@@ -377,8 +384,13 @@ def _build_inbound_rules(config: Config) -> list[InboundRule]:
                 priority=int(rule_conf.get("priority", 100)),
                 platform=_optional_str(match_conf.get("platform")),
                 event_type=_optional_str(match_conf.get("event_type")),
+                message_subtype=_optional_str(match_conf.get("message_subtype")),
+                notice_type=_optional_str(match_conf.get("notice_type")),
+                notice_subtype=_optional_str(match_conf.get("notice_subtype")),
                 actor_id=_optional_str(match_conf.get("actor_id")),
                 channel_scope=_optional_str(match_conf.get("channel_scope")),
+                targets_self=_optional_bool(match_conf.get("targets_self")),
+                mentioned_everyone=_optional_bool(match_conf.get("mentioned_everyone")),
                 sender_roles=[str(role) for role in match_conf.get("sender_roles", [])],
                 metadata=dict(rule_conf.get("metadata", {})),
             )
@@ -409,8 +421,13 @@ def _build_event_policies(config: Config) -> list[EventPolicy]:
                 priority=int(policy_conf.get("priority", 100)),
                 platform=_optional_str(match_conf.get("platform")),
                 event_type=_optional_str(match_conf.get("event_type")),
+                message_subtype=_optional_str(match_conf.get("message_subtype")),
+                notice_type=_optional_str(match_conf.get("notice_type")),
+                notice_subtype=_optional_str(match_conf.get("notice_subtype")),
                 actor_id=_optional_str(match_conf.get("actor_id")),
                 channel_scope=_optional_str(match_conf.get("channel_scope")),
+                targets_self=_optional_bool(match_conf.get("targets_self")),
+                mentioned_everyone=_optional_bool(match_conf.get("mentioned_everyone")),
                 sender_roles=[str(role) for role in match_conf.get("sender_roles", [])],
                 persist_event=bool(policy_conf.get("persist_event", True)),
                 extract_to_memory=bool(policy_conf.get("extract_to_memory", False)),
@@ -711,6 +728,29 @@ def _optional_str(value: object) -> str | None:
     if value in (None, ""):
         return None
     return str(value)
+
+
+def _optional_bool(value: object) -> bool | None:
+    """把配置值转换成可选布尔值.
+
+    Args:
+        value: 原始配置值.
+
+    Returns:
+        `True`, `False`, 或 `None`.
+    """
+
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+    return bool(value)
 
 
 def _parse_run_mode(value: object) -> str:

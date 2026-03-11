@@ -93,6 +93,7 @@ class StandardEvent:
         raw_message_id (str): 关联的平台 message ID. notice event 可为空.
         sender_nickname (str): 发送者昵称. notice event 可为空.
         sender_role (str | None): 群角色信息.
+        message_subtype (str | None): 平台消息子类型. message 事件可用, 例如 `friend` `normal`.
         operator_id (str | None): 操作者 ID. recall 等事件会用到.
         subject_user_id (str | None): notice 事件的主体用户 ID, 例如被撤回消息的原作者, 被加入群的成员.
         target_message_id (str | None): 被操作的目标消息 ID.
@@ -101,6 +102,8 @@ class StandardEvent:
         reply_to_message_id (str | None): 当前消息引用的上游消息 ID.
         reply_reference (ReplyReference | None): 当前消息的 reply 引用详情.
         mentioned_user_ids (list[str]): 当前消息里显式提及的用户 ID 列表.
+        mentioned_everyone (bool): 当前消息是否显式 @全体.
+        targets_self (bool): 当前事件是否明确指向 bot 自身.
         attachments (list[EventAttachment]): 当前消息携带的 canonical 附件列表.
         metadata (dict[str, Any]): canonical 扩展字段.
         raw_event (dict[str, Any]): 平台原始 payload.
@@ -115,6 +118,7 @@ class StandardEvent:
     raw_message_id: str
     sender_nickname: str
     sender_role: str | None
+    message_subtype: str | None = None
     operator_id: str | None = None
     subject_user_id: str | None = None
     target_message_id: str | None = None
@@ -123,6 +127,8 @@ class StandardEvent:
     reply_to_message_id: str | None = None
     reply_reference: ReplyReference | None = None
     mentioned_user_ids: list[str] = field(default_factory=list)
+    mentioned_everyone: bool = False
+    targets_self: bool = False
     attachments: list[EventAttachment] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     raw_event: dict[str, Any] = field(default_factory=dict)
@@ -138,6 +144,8 @@ class StandardEvent:
             self.reply_reference = ReplyReference(message_id=self.reply_to_message_id)
         elif self.reply_reference is not None and not self.reply_to_message_id:
             self.reply_to_message_id = self.reply_reference.message_id
+        if self.is_private:
+            self.targets_self = True
 
     @property
     def is_private(self) -> bool:

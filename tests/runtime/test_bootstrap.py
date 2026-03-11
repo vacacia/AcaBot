@@ -333,6 +333,74 @@ async def test_build_runtime_components_uses_admin_override_rule() -> None:
     assert agent.calls[0]["model"] == "model-o"
 
 
+async def test_build_runtime_components_supports_targets_self_binding_rule() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "fallback-model",
+                "system_prompt": "Fallback prompt.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "profiles": {
+                    "aca": {
+                        "name": "Aca",
+                        "prompt_ref": "prompt/aca",
+                        "default_model": "model-a",
+                    },
+                    "mention": {
+                        "name": "Mention",
+                        "prompt_ref": "prompt/mention",
+                        "default_model": "model-m",
+                    },
+                },
+                "prompts": {
+                    "prompt/aca": "You are Aca.",
+                    "prompt/mention": "You are the directed mention agent.",
+                },
+                "binding_rules": [
+                    {
+                        "rule_id": "mention-directed",
+                        "agent_id": "mention",
+                        "priority": 80,
+                        "match": {
+                            "event_type": "message",
+                            "channel_scope": "qq:group:20002",
+                            "targets_self": True,
+                        },
+                    },
+                ],
+            },
+        }
+    )
+    gateway = FakeGateway()
+    agent = FakeAgent(FakeAgentResponse(text="hello mention", model_used="model-m"))
+    components = build_runtime_components(config, gateway=gateway, agent=agent)
+    event = StandardEvent(
+        event_id="evt-group-mention-1",
+        event_type="message",
+        platform="qq",
+        timestamp=456,
+        source=EventSource(
+            platform="qq",
+            message_type="group",
+            user_id="10001",
+            group_id="20002",
+        ),
+        segments=[MsgSegment(type="text", data={"text": "hello @bot"})],
+        raw_message_id="msg-group-mention-1",
+        sender_nickname="acacia",
+        sender_role="member",
+        targets_self=True,
+    )
+
+    components.app.install()
+    await gateway.handler(event)
+
+    assert agent.calls[0]["system_prompt"] == "You are the directed mention agent."
+    assert agent.calls[0]["model"] == "model-m"
+
+
 async def test_build_runtime_components_supports_event_type_binding_override() -> None:
     config = Config(
         {

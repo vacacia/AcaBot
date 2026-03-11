@@ -154,7 +154,13 @@ class NapCatGateway(BaseGateway):
 
         sender = raw.get("sender", {})
         raw_segments = list(raw.get("message", []))
-        reply_reference, mentioned_user_ids, attachments = self._extract_message_features(raw_segments)
+        (
+            reply_reference,
+            mentioned_user_ids,
+            mentioned_everyone,
+            attachments,
+        ) = self._extract_message_features(raw_segments)
+        self_user_id = str(self._self_id or "")
         source = EventSource(
             platform="qq",
             message_type=raw.get("message_type", ""),
@@ -180,9 +186,16 @@ class NapCatGateway(BaseGateway):
             raw_message_id=str(raw.get("message_id", "")),
             sender_nickname=sender.get("nickname", ""),
             sender_role=sender.get("role"),
+            message_subtype=str(raw.get("sub_type", "") or "") or None,
             reply_to_message_id=reply_reference.message_id if reply_reference is not None else None,
             reply_reference=reply_reference,
             mentioned_user_ids=mentioned_user_ids,
+            mentioned_everyone=mentioned_everyone,
+            targets_self=(
+                raw.get("message_type") == "private"
+                or mentioned_everyone
+                or (bool(self_user_id) and self_user_id in mentioned_user_ids)
+            ),
             attachments=attachments,
             raw_event=dict(raw),
         )
@@ -248,6 +261,10 @@ class NapCatGateway(BaseGateway):
             subject_user_id=str(raw.get("target_id", "") or "") or None,
             notice_type="notify",
             notice_subtype="poke",
+            targets_self=(
+                bool(self._self_id)
+                and str(raw.get("target_id", "") or "") == str(self._self_id)
+            ),
             metadata={
                 "notice_type": "poke",
                 "target_id": str(raw.get("target_id", "") or ""),
@@ -357,7 +374,7 @@ class NapCatGateway(BaseGateway):
     def _extract_message_features(
         self,
         raw_segments: list[dict[str, Any]],
-    ) -> tuple[ReplyReference | None, list[str], list[EventAttachment]]:
+    ) -> tuple[ReplyReference | None, list[str], bool, list[EventAttachment]]:
         """从 OneBot message segments 提取 canonical message feature.
 
         OneBot v11 的 message 是 segment 数组, 每个 segment 有 type 和 data.
@@ -367,14 +384,16 @@ class NapCatGateway(BaseGateway):
             raw_segments: OneBot v11 message 字段里的原始 segments.
 
         Returns:
-            (reply_reference, mentioned_user_ids, attachments).
+            (reply_reference, mentioned_user_ids, mentioned_everyone, attachments).
             - reply_reference: 回复的目标消息引用信息, 从 reply segment 提取
             - mentioned_user_ids: 被 @ 的用户 ID 列表, 从 at segment 提取
+            - mentioned_everyone: 当前消息是否显式 @全体
             - attachments: 附件列表(图片/文件/语音/视频), 从对应 segment 转换
         """
 
         reply_reference: ReplyReference | None = None
         mentioned_user_ids: list[str] = []
+        mentioned_everyone = False
         attachments: list[EventAttachment] = []
 
         for segment in raw_segments:
@@ -401,6 +420,8 @@ class NapCatGateway(BaseGateway):
             if seg_type == "at":
                 mentioned_user_id = str(data.get("qq", "") or "") or None
                 if mentioned_user_id:
+                    if mentioned_user_id in {"all", "everyone"}:
+                        mentioned_everyone = True
                     mentioned_user_ids.append(mentioned_user_id)
                 continue  # at 不生成 attachment
 
@@ -410,7 +431,7 @@ class NapCatGateway(BaseGateway):
             if attachment is not None:
                 attachments.append(attachment)
 
-        return reply_reference, mentioned_user_ids, attachments
+        return reply_reference, mentioned_user_ids, mentioned_everyone, attachments
 
     def _segment_to_attachment(
         self,
