@@ -86,6 +86,7 @@ from .plugin_manager import (
     load_runtime_plugins_from_config,
     parse_runtime_plugin_spec,
 )
+from .plugins import ReferenceToolsPlugin
 from .profile_loader import (
     AgentProfileRegistry,
     ProfileLoader,
@@ -205,6 +206,7 @@ __all__ = [
     "load_runtime_plugin",
     "load_runtime_plugins_from_config",
     "parse_runtime_plugin_spec",
+    "ReferenceToolsPlugin",
     "RunContext",
     "RunManager",
     "RunRecord",
