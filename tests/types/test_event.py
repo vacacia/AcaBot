@@ -175,6 +175,81 @@ def test_notice_preview_supports_admin_change_and_file_upload():
     assert upload_event.content_preview == "[notice:file_upload user=999 file=guide.pdf]"
 
 
+def test_notice_preview_supports_friend_mute_honor_title_and_lucky_king():
+    source = EventSource(platform="qq", message_type="group", user_id="123", group_id="456")
+    friend_event = StandardEvent(
+        event_id="evt_friend_added_1",
+        event_type="friend_added",
+        platform="qq",
+        timestamp=1700000000,
+        source=EventSource(platform="qq", message_type="private", user_id="999", group_id=None),
+        segments=[],
+        raw_message_id="",
+        sender_nickname="",
+        sender_role=None,
+        subject_user_id="999",
+        targets_self=True,
+    )
+    mute_event = StandardEvent(
+        event_id="evt_mute_1",
+        event_type="mute_change",
+        platform="qq",
+        timestamp=1700000000,
+        source=source,
+        segments=[],
+        raw_message_id="",
+        sender_nickname="",
+        sender_role=None,
+        subject_user_id="999",
+        notice_subtype="ban",
+        metadata={"duration": 60},
+    )
+    honor_event = StandardEvent(
+        event_id="evt_honor_1",
+        event_type="honor_change",
+        platform="qq",
+        timestamp=1700000000,
+        source=source,
+        segments=[],
+        raw_message_id="",
+        sender_nickname="",
+        sender_role=None,
+        subject_user_id="999",
+        notice_subtype="talkative",
+    )
+    title_event = StandardEvent(
+        event_id="evt_title_1",
+        event_type="title_change",
+        platform="qq",
+        timestamp=1700000000,
+        source=source,
+        segments=[],
+        raw_message_id="",
+        sender_nickname="",
+        sender_role=None,
+        subject_user_id="999",
+        metadata={"title": "年度答疑官"},
+    )
+    lucky_event = StandardEvent(
+        event_id="evt_lucky_1",
+        event_type="lucky_king",
+        platform="qq",
+        timestamp=1700000000,
+        source=source,
+        segments=[],
+        raw_message_id="",
+        sender_nickname="",
+        sender_role=None,
+        subject_user_id="999",
+        metadata={"sender_user_id": "888"},
+    )
+    assert friend_event.content_preview == "[notice:friend_added user=999]"
+    assert mute_event.content_preview == "[notice:mute_change user=999 sub_type=ban duration=60]"
+    assert honor_event.content_preview == "[notice:honor_change user=999 sub_type=talkative]"
+    assert title_event.content_preview == "[notice:title_change user=999 title=年度答疑官]"
+    assert lucky_event.content_preview == "[notice:lucky_king user=999 sender=888]"
+
+
 def test_to_payload_json_returns_canonical_shape():
     source = EventSource(platform="qq", message_type="group", user_id="123", group_id="456")
     event = StandardEvent(

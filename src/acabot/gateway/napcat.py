@@ -211,8 +211,8 @@ class NapCatGateway(BaseGateway):
         """
 
         notice_type = str(raw.get("notice_type", "") or "")
-        if notice_type == "notify" and raw.get("sub_type") == "poke":
-            return self._translate_poke_notice(raw)
+        if notice_type == "notify":
+            return self._translate_notify_notice(raw)
         if notice_type in {"group_recall", "friend_recall"}:
             return self._translate_recall_notice(raw, notice_type=notice_type)
         if notice_type == "group_increase":
@@ -231,6 +231,31 @@ class NapCatGateway(BaseGateway):
             return self._translate_group_admin_notice(raw, notice_type=notice_type)
         if notice_type == "group_upload":
             return self._translate_group_upload_notice(raw, notice_type=notice_type)
+        if notice_type == "friend_add":
+            return self._translate_friend_add_notice(raw, notice_type=notice_type)
+        if notice_type == "group_ban":
+            return self._translate_group_ban_notice(raw, notice_type=notice_type)
+        return None
+
+    def _translate_notify_notice(self, raw: dict[str, Any]) -> StandardEvent | None:
+        """翻译 notify notice.
+
+        Args:
+            raw: OneBot v11 notify 原始事件.
+
+        Returns:
+            可识别时返回 StandardEvent, 否则返回 None.
+        """
+
+        sub_type = str(raw.get("sub_type", "") or "")
+        if sub_type == "poke":
+            return self._translate_poke_notice(raw)
+        if sub_type == "lucky_king":
+            return self._translate_lucky_king_notice(raw)
+        if sub_type == "honor":
+            return self._translate_honor_notice(raw)
+        if sub_type == "title":
+            return self._translate_title_notice(raw)
         return None
 
     def _translate_poke_notice(self, raw: dict[str, Any]) -> StandardEvent:
@@ -479,6 +504,233 @@ class NapCatGateway(BaseGateway):
                 "notice_type": notice_type,
                 "file": dict(file_info),
                 "file_name": str(file_info.get("name", "") or ""),
+            },
+            raw_event=dict(raw),
+        )
+
+    def _translate_friend_add_notice(
+        self,
+        raw: dict[str, Any],
+        *,
+        notice_type: str,
+    ) -> StandardEvent:
+        """翻译 friend add notice.
+
+        Args:
+            raw: friend add 原始事件.
+            notice_type: OneBot v11 notice 类型.
+
+        Returns:
+            统一的 friend_added StandardEvent.
+        """
+
+        user_id = str(raw.get("user_id", "") or "")
+        source = EventSource(
+            platform="qq",
+            message_type="private",
+            user_id=user_id,
+            group_id=None,
+        )
+        return StandardEvent(
+            event_id=f"evt_friend_add_{raw.get('time', 0)}_{user_id}",
+            event_type="friend_added",
+            platform="qq",
+            timestamp=raw.get("time", 0),
+            source=source,
+            segments=[],
+            raw_message_id="",
+            sender_nickname="",
+            sender_role=None,
+            subject_user_id=user_id or None,
+            notice_type=notice_type,
+            targets_self=True,
+            metadata={"notice_type": notice_type},
+            raw_event=dict(raw),
+        )
+
+    def _translate_group_ban_notice(
+        self,
+        raw: dict[str, Any],
+        *,
+        notice_type: str,
+    ) -> StandardEvent:
+        """翻译 group ban notice.
+
+        Args:
+            raw: group ban 原始事件.
+            notice_type: OneBot v11 notice 类型.
+
+        Returns:
+            统一的 mute_change StandardEvent.
+        """
+
+        affected_user_id = str(raw.get("user_id", "") or "")
+        operator_id = str(raw.get("operator_id", "") or "") or None
+        group_id = str(raw.get("group_id", "") or "") or None
+        sub_type = str(raw.get("sub_type", "") or "")
+        duration = int(raw.get("duration", 0) or 0)
+        source = EventSource(
+            platform="qq",
+            message_type="group",
+            user_id=affected_user_id,
+            group_id=group_id,
+        )
+        return StandardEvent(
+            event_id=(
+                f"evt_mute_change_{raw.get('time', 0)}_"
+                f"{group_id or ''}_{affected_user_id}_{sub_type}"
+            ),
+            event_type="mute_change",
+            platform="qq",
+            timestamp=raw.get("time", 0),
+            source=source,
+            segments=[],
+            raw_message_id="",
+            sender_nickname="",
+            sender_role=None,
+            operator_id=operator_id,
+            subject_user_id=affected_user_id or None,
+            notice_type=notice_type,
+            notice_subtype=sub_type or None,
+            targets_self=(
+                bool(getattr(self, "_self_id", None))
+                and affected_user_id == str(getattr(self, "_self_id", ""))
+            ),
+            metadata={
+                "notice_type": notice_type,
+                "sub_type": sub_type,
+                "duration": duration,
+                "affected_user_id": affected_user_id,
+            },
+            raw_event=dict(raw),
+        )
+
+    def _translate_lucky_king_notice(self, raw: dict[str, Any]) -> StandardEvent:
+        """翻译 lucky king notify.
+
+        Args:
+            raw: lucky king 原始事件.
+
+        Returns:
+            统一的 lucky_king StandardEvent.
+        """
+
+        group_id = str(raw.get("group_id", "") or "") or None
+        sender_user_id = str(raw.get("user_id", "") or "")
+        lucky_user_id = str(raw.get("target_id", "") or "")
+        source = EventSource(
+            platform="qq",
+            message_type="group",
+            user_id=sender_user_id,
+            group_id=group_id,
+        )
+        return StandardEvent(
+            event_id=f"evt_lucky_king_{raw.get('time', 0)}_{group_id or ''}_{lucky_user_id}",
+            event_type="lucky_king",
+            platform="qq",
+            timestamp=raw.get("time", 0),
+            source=source,
+            segments=[],
+            raw_message_id="",
+            sender_nickname="",
+            sender_role=None,
+            operator_id=sender_user_id or None,
+            subject_user_id=lucky_user_id or None,
+            notice_type="notify",
+            notice_subtype="lucky_king",
+            targets_self=(
+                bool(getattr(self, "_self_id", None))
+                and lucky_user_id == str(getattr(self, "_self_id", ""))
+            ),
+            metadata={
+                "notice_type": "notify",
+                "sender_user_id": sender_user_id,
+            },
+            raw_event=dict(raw),
+        )
+
+    def _translate_honor_notice(self, raw: dict[str, Any]) -> StandardEvent:
+        """翻译 honor notify.
+
+        Args:
+            raw: honor 原始事件.
+
+        Returns:
+            统一的 honor_change StandardEvent.
+        """
+
+        group_id = str(raw.get("group_id", "") or "") or None
+        user_id = str(raw.get("user_id", "") or "")
+        honor_type = str(raw.get("honor_type", "") or "")
+        source = EventSource(
+            platform="qq",
+            message_type="group",
+            user_id=user_id,
+            group_id=group_id,
+        )
+        return StandardEvent(
+            event_id=f"evt_honor_{raw.get('time', 0)}_{group_id or ''}_{user_id}_{honor_type}",
+            event_type="honor_change",
+            platform="qq",
+            timestamp=raw.get("time", 0),
+            source=source,
+            segments=[],
+            raw_message_id="",
+            sender_nickname="",
+            sender_role=None,
+            subject_user_id=user_id or None,
+            notice_type="notify",
+            notice_subtype=honor_type or None,
+            targets_self=(
+                bool(getattr(self, "_self_id", None))
+                and user_id == str(getattr(self, "_self_id", ""))
+            ),
+            metadata={
+                "notice_type": "notify",
+                "honor_type": honor_type,
+            },
+            raw_event=dict(raw),
+        )
+
+    def _translate_title_notice(self, raw: dict[str, Any]) -> StandardEvent:
+        """翻译 title notify.
+
+        Args:
+            raw: title 原始事件.
+
+        Returns:
+            统一的 title_change StandardEvent.
+        """
+
+        group_id = str(raw.get("group_id", "") or "") or None
+        user_id = str(raw.get("user_id", "") or "")
+        title = str(raw.get("title", "") or "")
+        source = EventSource(
+            platform="qq",
+            message_type="group",
+            user_id=user_id,
+            group_id=group_id,
+        )
+        return StandardEvent(
+            event_id=f"evt_title_{raw.get('time', 0)}_{group_id or ''}_{user_id}",
+            event_type="title_change",
+            platform="qq",
+            timestamp=raw.get("time", 0),
+            source=source,
+            segments=[],
+            raw_message_id="",
+            sender_nickname="",
+            sender_role=None,
+            subject_user_id=user_id or None,
+            notice_type="notify",
+            notice_subtype="title",
+            targets_self=(
+                bool(getattr(self, "_self_id", None))
+                and user_id == str(getattr(self, "_self_id", ""))
+            ),
+            metadata={
+                "notice_type": "notify",
+                "title": title,
             },
             raw_event=dict(raw),
         )

@@ -229,6 +229,94 @@ class TestNapCatTranslation:
         assert event.attachments[0].name == "guide.pdf"
         assert event.content_preview == "[notice:file_upload user=222 file=guide.pdf]"
 
+    def test_translate_friend_add_notice(self, gw):
+        raw = {
+            "post_type": "notice",
+            "notice_type": "friend_add",
+            "time": 1700000007,
+            "user_id": 222,
+        }
+        event = gw.translate(raw)
+        assert event is not None
+        assert event.event_type == "friend_added"
+        assert event.subject_user_id == "222"
+        assert event.targets_self is True
+        assert event.content_preview == "[notice:friend_added user=222]"
+
+    def test_translate_group_ban_notice(self, gw):
+        gw._self_id = "111"
+        raw = {
+            "post_type": "notice",
+            "notice_type": "group_ban",
+            "sub_type": "ban",
+            "time": 1700000008,
+            "group_id": 444,
+            "user_id": 111,
+            "operator_id": 333,
+            "duration": 60,
+        }
+        event = gw.translate(raw)
+        assert event is not None
+        assert event.event_type == "mute_change"
+        assert event.subject_user_id == "111"
+        assert event.operator_id == "333"
+        assert event.notice_subtype == "ban"
+        assert event.targets_self is True
+        assert event.content_preview == "[notice:mute_change user=111 sub_type=ban duration=60]"
+
+    def test_translate_lucky_king_notice(self, gw):
+        gw._self_id = "111"
+        raw = {
+            "post_type": "notice",
+            "notice_type": "notify",
+            "sub_type": "lucky_king",
+            "time": 1700000009,
+            "group_id": 444,
+            "user_id": 222,
+            "target_id": 111,
+        }
+        event = gw.translate(raw)
+        assert event is not None
+        assert event.event_type == "lucky_king"
+        assert event.subject_user_id == "111"
+        assert event.targets_self is True
+        assert event.content_preview == "[notice:lucky_king user=111 sender=222]"
+
+    def test_translate_honor_notice(self, gw):
+        gw._self_id = "111"
+        raw = {
+            "post_type": "notice",
+            "notice_type": "notify",
+            "sub_type": "honor",
+            "time": 1700000010,
+            "group_id": 444,
+            "user_id": 111,
+            "honor_type": "talkative",
+        }
+        event = gw.translate(raw)
+        assert event is not None
+        assert event.event_type == "honor_change"
+        assert event.notice_subtype == "talkative"
+        assert event.targets_self is True
+        assert event.content_preview == "[notice:honor_change user=111 sub_type=talkative]"
+
+    def test_translate_title_notice(self, gw):
+        gw._self_id = "111"
+        raw = {
+            "post_type": "notice",
+            "notice_type": "notify",
+            "sub_type": "title",
+            "time": 1700000011,
+            "group_id": 444,
+            "user_id": 111,
+            "title": "年度答疑官",
+        }
+        event = gw.translate(raw)
+        assert event is not None
+        assert event.event_type == "title_change"
+        assert event.targets_self is True
+        assert event.content_preview == "[notice:title_change user=111 title=年度答疑官]"
+
     # --- build_send_payload: 发消息方向 ---
     # NOTE: 验证能否把 Action 对象正确转换成 NapCat 格式的 JSON
     

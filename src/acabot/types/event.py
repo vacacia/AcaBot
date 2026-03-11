@@ -260,6 +260,44 @@ class StandardEvent:
             if file_name:
                 parts.append(f"file={file_name}")
             return " ".join(parts) + "]"
+        if self.event_type == "friend_added":
+            parts = ["[notice:friend_added"]
+            if self.subject_user_id:
+                parts.append(f"user={self.subject_user_id}")
+            return " ".join(parts) + "]"
+        if self.event_type == "mute_change":
+            parts = ["[notice:mute_change"]
+            if self.subject_user_id:
+                parts.append(f"user={self.subject_user_id}")
+            if self.notice_subtype:
+                parts.append(f"sub_type={self.notice_subtype}")
+            duration = str(self.metadata.get("duration", "") or "")
+            if duration:
+                parts.append(f"duration={duration}")
+            return " ".join(parts) + "]"
+        if self.event_type == "honor_change":
+            parts = ["[notice:honor_change"]
+            if self.subject_user_id:
+                parts.append(f"user={self.subject_user_id}")
+            if self.notice_subtype:
+                parts.append(f"sub_type={self.notice_subtype}")
+            return " ".join(parts) + "]"
+        if self.event_type == "title_change":
+            parts = ["[notice:title_change"]
+            if self.subject_user_id:
+                parts.append(f"user={self.subject_user_id}")
+            title = str(self.metadata.get("title", "") or "")
+            if title:
+                parts.append(f"title={title}")
+            return " ".join(parts) + "]"
+        if self.event_type == "lucky_king":
+            parts = ["[notice:lucky_king"]
+            if self.subject_user_id:
+                parts.append(f"user={self.subject_user_id}")
+            sender_user_id = str(self.metadata.get("sender_user_id", "") or "")
+            if sender_user_id:
+                parts.append(f"sender={sender_user_id}")
+            return " ".join(parts) + "]"
         return f"[notice:{self.event_type}]"
 
     @property
