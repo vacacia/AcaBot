@@ -43,6 +43,7 @@ from .model_agent_runtime import ModelAgentRuntime
 from .models import AgentProfile, BindingRule, EventPolicy, InboundRule
 from .outbox import Outbox
 from .pipeline import ThreadPipeline
+from .plugin_manager import RuntimePlugin, RuntimePluginManager
 from .profile_loader import (
     AgentProfileRegistry,
     ProfileLoader,
@@ -87,6 +88,7 @@ class RuntimeComponents:
         context_compactor (ContextCompactor): 负责 token-aware working memory compaction 的 compactor.
         retrieval_planner (RetrievalPlanner): 负责 retrieval planning 和 prompt assembly 的 planner.
         reference_backend (ReferenceBackend): on-demand `reference / notebook` provider.
+        plugin_manager (RuntimePluginManager): runtime world 的插件管理器.
         prompt_loader (PromptLoader): 按 `prompt_ref` 加载 system prompt 的 loader.
         profile_loader (ProfileLoader): 按 `RouteDecision` 加载 profile 的 loader.
         tool_broker (ToolBroker): runtime 侧统一工具入口.
@@ -108,6 +110,7 @@ class RuntimeComponents:
     context_compactor: ContextCompactor
     retrieval_planner: RetrievalPlanner
     reference_backend: ReferenceBackend
+    plugin_manager: RuntimePluginManager
     prompt_loader: PromptLoader
     profile_loader: ProfileLoader
     tool_broker: ToolBroker
@@ -133,8 +136,10 @@ def build_runtime_components(
     context_compactor: ContextCompactor | None = None,
     retrieval_planner: RetrievalPlanner | None = None,
     reference_backend: ReferenceBackend | None = None,
+    plugin_manager: RuntimePluginManager | None = None,
     tool_broker: ToolBroker | None = None,
     approval_resumer: ApprovalResumer | None = None,
+    plugins: list[RuntimePlugin] | None = None,
 ) -> RuntimeComponents:
     """根据配置和注入依赖组装一套最小 runtime 组件.
 
@@ -152,8 +157,10 @@ def build_runtime_components(
         context_compactor: 可选的 ContextCompactor 实现.
         retrieval_planner: 可选的 RetrievalPlanner 实现.
         reference_backend: 可选的 ReferenceBackend 实现.
+        plugin_manager: 可选的 RuntimePluginManager 实现.
         tool_broker: 可选的 ToolBroker 实现.
         approval_resumer: 可选的 approval resumer.
+        plugins: 启动时要加载的 runtime plugin 实例列表.
 
     Returns:
         一份包含 RuntimeApp 及其依赖组件的组装结果.
@@ -197,6 +204,13 @@ def build_runtime_components(
     runtime_retrieval_planner = retrieval_planner or _build_retrieval_planner(config)
     runtime_reference_backend = reference_backend or _build_reference_backend(config)
     runtime_tool_broker = tool_broker or ToolBroker()
+    runtime_plugin_manager = plugin_manager or RuntimePluginManager(
+        config=config,
+        gateway=gateway,
+        tool_broker=runtime_tool_broker,
+        reference_backend=runtime_reference_backend,
+        plugins=plugins,
+    )
     runtime_approval_resumer = approval_resumer or NoopApprovalResumer()
     agent_runtime = ModelAgentRuntime(
         agent=agent,
@@ -213,6 +227,7 @@ def build_runtime_components(
         retrieval_planner=runtime_retrieval_planner,
         context_compactor=runtime_context_compactor,
         tool_broker=runtime_tool_broker,
+        plugin_manager=runtime_plugin_manager,
     )
     app = RuntimeApp(
         gateway=gateway,
@@ -224,6 +239,7 @@ def build_runtime_components(
         profile_loader=profile_registry.load,
         approval_resumer=runtime_approval_resumer,
         reference_backend=runtime_reference_backend,
+        plugin_manager=runtime_plugin_manager,
     )
 
     return RuntimeComponents(
@@ -238,6 +254,7 @@ def build_runtime_components(
         context_compactor=runtime_context_compactor,
         retrieval_planner=runtime_retrieval_planner,
         reference_backend=runtime_reference_backend,
+        plugin_manager=runtime_plugin_manager,
         prompt_loader=prompt_loader,
         profile_loader=profile_registry,
         tool_broker=runtime_tool_broker,

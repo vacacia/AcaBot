@@ -15,9 +15,10 @@ from acabot.types import Action, ActionType
 
 from .agent_runtime import AgentRuntime
 from .context_compactor import ContextCompactor
-from .models import DispatchReport, PlannedAction, RunContext
+from .models import AgentRuntimeResult, DispatchReport, PlannedAction, RunContext
 from .memory_broker import MemoryBroker
 from .outbox import Outbox
+from .plugin_manager import RuntimeHookPoint, RuntimePluginManager
 from .retrieval_planner import RetrievalPlanner
 from .runs import RunManager
 from .tool_broker import ToolBroker
@@ -32,8 +33,7 @@ class ThreadPipeline:
     当前版本已经接入:
     - MemoryBroker retrieval / extraction skeleton
     - ToolBroker approval audit 回写
-
-    仍然不接 hook registry.
+    - RuntimePluginManager hooks
     """
 
     def __init__(
@@ -47,6 +47,7 @@ class ThreadPipeline:
         retrieval_planner: RetrievalPlanner | None = None,
         context_compactor: ContextCompactor | None = None,
         tool_broker: ToolBroker | None = None,
+        plugin_manager: RuntimePluginManager | None = None,
     ) -> None:
         """初始化 ThreadPipeline.
 
@@ -59,6 +60,7 @@ class ThreadPipeline:
             retrieval_planner: 可选的 RetrievalPlanner. 用于 planning 和 prompt assembly.
             context_compactor: 可选的 ContextCompactor. 用于 working memory compaction.
             tool_broker: 可选的 ToolBroker. 用于 approval prompt 的 audit 回写.
+            plugin_manager: 可选的 RuntimePluginManager. 用于 runtime hooks.
         """
 
         self.agent_runtime = agent_runtime
@@ -69,6 +71,7 @@ class ThreadPipeline:
         self.retrieval_planner = retrieval_planner
         self.context_compactor = context_compactor
         self.tool_broker = tool_broker
+        self.plugin_manager = plugin_manager
     # region execute
     async def execute(self, ctx: RunContext) -> None:
         """执行一条最小 runtime 主线.
@@ -79,6 +82,7 @@ class ThreadPipeline:
         # 标记 run 状态为 running
         await self.run_manager.mark_running(ctx.run.run_id)
         try:
+            await self._run_plugin_hooks(RuntimeHookPoint.ON_EVENT, ctx)
             # -----------------------------------------------------
             # 准备 compaction
             # -----------------------------------------------------
@@ -150,17 +154,28 @@ class ThreadPipeline:
             # 注入记忆, 调用 Agent
             # -----------------------------------------------------
             await self._inject_memories(ctx)
-            ctx.response = await self.agent_runtime.execute(ctx)
-            ctx.actions = list(ctx.response.actions)
+            pre_agent_result = await self._run_plugin_hooks(RuntimeHookPoint.PRE_AGENT, ctx)
+            if pre_agent_result.action == "skip_agent":
+                ctx.response = AgentRuntimeResult(
+                    status="completed",
+                    actions=list(ctx.actions),
+                    metadata={"origin": "runtime_plugin_skip_agent"},
+                )
+            else:
+                ctx.response = await self.agent_runtime.execute(ctx)
+                ctx.actions = list(ctx.response.actions)
+            await self._run_plugin_hooks(RuntimeHookPoint.POST_AGENT, ctx)
 
             # -----------------------------------------------------
             # 发送回复
             # -----------------------------------------------------
+            await self._run_plugin_hooks(RuntimeHookPoint.BEFORE_SEND, ctx)
             if ctx.actions:
                 # 通过 Outbox 发送
                 ctx.delivery_report = await self.outbox.dispatch(ctx)
             else:
                 ctx.delivery_report = DispatchReport()
+            await self._run_plugin_hooks(RuntimeHookPoint.ON_SENT, ctx)
             # -----------------------------------------------------
             # 收尾
             # -----------------------------------------------------
@@ -169,6 +184,7 @@ class ThreadPipeline:
             await self._extract_memory_safely(ctx)
         except Exception as exc:
             logger.exception("ThreadPipeline crashed: run_id=%s", ctx.run.run_id)
+            await self._run_error_hooks(ctx)
             await self._save_thread_safely(ctx)
             await self._mark_failed_safely(
                 ctx.run.run_id,
@@ -349,6 +365,37 @@ class ThreadPipeline:
             await self.run_manager.mark_failed(run_id, error)
         except Exception:
             logger.exception("Failed to mark run as failed: run_id=%s", run_id)
+
+    async def _run_plugin_hooks(self, point: RuntimeHookPoint, ctx: RunContext):
+        """执行指定切入点的 runtime hooks.
+
+        Args:
+            point: 当前 hook 切入点.
+            ctx: 当前 run 的执行上下文.
+
+        Returns:
+            RuntimePluginManager 聚合后的 RuntimeHookResult.
+        """
+
+        if self.plugin_manager is None:
+            from .plugin_manager import RuntimeHookResult
+
+            return RuntimeHookResult()
+        return await self.plugin_manager.run_hooks(point, ctx)
+
+    async def _run_error_hooks(self, ctx: RunContext) -> None:
+        """在 pipeline 异常时尽力触发 error hooks.
+
+        Args:
+            ctx: 当前 run 的执行上下文.
+        """
+
+        if self.plugin_manager is None:
+            return
+        try:
+            await self.plugin_manager.run_hooks(RuntimeHookPoint.ON_ERROR, ctx)
+        except Exception:
+            logger.exception("Failed to run runtime error hooks: run_id=%s", ctx.run.run_id)
 
     async def _save_thread_safely(self, ctx: RunContext) -> None:
         """尽力保存当前 thread 状态.

@@ -1,3 +1,4 @@
+from acabot.config import Config
 from acabot.runtime import (
     AgentProfile,
     AgentRuntime,
@@ -9,12 +10,20 @@ from acabot.runtime import (
     InMemoryRunManager,
     InMemoryThreadManager,
     Outbox,
+    PlannedAction,
     RouteDecision,
     RuntimeApp,
+    RuntimeHook,
+    RuntimeHookPoint,
+    RuntimeHookResult,
+    RuntimePlugin,
+    RuntimePluginContext,
+    RuntimePluginManager,
     RuntimeRouter,
     ThreadPipeline,
+    ToolBroker,
 )
-from acabot.types import EventSource, MsgSegment, StandardEvent
+from acabot.types import Action, ActionType, EventSource, MsgSegment, StandardEvent
 
 from .test_outbox import FakeGateway, FakeMessageStore
 from .test_pipeline_runtime import FakeAgentRuntime
@@ -104,6 +113,42 @@ class TrackingReferenceBackend:
         """记录 close 调用."""
 
         self.closed = True
+
+
+class AppShortcutHook(RuntimeHook):
+    name = "app_shortcut"
+
+    async def handle(self, ctx) -> RuntimeHookResult:
+        ctx.actions = [
+            PlannedAction(
+                action_id=f"action:{ctx.run.run_id}:plugin",
+                action=Action(
+                    action_type=ActionType.SEND_TEXT,
+                    target=ctx.event.source,
+                    payload={"text": "from plugin"},
+                ),
+                thread_content="from plugin",
+            )
+        ]
+        return RuntimeHookResult(action="skip_agent")
+
+
+class TrackingRuntimePlugin(RuntimePlugin):
+    name = "tracking_runtime"
+
+    def __init__(self) -> None:
+        self.setup_calls = 0
+        self.teardown_calls = 0
+
+    async def setup(self, runtime: RuntimePluginContext) -> None:
+        _ = runtime
+        self.setup_calls += 1
+
+    def hooks(self):
+        return [(RuntimeHookPoint.PRE_AGENT, AppShortcutHook())]
+
+    async def teardown(self) -> None:
+        self.teardown_calls += 1
 
 
 async def test_runtime_app_installs_handler_and_processes_event() -> None:
@@ -586,3 +631,74 @@ async def test_runtime_app_stop_closes_reference_backend() -> None:
     await app.stop()
 
     assert reference_backend.closed is True
+
+
+async def test_runtime_app_lazily_starts_plugins_on_first_event() -> None:
+    gateway = FakeGateway()
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    channel_event_store = InMemoryChannelEventStore()
+    outbox = Outbox(gateway=gateway, store=FakeMessageStore())
+    pipeline = ThreadPipeline(
+        agent_runtime=BrokenAgentRuntime(),
+        outbox=outbox,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+    )
+    plugin = TrackingRuntimePlugin()
+    plugin_manager = RuntimePluginManager(
+        config=Config({}),
+        gateway=gateway,
+        tool_broker=ToolBroker(),
+        plugins=[plugin],
+    )
+    pipeline.plugin_manager = plugin_manager
+    app = RuntimeApp(
+        gateway=gateway,
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=thread_manager,
+        run_manager=run_manager,
+        channel_event_store=channel_event_store,
+        pipeline=pipeline,
+        profile_loader=_profile_loader,
+        plugin_manager=plugin_manager,
+    )
+
+    app.install()
+    await gateway.handler(_event())
+
+    assert plugin.setup_calls == 1
+    assert len(gateway.sent) == 1
+    assert gateway.sent[0].payload["text"] == "from plugin"
+
+
+async def test_runtime_app_stop_tears_down_runtime_plugins() -> None:
+    gateway = TrackingGateway()
+    plugin = TrackingRuntimePlugin()
+    plugin_manager = RuntimePluginManager(
+        config=Config({}),
+        gateway=gateway,
+        tool_broker=ToolBroker(),
+        plugins=[plugin],
+    )
+    app = RuntimeApp(
+        gateway=gateway,
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=InMemoryThreadManager(),
+        run_manager=InMemoryRunManager(),
+        channel_event_store=InMemoryChannelEventStore(),
+        pipeline=ThreadPipeline(
+            agent_runtime=FakeAgentRuntime(),
+            outbox=Outbox(gateway=gateway, store=FakeMessageStore()),
+            run_manager=InMemoryRunManager(),
+            thread_manager=InMemoryThreadManager(),
+        ),
+        profile_loader=_profile_loader,
+        plugin_manager=plugin_manager,
+    )
+
+    await app.start()
+    await app.stop()
+
+    assert plugin.setup_calls == 1
+    assert plugin.teardown_calls == 1

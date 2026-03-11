@@ -18,6 +18,8 @@ from acabot.runtime import (
     LocalReferenceBackend,
     NullReferenceBackend,
     OpenVikingReferenceBackend,
+    RuntimePlugin,
+    RuntimePluginContext,
     RetrievalPlanner,
     RouteDecision,
     SQLiteChannelEventStore,
@@ -97,6 +99,19 @@ class FakeAgent:
 
 
 # endregion
+
+
+class BootstrapTrackingPlugin(RuntimePlugin):
+    """用于 bootstrap 注入测试的最小 runtime plugin."""
+
+    name = "bootstrap_tracking"
+
+    def __init__(self) -> None:
+        self.setup_calls = 0
+
+    async def setup(self, runtime: RuntimePluginContext) -> None:
+        _ = runtime
+        self.setup_calls += 1
 
 
 def _event() -> StandardEvent:
@@ -186,6 +201,34 @@ async def test_build_runtime_components_runs_app_with_model_agent_runtime() -> N
     assert components.pipeline.retrieval_planner is components.retrieval_planner
     assert isinstance(components.memory_store, InMemoryMemoryStore)
     assert len(gateway.sent) == 1
+
+
+async def test_build_runtime_components_accepts_runtime_plugins() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "test-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "default_prompt_ref": "prompt/default",
+            },
+        }
+    )
+    gateway = FakeGateway()
+    agent = FakeAgent(FakeAgentResponse(text="hello back", model_used="test-model"))
+    plugin = BootstrapTrackingPlugin()
+    components = build_runtime_components(
+        config,
+        gateway=gateway,
+        agent=agent,
+        plugins=[plugin],
+    )
+
+    await components.plugin_manager.ensure_started()
+
+    assert plugin.setup_calls == 1
 
 
 async def test_build_runtime_components_uses_channel_binding_for_group_event() -> None:

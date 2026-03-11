@@ -73,6 +73,15 @@ from .models import (
 )
 from .outbox import Outbox
 from .pipeline import ThreadPipeline
+from .plugin_manager import (
+    RuntimeHook,
+    RuntimeHookPoint,
+    RuntimeHookRegistry,
+    RuntimeHookResult,
+    RuntimePlugin,
+    RuntimePluginContext,
+    RuntimePluginManager,
+)
 from .profile_loader import (
     AgentProfileRegistry,
     ProfileLoader,
@@ -181,6 +190,13 @@ __all__ = [
     "RecoveryReport",
     "RuntimeComponents",
     "RuntimeApp",
+    "RuntimeHook",
+    "RuntimeHookPoint",
+    "RuntimeHookRegistry",
+    "RuntimeHookResult",
+    "RuntimePlugin",
+    "RuntimePluginContext",
+    "RuntimePluginManager",
     "RunContext",
     "RunManager",
     "RunRecord",

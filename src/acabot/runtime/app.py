@@ -26,6 +26,7 @@ from .models import (
     RunRecord,
     RunStep,
 )
+from .plugin_manager import RuntimePluginManager
 from .pipeline import ThreadPipeline
 from .reference_backend import ReferenceBackend
 from .router import RuntimeRouter
@@ -55,6 +56,7 @@ class RuntimeApp:
         profile_loader: Callable[[RouteDecision], AgentProfile],
         approval_resumer: ApprovalResumer | None = None,
         reference_backend: ReferenceBackend | None = None,
+        plugin_manager: RuntimePluginManager | None = None,
     ) -> None:
         """初始化 RuntimeApp.
 
@@ -68,6 +70,7 @@ class RuntimeApp:
             profile_loader: 根据 RouteDecision 加载 AgentProfile 的回调.
             approval_resumer: approval 通过后的续执行器.
             reference_backend: `reference / notebook` provider. 默认允许 lazy init.
+            plugin_manager: runtime world 的插件管理器.
         """
 
         self.gateway = gateway
@@ -79,6 +82,7 @@ class RuntimeApp:
         self.profile_loader = profile_loader
         self.approval_resumer = approval_resumer or NoopApprovalResumer()
         self.reference_backend = reference_backend
+        self.plugin_manager = plugin_manager
         self.last_recovery_report = RecoveryReport()
         self._pending_approvals: dict[str, PendingApprovalRecord] = {}
 
@@ -91,6 +95,8 @@ class RuntimeApp:
         """安装事件处理器并启动 gateway."""
 
         await self.recover_active_runs()
+        if self.plugin_manager is not None:
+            await self.plugin_manager.ensure_started()
         self.install()
         await self.gateway.start()
 
@@ -101,6 +107,13 @@ class RuntimeApp:
             await self.gateway.stop()
         except Exception as exc:
             stop_error = exc
+        if self.plugin_manager is not None:
+            try:
+                await self.plugin_manager.teardown_all()
+            except Exception:
+                logger.exception("Failed to teardown runtime plugins during shutdown")
+                if stop_error is None:
+                    raise
         if self.reference_backend is not None:
             try:
                 await self.reference_backend.close()
@@ -119,6 +132,8 @@ class RuntimeApp:
         """
         run_id: str | None = None
         try:
+            if self.plugin_manager is not None:
+                await self.plugin_manager.ensure_started()
             decision = await self.router.route(event)
             if decision.run_mode == "silent_drop":
                 return
