@@ -43,7 +43,11 @@ from .model_agent_runtime import ModelAgentRuntime
 from .models import AgentProfile, BindingRule, EventPolicy, InboundRule
 from .outbox import Outbox
 from .pipeline import ThreadPipeline
-from .plugin_manager import RuntimePlugin, RuntimePluginManager
+from .plugin_manager import (
+    RuntimePlugin,
+    RuntimePluginManager,
+    load_runtime_plugins_from_config,
+)
 from .profile_loader import (
     AgentProfileRegistry,
     ProfileLoader,
@@ -204,12 +208,13 @@ def build_runtime_components(
     runtime_retrieval_planner = retrieval_planner or _build_retrieval_planner(config)
     runtime_reference_backend = reference_backend or _build_reference_backend(config)
     runtime_tool_broker = tool_broker or ToolBroker()
+    configured_plugins = plugins if plugins is not None else load_runtime_plugins_from_config(config)
     runtime_plugin_manager = plugin_manager or RuntimePluginManager(
         config=config,
         gateway=gateway,
         tool_broker=runtime_tool_broker,
         reference_backend=runtime_reference_backend,
-        plugins=plugins,
+        plugins=configured_plugins,
     )
     runtime_approval_resumer = approval_resumer or NoopApprovalResumer()
     agent_runtime = ModelAgentRuntime(

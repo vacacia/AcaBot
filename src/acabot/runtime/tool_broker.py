@@ -628,6 +628,24 @@ class ToolBroker:
             metadata=metadata,
         )
 
+    def unregister_source(self, source: str) -> list[str]:
+        """按 source 删除已注册工具.
+
+        Args:
+            source: 注册时使用的 source 标识.
+
+        Returns:
+            被删除的工具名列表.
+        """
+
+        removed: list[str] = []
+        for tool_name, registered in list(self._tools.items()):
+            if registered.source != source:
+                continue
+            removed.append(tool_name)
+            del self._tools[tool_name]
+        return removed
+
     def visible_tools(self, profile: AgentProfile) -> list[ToolSpec]:
         """返回当前 profile 可以看到的工具列表.
 

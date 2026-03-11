@@ -16,6 +16,7 @@ from acabot.runtime import (
     RuntimePlugin,
     RuntimePluginContext,
     RuntimePluginManager,
+    load_runtime_plugins_from_config,
     ThreadPipeline,
     ToolBroker,
 )
@@ -226,3 +227,63 @@ async def test_thread_pipeline_can_be_short_circuited_by_runtime_plugin() -> Non
     assert updated.status == "completed"
     assert len(gateway.sent) == 1
     assert gateway.sent[0].payload["text"] == "plugin handled"
+
+
+def test_load_runtime_plugins_from_config_supports_import_paths() -> None:
+    from tests.runtime.runtime_plugin_samples import SampleConfiguredRuntimePlugin
+
+    SampleConfiguredRuntimePlugin.reset()
+    config = Config(
+        {
+            "runtime": {
+                "plugins": [
+                    "tests.runtime.runtime_plugin_samples:SampleConfiguredRuntimePlugin",
+                ],
+            },
+        }
+    )
+
+    plugins = load_runtime_plugins_from_config(config)
+
+    assert len(plugins) == 1
+    assert plugins[0].name == "sample_configured_runtime"
+
+
+async def test_runtime_plugin_manager_reload_clears_old_tools_and_reloads() -> None:
+    from tests.runtime.runtime_plugin_samples import SampleConfiguredRuntimePlugin
+
+    SampleConfiguredRuntimePlugin.reset()
+    config = Config(
+        {
+            "runtime": {
+                "plugins": [
+                    "tests.runtime.runtime_plugin_samples:SampleConfiguredRuntimePlugin",
+                ],
+            },
+        }
+    )
+    tool_broker = ToolBroker()
+    manager = RuntimePluginManager(
+        config=config,
+        gateway=FakeGateway(),
+        tool_broker=tool_broker,
+    )
+    sample_profile = AgentProfile(
+        agent_id="aca",
+        name="Aca",
+        prompt_ref="prompt/default",
+        default_model="test-model",
+        enabled_tools=["sample_configured_tool"],
+    )
+
+    loaded_names = await manager.reload_from_config()
+    visible_before = tool_broker.visible_tools(sample_profile)
+    loaded_again = await manager.reload_from_config()
+    visible_after = tool_broker.visible_tools(sample_profile)
+
+    assert loaded_names == ["sample_configured_runtime"]
+    assert loaded_again == ["sample_configured_runtime"]
+    assert [tool.name for tool in visible_before] == ["sample_configured_tool"]
+    assert [tool.name for tool in visible_after] == ["sample_configured_tool"]
+    assert SampleConfiguredRuntimePlugin.setup_calls == 2
+    assert SampleConfiguredRuntimePlugin.teardown_calls == 1

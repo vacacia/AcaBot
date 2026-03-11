@@ -81,6 +81,10 @@ from .plugin_manager import (
     RuntimePlugin,
     RuntimePluginContext,
     RuntimePluginManager,
+    RuntimePluginSpec,
+    load_runtime_plugin,
+    load_runtime_plugins_from_config,
+    parse_runtime_plugin_spec,
 )
 from .profile_loader import (
     AgentProfileRegistry,
@@ -197,6 +201,10 @@ __all__ = [
     "RuntimePlugin",
     "RuntimePluginContext",
     "RuntimePluginManager",
+    "RuntimePluginSpec",
+    "load_runtime_plugin",
+    "load_runtime_plugins_from_config",
+    "parse_runtime_plugin_spec",
     "RunContext",
     "RunManager",
     "RunRecord",

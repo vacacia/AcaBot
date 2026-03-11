@@ -12,6 +12,7 @@ from typing import Any
 from acabot.agent import ToolDef
 from acabot.config import Config
 from acabot.runtime import (
+    AgentProfile,
     InMemoryMemoryStore,
     ContextCompactor,
     ModelContextSummarizer,
@@ -229,6 +230,49 @@ async def test_build_runtime_components_accepts_runtime_plugins() -> None:
     await components.plugin_manager.ensure_started()
 
     assert plugin.setup_calls == 1
+
+
+async def test_build_runtime_components_loads_runtime_plugins_from_config() -> None:
+    from tests.runtime.runtime_plugin_samples import SampleConfiguredRuntimePlugin
+
+    SampleConfiguredRuntimePlugin.reset()
+    config = Config(
+        {
+            "agent": {
+                "default_model": "test-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "default_prompt_ref": "prompt/default",
+                "plugins": [
+                    "tests.runtime.runtime_plugin_samples:SampleConfiguredRuntimePlugin",
+                ],
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+
+    await components.plugin_manager.ensure_started()
+
+    assert SampleConfiguredRuntimePlugin.setup_calls == 1
+    assert any(
+        tool.name == "sample_configured_tool"
+        for tool in components.tool_broker.visible_tools(
+            AgentProfile(
+                agent_id="aca",
+                name="Aca",
+                prompt_ref="prompt/default",
+                default_model="test-model",
+                enabled_tools=["sample_configured_tool"],
+            )
+        )
+    )
 
 
 async def test_build_runtime_components_uses_channel_binding_for_group_event() -> None:

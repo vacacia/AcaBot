@@ -702,3 +702,44 @@ async def test_runtime_app_stop_tears_down_runtime_plugins() -> None:
 
     assert plugin.setup_calls == 1
     assert plugin.teardown_calls == 1
+
+
+async def test_runtime_app_can_reload_plugins_from_config() -> None:
+    from tests.runtime.runtime_plugin_samples import SampleConfiguredRuntimePlugin
+
+    SampleConfiguredRuntimePlugin.reset()
+    gateway = TrackingGateway()
+    plugin_manager = RuntimePluginManager(
+        config=Config(
+            {
+                "runtime": {
+                    "plugins": [
+                        "tests.runtime.runtime_plugin_samples:SampleConfiguredRuntimePlugin",
+                    ],
+                },
+            }
+        ),
+        gateway=gateway,
+        tool_broker=ToolBroker(),
+    )
+    app = RuntimeApp(
+        gateway=gateway,
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=InMemoryThreadManager(),
+        run_manager=InMemoryRunManager(),
+        channel_event_store=InMemoryChannelEventStore(),
+        pipeline=ThreadPipeline(
+            agent_runtime=FakeAgentRuntime(),
+            outbox=Outbox(gateway=gateway, store=FakeMessageStore()),
+            run_manager=InMemoryRunManager(),
+            thread_manager=InMemoryThreadManager(),
+            plugin_manager=plugin_manager,
+        ),
+        profile_loader=_profile_loader,
+        plugin_manager=plugin_manager,
+    )
+
+    loaded = await app.reload_plugins()
+
+    assert loaded == ["sample_configured_runtime"]
+    assert SampleConfiguredRuntimePlugin.setup_calls == 1
