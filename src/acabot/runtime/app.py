@@ -209,6 +209,18 @@ class RuntimeApp:
                     {"type": segment.type, "data": dict(segment.data)}
                     for segment in event.segments
                 ],
+                "reply_to_message_id": event.reply_to_message_id,
+                "mentioned_user_ids": list(event.mentioned_user_ids),
+                "attachments": [
+                    {
+                        "type": attachment.type,
+                        "source": attachment.source,
+                        "name": attachment.name,
+                        "mime_type": attachment.mime_type,
+                        "metadata": dict(attachment.metadata),
+                    }
+                    for attachment in event.attachments
+                ],
                 "sender_nickname": event.sender_nickname,
                 "sender_role": event.sender_role,
                 "operator_id": event.operator_id,
@@ -239,7 +251,7 @@ class RuntimeApp:
             一条简短的文本投影.
         """
 
-        text = event.text.strip()
+        text = event.message_preview.strip()
         if text:
             return text
         if event.event_type == "poke":

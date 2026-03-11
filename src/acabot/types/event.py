@@ -27,6 +27,25 @@ class MsgSegment:
 
 
 @dataclass
+class EventAttachment:
+    """统一 inbound 附件引用.
+
+    Attributes:
+        type (str): canonical 附件类型, 例如 `image` `file` `audio` `video`.
+        source (str): 平台给出的可引用地址或文件标识.
+        name (str): 附件名称. 平台未提供时为空.
+        mime_type (str): MIME 类型. 平台未提供时为空.
+        metadata (dict[str, Any]): 其他平台特定字段.
+    """
+
+    type: str
+    source: str = ""
+    name: str = ""
+    mime_type: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class EventSource:
     """事件来源地址.
 
@@ -59,6 +78,9 @@ class StandardEvent:
         sender_role (str | None): 群角色信息.
         operator_id (str | None): 操作者 ID. recall 等事件会用到.
         target_message_id (str | None): 被操作的目标消息 ID.
+        reply_to_message_id (str | None): 当前消息引用的上游消息 ID.
+        mentioned_user_ids (list[str]): 当前消息里显式提及的用户 ID 列表.
+        attachments (list[EventAttachment]): 当前消息携带的 canonical 附件列表.
         metadata (dict[str, Any]): canonical 扩展字段.
         raw_event (dict[str, Any]): 平台原始 payload.
     """
@@ -74,6 +96,9 @@ class StandardEvent:
     sender_role: str | None
     operator_id: str | None = None
     target_message_id: str | None = None
+    reply_to_message_id: str | None = None
+    mentioned_user_ids: list[str] = field(default_factory=list)
+    attachments: list[EventAttachment] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     raw_event: dict[str, Any] = field(default_factory=dict)
 
@@ -118,6 +143,34 @@ class StandardEvent:
             if seg.type == "text":
                 parts.append(seg.data.get("text", ""))
         return "".join(parts)
+
+    @property
+    def message_preview(self) -> str:
+        """返回 message world 的 canonical 文本投影.
+
+        Returns:
+            一个适合 working memory 和 event log 的简短文本.
+        """
+
+        if not self.is_message:
+            return ""
+
+        parts: list[str] = []
+        if self.reply_to_message_id:
+            parts.append(f"[reply:{self.reply_to_message_id}]")
+        if self.mentioned_user_ids:
+            joined = ",".join(self.mentioned_user_ids)
+            parts.append(f"[mentions:{joined}]")
+
+        text = self.text.strip()
+        if text:
+            parts.append(text)
+
+        if self.attachments:
+            attachment_types = ",".join(attachment.type for attachment in self.attachments)
+            parts.append(f"[attachments:{attachment_types}]")
+
+        return " ".join(part for part in parts if part).strip()
 
 
 # endregion

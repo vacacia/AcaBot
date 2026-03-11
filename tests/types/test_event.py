@@ -1,7 +1,7 @@
 # StandardEvent: 框架核心数据结构, 所有消息经 Gateway 翻译后统一为此格式
 # 测试: session_key 拼接规则(私聊 vs 群聊), .text 从混合段中提取纯文字
 
-from acabot.types import StandardEvent, EventSource, MsgSegment
+from acabot.types import StandardEvent, EventSource, MsgSegment, EventAttachment
 
 
 def test_private_event():
@@ -63,3 +63,22 @@ def test_notice_event_keeps_metadata_and_empty_text():
     assert not event.is_message
     assert event.text == ""
     assert event.metadata["target_id"] == "999"
+
+
+def test_message_preview_includes_reply_mentions_and_attachments():
+    source = EventSource(platform="qq", message_type="group", user_id="123", group_id="456")
+    event = StandardEvent(
+        event_id="evt_msg_3",
+        event_type="message",
+        platform="qq",
+        timestamp=1700000000,
+        source=source,
+        segments=[MsgSegment(type="text", data={"text": "请看图"})],
+        raw_message_id="msg_3",
+        sender_nickname="Alice",
+        sender_role="member",
+        reply_to_message_id="msg_1",
+        mentioned_user_ids=["111", "all"],
+        attachments=[EventAttachment(type="image", source="https://example.com/cat.jpg")],
+    )
+    assert event.message_preview == "[reply:msg_1] [mentions:111,all] 请看图 [attachments:image]"

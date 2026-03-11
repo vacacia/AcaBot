@@ -17,7 +17,7 @@ except ImportError:
     serve = None
 
 from .base import BaseGateway
-from acabot.types import StandardEvent, EventSource, MsgSegment, Action, ActionType
+from acabot.types import StandardEvent, EventSource, MsgSegment, EventAttachment, Action, ActionType
 
 logger = logging.getLogger("acabot.gateway")
 
@@ -145,6 +145,8 @@ class NapCatGateway(BaseGateway):
         """
 
         sender = raw.get("sender", {})
+        raw_segments = list(raw.get("message", []))
+        reply_to_message_id, mentioned_user_ids, attachments = self._extract_message_features(raw_segments)
         source = EventSource(
             platform="qq",
             message_type=raw.get("message_type", ""),
@@ -153,7 +155,7 @@ class NapCatGateway(BaseGateway):
         )
         segments = [
             MsgSegment(type=s["type"], data=s.get("data", {}))
-            for s in raw.get("message", [])
+            for s in raw_segments
         ]
         logger.debug(
             "translate: msg_id=%s, segments=%s",
@@ -170,6 +172,9 @@ class NapCatGateway(BaseGateway):
             raw_message_id=str(raw.get("message_id", "")),
             sender_nickname=sender.get("nickname", ""),
             sender_role=sender.get("role"),
+            reply_to_message_id=reply_to_message_id,
+            mentioned_user_ids=mentioned_user_ids,
+            attachments=attachments,
             raw_event=dict(raw),
         )
 
@@ -330,6 +335,110 @@ class NapCatGateway(BaseGateway):
                 "affected_user_id": affected_user_id,
             },
             raw_event=dict(raw),
+        )
+
+    def _extract_message_features(
+        self,
+        raw_segments: list[dict[str, Any]],
+    ) -> tuple[str | None, list[str], list[EventAttachment]]:
+        """从 OneBot message segments 提取 canonical message feature.
+
+        OneBot v11 的 message 是 segment 数组, 每个 segment 有 type 和 data.
+        例如: [{"type": "text", "data": {"text": "hello"}}, {"type": "at", "data": {"qq": "12345"}}]
+
+        Args:
+            raw_segments: OneBot v11 message 字段里的原始 segments.
+
+        Returns:
+            (reply_to_message_id, mentioned_user_ids, attachments).
+            - reply_to_message_id: 回复的目标消息 ID, 从 reply segment 提取
+            - mentioned_user_ids: 被 @ 的用户 ID 列表, 从 at segment 提取
+            - attachments: 附件列表(图片/文件/语音/视频), 从对应 segment 转换
+        """
+
+        reply_to_message_id: str | None = None
+        mentioned_user_ids: list[str] = []
+        attachments: list[EventAttachment] = []
+
+        for segment in raw_segments:
+            seg_type = str(segment.get("type", "") or "")
+            data = dict(segment.get("data", {}) or {})
+
+            # reply segment: 是一条回复消息, data.id 是被回复的消息 ID
+            if seg_type == "reply":
+                reply_to_message_id = str(data.get("id", "") or "") or None
+                continue  # reply 不生成 attachment
+
+            # at segment: data.qq 是被 @ 的用户 ID
+            if seg_type == "at":
+                mentioned_user_id = str(data.get("qq", "") or "") or None
+                if mentioned_user_id:
+                    mentioned_user_ids.append(mentioned_user_id)
+                continue  # at 不生成 attachment
+
+            # 其他 segment 类型(image/file/record/video)转换为 attachment
+            # text segment 不在这里处理, 因为文本内容在 message_preview 中提取
+            attachment = self._segment_to_attachment(seg_type, data)
+            if attachment is not None:
+                attachments.append(attachment)
+
+        return reply_to_message_id, mentioned_user_ids, attachments
+
+    def _segment_to_attachment(
+        self,
+        seg_type: str,
+        data: dict[str, Any],
+    ) -> EventAttachment | None:
+        """把单个 OneBot segment 投影成 canonical EventAttachment.
+
+        类型映射:
+        - image -> image: 图片消息
+        - file -> file: 文件消息
+        - record -> audio: 语音消息(OneBot 叫 record, AcaBot 内部叫 audio)
+        - video -> video: 视频消息
+
+        Args:
+            seg_type: segment 类型, 如 "image", "file", "record", "video".
+            data: segment 负载, 包含 url/file/path/id 等字段.
+
+        Returns:
+            可识别时返回 EventAttachment, 否则返回 None.
+        """
+
+        # OneBot 类型 -> AcaBot 内部类型的映射表
+        attachment_type_map = {
+            "image": "image",
+            "file": "file",
+            "record": "audio",
+            "video": "video",
+        }
+        attachment_type = attachment_type_map.get(seg_type)
+        if attachment_type is None:
+            # 未识别的类型不生成 attachment
+            return None
+
+        # source 的优先级
+        # - url: 最直接可访问的 HTTP URL
+        # - file: 本地文件路径或缓存标识
+        # - path: 备用路径字段
+        # - id: 最简标识, 需要二次解析
+        source = str(
+            data.get("url")
+            or data.get("file")
+            or data.get("path")
+            or data.get("id")
+            or ""
+        )
+        name = str(data.get("name", "") or "")  # 文件名, 用于展示
+        mime_type = str(data.get("mime", "") or "")  # MIME 类型, 用于内容识别
+
+        # 保留原始 data 的完整内容, 供后续处理使用
+        return EventAttachment(
+            type=attachment_type,
+            source=source,
+            name=name,
+            mime_type=mime_type,
+            metadata=dict(data),
         )
 
     # endregion

@@ -25,7 +25,7 @@ from acabot.runtime import (
     ToolBroker,
     ToolPolicyDecision,
 )
-from acabot.types import Action, ActionType, EventSource, MsgSegment, StandardEvent
+from acabot.types import Action, ActionType, EventAttachment, EventSource, MsgSegment, StandardEvent
 
 from .test_outbox import FakeGateway, FakeMessageStore
 
@@ -210,6 +210,65 @@ async def test_thread_pipeline_runs_minimal_text_flow() -> None:
     assert len(gateway.sent) == 1
     assert thread.working_messages[0]["role"] == "user"
     assert thread.working_messages[1]["content"] == "hello back"
+
+
+async def test_thread_pipeline_projects_reply_and_attachment_into_working_memory() -> None:
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    gateway = FakeGateway()
+    store = FakeMessageStore()
+    outbox = Outbox(gateway=gateway, store=store)
+    pipeline = ThreadPipeline(
+        agent_runtime=FakeAgentRuntime(),
+        outbox=outbox,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+    )
+
+    event = StandardEvent(
+        event_id="evt-1",
+        event_type="message",
+        platform="qq",
+        timestamp=123,
+        source=EventSource(
+            platform="qq",
+            message_type="private",
+            user_id="10001",
+            group_id=None,
+        ),
+        segments=[MsgSegment(type="text", data={"text": "请看图"})],
+        raw_message_id="msg-1",
+        sender_nickname="acacia",
+        sender_role=None,
+        reply_to_message_id="msg-0",
+        mentioned_user_ids=["20002"],
+        attachments=[
+            EventAttachment(
+                type="image",
+                source="https://example.com/cat.jpg",
+            )
+        ],
+    )
+    decision = _decision()
+    thread = await thread_manager.get_or_create(
+        thread_id=decision.thread_id,
+        channel_scope=decision.channel_scope,
+        last_event_at=event.timestamp,
+    )
+    run = await run_manager.open(event=event, decision=decision)
+    ctx = RunContext(
+        run=run,
+        event=event,
+        decision=decision,
+        thread=thread,
+        profile=_profile(),
+    )
+
+    await pipeline.execute(ctx)
+
+    assert thread.working_messages[0]["content"] == (
+        "[acacia/10001] [reply:msg-0] [mentions:20002] 请看图 [attachments:image]"
+    )
 
 
 async def test_thread_pipeline_injects_memory_blocks_before_agent_runtime() -> None:

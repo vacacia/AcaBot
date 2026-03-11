@@ -56,8 +56,28 @@ class TestNapCatTranslation:
         assert len(event.segments) == 2
         assert event.sender_role == "member"
 
+    def test_translate_message_extracts_reply_mentions_and_attachments(self, gw):
+        raw = {
+            "post_type": "message", "message_type": "group", "sub_type": "normal",
+            "time": 1700000000, "self_id": 111, "user_id": 222, "group_id": 444,
+            "message_id": 333,
+            "message": [
+                {"type": "reply", "data": {"id": "999"}},
+                {"type": "at", "data": {"qq": "111"}},
+                {"type": "text", "data": {"text": "请看图"}},
+                {"type": "image", "data": {"file": "https://example.com/cat.jpg"}},
+            ],
+            "sender": {"user_id": 222, "nickname": "Bob", "role": "member"},
+        }
+        event = gw.translate(raw)
+        assert event.reply_to_message_id == "999"
+        assert event.mentioned_user_ids == ["111"]
+        assert len(event.attachments) == 1
+        assert event.attachments[0].type == "image"
+        assert event.attachments[0].source == "https://example.com/cat.jpg"
+
     def test_translate_ignores_non_message(self, gw):
-        # 非消息事件(notice/request等)直接返回 None
+        # 非消息事件(notice/request等)如果未识别到具体 notice, 返回 None
         assert gw.translate({"post_type": "notice"}) is None
 
     def test_translate_poke_notice(self, gw):
