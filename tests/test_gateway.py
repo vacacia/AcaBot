@@ -189,6 +189,46 @@ class TestNapCatTranslation:
         assert event.notice_subtype == "kick"
         assert event.metadata["notice_type"] == "group_decrease"
 
+    def test_translate_group_admin_notice(self, gw):
+        raw = {
+            "post_type": "notice",
+            "notice_type": "group_admin",
+            "sub_type": "set",
+            "time": 1700000005,
+            "group_id": 444,
+            "user_id": 222,
+        }
+        event = gw.translate(raw)
+        assert event is not None
+        assert event.event_type == "admin_change"
+        assert event.subject_user_id == "222"
+        assert event.notice_type == "group_admin"
+        assert event.notice_subtype == "set"
+        assert event.content_preview == "[notice:admin_change user=222 sub_type=set]"
+
+    def test_translate_group_upload_notice(self, gw):
+        raw = {
+            "post_type": "notice",
+            "notice_type": "group_upload",
+            "time": 1700000006,
+            "group_id": 444,
+            "user_id": 222,
+            "file": {
+                "id": "file-1",
+                "name": "guide.pdf",
+                "size": 1024,
+            },
+        }
+        event = gw.translate(raw)
+        assert event is not None
+        assert event.event_type == "file_upload"
+        assert event.subject_user_id == "222"
+        assert event.notice_type == "group_upload"
+        assert len(event.attachments) == 1
+        assert event.attachments[0].type == "file"
+        assert event.attachments[0].name == "guide.pdf"
+        assert event.content_preview == "[notice:file_upload user=222 file=guide.pdf]"
+
     # --- build_send_payload: 发消息方向 ---
     # NOTE: 验证能否把 Action 对象正确转换成 NapCat 格式的 JSON
     

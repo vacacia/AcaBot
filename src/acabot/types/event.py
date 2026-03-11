@@ -245,6 +245,21 @@ class StandardEvent:
             if self.notice_subtype:
                 parts.append(f"sub_type={self.notice_subtype}")
             return " ".join(parts) + "]"
+        if self.event_type == "admin_change":
+            parts = ["[notice:admin_change"]
+            if self.subject_user_id:
+                parts.append(f"user={self.subject_user_id}")
+            if self.notice_subtype:
+                parts.append(f"sub_type={self.notice_subtype}")
+            return " ".join(parts) + "]"
+        if self.event_type == "file_upload":
+            parts = ["[notice:file_upload"]
+            if self.subject_user_id:
+                parts.append(f"user={self.subject_user_id}")
+            file_name = str(self.metadata.get("file_name", "") or "")
+            if file_name:
+                parts.append(f"file={file_name}")
+            return " ".join(parts) + "]"
         return f"[notice:{self.event_type}]"
 
     @property
@@ -285,6 +300,66 @@ class StandardEvent:
         if not content:
             return self.actor_tag
         return f"{self.actor_tag} {content}".strip()
+
+    def to_payload_json(self) -> dict[str, Any]:
+        """把事件序列化成稳定的 canonical payload.
+
+        Returns:
+            可直接落到 `ChannelEventRecord.payload_json` 的结构化字典.
+        """
+
+        return {
+            "source": {
+                "platform": self.source.platform,
+                "message_type": self.source.message_type,
+                "user_id": self.source.user_id,
+                "group_id": self.source.group_id,
+            },
+            "segments": [
+                {"type": segment.type, "data": dict(segment.data)}
+                for segment in self.segments
+            ],
+            "reply_to_message_id": self.reply_to_message_id,
+            "reply_reference": self._reply_reference_payload(),
+            "mentioned_user_ids": list(self.mentioned_user_ids),
+            "mentioned_everyone": self.mentioned_everyone,
+            "targets_self": self.targets_self,
+            "attachments": [
+                {
+                    "type": attachment.type,
+                    "source": attachment.source,
+                    "name": attachment.name,
+                    "mime_type": attachment.mime_type,
+                    "metadata": dict(attachment.metadata),
+                }
+                for attachment in self.attachments
+            ],
+            "sender_nickname": self.sender_nickname,
+            "sender_role": self.sender_role,
+            "message_subtype": self.message_subtype,
+            "operator_id": self.operator_id,
+            "subject_user_id": self.subject_user_id,
+            "target_message_id": self.target_message_id,
+            "notice_type": self.notice_type,
+            "notice_subtype": self.notice_subtype,
+            "metadata": dict(self.metadata),
+        }
+
+    def _reply_reference_payload(self) -> dict[str, Any] | None:
+        """把 reply_reference 序列化为 JSON 友好结构.
+
+        Returns:
+            reply payload, 未设置时返回 None.
+        """
+
+        if self.reply_reference is None:
+            return None
+        return {
+            "message_id": self.reply_reference.message_id,
+            "sender_user_id": self.reply_reference.sender_user_id,
+            "text_preview": self.reply_reference.text_preview,
+            "metadata": dict(self.reply_reference.metadata),
+        }
 
 
 # endregion

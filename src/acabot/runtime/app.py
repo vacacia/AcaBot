@@ -197,49 +197,8 @@ class RuntimeApp:
             platform=event.platform,
             event_type=event.event_type,
             message_type=event.source.message_type,
-            content_text=RuntimeApp._event_text_projection(event),
-            payload_json={
-                "source": {
-                    "platform": event.source.platform,
-                    "message_type": event.source.message_type,
-                    "user_id": event.source.user_id,
-                    "group_id": event.source.group_id,
-                },
-                "segments": [
-                    {"type": segment.type, "data": dict(segment.data)}
-                    for segment in event.segments
-                ],
-                "reply_to_message_id": event.reply_to_message_id,
-                "reply_reference": (
-                    {
-                        "message_id": event.reply_reference.message_id,
-                        "sender_user_id": event.reply_reference.sender_user_id,
-                        "text_preview": event.reply_reference.text_preview,
-                        "metadata": dict(event.reply_reference.metadata),
-                    }
-                    if event.reply_reference is not None
-                    else None
-                ),
-                "mentioned_user_ids": list(event.mentioned_user_ids),
-                "attachments": [
-                    {
-                        "type": attachment.type,
-                        "source": attachment.source,
-                        "name": attachment.name,
-                        "mime_type": attachment.mime_type,
-                        "metadata": dict(attachment.metadata),
-                    }
-                    for attachment in event.attachments
-                ],
-                "sender_nickname": event.sender_nickname,
-                "sender_role": event.sender_role,
-                "operator_id": event.operator_id,
-                "subject_user_id": event.subject_user_id,
-                "target_message_id": event.target_message_id,
-                "notice_type": event.notice_type,
-                "notice_subtype": event.notice_subtype,
-                "metadata": dict(event.metadata),
-            },
+            content_text=event.content_preview or f"[{event.event_type}]",
+            payload_json=event.to_payload_json(),
             timestamp=event.timestamp,
             run_id=run_id,
             raw_message_id=event.raw_message_id,
@@ -252,22 +211,6 @@ class RuntimeApp:
             },
             raw_event=dict(event.raw_event),
         )
-
-    @staticmethod
-    def _event_text_projection(event: StandardEvent) -> str:
-        """把 StandardEvent 投影成便于检索的简短文本.
-
-        Args:
-            event: 当前标准化事件.
-
-        Returns:
-            一条简短的文本投影.
-        """
-
-        text = event.content_preview.strip()
-        if text:
-            return text
-        return f"[{event.event_type}]"
 
     # region recovery
     async def recover_active_runs(self) -> RecoveryReport:

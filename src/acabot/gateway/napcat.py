@@ -227,6 +227,10 @@ class NapCatGateway(BaseGateway):
                 event_type="member_leave",
                 notice_type=notice_type,
             )
+        if notice_type == "group_admin":
+            return self._translate_group_admin_notice(raw, notice_type=notice_type)
+        if notice_type == "group_upload":
+            return self._translate_group_upload_notice(raw, notice_type=notice_type)
         return None
 
     def _translate_poke_notice(self, raw: dict[str, Any]) -> StandardEvent:
@@ -367,6 +371,114 @@ class NapCatGateway(BaseGateway):
                 "notice_type": notice_type,
                 "sub_type": sub_type,
                 "affected_user_id": affected_user_id,
+            },
+            raw_event=dict(raw),
+        )
+
+    def _translate_group_admin_notice(
+        self,
+        raw: dict[str, Any],
+        *,
+        notice_type: str,
+    ) -> StandardEvent:
+        """翻译 group admin notice.
+
+        Args:
+            raw: group admin 原始事件.
+            notice_type: OneBot v11 notice 类型.
+
+        Returns:
+            统一的 admin_change StandardEvent.
+        """
+
+        affected_user_id = str(raw.get("user_id", "") or "")
+        group_id = str(raw.get("group_id", "") or "") or None
+        sub_type = str(raw.get("sub_type", "") or "")
+        source = EventSource(
+            platform="qq",
+            message_type="group",
+            user_id=affected_user_id,
+            group_id=group_id,
+        )
+        return StandardEvent(
+            event_id=(
+                f"evt_admin_change_{raw.get('time', 0)}_"
+                f"{group_id or ''}_{affected_user_id}_{sub_type}"
+            ),
+            event_type="admin_change",
+            platform="qq",
+            timestamp=raw.get("time", 0),
+            source=source,
+            segments=[],
+            raw_message_id="",
+            sender_nickname="",
+            sender_role=None,
+            subject_user_id=affected_user_id or None,
+            notice_type=notice_type,
+            notice_subtype=sub_type or None,
+            metadata={
+                "notice_type": notice_type,
+                "sub_type": sub_type,
+                "affected_user_id": affected_user_id,
+            },
+            raw_event=dict(raw),
+        )
+
+    def _translate_group_upload_notice(
+        self,
+        raw: dict[str, Any],
+        *,
+        notice_type: str,
+    ) -> StandardEvent:
+        """翻译 group upload notice.
+
+        Args:
+            raw: group upload 原始事件.
+            notice_type: OneBot v11 notice 类型.
+
+        Returns:
+            统一的 file_upload StandardEvent.
+        """
+
+        uploader_user_id = str(raw.get("user_id", "") or "")
+        group_id = str(raw.get("group_id", "") or "") or None
+        file_info = dict(raw.get("file", {}) or {})
+        source = EventSource(
+            platform="qq",
+            message_type="group",
+            user_id=uploader_user_id,
+            group_id=group_id,
+        )
+        attachments: list[EventAttachment] = []
+        if file_info:
+            attachments.append(
+                EventAttachment(
+                    type="file",
+                    source=str(file_info.get("id") or file_info.get("name") or ""),
+                    name=str(file_info.get("name", "") or ""),
+                    metadata=dict(file_info),
+                )
+            )
+        return StandardEvent(
+            event_id=(
+                f"evt_file_upload_{raw.get('time', 0)}_"
+                f"{group_id or ''}_{uploader_user_id}_{file_info.get('id', '')}"
+            ),
+            event_type="file_upload",
+            platform="qq",
+            timestamp=raw.get("time", 0),
+            source=source,
+            segments=[],
+            raw_message_id="",
+            sender_nickname="",
+            sender_role=None,
+            subject_user_id=uploader_user_id or None,
+            notice_type=notice_type,
+            attachments=attachments,
+            metadata={
+                "notice_type": notice_type,
+                "file": dict(file_info),
+                "file_name": str(file_info.get("name", "") or ""),
             },
             raw_event=dict(raw),
         )

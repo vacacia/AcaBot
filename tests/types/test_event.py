@@ -139,3 +139,64 @@ def test_membership_notice_preview_includes_subject_and_subtype():
         notice_subtype="approve",
     )
     assert event.content_preview == "[notice:member_join user=999 sub_type=approve]"
+
+
+def test_notice_preview_supports_admin_change_and_file_upload():
+    source = EventSource(platform="qq", message_type="group", user_id="123", group_id="456")
+    admin_event = StandardEvent(
+        event_id="evt_admin_change_1",
+        event_type="admin_change",
+        platform="qq",
+        timestamp=1700000000,
+        source=source,
+        segments=[],
+        raw_message_id="",
+        sender_nickname="",
+        sender_role=None,
+        subject_user_id="999",
+        notice_type="group_admin",
+        notice_subtype="set",
+    )
+    upload_event = StandardEvent(
+        event_id="evt_file_upload_1",
+        event_type="file_upload",
+        platform="qq",
+        timestamp=1700000000,
+        source=source,
+        segments=[],
+        raw_message_id="",
+        sender_nickname="",
+        sender_role=None,
+        subject_user_id="999",
+        notice_type="group_upload",
+        metadata={"file_name": "guide.pdf"},
+    )
+    assert admin_event.content_preview == "[notice:admin_change user=999 sub_type=set]"
+    assert upload_event.content_preview == "[notice:file_upload user=999 file=guide.pdf]"
+
+
+def test_to_payload_json_returns_canonical_shape():
+    source = EventSource(platform="qq", message_type="group", user_id="123", group_id="456")
+    event = StandardEvent(
+        event_id="evt_5",
+        event_type="message",
+        platform="qq",
+        timestamp=1700000000,
+        source=source,
+        segments=[MsgSegment(type="text", data={"text": "你好"})],
+        raw_message_id="msg_5",
+        sender_nickname="Alice",
+        sender_role="member",
+        message_subtype="normal",
+        reply_reference=ReplyReference(message_id="msg_1", sender_user_id="321"),
+        mentioned_user_ids=["111"],
+        mentioned_everyone=False,
+        targets_self=True,
+        attachments=[EventAttachment(type="image", source="https://example.com/a.jpg")],
+    )
+    payload = event.to_payload_json()
+    assert payload["source"]["group_id"] == "456"
+    assert payload["reply_reference"]["message_id"] == "msg_1"
+    assert payload["mentioned_user_ids"] == ["111"]
+    assert payload["targets_self"] is True
+    assert payload["attachments"][0]["type"] == "image"
