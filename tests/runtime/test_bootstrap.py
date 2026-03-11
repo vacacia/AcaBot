@@ -13,6 +13,9 @@ from acabot.agent import ToolDef
 from acabot.config import Config
 from acabot.runtime import (
     InMemoryMemoryStore,
+    LocalReferenceBackend,
+    NullReferenceBackend,
+    OpenVikingReferenceBackend,
     RouteDecision,
     SQLiteChannelEventStore,
     SQLiteMemoryStore,
@@ -721,6 +724,96 @@ async def test_build_runtime_components_uses_sqlite_persistence_when_configured(
     assert [msg.content_text for msg in delivered] == ["hello back"]
     assert delivered[0].metadata["thread_content"] == "hello back"
     assert [event.content_text for event in events] == ["hello"]
+
+
+def test_build_runtime_components_defaults_to_null_reference_backend() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "runtime-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "default_prompt_ref": "prompt/default",
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+
+    assert isinstance(components.reference_backend, NullReferenceBackend)
+
+
+def test_build_runtime_components_selects_local_reference_backend(tmp_path: Path) -> None:
+    sqlite_path = tmp_path / "reference.sqlite3"
+    config = Config(
+        {
+            "agent": {
+                "default_model": "runtime-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "default_prompt_ref": "prompt/default",
+                "reference": {
+                    "enabled": True,
+                    "provider": "local",
+                    "local": {
+                        "sqlite_path": str(sqlite_path),
+                    },
+                },
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+
+    assert isinstance(components.reference_backend, LocalReferenceBackend)
+    assert components.reference_backend.db_path == sqlite_path
+
+
+def test_build_runtime_components_selects_openviking_reference_backend() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "runtime-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "default_prompt_ref": "prompt/default",
+                "reference": {
+                    "enabled": True,
+                    "provider": "openviking",
+                    "openviking": {
+                        "mode": "embedded",
+                        "path": "./ref-data",
+                        "base_uri": "viking://resources/acabot-test",
+                    },
+                },
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+
+    assert isinstance(components.reference_backend, OpenVikingReferenceBackend)
+    assert components.reference_backend.mode == "embedded"
+    assert components.reference_backend.path == "./ref-data"
+    assert components.reference_backend.base_uri == "viking://resources/acabot-test"
 
 
 def test_build_runtime_components_rejects_thread_id_in_binding_rules() -> None:

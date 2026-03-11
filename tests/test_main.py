@@ -18,6 +18,7 @@ from acabot.runtime import (
     InMemoryMessageStore,
     MemoryBroker,
     NoopApprovalResumer,
+    NullReferenceBackend,
     RouteDecision,
     RuntimeComponents,
     SQLiteMessageStore,
@@ -267,6 +268,7 @@ async def test_run_starts_and_stops_runtime_app(monkeypatch) -> None:
             message_store=InMemoryMessageStore(),
             memory_store=InMemoryMemoryStore(),
             memory_broker=MemoryBroker(),
+            reference_backend=NullReferenceBackend(),
             prompt_loader=None,  # type: ignore[arg-type]
             profile_loader=None,  # type: ignore[arg-type]
             tool_broker=None,  # type: ignore[arg-type]

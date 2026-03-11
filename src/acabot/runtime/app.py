@@ -27,6 +27,7 @@ from .models import (
     RunStep,
 )
 from .pipeline import ThreadPipeline
+from .reference_backend import ReferenceBackend
 from .router import RuntimeRouter
 from .runs import RunManager
 from .stores import ChannelEventStore
@@ -53,6 +54,7 @@ class RuntimeApp:
         pipeline: ThreadPipeline,
         profile_loader: Callable[[RouteDecision], AgentProfile],
         approval_resumer: ApprovalResumer | None = None,
+        reference_backend: ReferenceBackend | None = None,
     ) -> None:
         """初始化 RuntimeApp.
 
@@ -65,6 +67,7 @@ class RuntimeApp:
             pipeline: 真正执行一次 run 的 ThreadPipeline.
             profile_loader: 根据 RouteDecision 加载 AgentProfile 的回调.
             approval_resumer: approval 通过后的续执行器.
+            reference_backend: `reference / notebook` provider. 默认允许 lazy init.
         """
 
         self.gateway = gateway
@@ -75,6 +78,7 @@ class RuntimeApp:
         self.pipeline = pipeline
         self.profile_loader = profile_loader
         self.approval_resumer = approval_resumer or NoopApprovalResumer()
+        self.reference_backend = reference_backend
         self.last_recovery_report = RecoveryReport()
         self._pending_approvals: dict[str, PendingApprovalRecord] = {}
 
@@ -92,8 +96,20 @@ class RuntimeApp:
 
     async def stop(self) -> None:
         """停止 gateway."""
-
-        await self.gateway.stop()
+        stop_error: Exception | None = None
+        try:
+            await self.gateway.stop()
+        except Exception as exc:
+            stop_error = exc
+        if self.reference_backend is not None:
+            try:
+                await self.reference_backend.close()
+            except Exception:
+                logger.exception("Failed to close reference backend during shutdown")
+                if stop_error is None:
+                    raise
+        if stop_error is not None:
+            raise stop_error
 
     async def handle_event(self, event: StandardEvent) -> None:
         """处理一条来自 gateway 的标准事件.

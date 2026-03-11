@@ -70,6 +70,20 @@ from .profile_loader import (
     StaticProfileLoader,
     StaticPromptLoader,
 )
+from .reference_backend import (
+    LocalReferenceBackend,
+    NullReferenceBackend,
+    OpenVikingReferenceBackend,
+    ReferenceBodyLevel,
+    ReferenceBackend,
+    ReferenceDocument,
+    ReferenceDocumentInput,
+    ReferenceDocumentRef,
+    ReferenceHit,
+    ReferenceMode,
+    ReferenceProviderMode,
+    ReferenceSpace,
+)
 from .router import InboundRuleRegistry, RuntimeRouter
 from .runs import InMemoryRunManager, RunManager, StoreBackedRunManager
 from .sqlite_stores import (
@@ -136,7 +150,9 @@ __all__ = [
     "NoopApprovalResumer",
     "NullMemoryExtractor",
     "NullMemoryRetriever",
+    "NullReferenceBackend",
     "OutboxItem",
+    "OpenVikingReferenceBackend",
     "PendingApproval",
     "PendingApprovalRecord",
     "PlannedAction",
@@ -159,6 +175,16 @@ __all__ = [
     "SQLiteMessageStore",
     "SQLiteRunStore",
     "SQLiteThreadStore",
+    "ReferenceBackend",
+    "ReferenceBodyLevel",
+    "ReferenceDocument",
+    "ReferenceDocumentInput",
+    "ReferenceDocumentRef",
+    "ReferenceHit",
+    "ReferenceMode",
+    "ReferenceProviderMode",
+    "ReferenceSpace",
+    "LocalReferenceBackend",
     "StaticProfileLoader",
     "StaticPromptLoader",
     "StoreBackedMemoryRetriever",

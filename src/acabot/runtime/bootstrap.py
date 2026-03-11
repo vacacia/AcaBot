@@ -44,6 +44,12 @@ from .profile_loader import (
     PromptLoader,
     StaticPromptLoader,
 )
+from .reference_backend import (
+    LocalReferenceBackend,
+    NullReferenceBackend,
+    OpenVikingReferenceBackend,
+    ReferenceBackend,
+)
 from .router import InboundRuleRegistry, RuntimeRouter
 from .runs import InMemoryRunManager, RunManager, StoreBackedRunManager
 from .sqlite_stores import (
@@ -72,6 +78,7 @@ class RuntimeComponents:
         message_store (MessageStore): 保存 delivered facts 的 MessageStore.
         memory_store (MemoryStore): 保存长期记忆项的 MemoryStore.
         memory_broker (MemoryBroker): 长期记忆统一入口.
+        reference_backend (ReferenceBackend): on-demand `reference / notebook` provider.
         prompt_loader (PromptLoader): 按 `prompt_ref` 加载 system prompt 的 loader.
         profile_loader (ProfileLoader): 按 `RouteDecision` 加载 profile 的 loader.
         tool_broker (ToolBroker): runtime 侧统一工具入口.
@@ -90,6 +97,7 @@ class RuntimeComponents:
     message_store: MessageStore
     memory_store: MemoryStore
     memory_broker: MemoryBroker
+    reference_backend: ReferenceBackend
     prompt_loader: PromptLoader
     profile_loader: ProfileLoader
     tool_broker: ToolBroker
@@ -112,6 +120,7 @@ def build_runtime_components(
     run_manager: RunManager | None = None,
     channel_event_store: ChannelEventStore | None = None,
     memory_broker: MemoryBroker | None = None,
+    reference_backend: ReferenceBackend | None = None,
     tool_broker: ToolBroker | None = None,
     approval_resumer: ApprovalResumer | None = None,
 ) -> RuntimeComponents:
@@ -128,6 +137,7 @@ def build_runtime_components(
         run_manager: 可选的 RunManager 实现.
         channel_event_store: 可选的 ChannelEventStore 实现.
         memory_broker: 可选的 MemoryBroker 实现.
+        reference_backend: 可选的 ReferenceBackend 实现.
         tool_broker: 可选的 ToolBroker 实现.
         approval_resumer: 可选的 approval resumer.
 
@@ -166,6 +176,7 @@ def build_runtime_components(
         config,
         memory_store=runtime_memory_store,
     )
+    runtime_reference_backend = reference_backend or _build_reference_backend(config)
     runtime_tool_broker = tool_broker or ToolBroker()
     runtime_approval_resumer = approval_resumer or NoopApprovalResumer()
     agent_runtime = ModelAgentRuntime(
@@ -191,6 +202,7 @@ def build_runtime_components(
         pipeline=pipeline,
         profile_loader=profile_registry.load,
         approval_resumer=runtime_approval_resumer,
+        reference_backend=runtime_reference_backend,
     )
 
     return RuntimeComponents(
@@ -202,6 +214,7 @@ def build_runtime_components(
         message_store=runtime_message_store,
         memory_store=runtime_memory_store,
         memory_broker=runtime_memory_broker,
+        reference_backend=runtime_reference_backend,
         prompt_loader=prompt_loader,
         profile_loader=profile_registry,
         tool_broker=runtime_tool_broker,
@@ -476,6 +489,43 @@ def _build_memory_broker(
         retriever=StoreBackedMemoryRetriever(memory_store),
         extractor=StructuredMemoryExtractor(memory_store),
     )
+
+
+def _build_reference_backend(config: Config) -> ReferenceBackend:
+    """根据配置构造 ReferenceBackend.
+
+    Args:
+        config: 项目配置对象.
+
+    Returns:
+        默认的 ReferenceBackend 实现.
+    """
+
+    runtime_conf = config.get("runtime", {})
+    reference_conf = runtime_conf.get("reference", {})
+    if not bool(reference_conf.get("enabled", False)):
+        return NullReferenceBackend()
+
+    provider = str(reference_conf.get("provider", "local"))
+    if provider == "local":
+        local_conf = dict(reference_conf.get("local", {}))
+        sqlite_path = (
+            local_conf.get("sqlite_path")
+            or reference_conf.get("sqlite_path")
+            or _get_persistence_sqlite_path(config)
+            or "data/reference.sqlite3"
+        )
+        return LocalReferenceBackend(str(sqlite_path))
+
+    if provider == "openviking":
+        openviking_conf = dict(reference_conf.get("openviking", {}))
+        return OpenVikingReferenceBackend(
+            mode=str(openviking_conf.get("mode", "embedded")),
+            path=_optional_str(openviking_conf.get("path")),
+            base_uri=str(openviking_conf.get("base_uri", "viking://resources/acabot")),
+        )
+
+    raise ValueError(f"unsupported runtime.reference provider: {provider}")
 
 
 def _get_persistence_sqlite_path(config: Config) -> str | None:
