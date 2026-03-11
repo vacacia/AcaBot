@@ -93,7 +93,9 @@ async def test_memory_broker_builds_retrieval_request_from_context() -> None:
 
     assert blocks[0].title == "User Profile"
     request = retriever.calls[0]
+    assert request.event_id == "evt-1"
     assert request.event_type == "poke"
+    assert request.event_timestamp == 123
     assert request.requested_scopes == ["episodic", "relationship"]
     assert request.event_tags == ["notice", "poke"]
     assert request.metadata["event_policy_id"] == "poke-memory"
@@ -108,7 +110,9 @@ async def test_memory_broker_builds_write_request_from_context() -> None:
     await broker.extract_after_run(ctx)
 
     request = extractor.calls[0]
+    assert request.event_id == "evt-1"
     assert request.run_status == "completed"
+    assert request.event_timestamp == 123
     assert request.user_content == "[acacia/10001] [notice:poke]"
     assert request.requested_scopes == ["episodic", "relationship"]
     assert request.metadata["extract_to_memory"] is True

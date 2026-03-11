@@ -14,6 +14,7 @@ from acabot.main import build_runtime_app, create_message_store, wait_for_shutdo
 from acabot.runtime import (
     AgentProfile,
     InMemoryChannelEventStore,
+    InMemoryMemoryStore,
     InMemoryMessageStore,
     MemoryBroker,
     NoopApprovalResumer,
@@ -264,6 +265,7 @@ async def test_run_starts_and_stops_runtime_app(monkeypatch) -> None:
             run_manager=None,  # type: ignore[arg-type]
             channel_event_store=InMemoryChannelEventStore(),
             message_store=InMemoryMessageStore(),
+            memory_store=InMemoryMemoryStore(),
             memory_broker=MemoryBroker(),
             prompt_loader=None,  # type: ignore[arg-type]
             profile_loader=None,  # type: ignore[arg-type]

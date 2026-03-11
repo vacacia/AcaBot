@@ -24,6 +24,7 @@ from .memory_broker import (
     NullMemoryExtractor,
     NullMemoryRetriever,
 )
+from .memory_item_store import InMemoryMemoryStore
 from .memory_store import InMemoryMessageStore
 from .legacy_agent_runtime import LegacyAgentRuntime
 from .model_agent_runtime import (
@@ -44,6 +45,8 @@ from .models import (
     EventPolicy,
     EventPolicyDecision,
     InboundRule,
+    MemoryEditMode,
+    MemoryItem,
     MessageRecord,
     OutboxItem,
     PendingApproval,
@@ -71,11 +74,13 @@ from .router import InboundRuleRegistry, RuntimeRouter
 from .runs import InMemoryRunManager, RunManager, StoreBackedRunManager
 from .sqlite_stores import (
     SQLiteChannelEventStore,
+    SQLiteMemoryStore,
     SQLiteMessageStore,
     SQLiteRunStore,
     SQLiteThreadStore,
 )
-from .stores import ChannelEventStore, MessageStore, RunStore, ThreadStore
+from .stores import ChannelEventStore, MemoryStore, MessageStore, RunStore, ThreadStore
+from .structured_memory import StoreBackedMemoryRetriever, StructuredMemoryExtractor
 from .tool_broker import (
     AllowAllToolPolicy,
     InMemoryToolAudit,
@@ -117,13 +122,17 @@ __all__ = [
     "LegacyAgentRuntime",
     "MemoryBlock",
     "MemoryBroker",
+    "MemoryEditMode",
     "MemoryExtractor",
+    "MemoryItem",
+    "MemoryStore",
     "MessageRecord",
     "MessageStore",
     "MemoryRetrievalRequest",
     "MemoryRetriever",
     "MemoryWriteRequest",
     "ModelAgentRuntime",
+    "InMemoryMemoryStore",
     "NoopApprovalResumer",
     "NullMemoryExtractor",
     "NullMemoryRetriever",
@@ -146,13 +155,16 @@ __all__ = [
     "RuntimeRouter",
     "Outbox",
     "SQLiteChannelEventStore",
+    "SQLiteMemoryStore",
     "SQLiteMessageStore",
     "SQLiteRunStore",
     "SQLiteThreadStore",
     "StaticProfileLoader",
     "StaticPromptLoader",
+    "StoreBackedMemoryRetriever",
     "StoreBackedRunManager",
     "StoreBackedThreadManager",
+    "StructuredMemoryExtractor",
     "ThreadPipeline",
     "ThreadManager",
     "ThreadRecord",

@@ -12,8 +12,10 @@ from typing import Any
 from acabot.agent import ToolDef
 from acabot.config import Config
 from acabot.runtime import (
+    InMemoryMemoryStore,
     RouteDecision,
     SQLiteChannelEventStore,
+    SQLiteMemoryStore,
     SQLiteMessageStore,
     StoreBackedRunManager,
     StoreBackedThreadManager,
@@ -175,6 +177,7 @@ async def test_build_runtime_components_runs_app_with_model_agent_runtime() -> N
     assert agent.calls[0]["model"] == "test-model"
     assert components.pipeline.tool_broker is components.tool_broker
     assert components.pipeline.memory_broker is components.memory_broker
+    assert isinstance(components.memory_store, InMemoryMemoryStore)
     assert len(gateway.sent) == 1
 
 
@@ -571,6 +574,53 @@ async def test_build_runtime_components_applies_event_policies_to_run_metadata()
     assert await components.channel_event_store.get_thread_events("qq:group:20002") == []
 
 
+async def test_build_runtime_components_persists_minimal_episodic_memory() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "test-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "default_prompt_ref": "prompt/default",
+                "event_policies": [
+                    {
+                        "policy_id": "private-message-memory",
+                        "priority": 80,
+                        "match": {
+                            "platform": "qq",
+                            "event_type": "message",
+                            "channel_scope": "qq:user:10001",
+                        },
+                        "persist_event": True,
+                        "extract_to_memory": True,
+                        "memory_scopes": ["episodic", "relationship"],
+                        "tags": ["chat"],
+                    }
+                ],
+            },
+        }
+    )
+    gateway = FakeGateway()
+    agent = FakeAgent(FakeAgentResponse(text="hello back"))
+    components = build_runtime_components(config, gateway=gateway, agent=agent)
+
+    components.app.install()
+    await gateway.handler(_event())
+
+    items = await components.memory_store.find(
+        scope="relationship",
+        scope_key="qq:user:10001|qq:user:10001",
+        memory_types=["episodic"],
+    )
+
+    assert len(items) == 1
+    assert items[0].memory_type == "episodic"
+    assert items[0].source_event_id == "evt-1"
+    assert "assistant_1: hello back" in items[0].content
+
+
 async def test_build_runtime_components_wires_tool_broker_into_agent_runtime() -> None:
     config = Config(
         {
@@ -651,6 +701,7 @@ async def test_build_runtime_components_uses_sqlite_persistence_when_configured(
     assert isinstance(components1.run_manager, StoreBackedRunManager)
     assert isinstance(components1.message_store, SQLiteMessageStore)
     assert isinstance(components1.channel_event_store, SQLiteChannelEventStore)
+    assert isinstance(components1.memory_store, SQLiteMemoryStore)
 
     components1.app.install()
     await gateway1.handler(_event())

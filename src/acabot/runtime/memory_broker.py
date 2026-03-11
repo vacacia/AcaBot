@@ -58,7 +58,9 @@ class MemoryRetrievalRequest:
         actor_id (str): 当前 actor_id.
         agent_id (str): 当前 agent_id.
         channel_scope (str): 当前 channel scope.
+        event_id (str): 当前事件 ID.
         event_type (str): 当前事件类型.
+        event_timestamp (int): 当前事件时间戳.
         query_text (str): 当前事件的简短检索文本.
         working_summary (str): 当前 thread 的 working summary.
         requested_scopes (list[str]): control plane 建议读取的 memory scope 列表.
@@ -71,7 +73,9 @@ class MemoryRetrievalRequest:
     actor_id: str
     agent_id: str
     channel_scope: str
+    event_id: str
     event_type: str
+    event_timestamp: int
     query_text: str
     working_summary: str
     requested_scopes: list[str] = field(default_factory=list)
@@ -89,7 +93,9 @@ class MemoryWriteRequest:
         actor_id (str): 当前 actor_id.
         agent_id (str): 当前 agent_id.
         channel_scope (str): 当前 channel scope.
+        event_id (str): 当前事件 ID.
         event_type (str): 当前事件类型.
+        event_timestamp (int): 当前事件时间戳.
         run_mode (str): 当前 run_mode.
         run_status (str): 当前 run 结束状态.
         user_content (str): 当前事件投影后的用户内容.
@@ -104,7 +110,9 @@ class MemoryWriteRequest:
     actor_id: str
     agent_id: str
     channel_scope: str
+    event_id: str
     event_type: str
+    event_timestamp: int
     run_mode: str
     run_status: str
     user_content: str
@@ -251,7 +259,9 @@ class MemoryBroker:
             actor_id=ctx.decision.actor_id,
             agent_id=ctx.decision.agent_id,
             channel_scope=ctx.decision.channel_scope,
+            event_id=ctx.event.event_id,
             event_type=ctx.event.event_type,
+            event_timestamp=ctx.event.timestamp,
             query_text=self._user_content(ctx),
             working_summary=ctx.thread.working_summary,
             requested_scopes=list(ctx.decision.metadata.get("event_memory_scopes", [])),
@@ -279,7 +289,9 @@ class MemoryBroker:
             actor_id=ctx.decision.actor_id,
             agent_id=ctx.decision.agent_id,
             channel_scope=ctx.decision.channel_scope,
+            event_id=ctx.event.event_id,
             event_type=ctx.event.event_type,
+            event_timestamp=ctx.event.timestamp,
             run_mode=ctx.decision.run_mode,
             run_status=str(ctx.run.status),
             user_content=self._user_content(ctx),

@@ -1,7 +1,8 @@
 """runtime.sqlite_stores 提供 runtime store 的 SQLite 实现.
 
-目前覆盖四类持久化:
+目前覆盖五类持久化:
 - ChannelEventStore
+- MemoryStore
 - MessageStore
 - ThreadStore
 - RunStore
@@ -15,8 +16,15 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from .models import ChannelEventRecord, MessageRecord, RunRecord, RunStep, ThreadRecord
-from .stores import ChannelEventStore, MessageStore, RunStore, ThreadStore
+from .models import (
+    ChannelEventRecord,
+    MemoryItem,
+    MessageRecord,
+    RunRecord,
+    RunStep,
+    ThreadRecord,
+)
+from .stores import ChannelEventStore, MemoryStore, MessageStore, RunStore, ThreadStore
 
 
 # region base
@@ -404,6 +412,207 @@ class SQLiteChannelEventStore(_SQLiteStoreBase, ChannelEventStore):
             ),
             metadata=dict(self._decode_json(row["metadata_json"])),
             raw_event=dict(self._decode_json(row["raw_event_json"])),
+        )
+
+
+# endregion
+
+
+# region memory store
+class SQLiteMemoryStore(_SQLiteStoreBase, MemoryStore):
+    """基于 SQLite 的 MemoryStore."""
+
+    def __init__(self, db_path: str | Path) -> None:
+        """初始化 SQLiteMemoryStore.
+
+        Args:
+            db_path: SQLite 数据库文件路径.
+        """
+
+        super().__init__(db_path)
+        self._ensure_schema()
+
+    async def upsert(self, item: MemoryItem) -> None:
+        """插入或更新一条长期记忆项.
+
+        Args:
+            item: 待写入的 MemoryItem.
+        """
+
+        async with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO memory_items (
+                    memory_id,
+                    scope,
+                    scope_key,
+                    memory_type,
+                    content,
+                    edit_mode,
+                    author,
+                    confidence,
+                    source_run_id,
+                    source_event_id,
+                    tags_json,
+                    metadata_json,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(memory_id) DO UPDATE SET
+                    scope = excluded.scope,
+                    scope_key = excluded.scope_key,
+                    memory_type = excluded.memory_type,
+                    content = excluded.content,
+                    edit_mode = excluded.edit_mode,
+                    author = excluded.author,
+                    confidence = excluded.confidence,
+                    source_run_id = excluded.source_run_id,
+                    source_event_id = excluded.source_event_id,
+                    tags_json = excluded.tags_json,
+                    metadata_json = excluded.metadata_json,
+                    created_at = excluded.created_at,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    item.memory_id,
+                    item.scope,
+                    item.scope_key,
+                    item.memory_type,
+                    item.content,
+                    item.edit_mode,
+                    item.author,
+                    item.confidence,
+                    item.source_run_id,
+                    item.source_event_id,
+                    self._encode_json(item.tags),
+                    self._encode_json(item.metadata),
+                    item.created_at,
+                    item.updated_at,
+                ),
+            )
+            self._conn.commit()
+
+    async def find(
+        self,
+        *,
+        scope: str,
+        scope_key: str,
+        memory_types: list[str] | None = None,
+        limit: int | None = None,
+    ) -> list[MemoryItem]:
+        """按 scope 查询长期记忆项.
+
+        Args:
+            scope: 当前查询的 scope.
+            scope_key: 当前 scope 对应的 key.
+            memory_types: 可选的记忆类型过滤列表.
+            limit: 最多返回多少条记忆项.
+
+        Returns:
+            满足条件的 MemoryItem 列表.
+        """
+
+        query = [
+            """
+            SELECT
+                memory_id,
+                scope,
+                scope_key,
+                memory_type,
+                content,
+                edit_mode,
+                author,
+                confidence,
+                source_run_id,
+                source_event_id,
+                tags_json,
+                metadata_json,
+                created_at,
+                updated_at
+            FROM memory_items
+            WHERE scope = ?
+              AND scope_key = ?
+            """
+        ]
+        params: list[object] = [scope, scope_key]
+
+        if memory_types:
+            placeholders = ", ".join("?" for _ in memory_types)
+            query.append(f"AND memory_type IN ({placeholders})")
+            params.extend(memory_types)
+
+        query.append("ORDER BY updated_at DESC, created_at DESC, memory_id DESC")
+        if limit is not None:
+            query.append("LIMIT ?")
+            params.append(limit)
+
+        async with self._lock:
+            rows = self._conn.execute("\n".join(query), tuple(params)).fetchall()
+        return [self._row_to_memory_item(row) for row in rows]
+
+    def _ensure_schema(self) -> None:
+        """初始化 memory_items 表结构."""
+
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS memory_items (
+                memory_id TEXT PRIMARY KEY,
+                scope TEXT NOT NULL,
+                scope_key TEXT NOT NULL,
+                memory_type TEXT NOT NULL,
+                content TEXT NOT NULL,
+                edit_mode TEXT NOT NULL,
+                author TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                source_run_id TEXT,
+                source_event_id TEXT,
+                tags_json TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            """
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_items_scope_updated ON memory_items(scope, scope_key, updated_at)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_items_type ON memory_items(memory_type)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_items_source_run ON memory_items(source_run_id)"
+        )
+        self._conn.commit()
+
+    def _row_to_memory_item(self, row: sqlite3.Row) -> MemoryItem:
+        """把 SQLite 行对象转换成 MemoryItem.
+
+        Args:
+            row: SQLite 查询返回的行对象.
+
+        Returns:
+            对应的 MemoryItem.
+        """
+
+        return MemoryItem(
+            memory_id=str(row["memory_id"]),
+            scope=str(row["scope"]),
+            scope_key=str(row["scope_key"]),
+            memory_type=str(row["memory_type"]),
+            content=str(row["content"]),
+            edit_mode=str(row["edit_mode"]),
+            author=str(row["author"]),
+            confidence=float(row["confidence"]),
+            source_run_id=(
+                None if row["source_run_id"] is None else str(row["source_run_id"])
+            ),
+            source_event_id=(
+                None if row["source_event_id"] is None else str(row["source_event_id"])
+            ),
+            tags=list(self._decode_json(row["tags_json"])),
+            metadata=dict(self._decode_json(row["metadata_json"])),
+            created_at=int(row["created_at"]),
+            updated_at=int(row["updated_at"]),
         )
 
 

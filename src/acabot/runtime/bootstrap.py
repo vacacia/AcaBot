@@ -8,7 +8,8 @@ r"""runtime.bootstrap 提供 runtime 默认组装入口.
     build_runtime_components()
       |
       +-- RuntimeRouter
-      +-- ThreadManager / RunManager / MessageStore
+      +-- ThreadManager / RunManager
+      +-- MessageStore / MemoryStore / ChannelEventStore
       +-- ModelAgentRuntime
       +-- Outbox
       `-- RuntimeApp
@@ -31,6 +32,7 @@ from .event_policy import EventPolicyRegistry
 from .event_store import InMemoryChannelEventStore
 from .gateway_protocol import GatewayProtocol
 from .memory_broker import MemoryBroker
+from .memory_item_store import InMemoryMemoryStore
 from .memory_store import InMemoryMessageStore
 from .model_agent_runtime import ModelAgentRuntime
 from .models import AgentProfile, BindingRule, EventPolicy, InboundRule
@@ -46,11 +48,13 @@ from .router import InboundRuleRegistry, RuntimeRouter
 from .runs import InMemoryRunManager, RunManager, StoreBackedRunManager
 from .sqlite_stores import (
     SQLiteChannelEventStore,
+    SQLiteMemoryStore,
     SQLiteMessageStore,
     SQLiteRunStore,
     SQLiteThreadStore,
 )
-from .stores import ChannelEventStore, MessageStore
+from .stores import ChannelEventStore, MemoryStore, MessageStore
+from .structured_memory import StoreBackedMemoryRetriever, StructuredMemoryExtractor
 from .tool_broker import ToolBroker
 from .threads import InMemoryThreadManager, StoreBackedThreadManager, ThreadManager
 
@@ -66,6 +70,7 @@ class RuntimeComponents:
         run_manager (RunManager): 管理 run 生命周期的 manager.
         channel_event_store (ChannelEventStore): 保存 inbound event facts 的 ChannelEventStore.
         message_store (MessageStore): 保存 delivered facts 的 MessageStore.
+        memory_store (MemoryStore): 保存长期记忆项的 MemoryStore.
         memory_broker (MemoryBroker): 长期记忆统一入口.
         prompt_loader (PromptLoader): 按 `prompt_ref` 加载 system prompt 的 loader.
         profile_loader (ProfileLoader): 按 `RouteDecision` 加载 profile 的 loader.
@@ -83,6 +88,7 @@ class RuntimeComponents:
     run_manager: RunManager
     channel_event_store: ChannelEventStore
     message_store: MessageStore
+    memory_store: MemoryStore
     memory_broker: MemoryBroker
     prompt_loader: PromptLoader
     profile_loader: ProfileLoader
@@ -100,6 +106,7 @@ def build_runtime_components(
     gateway: GatewayProtocol,
     agent: BaseAgent,
     message_store: MessageStore | None = None,
+    memory_store: MemoryStore | None = None,
     router: RuntimeRouter | None = None,
     thread_manager: ThreadManager | None = None,
     run_manager: RunManager | None = None,
@@ -115,6 +122,7 @@ def build_runtime_components(
         gateway: 平台 Gateway 实现.
         agent: 满足新 `BaseAgent` 契约的 agent.
         message_store: 可选的 MessageStore 实现.
+        memory_store: 可选的 MemoryStore 实现.
         router: 可选的 RuntimeRouter 实现.
         thread_manager: 可选的 ThreadManager 实现.
         run_manager: 可选的 RunManager 实现.
@@ -153,7 +161,11 @@ def build_runtime_components(
     runtime_run_manager = run_manager or _build_run_manager(config)
     runtime_channel_event_store = channel_event_store or _build_channel_event_store(config)
     runtime_message_store = message_store or _build_message_store(config)
-    runtime_memory_broker = memory_broker or _build_memory_broker(config)
+    runtime_memory_store = memory_store or _build_memory_store(config)
+    runtime_memory_broker = memory_broker or _build_memory_broker(
+        config,
+        memory_store=runtime_memory_store,
+    )
     runtime_tool_broker = tool_broker or ToolBroker()
     runtime_approval_resumer = approval_resumer or NoopApprovalResumer()
     agent_runtime = ModelAgentRuntime(
@@ -188,6 +200,7 @@ def build_runtime_components(
         run_manager=runtime_run_manager,
         channel_event_store=runtime_channel_event_store,
         message_store=runtime_message_store,
+        memory_store=runtime_memory_store,
         memory_broker=runtime_memory_broker,
         prompt_loader=prompt_loader,
         profile_loader=profile_registry,
@@ -427,18 +440,42 @@ def _build_channel_event_store(config: Config) -> ChannelEventStore:
     return SQLiteChannelEventStore(sqlite_path)
 
 
-def _build_memory_broker(config: Config) -> MemoryBroker:
+def _build_memory_store(config: Config) -> MemoryStore:
+    """根据配置构造 MemoryStore.
+
+    Args:
+        config: 项目配置对象.
+
+    Returns:
+        默认的 MemoryStore 实现.
+    """
+
+    sqlite_path = _get_persistence_sqlite_path(config)
+    if sqlite_path is None:
+        return InMemoryMemoryStore()
+    return SQLiteMemoryStore(sqlite_path)
+
+
+def _build_memory_broker(
+    config: Config,
+    *,
+    memory_store: MemoryStore,
+) -> MemoryBroker:
     """根据配置构造 MemoryBroker.
 
     Args:
         config: 项目配置对象.
+        memory_store: 已经选定的 MemoryStore.
 
     Returns:
         默认的 MemoryBroker 实现.
     """
 
     _ = config
-    return MemoryBroker()
+    return MemoryBroker(
+        retriever=StoreBackedMemoryRetriever(memory_store),
+        extractor=StructuredMemoryExtractor(memory_store),
+    )
 
 
 def _get_persistence_sqlite_path(config: Config) -> str | None:

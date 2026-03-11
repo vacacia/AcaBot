@@ -24,6 +24,44 @@ RunStatus = Literal[
 RunMode = Literal["respond", "record_only", "silent_drop"]
 CommitWhen = Literal["success", "failure", "waiting_approval", "always"]
 ApprovalDecision = Literal["approved", "rejected"]
+MemoryEditMode = Literal["readonly", "draft", "private"]
+
+
+@dataclass(slots=True)
+class MemoryItem:
+    """MemoryItem, 对应持久化层的 memory_items 表.
+
+    Attributes:
+        memory_id (str): 记忆项唯一 ID.
+        scope (str): 当前记忆所属 scope, 例如 `user`, `channel`, `relationship`, `global`.
+        scope_key (str): scope 对应的唯一键.
+        memory_type (str): 记忆类型, 例如 `episodic`, `semantic`, `sticky_note`, `reference`, `task`.
+        content (str): 记忆正文.
+        edit_mode (MemoryEditMode): 当前记忆的编辑模式.
+        author (str): 当前记忆的写入者, 例如 `user`, `agent`, `extractor`.
+        confidence (float): 当前记忆的置信度.
+        source_run_id (str | None): 来源 run_id.
+        source_event_id (str | None): 来源 event_id.
+        tags (list[str]): 记忆标签.
+        metadata (dict[str, Any]): 附加元数据.
+        created_at (int): 创建时间戳.
+        updated_at (int): 更新时间戳.
+    """
+
+    memory_id: str
+    scope: str
+    scope_key: str
+    memory_type: str
+    content: str
+    edit_mode: MemoryEditMode = "draft"
+    author: str = "extractor"
+    confidence: float = 0.0
+    source_run_id: str | None = None
+    source_event_id: str | None = None
+    tags: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    created_at: int = 0
+    updated_at: int = 0
 
 
 @dataclass(slots=True)
