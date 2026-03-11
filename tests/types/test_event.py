@@ -115,7 +115,27 @@ def test_notice_preview_is_canonical():
         raw_message_id="",
         sender_nickname="",
         sender_role=None,
+        subject_user_id="555",
         target_message_id="msg_9",
     )
-    assert event.content_preview == "[notice:recall target=msg_9]"
-    assert event.working_memory_text == "[123] [notice:recall target=msg_9]"
+    assert event.content_preview == "[notice:recall target=msg_9 user=555]"
+    assert event.working_memory_text == "[123] [notice:recall target=msg_9 user=555]"
+
+
+def test_membership_notice_preview_includes_subject_and_subtype():
+    source = EventSource(platform="qq", message_type="group", user_id="123", group_id="456")
+    event = StandardEvent(
+        event_id="evt_member_join_1",
+        event_type="member_join",
+        platform="qq",
+        timestamp=1700000000,
+        source=source,
+        segments=[],
+        raw_message_id="",
+        sender_nickname="",
+        sender_role=None,
+        subject_user_id="999",
+        notice_type="group_increase",
+        notice_subtype="approve",
+    )
+    assert event.content_preview == "[notice:member_join user=999 sub_type=approve]"

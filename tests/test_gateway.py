@@ -98,6 +98,9 @@ class TestNapCatTranslation:
         assert event.is_notice
         assert event.source.group_id == "444"
         assert event.operator_id == "222"
+        assert event.subject_user_id == "111"
+        assert event.notice_type == "notify"
+        assert event.notice_subtype == "poke"
         assert event.metadata["target_id"] == "111"
 
     def test_translate_group_recall_notice(self, gw):
@@ -114,6 +117,8 @@ class TestNapCatTranslation:
         assert event is not None
         assert event.event_type == "recall"
         assert event.source.user_id == "333"
+        assert event.subject_user_id == "222"
+        assert event.notice_type == "group_recall"
         assert event.target_message_id == "555"
         assert event.metadata["recalled_user_id"] == "222"
 
@@ -133,6 +138,9 @@ class TestNapCatTranslation:
         assert event.source.group_id == "444"
         assert event.source.user_id == "222"
         assert event.operator_id == "333"
+        assert event.subject_user_id == "222"
+        assert event.notice_type == "group_increase"
+        assert event.notice_subtype == "approve"
         assert event.metadata["sub_type"] == "approve"
 
     def test_translate_group_decrease_notice(self, gw):
@@ -151,6 +159,9 @@ class TestNapCatTranslation:
         assert event.source.group_id == "444"
         assert event.source.user_id == "222"
         assert event.operator_id == "333"
+        assert event.subject_user_id == "222"
+        assert event.notice_type == "group_decrease"
+        assert event.notice_subtype == "kick"
         assert event.metadata["notice_type"] == "group_decrease"
 
     # --- build_send_payload: 发消息方向 ---

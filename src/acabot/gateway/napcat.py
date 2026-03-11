@@ -245,6 +245,9 @@ class NapCatGateway(BaseGateway):
             sender_nickname="",
             sender_role=None,
             operator_id=operator_id or None,
+            subject_user_id=str(raw.get("target_id", "") or "") or None,
+            notice_type="notify",
+            notice_subtype="poke",
             metadata={
                 "notice_type": "poke",
                 "target_id": str(raw.get("target_id", "") or ""),
@@ -288,7 +291,9 @@ class NapCatGateway(BaseGateway):
             sender_nickname="",
             sender_role=None,
             operator_id=operator_id or None,
+            subject_user_id=recalled_user_id or None,
             target_message_id=str(raw.get("message_id", "") or "") or None,
+            notice_type=notice_type,
             metadata={
                 "notice_type": notice_type,
                 "recalled_user_id": recalled_user_id,
@@ -338,6 +343,9 @@ class NapCatGateway(BaseGateway):
             sender_nickname="",
             sender_role=None,
             operator_id=operator_id,
+            subject_user_id=affected_user_id or None,
+            notice_type=notice_type,
+            notice_subtype=sub_type or None,
             metadata={
                 "notice_type": notice_type,
                 "sub_type": sub_type,
