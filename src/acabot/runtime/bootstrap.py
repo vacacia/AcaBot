@@ -261,6 +261,9 @@ def build_runtime_components(
     control_plane = RuntimeControlPlane(
         app=app,
         run_manager=runtime_run_manager,
+        thread_manager=runtime_thread_manager,
+        memory_store=runtime_memory_store,
+        profile_registry=profile_registry,
         plugin_manager=runtime_plugin_manager,
     )
 

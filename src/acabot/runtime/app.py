@@ -25,6 +25,7 @@ from .models import (
     RunContext,
     RunRecord,
     RunStep,
+    ThreadState,
 )
 from .plugin_manager import RuntimePluginManager
 from .pipeline import ThreadPipeline
@@ -153,6 +154,7 @@ class RuntimeApp:
                 channel_scope=decision.channel_scope,
                 last_event_at=event.timestamp,
             )
+            decision = self._apply_thread_agent_override(decision, thread)
             run = await self.run_manager.open(event=event, decision=decision)
             run_id = run.run_id
             if decision.metadata.get("event_persist", True):
@@ -236,6 +238,38 @@ class RuntimeApp:
                 **dict(decision.metadata),
             },
             raw_event=dict(event.raw_event),
+        )
+
+    @staticmethod
+    def _apply_thread_agent_override(
+        decision: RouteDecision,
+        thread: ThreadState,
+    ) -> RouteDecision:
+        """把 thread-local agent override 应用到当前 route decision.
+
+        Args:
+            decision: router 产出的原始 RouteDecision.
+            thread: 当前 run 使用的 ThreadState.
+
+        Returns:
+            应用 override 后的 RouteDecision. 未声明 override 时返回原对象.
+        """
+
+        override_agent_id = str(thread.metadata.get("thread_agent_override", "") or "")
+        if not override_agent_id:
+            return decision
+        # override + 留痕
+        return replace(
+            decision,
+            agent_id=override_agent_id,
+            metadata={
+                **dict(decision.metadata),
+                "binding_kind": "thread_override",
+                "binding_rule_id": "",
+                "binding_priority": 1_000_000,
+                "binding_match_keys": ["thread_id"],
+                "binding_override_agent_id": override_agent_id,
+            },
         )
 
     # region recovery

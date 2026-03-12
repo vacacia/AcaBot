@@ -357,6 +357,70 @@ async def test_build_runtime_components_exposes_control_plane() -> None:
     assert status.loaded_plugins == []
 
 
+async def test_build_runtime_components_control_plane_can_switch_thread_agent() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "fallback-model",
+                "system_prompt": "Fallback prompt.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "profiles": {
+                    "aca": {
+                        "name": "Aca",
+                        "prompt_ref": "prompt/aca",
+                        "default_model": "model-a",
+                    },
+                    "ops": {
+                        "name": "Ops",
+                        "prompt_ref": "prompt/ops",
+                        "default_model": "model-o",
+                    },
+                },
+                "prompts": {
+                    "prompt/aca": "You are Aca.",
+                    "prompt/ops": "You are the operator agent.",
+                },
+            },
+        }
+    )
+    gateway = FakeGateway()
+    agent = FakeAgent(FakeAgentResponse(text="ok", model_used="model-o"))
+    components = build_runtime_components(config, gateway=gateway, agent=agent)
+    await components.thread_manager.get_or_create(
+        thread_id="qq:user:10001",
+        channel_scope="qq:user:10001",
+    )
+    switch = await components.control_plane.switch_thread_agent(
+        thread_id="qq:user:10001",
+        agent_id="ops",
+    )
+    event = StandardEvent(
+        event_id="evt-switch-1",
+        event_type="message",
+        platform="qq",
+        timestamp=123,
+        source=EventSource(
+            platform="qq",
+            message_type="private",
+            user_id="10001",
+            group_id=None,
+        ),
+        segments=[MsgSegment(type="text", data={"text": "hello"})],
+        raw_message_id="msg-switch-1",
+        sender_nickname="acacia",
+        sender_role=None,
+    )
+
+    components.app.install()
+    await gateway.handler(event)
+
+    assert switch.ok is True
+    assert agent.calls[0]["system_prompt"] == "You are the operator agent."
+    assert agent.calls[0]["model"] == "model-o"
+
+
 async def test_build_runtime_components_loads_binding_rules_from_filesystem(
     tmp_path: Path,
 ) -> None:

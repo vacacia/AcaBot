@@ -22,6 +22,8 @@ from .context_compactor import (
 )
 from .control_plane import (
     ActiveRunSnapshot,
+    AgentSwitchSnapshot,
+    MemoryQuerySnapshot,
     PluginReloadSnapshot,
     RuntimeControlPlane,
     RuntimeStatusSnapshot,
@@ -163,6 +165,8 @@ __all__ = [
     "ContextCompactionResult",
     "ContextCompactor",
     "ActiveRunSnapshot",
+    "AgentSwitchSnapshot",
+    "MemoryQuerySnapshot",
     "PluginReloadSnapshot",
     "RuntimeControlPlane",
     "RuntimeStatusSnapshot",

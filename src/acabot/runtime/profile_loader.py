@@ -597,6 +597,18 @@ class AgentProfileRegistry(ProfileLoader):
 
         return self.profiles[decision.agent_id]
 
+    def has_agent(self, agent_id: str) -> bool:
+        """判断某个 agent_id 是否已注册.
+
+        Args:
+            agent_id: 待检查的 agent_id.
+
+        Returns:
+            当前 registry 是否包含该 agent.
+        """
+
+        return agent_id in self.profiles
+
     @staticmethod
     def _default_metadata() -> dict[str, Any]:
         """构造 default fallback 的 metadata.

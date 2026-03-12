@@ -1,9 +1,12 @@
 from acabot.config import Config
 from acabot.runtime import (
     AgentProfile,
+    AgentProfileRegistry,
     InMemoryChannelEventStore,
+    InMemoryMemoryStore,
     InMemoryRunManager,
     InMemoryThreadManager,
+    MemoryItem,
     Outbox,
     RouteDecision,
     RuntimeApp,
@@ -170,3 +173,101 @@ async def test_runtime_control_plane_can_reload_plugins() -> None:
     result = await control_plane.reload_plugins()
 
     assert result.loaded_plugins == ["sample_configured_runtime"]
+
+
+async def test_runtime_control_plane_can_switch_thread_agent_override() -> None:
+    thread_manager = InMemoryThreadManager()
+    profile_registry = AgentProfileRegistry(
+        profiles={
+            "aca": AgentProfile(
+                agent_id="aca",
+                name="Aca",
+                prompt_ref="prompt/default",
+                default_model="test-model",
+            ),
+            "ops": AgentProfile(
+                agent_id="ops",
+                name="Ops",
+                prompt_ref="prompt/ops",
+                default_model="ops-model",
+            ),
+        },
+        default_agent_id="aca",
+    )
+    thread = await thread_manager.get_or_create(
+        thread_id="qq:user:10001",
+        channel_scope="qq:user:10001",
+    )
+    app = RuntimeApp(
+        gateway=FakeGateway(),
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=thread_manager,
+        run_manager=InMemoryRunManager(),
+        channel_event_store=InMemoryChannelEventStore(),
+        pipeline=ThreadPipeline(
+            agent_runtime=FakeAgentRuntime(),
+            outbox=Outbox(gateway=FakeGateway(), store=FakeMessageStore()),
+            run_manager=InMemoryRunManager(),
+            thread_manager=thread_manager,
+        ),
+        profile_loader=_profile_loader,
+    )
+    control_plane = RuntimeControlPlane(
+        app=app,
+        run_manager=app.run_manager,
+        thread_manager=thread_manager,
+        profile_registry=profile_registry,
+    )
+
+    result = await control_plane.switch_thread_agent(
+        thread_id=thread.thread_id,
+        agent_id="ops",
+    )
+    restored = await thread_manager.get(thread.thread_id)
+
+    assert result.ok is True
+    assert restored is not None
+    assert restored.metadata["thread_agent_override"] == "ops"
+
+
+async def test_runtime_control_plane_can_show_memory() -> None:
+    memory_store = InMemoryMemoryStore()
+    await memory_store.upsert(
+        MemoryItem(
+            memory_id="mem:1",
+            scope="user",
+            scope_key="qq:user:10001",
+            memory_type="sticky_note",
+            content="用户名字叫阿卡西亚",
+            edit_mode="readonly",
+        )
+    )
+    control_plane = RuntimeControlPlane(
+        app=RuntimeApp(
+            gateway=FakeGateway(),
+            router=RuntimeRouter(default_agent_id="aca"),
+            thread_manager=InMemoryThreadManager(),
+            run_manager=InMemoryRunManager(),
+            channel_event_store=InMemoryChannelEventStore(),
+            pipeline=ThreadPipeline(
+                agent_runtime=FakeAgentRuntime(),
+                outbox=Outbox(gateway=FakeGateway(), store=FakeMessageStore()),
+                run_manager=InMemoryRunManager(),
+                thread_manager=InMemoryThreadManager(),
+            ),
+            profile_loader=_profile_loader,
+        ),
+        run_manager=InMemoryRunManager(),
+        memory_store=memory_store,
+    )
+
+    result = await control_plane.show_memory(
+        scope="user",
+        scope_key="qq:user:10001",
+        memory_types=["sticky_note"],
+    )
+
+    assert result.scope == "user"
+    assert result.scope_key == "qq:user:10001"
+    assert len(result.items) == 1
+    assert result.items[0].content == "用户名字叫阿卡西亚"

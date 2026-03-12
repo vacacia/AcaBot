@@ -16,12 +16,16 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 
 from .app import RuntimeApp
-from .models import PendingApprovalRecord
+from .models import MemoryItem, PendingApprovalRecord
 from .plugin_manager import RuntimePluginManager
+from .profile_loader import AgentProfileRegistry
 from .runs import RunManager
+from .stores import MemoryStore
+from .threads import ThreadManager
 
 
 # region 状态模型
@@ -94,6 +98,38 @@ class PluginReloadSnapshot:
     loaded_plugins: list[str] = field(default_factory=list)
 
 
+@dataclass(slots=True)
+class AgentSwitchSnapshot:
+    """一次 thread agent switch 的结果.
+
+    Attributes:
+        ok (bool): 是否成功应用切换.
+        thread_id (str): 目标 thread 标识.
+        agent_id (str): 当前设置的 agent 标识.
+        message (str): 附加说明信息.
+    """
+
+    ok: bool
+    thread_id: str
+    agent_id: str = ""
+    message: str = ""
+
+
+@dataclass(slots=True)
+class MemoryQuerySnapshot:
+    """一次 memory show 查询结果, 可查看任何级别的 memory.
+
+    Attributes:
+        scope (str): 当前查询的 scope.
+        scope_key (str): 当前 scope 对应的 key.
+        items (list[MemoryItem]): 查询到的 memory items.
+    """
+
+    scope: str
+    scope_key: str
+    items: list[MemoryItem] = field(default_factory=list)
+
+
 # endregion
 
 
@@ -113,6 +149,9 @@ class RuntimeControlPlane:
         *,
         app: RuntimeApp,
         run_manager: RunManager,
+        thread_manager: ThreadManager | None = None,
+        memory_store: MemoryStore | None = None,
+        profile_registry: AgentProfileRegistry | None = None,
         plugin_manager: RuntimePluginManager | None = None,
     ) -> None:
         """初始化 RuntimeControlPlane.
@@ -120,11 +159,17 @@ class RuntimeControlPlane:
         Args:
             app: 当前 runtime app.
             run_manager: run 生命周期管理器.
+            thread_manager: 可选的 thread 状态管理器.
+            memory_store: 可选的长期记忆存储.
+            profile_registry: 可选的 profile registry, 用于校验 agent 是否存在.
             plugin_manager: 可选的 runtime plugin manager.
         """
 
         self.app = app
         self.run_manager = run_manager
+        self.thread_manager = thread_manager
+        self.memory_store = memory_store
+        self.profile_registry = profile_registry
         self.plugin_manager = plugin_manager
 
     async def get_status(self) -> RuntimeStatusSnapshot:
@@ -161,6 +206,127 @@ class RuntimeControlPlane:
 
         loaded = await self.app.reload_plugins()
         return PluginReloadSnapshot(loaded_plugins=list(loaded))
+
+    async def switch_thread_agent(
+        self,
+        *,
+        thread_id: str,
+        agent_id: str,
+    ) -> AgentSwitchSnapshot:
+        """为指定 thread 设置临时 agent override.
+
+        
+        Args:
+            thread_id: 目标 thread 标识.
+            agent_id: 要切换到的 agent 标识.
+
+        Returns:
+            一份 AgentSwitchSnapshot.
+        """
+
+        if self.profile_registry is not None and not self.profile_registry.has_agent(agent_id):
+            return AgentSwitchSnapshot(
+                ok=False,
+                thread_id=thread_id,
+                agent_id=agent_id,
+                message="unknown agent_id",
+            )
+        if self.thread_manager is None:
+            return AgentSwitchSnapshot(
+                ok=False,
+                thread_id=thread_id,
+                agent_id=agent_id,
+                message="thread manager unavailable",
+            )
+
+        thread = await self.thread_manager.get(thread_id)
+        if thread is None:
+            return AgentSwitchSnapshot(
+                ok=False,
+                thread_id=thread_id,
+                agent_id=agent_id,
+                message="thread not found",
+            )
+
+        # Thread Metadata Infection
+        # 实际运行时在 _apply_thread_agent_override 生效
+        thread.metadata["thread_agent_override"] = agent_id
+        thread.metadata["thread_agent_override_set_at"] = int(time.time())
+        await self.thread_manager.save(thread)
+        return AgentSwitchSnapshot(
+            ok=True,
+            thread_id=thread_id,
+            agent_id=agent_id,
+        )
+
+    async def clear_thread_agent_override(self, *, thread_id: str) -> AgentSwitchSnapshot:
+        """清除指定 thread 的临时 agent override.
+
+        Args:
+            thread_id: 目标 thread 标识.
+
+        Returns:
+            一份 AgentSwitchSnapshot.
+        """
+
+        if self.thread_manager is None:
+            return AgentSwitchSnapshot(
+                ok=False,
+                thread_id=thread_id,
+                message="thread manager unavailable",
+            )
+
+        thread = await self.thread_manager.get(thread_id)
+        if thread is None:
+            return AgentSwitchSnapshot(
+                ok=False,
+                thread_id=thread_id,
+                message="thread not found",
+            )
+
+        thread.metadata.pop("thread_agent_override", None)
+        thread.metadata.pop("thread_agent_override_set_at", None)
+        await self.thread_manager.save(thread)
+        return AgentSwitchSnapshot(
+            ok=True,
+            thread_id=thread_id,
+            message="cleared",
+        )
+
+    async def show_memory(
+        self,
+        *,
+        scope: str,
+        scope_key: str,
+        memory_types: list[str] | None = None,
+        limit: int = 20,
+    ) -> MemoryQuerySnapshot:
+        """按 scope 查询长期记忆.
+
+        Args:
+            scope: 当前查询的 scope.
+            scope_key: 当前 scope 对应的 key.
+            memory_types: 可选的 memory_type 过滤列表.
+            limit: 最多返回多少条记忆.
+
+        Returns:
+            一份 MemoryQuerySnapshot.
+        """
+
+        if self.memory_store is None:
+            return MemoryQuerySnapshot(scope=scope, scope_key=scope_key)
+
+        items = await self.memory_store.find(
+            scope=scope,
+            scope_key=scope_key,
+            memory_types=memory_types,
+            limit=limit,
+        )
+        return MemoryQuerySnapshot(
+            scope=scope,
+            scope_key=scope_key,
+            items=items,
+        )
 
     def _list_loaded_plugins(self) -> list[str]:
         """返回当前已加载插件名列表.
