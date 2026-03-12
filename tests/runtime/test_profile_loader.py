@@ -1,4 +1,14 @@
-from acabot.runtime import AgentProfile, RouteDecision, StaticProfileLoader, StaticPromptLoader
+from pathlib import Path
+
+from acabot.runtime import (
+    AgentProfile,
+    ChainedPromptLoader,
+    FileSystemProfileLoader,
+    FileSystemPromptLoader,
+    RouteDecision,
+    StaticProfileLoader,
+    StaticPromptLoader,
+)
 
 
 def _profile(agent_id: str, prompt_ref: str) -> AgentProfile:
@@ -53,3 +63,57 @@ def test_static_profile_loader_falls_back_to_default_agent() -> None:
     profile = loader.load(decision)
 
     assert profile.agent_id == "aca"
+
+
+def test_filesystem_prompt_loader_loads_prompt_file(tmp_path: Path) -> None:
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir()
+    (prompts_dir / "aca.md").write_text("You are Aca from filesystem.", encoding="utf-8")
+    loader = FileSystemPromptLoader(prompts_dir)
+
+    prompt = loader.load("prompt/aca")
+
+    assert prompt == "You are Aca from filesystem."
+
+
+def test_chained_prompt_loader_falls_back_to_static_loader(tmp_path: Path) -> None:
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir()
+    loader = ChainedPromptLoader(
+        [
+            FileSystemPromptLoader(prompts_dir),
+            StaticPromptLoader({"prompt/default": "Fallback prompt."}),
+        ]
+    )
+
+    prompt = loader.load("prompt/default")
+
+    assert prompt == "Fallback prompt."
+
+
+def test_filesystem_profile_loader_loads_yaml_profiles(tmp_path: Path) -> None:
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+    (profiles_dir / "aca.yaml").write_text(
+        "\n".join(
+            [
+                "name: Aca FS",
+                "prompt_ref: prompt/aca",
+                "default_model: fs-model",
+                "enabled_tools:",
+                "  - reference_search",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    loader = FileSystemProfileLoader(
+        profiles_dir,
+        default_model="fallback-model",
+    )
+
+    profiles = loader.load_all()
+
+    assert "aca" in profiles
+    assert profiles["aca"].name == "Aca FS"
+    assert profiles["aca"].default_model == "fs-model"
+    assert profiles["aca"].enabled_tools == ["reference_search"]

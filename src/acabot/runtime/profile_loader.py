@@ -9,7 +9,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
+
+import yaml
 
 from acabot.types import StandardEvent
 
@@ -71,6 +74,122 @@ class StaticPromptLoader(PromptLoader):
         """
 
         return self.prompts[prompt_ref]
+
+
+class ChainedPromptLoader(PromptLoader):
+    """加载器回退.
+
+    Attributes:
+        loaders (list[PromptLoader]): 按顺序尝试的 prompt loaders.
+    """
+
+    def __init__(self, loaders: list[PromptLoader]) -> None:
+        """初始化 chained prompt loader.
+
+        Args:
+            loaders: 按顺序尝试的 prompt loader 列表.
+        """
+
+        self.loaders = list(loaders)
+
+    def load(self, prompt_ref: str) -> str:
+        """按顺序尝试加载 prompt.
+        
+        FileSystemPromptLoader > static_loader
+
+        Args:
+            prompt_ref: profile 中声明的 prompt 引用.
+
+        Returns:
+            对应的 system prompt 文本.
+
+        Raises:
+            KeyError: 所有 loader 都未命中时抛出.
+        """
+
+        for loader in self.loaders:
+            try:
+                return loader.load(prompt_ref)
+            except KeyError:
+                continue
+        raise KeyError(f"Unknown prompt_ref: {prompt_ref}")
+
+
+class FileSystemPromptLoader(PromptLoader):
+    """从 `prompts/` 目录加载 prompt 的 loader.
+
+    Attributes:
+        root (Path): prompt 根目录.
+        extensions (tuple[str, ...]): 允许尝试的文件扩展名.
+    """
+
+    def __init__(
+        self,
+        root: str | Path,
+        *,
+        extensions: tuple[str, ...] = (".md", ".txt", ".prompt"),
+    ) -> None:
+        """初始化文件系统 prompt loader.
+
+        Args:
+            root: prompt 根目录.
+            extensions: 当 prompt_ref 不带后缀时的候选扩展名.
+        """
+
+        self.root = Path(root)
+        self.extensions = tuple(extensions)
+
+    def load(self, prompt_ref: str) -> str:
+        """从文件系统读取 prompt 文本.
+
+        Args:
+            prompt_ref: profile 中声明的 prompt 引用.
+
+        Returns:
+            对应 prompt 文件的文本.
+
+        Raises:
+            KeyError: 目标 prompt 文件不存在时抛出.
+        """
+
+        path = self._resolve_prompt_path(prompt_ref)
+        if path is None:
+            raise KeyError(f"Unknown prompt_ref: {prompt_ref}")
+        return path.read_text(encoding="utf-8")
+
+    def _resolve_prompt_path(self, prompt_ref: str) -> Path | None:
+        """把 prompt_ref 解析成实际文件路径.
+            - 显式路径: "prompt/system.txt" → 直接查找 system.txt
+            - 省略扩展名: "prompt/system" → 尝试 system.md, system.txt 等
+            - 目录简写: "prompt/role" → 尝试 role/index.md, role/index.txt 等
+
+        Args:
+            prompt_ref: profile 中声明的 prompt 引用, 通常以 "prompt/" 开头.
+
+        Returns:
+            命中的文件路径. 未命中时返回 None.
+        """
+
+        # 去掉 "prompt/" 前缀
+        relative = prompt_ref.removeprefix("prompt/")
+
+        candidate = self.root / relative
+        candidates: list[Path] = []
+
+        # 自带后缀
+        if candidate.suffix:
+            candidates.append(candidate)
+        else:
+            # 后缀猜测
+            candidates.extend(candidate.with_suffix(ext) for ext in self.extensions)
+            # 尝试该目录下的 index 文件
+            candidates.extend((candidate / f"index{ext}") for ext in self.extensions)
+
+        # 按优先级返回
+        for path in candidates:
+            if path.exists() and path.is_file():
+                return path
+        return None
 
 
 class ProfileLoader(ABC):
@@ -139,6 +258,69 @@ class StaticProfileLoader(ProfileLoader):
         if self.default_agent_id is not None:
             return self.profiles[self.default_agent_id]
         raise KeyError(f"Unknown agent_id: {decision.agent_id}")
+
+
+class FileSystemProfileLoader:
+    """从 `profiles/` 目录读取 AgentProfile 映射.
+
+    Attributes:
+        root (Path): profile 根目录.
+        default_model (str): profile 文件未声明模型时的默认模型.
+        prompt_prefix (str): 默认 prompt_ref 前缀.
+    """
+
+    def __init__(
+        self,
+        root: str | Path,
+        *,
+        default_model: str,
+        prompt_prefix: str = "prompt",
+    ) -> None:
+        """初始化文件系统 profile loader.
+
+        Args:
+            root: profile 根目录.
+            default_model: profile 文件未声明模型时的默认模型.
+            prompt_prefix: 默认 prompt_ref 前缀.
+        """
+
+        self.root = Path(root)
+        self.default_model = default_model
+        self.prompt_prefix = prompt_prefix.strip("/")
+
+    def load_all(self) -> dict[str, AgentProfile]:
+        """扫描目录并加载全部 profile 文件.
+
+        Returns:
+            `agent_id -> AgentProfile` 映射表.
+        """
+
+        profiles: dict[str, AgentProfile] = {}
+        if not self.root.exists():
+            return profiles
+        for path in sorted(self.root.glob("*.y*ml")):
+            profile = self._load_file(path)
+            profiles[profile.agent_id] = profile
+        return profiles
+
+    def _load_file(self, path: Path) -> AgentProfile:
+        """从单个 YAML 文件加载一条 AgentProfile.
+        """
+
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if not isinstance(raw, dict):
+            raise ValueError(f"Profile file must be a mapping: {path}")
+        agent_id = str(raw.get("agent_id", "") or path.stem)
+        return AgentProfile(
+            agent_id=agent_id,
+            name=str(raw.get("name", "") or agent_id),
+            prompt_ref=str(
+                raw.get("prompt_ref", "") or f"{self.prompt_prefix}/{agent_id}"
+            ),
+            default_model=str(raw.get("default_model", "") or self.default_model),
+            enabled_tools=[str(item) for item in list(raw.get("enabled_tools", []) or [])],
+            config=dict(raw),
+        )
 
 
 class AgentProfileRegistry(ProfileLoader):

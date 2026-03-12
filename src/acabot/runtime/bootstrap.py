@@ -21,6 +21,7 @@ r"""runtime.bootstrap 提供 runtime 默认组装入口.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from acabot.agent import BaseAgent
 from acabot.config import Config
@@ -50,6 +51,9 @@ from .plugin_manager import (
 )
 from .profile_loader import (
     AgentProfileRegistry,
+    ChainedPromptLoader,
+    FileSystemProfileLoader,
+    FileSystemPromptLoader,
     ProfileLoader,
     PromptLoader,
     StaticPromptLoader,
@@ -170,9 +174,11 @@ def build_runtime_components(
         一份包含 RuntimeApp 及其依赖组件的组装结果.
     """
 
-    profiles = _build_profiles(config)
-    prompt_loader = StaticPromptLoader(_build_prompt_map(config, profiles))
     runtime_conf = config.get("runtime", {})
+    profiles = _build_profiles(config)
+    filesystem_profiles = _build_filesystem_profiles(config)
+    profiles.update(filesystem_profiles)
+    prompt_loader = _build_prompt_loader(config, profiles)
     default_agent_id = runtime_conf.get("default_agent_id", next(iter(profiles)))
     rules = _build_binding_rules(config)
     inbound_rules = _build_inbound_rules(config)
@@ -271,6 +277,7 @@ def build_runtime_components(
     )
 
 
+#  config.yaml 里提取
 def _build_profiles(config: Config) -> dict[str, AgentProfile]:
     """从配置对象构造 profile 映射.
 
@@ -312,6 +319,38 @@ def _build_profiles(config: Config) -> dict[str, AgentProfile]:
         )
     }
 
+# FS上的 profiles/
+def _build_filesystem_profiles(config: Config) -> dict[str, AgentProfile]:
+    """从 `profiles/` 目录构造 profile 映射.
+
+    Args:
+        config: 项目配置对象.
+
+    Returns:
+        文件系统中的 `agent_id -> AgentProfile` 映射表. 未启用时返回空映射.
+    """
+
+    runtime_conf = config.get("runtime", {})
+    fs_conf = dict(runtime_conf.get("filesystem", {}))
+    # 拒绝未经允许的外部文件被加载
+    if not bool(fs_conf.get("enabled", False)):
+        return {}
+    
+    profiles_dir = _resolve_filesystem_path(
+        fs_conf,
+        key="profiles_dir",
+        default="profiles",
+    )
+    default_model = str(
+        runtime_conf.get("filesystem_default_model", "")
+        or config.get("agent", {}).get("default_model", "gpt-4o-mini")
+    )
+    loader = FileSystemProfileLoader(
+        profiles_dir,
+        default_model=default_model,
+    )
+    return loader.load_all()
+
 
 def _build_prompt_map(
     config: Config,
@@ -334,6 +373,63 @@ def _build_prompt_map(
     for profile in profiles.values():
         prompts.setdefault(profile.prompt_ref, default_prompt_text)
     return prompts
+
+
+def _build_prompt_loader(
+    config: Config,
+    profiles: dict[str, AgentProfile],
+) -> PromptLoader:
+    """根据配置构造 prompt loader.
+
+    Args:
+        config: 项目配置对象.
+        profiles: 当前可用的 profile 映射.
+
+    Returns:
+        PromptLoader 实例.
+    """
+
+    runtime_conf = config.get("runtime", {})
+    fs_conf = dict(runtime_conf.get("filesystem", {}))
+    static_loader = StaticPromptLoader(_build_prompt_map(config, profiles))
+    if not bool(fs_conf.get("enabled", False)):
+        return static_loader
+
+    prompts_dir = _resolve_filesystem_path(
+        fs_conf,
+        key="prompts_dir",
+        default="prompts",
+    )
+    return ChainedPromptLoader(
+        [
+            FileSystemPromptLoader(prompts_dir),
+            static_loader,
+        ]
+    )
+
+
+def _resolve_filesystem_path(
+    fs_conf: dict[str, object],
+    *,
+    key: str,
+    default: str,
+) -> Path:
+    """解析 runtime.filesystem 下的目录路径.
+
+    Args:
+        fs_conf: `runtime.filesystem` 配置字典.
+        key: 要解析的字段名.
+        default: 字段缺省时的目录名.
+
+    Returns:
+        解析后的 Path.
+    """
+
+    base_dir = Path(str(fs_conf.get("base_dir", ".") or "."))
+    raw_value = Path(str(fs_conf.get(key, default) or default))
+    if raw_value.is_absolute():
+        return raw_value
+    return base_dir / raw_value
 
 
 def _build_binding_rules(config: Config) -> list[BindingRule]:

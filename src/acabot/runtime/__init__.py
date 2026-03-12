@@ -89,6 +89,9 @@ from .plugin_manager import (
 from .plugins import ReferenceToolsPlugin
 from .profile_loader import (
     AgentProfileRegistry,
+    ChainedPromptLoader,
+    FileSystemProfileLoader,
+    FileSystemPromptLoader,
     ProfileLoader,
     PromptLoader,
     StaticProfileLoader,
@@ -144,6 +147,7 @@ __all__ = [
     "ApprovalResumeResult",
     "ApprovalResumer",
     "BindingRule",
+    "ChainedPromptLoader",
     "ChannelEventRecord",
     "ChannelEventStore",
     "ContextCompactionConfig",
@@ -164,6 +168,8 @@ __all__ = [
     "InMemoryMessageStore",
     "InMemoryThreadManager",
     "LegacyAgentRuntime",
+    "FileSystemProfileLoader",
+    "FileSystemPromptLoader",
     "MemoryBlock",
     "MemoryBroker",
     "MemoryEditMode",

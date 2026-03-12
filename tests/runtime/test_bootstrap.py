@@ -275,6 +275,63 @@ async def test_build_runtime_components_loads_runtime_plugins_from_config() -> N
     )
 
 
+async def test_build_runtime_components_loads_profiles_and_prompts_from_filesystem(
+    tmp_path: Path,
+) -> None:
+    profiles_dir = tmp_path / "profiles"
+    prompts_dir = tmp_path / "prompts"
+    profiles_dir.mkdir()
+    prompts_dir.mkdir()
+    (profiles_dir / "aca.yaml").write_text(
+        "\n".join(
+            [
+                "name: Aca Filesystem",
+                "prompt_ref: prompt/aca",
+                "default_model: fs-model",
+                "enabled_tools:",
+                "  - reference_search",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (prompts_dir / "aca.md").write_text("You are Aca from filesystem.", encoding="utf-8")
+    config = Config(
+        {
+            "agent": {
+                "default_model": "fallback-model",
+                "system_prompt": "Fallback prompt.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "filesystem": {
+                    "enabled": True,
+                    "base_dir": str(tmp_path),
+                },
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    decision = RouteDecision(
+        thread_id="qq:user:10001",
+        actor_id="qq:user:10001",
+        agent_id="aca",
+        channel_scope="qq:user:10001",
+    )
+
+    profile = components.profile_loader.load(decision)
+    prompt = components.prompt_loader.load("prompt/aca")
+
+    assert profile.name == "Aca Filesystem"
+    assert profile.default_model == "fs-model"
+    assert profile.enabled_tools == ["reference_search"]
+    assert prompt == "You are Aca from filesystem."
+
+
 async def test_build_runtime_components_uses_channel_binding_for_group_event() -> None:
     config = Config(
         {
