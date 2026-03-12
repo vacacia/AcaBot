@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import Awaitable, Callable, Protocol
+from typing import Any, Awaitable, Callable, Protocol
 
 from acabot.types import Action, StandardEvent
 
@@ -33,6 +33,19 @@ class GatewayProtocol(Protocol):
 
         Returns:
             平台返回的原始回执, 或 None.
+        """
+
+        ...
+
+    async def call_api(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
+        """调用平台原生 API.
+
+        Args:
+            action: 平台 API 名称.
+            params: API 参数.
+
+        Returns:
+            平台返回的原始 JSON 字典.
         """
 
         ...

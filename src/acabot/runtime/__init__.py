@@ -93,7 +93,7 @@ from .plugin_manager import (
     load_runtime_plugins_from_config,
     parse_runtime_plugin_spec,
 )
-from .plugins import OpsControlPlugin, ReferenceToolsPlugin
+from .plugins import NapCatToolsPlugin, OpsControlPlugin, ReferenceToolsPlugin
 from .profile_loader import (
     AgentProfileRegistry,
     ChainedPromptLoader,
@@ -230,6 +230,7 @@ __all__ = [
     "load_runtime_plugin",
     "load_runtime_plugins_from_config",
     "parse_runtime_plugin_spec",
+    "NapCatToolsPlugin",
     "OpsControlPlugin",
     "ReferenceToolsPlugin",
     "RunContext",
