@@ -137,8 +137,21 @@ class OpsControlPlugin(RuntimePlugin):
                 f"active_runs={status.active_run_count}\n"
                 f"pending_approvals={status.pending_approval_count}\n"
                 f"loaded_plugins={','.join(status.loaded_plugins) or '-'}\n"
+                f"loaded_skills={','.join(status.loaded_skills) or '-'}\n"
                 f"interrupted_runs={','.join(status.interrupted_run_ids) or '-'}"
             )
+
+        if command == "skills":
+            items = await self._control_plane.list_skills()
+            if not items:
+                return "skills: no registered skills"
+            lines = ["skills:"]
+            for item in items:
+                tools = ",".join(item.tool_names) or "-"
+                lines.append(
+                    f"- {item.skill_name} [{item.skill_type}] tools={tools}"
+                )
+            return "\n".join(lines)
 
         if command == "reload_plugins":
             result = await self._control_plane.reload_plugins()

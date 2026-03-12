@@ -26,6 +26,7 @@ from acabot.runtime import (
     RouteDecision,
     RuntimeComponents,
     RuntimeControlPlane,
+    SkillRegistry,
     SQLiteMessageStore,
     StickyNotesService,
 )
@@ -304,6 +305,7 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
         message_store=InMemoryMessageStore(),
         memory_store=InMemoryMemoryStore(),
         sticky_notes=StickyNotesService(store=InMemoryMemoryStore()),
+        skill_registry=SkillRegistry(),
         memory_broker=MemoryBroker(),
         context_compactor=ContextCompactor(ContextCompactionConfig()),
         retrieval_planner=RetrievalPlanner(PromptAssemblyConfig()),

@@ -30,6 +30,7 @@ from acabot.config import Config
 from .gateway_protocol import GatewayProtocol
 from .models import RunContext
 from .reference_backend import ReferenceBackend
+from .skills import SkillRegistry, SkillSpec
 from .sticky_notes import StickyNotesService
 from .tool_broker import ToolBroker
 from .tool_broker import ToolHandler as RuntimeToolHandler
@@ -192,6 +193,7 @@ class RuntimePluginContext:
         tool_broker (ToolBroker): runtime 统一工具入口.
         reference_backend (ReferenceBackend | None): reference provider.
         sticky_notes (StickyNotesService | None): sticky note 的受控服务层.
+        skill_registry (SkillRegistry | None): 显式 skill 注册表.
         control_plane (RuntimeControlPlane | None): 本地 control plane 入口.
     """
 
@@ -200,6 +202,7 @@ class RuntimePluginContext:
     tool_broker: ToolBroker
     reference_backend: ReferenceBackend | None = None
     sticky_notes: StickyNotesService | None = None
+    skill_registry: SkillRegistry | None = None
     control_plane: RuntimeControlPlane | None = None
 
     def get_plugin_config(self, plugin_name: str) -> dict[str, object]:
@@ -278,6 +281,15 @@ class RuntimePlugin(ABC):
 
         return []
 
+    def skills(self) -> list[SkillSpec]:
+        """返回插件声明的显式 skills.
+
+        Returns:
+            SkillSpec 列表. 默认空列表.
+        """
+
+        return []
+
     async def teardown(self) -> None:
         """在 runtime 停止或热卸载时清理资源."""
         # 子类可重写, 默认空实现
@@ -300,6 +312,7 @@ class RuntimePluginManager:
         tool_broker (ToolBroker): runtime 工具入口.
         reference_backend (ReferenceBackend | None): reference provider.
         sticky_notes (StickyNotesService | None): sticky note 服务.
+        skill_registry (SkillRegistry | None): 显式 skill 注册表.
         control_plane (RuntimeControlPlane | None): 本地 control plane 入口.
         hooks (RuntimeHookRegistry): runtime hook 注册表.
         loaded (list[RuntimePlugin]): 已加载插件列表, 按加载顺序.
@@ -317,6 +330,7 @@ class RuntimePluginManager:
         tool_broker: ToolBroker,
         reference_backend: ReferenceBackend | None = None,
         sticky_notes: StickyNotesService | None = None,
+        skill_registry: SkillRegistry | None = None,
         control_plane: RuntimeControlPlane | None = None,
         plugins: list[RuntimePlugin] | None = None,
     ) -> None:
@@ -330,6 +344,7 @@ class RuntimePluginManager:
             tool_broker: runtime 工具入口.
             reference_backend: 可选的 reference provider.
             sticky_notes: 可选的 sticky note 服务.
+            skill_registry: 可选的显式 skill 注册表.
             control_plane: 可选的本地 control plane 入口.
             plugins: 启动时需要加载的插件实例列表.
         """
@@ -340,6 +355,7 @@ class RuntimePluginManager:
         # TODO: 收窄成 ReferenceService, 或者不暴露?
         self.reference_backend = reference_backend
         self.sticky_notes = sticky_notes
+        self.skill_registry = skill_registry
         self.control_plane = control_plane
         # 创建空的 hook 注册表
         self.hooks = RuntimeHookRegistry()
@@ -394,6 +410,7 @@ class RuntimePluginManager:
                 tool_broker=self.tool_broker,
                 reference_backend=self.reference_backend,
                 sticky_notes=self.sticky_notes,
+                skill_registry=self.skill_registry,
                 control_plane=self.control_plane,
             )
             # 复制并清空 pending, 防止 load 过程中 add_plugin 导致重复
@@ -440,6 +457,7 @@ class RuntimePluginManager:
             tool_broker=self.tool_broker,
             reference_backend=self.reference_backend,
             sticky_notes=self.sticky_notes,
+            skill_registry=self.skill_registry,
             control_plane=self.control_plane,
         )
         # 步骤 3: 调用 setup, 失败则跳过整个插件
@@ -454,6 +472,14 @@ class RuntimePluginManager:
         for point, hook in plugin_hooks:
             self.hooks.register(point, hook)
         self._plugin_hooks[plugin.name] = plugin_hooks
+        plugin_skills = list(plugin.skills())
+        if self.skill_registry is not None:
+            for skill in plugin_skills:
+                self.skill_registry.register_skill(
+                    skill,
+                    source=f"plugin:{plugin.name}",
+                    metadata={"plugin_name": plugin.name},
+                )
         runtime_tools = list(plugin.runtime_tools())
         for registration in runtime_tools:
             self.tool_broker.register_tool(
@@ -478,10 +504,11 @@ class RuntimePluginManager:
         self.loaded.append(plugin)
         self._names.add(plugin.name)
         logger.info(
-            "Runtime plugin loaded: %s (%s hooks, %s tools)",
+            "Runtime plugin loaded: %s (%s hooks, %s tools, %s skills)",
             plugin.name,
             len(plugin_hooks),
             len(runtime_tools) + len(legacy_tools),
+            len(plugin_skills),
         )
 
     async def run_hooks(self, point: RuntimeHookPoint, ctx: RunContext) -> RuntimeHookResult:
@@ -536,6 +563,14 @@ class RuntimePluginManager:
         for plugin in reversed(self.loaded):
             if plugin.name not in unload_set:
                 continue
+            if self.skill_registry is not None:
+                removed_skills = self.skill_registry.unregister_source(f"plugin:{plugin.name}")
+                if removed_skills:
+                    logger.info(
+                        "Runtime plugin skills removed: plugin=%s skills=%s",
+                        plugin.name,
+                        ",".join(removed_skills),
+                    )
             # 切断响应
             removed = self.tool_broker.unregister_source(f"plugin:{plugin.name}")
             if removed:
@@ -589,6 +624,14 @@ class RuntimePluginManager:
         # 这是依赖关系处理的关键: 如果插件A依赖插件B, 应该先加载B再加载A
         # 清理时则相反, 先清理A再清理B, 避免依赖悬空
         for plugin in reversed(self.loaded):
+            if self.skill_registry is not None:
+                removed_skills = self.skill_registry.unregister_source(f"plugin:{plugin.name}")
+                if removed_skills:
+                    logger.info(
+                        "Runtime plugin skills removed: plugin=%s skills=%s",
+                        plugin.name,
+                        ",".join(removed_skills),
+                    )
             removed = self.tool_broker.unregister_source(f"plugin:{plugin.name}")
             if removed:
                 logger.info(
@@ -666,6 +709,7 @@ class RuntimePluginManager:
             tool_broker=self.tool_broker,
             reference_backend=self.reference_backend,
             sticky_notes=self.sticky_notes,
+            skill_registry=self.skill_registry,
             control_plane=self.control_plane,
         )
         # 新插件实例，重新执行 load_plugin

@@ -5,6 +5,7 @@ from acabot.config import Config
 from acabot.runtime import (
     AgentProfile,
     InMemoryRunManager,
+    SkillRegistry,
     InMemoryThreadManager,
     Outbox,
     PlannedAction,
@@ -163,11 +164,13 @@ def _profile() -> AgentProfile:
 async def test_runtime_plugin_manager_registers_tools_and_lifecycle() -> None:
     config = Config({"plugins": {"echo_runtime": {"enabled": True, "mode": "test"}}})
     plugin = EchoRuntimePlugin()
-    tool_broker = ToolBroker()
+    skill_registry = SkillRegistry()
+    tool_broker = ToolBroker(skill_registry=skill_registry)
     manager = RuntimePluginManager(
         config=config,
         gateway=FakeGateway(),
         tool_broker=tool_broker,
+        skill_registry=skill_registry,
         plugins=[plugin],
     )
 
@@ -262,18 +265,20 @@ async def test_runtime_plugin_manager_reload_clears_old_tools_and_reloads() -> N
             },
         }
     )
-    tool_broker = ToolBroker()
+    skill_registry = SkillRegistry()
+    tool_broker = ToolBroker(skill_registry=skill_registry)
     manager = RuntimePluginManager(
         config=config,
         gateway=FakeGateway(),
         tool_broker=tool_broker,
+        skill_registry=skill_registry,
     )
     sample_profile = AgentProfile(
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
         default_model="test-model",
-        enabled_tools=["sample_configured_tool"],
+        enabled_skills=["sample_configured_skill"],
     )
 
     loaded_names, missing = await manager.reload_from_config()
@@ -287,6 +292,7 @@ async def test_runtime_plugin_manager_reload_clears_old_tools_and_reloads() -> N
     assert missing_again == []
     assert [tool.name for tool in visible_before] == ["sample_configured_tool"]
     assert [tool.name for tool in visible_after] == ["sample_configured_tool"]
+    assert [item.spec.skill_name for item in skill_registry.list_all()] == ["sample_configured_skill"]
     assert SampleConfiguredRuntimePlugin.setup_calls == 2
     assert SampleConfiguredRuntimePlugin.teardown_calls == 1
 
@@ -309,10 +315,12 @@ async def test_runtime_plugin_manager_can_reload_selected_plugins_only() -> None
             },
         }
     )
+    skill_registry = SkillRegistry()
     manager = RuntimePluginManager(
         config=config,
         gateway=FakeGateway(),
-        tool_broker=ToolBroker(),
+        tool_broker=ToolBroker(skill_registry=skill_registry),
+        skill_registry=skill_registry,
     )
 
     loaded_names, missing = await manager.reload_from_config()
@@ -326,3 +334,7 @@ async def test_runtime_plugin_manager_can_reload_selected_plugins_only() -> None
     assert SampleConfiguredRuntimePlugin.teardown_calls == 1
     assert AnotherConfiguredRuntimePlugin.setup_calls == 1
     assert AnotherConfiguredRuntimePlugin.teardown_calls == 0
+    assert [item.spec.skill_name for item in skill_registry.list_all()] == [
+        "another_configured_skill",
+        "sample_configured_skill",
+    ]

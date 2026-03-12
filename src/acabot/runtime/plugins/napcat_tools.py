@@ -26,6 +26,7 @@ from typing import Any
 from acabot.agent import ToolDef
 
 from ..plugin_manager import RuntimePlugin, RuntimePluginContext
+from ..skills import SkillSpec
 
 logger = logging.getLogger("acabot.runtime.plugin.napcat_tools")
 
@@ -82,6 +83,24 @@ class NapCatToolsPlugin(RuntimePlugin):
         if not self._enabled_tools:
             return all_tools
         return [tool for tool in all_tools if tool.name in self._enabled_tools]
+
+    def skills(self) -> list[SkillSpec]:
+        """返回 NapCat 查询能力对应的显式 skill.
+
+        Returns:
+            一条 `napcat_lookup` capability skill.
+        """
+
+        return [
+            SkillSpec(
+                skill_name="napcat_lookup",
+                skill_type="capability",
+                title="NapCat Lookup",
+                description="查询 QQ 用户, 群, 群成员和消息详情等平台事实.",
+                tool_names=[tool.name for tool in self.tools()],
+                workflow_guide="需要平台事实时优先调用这些查询工具, 不要凭空猜测 QQ 环境信息.",
+            )
+        ]
 
     # region tools
     def _get_user_info_tool(self) -> ToolDef:

@@ -27,6 +27,7 @@ from .control_plane import (
     PluginReloadSnapshot,
     RuntimeControlPlane,
     RuntimeStatusSnapshot,
+    SkillSnapshot,
 )
 from .event_policy import EventPolicyRegistry
 from .event_store import InMemoryChannelEventStore
@@ -125,6 +126,14 @@ from .reference_backend import (
 from .retrieval_planner import PromptAssemblyConfig, RetrievalPlanner
 from .router import InboundRuleRegistry, RuntimeRouter
 from .runs import InMemoryRunManager, RunManager, StoreBackedRunManager
+from .skills import (
+    DelegatedSubagentRequest,
+    DelegatedSubagentResult,
+    RegisteredSkill,
+    SkillRegistry,
+    SkillSpec,
+    SkillType,
+)
 from .sqlite_stores import (
     SQLiteChannelEventStore,
     SQLiteMemoryStore,
@@ -171,6 +180,7 @@ __all__ = [
     "PluginReloadSnapshot",
     "RuntimeControlPlane",
     "RuntimeStatusSnapshot",
+    "SkillSnapshot",
     "ContextSummarizer",
     "ModelContextSummarizer",
     "DeliveryResult",
@@ -230,6 +240,12 @@ __all__ = [
     "RuntimePluginManager",
     "RuntimePluginSpec",
     "RuntimeToolRegistration",
+    "SkillType",
+    "SkillSpec",
+    "RegisteredSkill",
+    "SkillRegistry",
+    "DelegatedSubagentRequest",
+    "DelegatedSubagentResult",
     "load_runtime_plugin",
     "load_runtime_plugins_from_config",
     "parse_runtime_plugin_spec",

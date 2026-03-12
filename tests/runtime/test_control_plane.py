@@ -15,6 +15,8 @@ from acabot.runtime import (
     RuntimePluginContext,
     RuntimePluginManager,
     RuntimeRouter,
+    SkillRegistry,
+    SkillSpec,
     ThreadPipeline,
     ToolBroker,
 )
@@ -38,6 +40,17 @@ class StatusRuntimePlugin(RuntimePlugin):
 
     async def setup(self, runtime: RuntimePluginContext) -> None:
         _ = runtime
+
+    def skills(self) -> list[SkillSpec]:
+        return [
+            SkillSpec(
+                skill_name="status_runtime_skill",
+                skill_type="capability",
+                title="Status Runtime Skill",
+                description="用于控制面状态测试的样例 skill.",
+                tool_names=[],
+            )
+        ]
 
 
 def _event(*, event_id: str = "evt-1") -> StandardEvent:
@@ -65,10 +78,12 @@ async def test_runtime_control_plane_reports_status_snapshot() -> None:
     run_manager = InMemoryRunManager()
     channel_event_store = InMemoryChannelEventStore()
     outbox = Outbox(gateway=gateway, store=FakeMessageStore())
+    skill_registry = SkillRegistry()
     plugin_manager = RuntimePluginManager(
         config=Config({}),
         gateway=gateway,
-        tool_broker=ToolBroker(),
+        tool_broker=ToolBroker(skill_registry=skill_registry),
+        skill_registry=skill_registry,
         plugins=[StatusRuntimePlugin()],
     )
     app = RuntimeApp(
@@ -91,6 +106,7 @@ async def test_runtime_control_plane_reports_status_snapshot() -> None:
         app=app,
         run_manager=run_manager,
         plugin_manager=plugin_manager,
+        skill_registry=plugin_manager.skill_registry,
     )
     await plugin_manager.ensure_started()
 
@@ -123,6 +139,7 @@ async def test_runtime_control_plane_reports_status_snapshot() -> None:
     status = await control_plane.get_status()
 
     assert status.loaded_plugins == ["status_runtime"]
+    assert status.loaded_skills == ["status_runtime_skill"]
     assert status.interrupted_run_ids == [running.run_id]
     assert status.active_run_count == 1
     assert status.active_runs[0].run_id == waiting.run_id
@@ -135,6 +152,7 @@ async def test_runtime_control_plane_can_reload_plugins() -> None:
 
     SampleConfiguredRuntimePlugin.reset()
     gateway = FakeGateway()
+    skill_registry = SkillRegistry()
     plugin_manager = RuntimePluginManager(
         config=Config(
             {
@@ -146,7 +164,8 @@ async def test_runtime_control_plane_can_reload_plugins() -> None:
             }
         ),
         gateway=gateway,
-        tool_broker=ToolBroker(),
+        tool_broker=ToolBroker(skill_registry=skill_registry),
+        skill_registry=skill_registry,
     )
     app = RuntimeApp(
         gateway=gateway,
@@ -168,6 +187,7 @@ async def test_runtime_control_plane_can_reload_plugins() -> None:
         app=app,
         run_manager=app.run_manager,
         plugin_manager=plugin_manager,
+        skill_registry=plugin_manager.skill_registry,
     )
 
     result = await control_plane.reload_plugins()
@@ -185,6 +205,7 @@ async def test_runtime_control_plane_can_reload_selected_plugins() -> None:
     SampleConfiguredRuntimePlugin.reset()
     AnotherConfiguredRuntimePlugin.reset()
     gateway = FakeGateway()
+    skill_registry = SkillRegistry()
     plugin_manager = RuntimePluginManager(
         config=Config(
             {
@@ -197,7 +218,8 @@ async def test_runtime_control_plane_can_reload_selected_plugins() -> None:
             }
         ),
         gateway=gateway,
-        tool_broker=ToolBroker(),
+        tool_broker=ToolBroker(skill_registry=skill_registry),
+        skill_registry=skill_registry,
     )
     app = RuntimeApp(
         gateway=gateway,
@@ -219,6 +241,7 @@ async def test_runtime_control_plane_can_reload_selected_plugins() -> None:
         app=app,
         run_manager=app.run_manager,
         plugin_manager=plugin_manager,
+        skill_registry=plugin_manager.skill_registry,
     )
 
     await control_plane.reload_plugins()
@@ -227,6 +250,46 @@ async def test_runtime_control_plane_can_reload_selected_plugins() -> None:
     assert result.requested_plugins == ["sample_configured_runtime", "missing_plugin"]
     assert result.loaded_plugins == ["sample_configured_runtime"]
     assert result.missing_plugins == ["missing_plugin"]
+
+
+async def test_runtime_control_plane_can_list_skills() -> None:
+    gateway = FakeGateway()
+    skill_registry = SkillRegistry()
+    plugin_manager = RuntimePluginManager(
+        config=Config({}),
+        gateway=gateway,
+        tool_broker=ToolBroker(skill_registry=skill_registry),
+        skill_registry=skill_registry,
+        plugins=[StatusRuntimePlugin()],
+    )
+    app = RuntimeApp(
+        gateway=gateway,
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=InMemoryThreadManager(),
+        run_manager=InMemoryRunManager(),
+        channel_event_store=InMemoryChannelEventStore(),
+        pipeline=ThreadPipeline(
+            agent_runtime=FakeAgentRuntime(),
+            outbox=Outbox(gateway=gateway, store=FakeMessageStore()),
+            run_manager=InMemoryRunManager(),
+            thread_manager=InMemoryThreadManager(),
+            plugin_manager=plugin_manager,
+        ),
+        profile_loader=_profile_loader,
+        plugin_manager=plugin_manager,
+    )
+    control_plane = RuntimeControlPlane(
+        app=app,
+        run_manager=app.run_manager,
+        plugin_manager=plugin_manager,
+        skill_registry=skill_registry,
+    )
+    await plugin_manager.ensure_started()
+
+    skills = await control_plane.list_skills()
+
+    assert len(skills) == 1
+    assert skills[0].skill_name == "status_runtime_skill"
 
 
 async def test_runtime_control_plane_can_switch_thread_agent_override() -> None:

@@ -23,6 +23,7 @@ from typing import Any, cast
 from acabot.agent import ToolSpec
 
 from ..plugin_manager import RuntimePlugin, RuntimePluginContext, RuntimeToolRegistration
+from ..skills import SkillSpec
 from ..sticky_notes import StickyNotesService, StickyScope
 from ..tool_broker import ToolExecutionContext, ToolResult
 
@@ -140,6 +141,32 @@ class StickyNotesPlugin(RuntimePlugin):
                 ),
                 handler=self._delete_note,
             ),
+        ]
+
+    def skills(self) -> list[SkillSpec]:
+        """返回 sticky notes 对应的显式 skill.
+
+        Returns:
+            一条 `sticky_notes` capability skill.
+        """
+
+        return [
+            SkillSpec(
+                skill_name="sticky_notes",
+                skill_type="capability",
+                title="Sticky Notes",
+                description="维护稳定事实和长期规则, 支持按 user/channel/relationship/global 作用域读写.",
+                tool_names=[
+                    "sticky_note_put",
+                    "sticky_note_get",
+                    "sticky_note_list",
+                    "sticky_note_delete",
+                ],
+                workflow_guide=(
+                    "稳定且高价值的事实优先写成 readonly sticky note. "
+                    "临时或不确定的事实不要强行写 sticky note."
+                ),
+            )
         ]
 
     # region handlers

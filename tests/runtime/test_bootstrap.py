@@ -261,6 +261,54 @@ async def test_build_runtime_components_loads_runtime_plugins_from_config() -> N
     await components.plugin_manager.ensure_started()
 
     assert SampleConfiguredRuntimePlugin.setup_calls == 1
+
+
+async def test_build_runtime_components_expands_enabled_skills_into_visible_tools() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "runtime-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "profiles": {
+                    "aca": {
+                        "name": "Aca",
+                        "prompt_ref": "prompt/aca",
+                        "default_model": "runtime-model",
+                        "enabled_skills": ["sample_configured_skill"],
+                    }
+                },
+                "prompts": {
+                    "prompt/aca": "You are Aca.",
+                },
+                "plugins": [
+                    "tests.runtime.runtime_plugin_samples:SampleConfiguredRuntimePlugin",
+                ],
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    await components.plugin_manager.ensure_started()
+
+    profile = components.profile_loader.load(
+        RouteDecision(
+            thread_id="qq:user:10001",
+            actor_id="qq:user:10001",
+            agent_id="aca",
+            channel_scope="qq:user:10001",
+        )
+    )
+    visible_tools = components.tool_broker.visible_tools(profile)
+
+    assert profile.enabled_skills == ["sample_configured_skill"]
+    assert [tool.name for tool in visible_tools] == ["sample_configured_tool"]
     assert any(
         tool.name == "sample_configured_tool"
         for tool in components.tool_broker.visible_tools(

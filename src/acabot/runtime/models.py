@@ -171,6 +171,7 @@ class AgentProfile:
     prompt_ref: str # prompt 文件引用
     default_model: str
     enabled_tools: list[str] = field(default_factory=list)
+    enabled_skills: list[str] = field(default_factory=list)
     config: dict[str, Any] = field(default_factory=dict)
 
 

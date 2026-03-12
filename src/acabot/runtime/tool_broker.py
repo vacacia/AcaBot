@@ -51,6 +51,7 @@ from .models import (
     PlannedAction,
     RunContext,
 )
+from .skills import SkillRegistry
 
 ToolHandler = Callable[[dict[str, Any], "ToolExecutionContext"], Awaitable[Any] | Any]
 
@@ -560,17 +561,20 @@ class ToolBroker:
         *,
         policy: ToolPolicy | None = None,
         audit: ToolAudit | None = None,
+        skill_registry: SkillRegistry | None = None,
     ) -> None:
         """初始化 ToolBroker.
 
         Args:
             policy: 可选的动态 policy.
             audit: 可选的审计 sink.
+            skill_registry: 可选的显式 skill 注册表.
         """
 
         self._tools: dict[str, RegisteredTool] = {}
         self.policy = policy or AllowAllToolPolicy()
         self.audit = audit or InMemoryToolAudit()
+        self.skill_registry = skill_registry
 
     def register_tool(
         self,
@@ -656,11 +660,22 @@ class ToolBroker:
             一个按 profile 声明顺序过滤后的 ToolSpec 列表.
         """
 
-        if not profile.enabled_tools:
+        tool_names: list[str] = []
+        for tool_name in profile.enabled_tools:
+            if tool_name in tool_names:
+                continue
+            tool_names.append(tool_name)
+        if self.skill_registry is not None:
+            for tool_name in self.skill_registry.visible_tool_names(profile):
+                if tool_name in tool_names:
+                    continue
+                tool_names.append(tool_name)
+
+        if not tool_names:
             return []
 
         visible: list[ToolSpec] = []
-        for tool_name in profile.enabled_tools:
+        for tool_name in tool_names:
             registered = self._tools.get(tool_name)
             if registered is None:
                 continue
@@ -682,6 +697,11 @@ class ToolBroker:
         metadata = {
             "source": "tool_broker",
             "visible_tools": [tool.name for tool in visible_tools],
+            "visible_skills": (
+                [skill.skill_name for skill in self.skill_registry.visible_skills(ctx.profile)]
+                if self.skill_registry is not None
+                else []
+            ),
         }
         if not visible_tools:
             return ToolRuntime(state=state, metadata=metadata)

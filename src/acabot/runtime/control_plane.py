@@ -24,6 +24,7 @@ from .models import MemoryItem, PendingApprovalRecord
 from .plugin_manager import RuntimePluginManager
 from .profile_loader import AgentProfileRegistry
 from .runs import RunManager
+from .skills import RegisteredSkill, SkillRegistry
 from .stores import MemoryStore
 from .threads import ThreadManager
 
@@ -58,12 +59,14 @@ class RuntimeStatusSnapshot:
         active_runs (list[ActiveRunSnapshot]): 当前活跃 runs.
         pending_approvals (list[PendingApprovalRecord]): 当前待审批 runs.
         loaded_plugins (list[str]): 当前已加载插件名列表.
+        loaded_skills (list[str]): 当前已加载 skill 名列表.
         interrupted_run_ids (list[str]): 启动恢复阶段识别出的中断 run 列表.
     """
 
     active_runs: list[ActiveRunSnapshot] = field(default_factory=list)
     pending_approvals: list[PendingApprovalRecord] = field(default_factory=list)
     loaded_plugins: list[str] = field(default_factory=list)
+    loaded_skills: list[str] = field(default_factory=list)
     interrupted_run_ids: list[str] = field(default_factory=list)
 
     @property
@@ -134,6 +137,27 @@ class MemoryQuerySnapshot:
     items: list[MemoryItem] = field(default_factory=list)
 
 
+@dataclass(slots=True)
+class SkillSnapshot:
+    """一次 skill 查询返回的轻量快照.
+
+    Attributes:
+        skill_name (str): skill 标识.
+        skill_type (str): skill 类型.
+        title (str): 展示标题.
+        tool_names (list[str]): skill 暴露的工具列表.
+        source (str): 注册来源.
+        delegated_agent_id (str): 未来 delegation 默认 agent.
+    """
+
+    skill_name: str
+    skill_type: str
+    title: str
+    tool_names: list[str] = field(default_factory=list)
+    source: str = ""
+    delegated_agent_id: str = ""
+
+
 # endregion
 
 
@@ -160,6 +184,7 @@ class RuntimeControlPlane:
         memory_store: MemoryStore | None = None,
         profile_registry: AgentProfileRegistry | None = None,
         plugin_manager: RuntimePluginManager | None = None,
+        skill_registry: SkillRegistry | None = None,
     ) -> None:
         """初始化 RuntimeControlPlane.
 
@@ -170,6 +195,7 @@ class RuntimeControlPlane:
             memory_store: 可选的长期记忆存储.
             profile_registry: 可选的 profile registry, 用于校验 agent 是否存在.
             plugin_manager: 可选的 runtime plugin manager.
+            skill_registry: 可选的显式 skill 注册表.
         """
 
         self.app = app
@@ -178,6 +204,7 @@ class RuntimeControlPlane:
         self.memory_store = memory_store
         self.profile_registry = profile_registry
         self.plugin_manager = plugin_manager
+        self.skill_registry = skill_registry
 
     async def get_status(self) -> RuntimeStatusSnapshot:
         """读取当前 runtime 的最小状态快照.
@@ -201,6 +228,7 @@ class RuntimeControlPlane:
             ],
             pending_approvals=self.app.list_pending_approvals(),
             loaded_plugins=self._list_loaded_plugins(),
+            loaded_skills=self._list_loaded_skills(),
             interrupted_run_ids=list(self.app.last_recovery_report.interrupted_run_ids),
         )
 
@@ -342,6 +370,17 @@ class RuntimeControlPlane:
             items=items,
         )
 
+    async def list_skills(self) -> list[SkillSnapshot]:
+        """列出当前已注册的显式 skills.
+
+        Returns:
+            SkillSnapshot 列表.
+        """
+
+        if self.skill_registry is None:
+            return []
+        return [self._to_skill_snapshot(item) for item in self.skill_registry.list_all()]
+
     def _list_loaded_plugins(self) -> list[str]:
         """返回当前已加载插件名列表.
 
@@ -352,6 +391,37 @@ class RuntimeControlPlane:
         if self.plugin_manager is None:
             return []
         return [plugin.name for plugin in self.plugin_manager.loaded]
+
+    def _list_loaded_skills(self) -> list[str]:
+        """列出当前已注册 skill 名列表.
+
+        Returns:
+            skill_name 列表.
+        """
+
+        if self.skill_registry is None:
+            return []
+        return [item.spec.skill_name for item in self.skill_registry.list_all()]
+
+    @staticmethod
+    def _to_skill_snapshot(item: RegisteredSkill) -> SkillSnapshot:
+        """把 RegisteredSkill 转成 SkillSnapshot.
+
+        Args:
+            item: 当前注册的 skill.
+
+        Returns:
+            对应的 SkillSnapshot.
+        """
+
+        return SkillSnapshot(
+            skill_name=item.spec.skill_name,
+            skill_type=item.spec.skill_type,
+            title=item.spec.title,
+            tool_names=list(item.spec.tool_names),
+            source=item.source,
+            delegated_agent_id=item.spec.delegated_agent_id,
+        )
 
 
 # endregion

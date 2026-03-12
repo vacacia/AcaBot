@@ -76,6 +76,20 @@ async def test_ops_control_plugin_handles_status_command() -> None:
     assert len(gateway.sent) == 1
     assert "active_runs=1" in gateway.sent[0].payload["text"]
     assert "loaded_plugins=ops_control" in gateway.sent[0].payload["text"]
+    assert "loaded_skills=sample_configured_skill" in gateway.sent[0].payload["text"]
+
+
+async def test_ops_control_plugin_can_list_skills() -> None:
+    gateway = FakeGateway()
+    agent = FakeAgent(FakeAgentResponse(text="should not be used"))
+    components = build_runtime_components(_ops_config(), gateway=gateway, agent=agent)
+
+    components.app.install()
+    await gateway.handler(_message_event("/skills"))
+
+    assert agent.calls == []
+    assert len(gateway.sent) == 1
+    assert "sample_configured_skill" in gateway.sent[0].payload["text"]
 
 
 async def test_ops_control_plugin_can_switch_thread_agent() -> None:

@@ -105,6 +105,8 @@ def test_filesystem_profile_loader_loads_yaml_profiles(tmp_path: Path) -> None:
                 "default_model: fs-model",
                 "enabled_tools:",
                 "  - reference_search",
+                "enabled_skills:",
+                "  - reference_lookup",
             ]
         ),
         encoding="utf-8",
@@ -120,6 +122,7 @@ def test_filesystem_profile_loader_loads_yaml_profiles(tmp_path: Path) -> None:
     assert profiles["aca"].name == "Aca FS"
     assert profiles["aca"].default_model == "fs-model"
     assert profiles["aca"].enabled_tools == ["reference_search"]
+    assert profiles["aca"].enabled_skills == ["reference_lookup"]
 
 
 def test_filesystem_binding_loader_loads_yaml_rules(tmp_path: Path) -> None:

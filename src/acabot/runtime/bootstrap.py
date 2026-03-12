@@ -81,6 +81,7 @@ from .sqlite_stores import (
 from .sticky_notes import StickyNotesService
 from .stores import ChannelEventStore, MemoryStore, MessageStore
 from .structured_memory import StoreBackedMemoryRetriever, StructuredMemoryExtractor
+from .skills import SkillRegistry
 from .tool_broker import ToolBroker
 from .threads import InMemoryThreadManager, StoreBackedThreadManager, ThreadManager
 
@@ -98,6 +99,7 @@ class RuntimeComponents:
         message_store (MessageStore): 保存 delivered facts 的 MessageStore.
         memory_store (MemoryStore): 保存长期记忆项的 MemoryStore.
         sticky_notes (StickyNotesService): sticky note 的受控服务层.
+        skill_registry (SkillRegistry): 显式 skill 注册表.
         memory_broker (MemoryBroker): 长期记忆统一入口.
         context_compactor (ContextCompactor): 负责 token-aware working memory compaction 的 compactor.
         retrieval_planner (RetrievalPlanner): 负责 retrieval planning 和 prompt assembly 的 planner.
@@ -122,6 +124,7 @@ class RuntimeComponents:
     message_store: MessageStore
     memory_store: MemoryStore
     sticky_notes: StickyNotesService
+    skill_registry: SkillRegistry
     memory_broker: MemoryBroker
     context_compactor: ContextCompactor
     retrieval_planner: RetrievalPlanner
@@ -155,6 +158,7 @@ def build_runtime_components(
     reference_backend: ReferenceBackend | None = None,
     plugin_manager: RuntimePluginManager | None = None,
     tool_broker: ToolBroker | None = None,
+    skill_registry: SkillRegistry | None = None,
     approval_resumer: ApprovalResumer | None = None,
     plugins: list[RuntimePlugin] | None = None,
 ) -> RuntimeComponents:
@@ -176,6 +180,7 @@ def build_runtime_components(
         reference_backend: 可选的 ReferenceBackend 实现.
         plugin_manager: 可选的 RuntimePluginManager 实现.
         tool_broker: 可选的 ToolBroker 实现.
+        skill_registry: 可选的 SkillRegistry 实现.
         approval_resumer: 可选的 approval resumer.
         plugins: 启动时要加载的 runtime plugin 实例列表.
 
@@ -213,6 +218,7 @@ def build_runtime_components(
     runtime_message_store = message_store or _build_message_store(config)
     runtime_memory_store = memory_store or _build_memory_store(config)
     runtime_sticky_notes = StickyNotesService(store=runtime_memory_store)
+    runtime_skill_registry = skill_registry or SkillRegistry()
     runtime_memory_broker = memory_broker or _build_memory_broker(
         config,
         memory_store=runtime_memory_store,
@@ -223,7 +229,8 @@ def build_runtime_components(
     )
     runtime_retrieval_planner = retrieval_planner or _build_retrieval_planner(config)
     runtime_reference_backend = reference_backend or _build_reference_backend(config)
-    runtime_tool_broker = tool_broker or ToolBroker()
+    runtime_tool_broker = tool_broker or ToolBroker(skill_registry=runtime_skill_registry)
+    runtime_tool_broker.skill_registry = runtime_skill_registry
     configured_plugins = plugins if plugins is not None else load_runtime_plugins_from_config(config)
     runtime_plugin_manager = plugin_manager or RuntimePluginManager(
         config=config,
@@ -231,6 +238,7 @@ def build_runtime_components(
         tool_broker=runtime_tool_broker,
         reference_backend=runtime_reference_backend,
         sticky_notes=runtime_sticky_notes,
+        skill_registry=runtime_skill_registry,
         plugins=configured_plugins,
     )
     runtime_approval_resumer = approval_resumer or NoopApprovalResumer()
@@ -270,6 +278,7 @@ def build_runtime_components(
         memory_store=runtime_memory_store,
         profile_registry=profile_registry,
         plugin_manager=runtime_plugin_manager,
+        skill_registry=runtime_skill_registry,
     )
     runtime_plugin_manager.attach_control_plane(control_plane)
 
@@ -282,6 +291,7 @@ def build_runtime_components(
         message_store=runtime_message_store,
         memory_store=runtime_memory_store,
         sticky_notes=runtime_sticky_notes,
+        skill_registry=runtime_skill_registry,
         memory_broker=runtime_memory_broker,
         context_compactor=runtime_context_compactor,
         retrieval_planner=runtime_retrieval_planner,
@@ -325,6 +335,7 @@ def _build_profiles(config: Config) -> dict[str, AgentProfile]:
                     agent_conf.get("default_model", "gpt-4o-mini"),
                 ),
                 enabled_tools=list(profile_conf.get("enabled_tools", [])),
+                enabled_skills=list(profile_conf.get("enabled_skills", [])),
                 config=dict(profile_conf),
             )
         return profiles
@@ -337,6 +348,7 @@ def _build_profiles(config: Config) -> dict[str, AgentProfile]:
             prompt_ref=runtime_conf.get("default_prompt_ref", "prompt/default"),
             default_model=agent_conf.get("default_model", "gpt-4o-mini"),
             enabled_tools=list(runtime_conf.get("enabled_tools", [])),
+            enabled_skills=list(runtime_conf.get("enabled_skills", [])),
             config=dict(agent_conf),
         )
     }
