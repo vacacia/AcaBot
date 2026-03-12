@@ -142,6 +142,20 @@ class OpsControlPlugin(RuntimePlugin):
             )
 
         if command == "skills":
+            if arguments:
+                items = await self._control_plane.list_agent_skills(arguments[0])
+                if not items:
+                    return f"skills: no assignments for {arguments[0]}"
+                lines = [f"skills for {arguments[0]}:"]
+                for item in items:
+                    tools = ",".join(item.tool_names) or "-"
+                    lines.append(
+                        f"- {item.skill_name} [{item.skill_type}] "
+                        f"mode={item.delegation_mode} delegate={item.delegate_agent_id or '-'} "
+                        f"tools={tools}"
+                    )
+                return "\n".join(lines)
+
             items = await self._control_plane.list_skills()
             if not items:
                 return "skills: no registered skills"

@@ -13,10 +13,10 @@
 
 这一层先解决两类问题:
 - 工具组织型 skill, 负责把一组相关 tools 变成显式能力包
-- 工作流协议型 skill, 负责携带 workflow guide 和可选 delegation hint
+- 工作流协议型 skill, 负责携带 workflow guide 和可选 reference hint
 
 当前这一版故意不直接执行 subagent.
-但会先把 delegated subagent 的请求和结果边界定义出来.
+但会先把 subagent delegation 的请求和结果边界定义出来.
 """
 
 from __future__ import annotations
@@ -24,9 +24,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from .models import AgentProfile
+from .models import AgentProfile, SkillAssignment
 
-SkillType = Literal["capability", "workflow", "delegated"]
+SkillType = Literal["capability", "workflow"]
 
 
 # region 数据对象
@@ -42,7 +42,6 @@ class SkillSpec:
         tool_names (list[str]): 这个 skill 会暴露的工具列表.
         workflow_guide (str): 可选的工作流指引.
         reference_hint (str): 可选的 reference 使用提示.
-        delegated_agent_id (str): 未来 delegated subagent 的默认 agent_id.
         metadata (dict[str, Any]): 附加元数据.
     """
 
@@ -53,7 +52,6 @@ class SkillSpec:
     tool_names: list[str] = field(default_factory=list)
     workflow_guide: str = ""
     reference_hint: str = ""
-    delegated_agent_id: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -73,15 +71,28 @@ class RegisteredSkill:
 
 
 @dataclass(slots=True)
-class DelegatedSubagentRequest:
-    """未来 delegated subagent 调用的请求边界.
+class ResolvedSkillAssignment:
+    """一条已经展开后的 skill assignment.
+
+    Attributes:
+        registered (RegisteredSkill): 命中的 skill 注册记录.
+        assignment (SkillAssignment): 对应的 profile 赋能关系.
+    """
+
+    registered: RegisteredSkill
+    assignment: SkillAssignment
+
+
+@dataclass(slots=True)
+class SubagentDelegationRequest:
+    """未来 subagent delegation 调用的请求边界.
 
     Attributes:
         skill_name (str): 本次委派对应的 skill.
         parent_run_id (str): 发起委派的父 run 标识.
         actor_id (str): 当前 actor.
         channel_scope (str): 当前 channel scope.
-        delegated_agent_id (str): 目标 subagent 标识.
+        delegate_agent_id (str): 目标 subagent 标识.
         payload (dict[str, Any]): 委派输入载荷.
         metadata (dict[str, Any]): 附加元数据.
     """
@@ -90,14 +101,14 @@ class DelegatedSubagentRequest:
     parent_run_id: str
     actor_id: str
     channel_scope: str
-    delegated_agent_id: str
+    delegate_agent_id: str
     payload: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
-class DelegatedSubagentResult:
-    """未来 delegated subagent 调用的返回边界.
+class SubagentDelegationResult:
+    """未来 subagent delegation 调用的返回边界.
 
     Attributes:
         skill_name (str): 对应的 skill 名.
@@ -202,16 +213,48 @@ class SkillRegistry:
             按 profile 声明顺序过滤后的 SkillSpec 列表.
         """
 
-        visible: list[SkillSpec] = []
+        return [item.registered.spec for item in self.resolve_assignments(profile)]
+
+    def resolve_assignments(self, profile: AgentProfile) -> list[ResolvedSkillAssignment]:
+        """把 profile 里的 skill 配置展开成正式 assignment.
+
+        Args:
+            profile: 当前 run 命中的 AgentProfile.
+
+        Returns:
+            按 profile 声明顺序展开后的 ResolvedSkillAssignment 列表.
+        """
+
+        resolved: list[ResolvedSkillAssignment] = []
+        seen: set[str] = set()
+        for assignment in profile.skill_assignments:
+            registered = self._skills.get(assignment.skill_name)
+            if registered is None:
+                continue
+            resolved.append(
+                ResolvedSkillAssignment(
+                    registered=registered,
+                    assignment=assignment,
+                )
+            )
+            seen.add(assignment.skill_name)
         for skill_name in profile.enabled_skills:
+            if skill_name in seen:
+                continue
             registered = self._skills.get(skill_name)
             if registered is None:
                 continue
-            visible.append(registered.spec)
-        return visible
+            resolved.append(
+                ResolvedSkillAssignment(
+                    registered=registered,
+                    assignment=SkillAssignment(skill_name=skill_name),
+                )
+            )
+            seen.add(skill_name)
+        return resolved
 
     def visible_tool_names(self, profile: AgentProfile) -> list[str]:
-        """根据 profile 的 enabled_skills 展开可见工具名.
+        """根据 profile 的 skill assignment 展开可见工具名.
 
         Args:
             profile: 当前 run 命中的 AgentProfile.
@@ -221,8 +264,8 @@ class SkillRegistry:
         """
 
         tool_names: list[str] = []
-        for spec in self.visible_skills(profile):
-            for tool_name in spec.tool_names:
+        for item in self.resolve_assignments(profile):
+            for tool_name in item.registered.spec.tool_names:
                 if tool_name in tool_names:
                     continue
                 tool_names.append(tool_name)

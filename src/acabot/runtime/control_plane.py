@@ -24,7 +24,7 @@ from .models import MemoryItem, PendingApprovalRecord
 from .plugin_manager import RuntimePluginManager
 from .profile_loader import AgentProfileRegistry
 from .runs import RunManager
-from .skills import RegisteredSkill, SkillRegistry
+from .skills import RegisteredSkill, ResolvedSkillAssignment, SkillRegistry
 from .stores import MemoryStore
 from .threads import ThreadManager
 
@@ -147,7 +147,7 @@ class SkillSnapshot:
         title (str): 展示标题.
         tool_names (list[str]): skill 暴露的工具列表.
         source (str): 注册来源.
-        delegated_agent_id (str): 未来 delegation 默认 agent.
+        workflow_guide (str): 可选的工作流说明.
     """
 
     skill_name: str
@@ -155,7 +155,32 @@ class SkillSnapshot:
     title: str
     tool_names: list[str] = field(default_factory=list)
     source: str = ""
-    delegated_agent_id: str = ""
+    workflow_guide: str = ""
+
+
+@dataclass(slots=True)
+class AgentSkillSnapshot:
+    """某个 agent 当前绑定的 skill assignment 快照.
+
+    Attributes:
+        agent_id (str): 当前 agent 标识.
+        skill_name (str): 目标 skill 标识.
+        skill_type (str): skill 类型.
+        title (str): 展示标题.
+        tool_names (list[str]): 这个 skill 暴露的工具列表.
+        delegation_mode (str): 当前 assignment 的 delegation policy.
+        delegate_agent_id (str): 目标 subagent 标识.
+        notes (str): operator 附加说明.
+    """
+
+    agent_id: str
+    skill_name: str
+    skill_type: str
+    title: str
+    tool_names: list[str] = field(default_factory=list)
+    delegation_mode: str = "inline"
+    delegate_agent_id: str = ""
+    notes: str = ""
 
 
 # endregion
@@ -381,6 +406,26 @@ class RuntimeControlPlane:
             return []
         return [self._to_skill_snapshot(item) for item in self.skill_registry.list_all()]
 
+    async def list_agent_skills(self, agent_id: str) -> list[AgentSkillSnapshot]:
+        """列出某个 agent 当前绑定的 skill assignment.
+
+        Args:
+            agent_id: 目标 agent 标识.
+
+        Returns:
+            AgentSkillSnapshot 列表.
+        """
+
+        if self.profile_registry is None or self.skill_registry is None:
+            return []
+        if not self.profile_registry.has_agent(agent_id):
+            return []
+        profile = self.profile_registry.profiles[agent_id]
+        return [
+            self._to_agent_skill_snapshot(agent_id, item)
+            for item in self.skill_registry.resolve_assignments(profile)
+        ]
+
     def _list_loaded_plugins(self) -> list[str]:
         """返回当前已加载插件名列表.
 
@@ -420,7 +465,33 @@ class RuntimeControlPlane:
             title=item.spec.title,
             tool_names=list(item.spec.tool_names),
             source=item.source,
-            delegated_agent_id=item.spec.delegated_agent_id,
+            workflow_guide=item.spec.workflow_guide,
+        )
+
+    @staticmethod
+    def _to_agent_skill_snapshot(
+        agent_id: str,
+        item: ResolvedSkillAssignment,
+    ) -> AgentSkillSnapshot:
+        """把 ResolvedSkillAssignment 转成 AgentSkillSnapshot.
+
+        Args:
+            agent_id: 当前 agent 标识.
+            item: 已展开的 assignment.
+
+        Returns:
+            对应的 AgentSkillSnapshot.
+        """
+
+        return AgentSkillSnapshot(
+            agent_id=agent_id,
+            skill_name=item.registered.spec.skill_name,
+            skill_type=item.registered.spec.skill_type,
+            title=item.registered.spec.title,
+            tool_names=list(item.registered.spec.tool_names),
+            delegation_mode=item.assignment.delegation_mode,
+            delegate_agent_id=item.assignment.delegate_agent_id,
+            notes=item.assignment.notes,
         )
 
 

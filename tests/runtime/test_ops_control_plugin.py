@@ -39,6 +39,13 @@ def _ops_config() -> Config:
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
                         "default_model": "model-a",
+                        "skill_assignments": [
+                            {
+                                "skill_name": "sample_configured_skill",
+                                "delegation_mode": "prefer_delegate",
+                                "delegate_agent_id": "sample_worker",
+                            }
+                        ],
                     },
                     "ops": {
                         "name": "Ops",
@@ -90,6 +97,22 @@ async def test_ops_control_plugin_can_list_skills() -> None:
     assert agent.calls == []
     assert len(gateway.sent) == 1
     assert "sample_configured_skill" in gateway.sent[0].payload["text"]
+
+
+async def test_ops_control_plugin_can_list_agent_skills() -> None:
+    gateway = FakeGateway()
+    agent = FakeAgent(FakeAgentResponse(text="should not be used"))
+    components = build_runtime_components(_ops_config(), gateway=gateway, agent=agent)
+
+    components.app.install()
+    await gateway.handler(_message_event("/skills aca"))
+
+    assert agent.calls == []
+    assert len(gateway.sent) == 1
+    assert "skills for aca:" in gateway.sent[0].payload["text"]
+    assert "sample_configured_skill" in gateway.sent[0].payload["text"]
+    assert "mode=prefer_delegate" in gateway.sent[0].payload["text"]
+    assert "delegate=sample_worker" in gateway.sent[0].payload["text"]
 
 
 async def test_ops_control_plugin_can_switch_thread_agent() -> None:

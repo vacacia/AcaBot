@@ -1,4 +1,5 @@
 from pathlib import Path
+import pytest
 
 from acabot.runtime import (
     AgentProfile,
@@ -107,6 +108,10 @@ def test_filesystem_profile_loader_loads_yaml_profiles(tmp_path: Path) -> None:
                 "  - reference_search",
                 "enabled_skills:",
                 "  - reference_lookup",
+                "skill_assignments:",
+                "  - skill_name: reference_lookup",
+                "    delegation_mode: prefer_delegate",
+                "    delegate_agent_id: research_worker",
             ]
         ),
         encoding="utf-8",
@@ -123,6 +128,32 @@ def test_filesystem_profile_loader_loads_yaml_profiles(tmp_path: Path) -> None:
     assert profiles["aca"].default_model == "fs-model"
     assert profiles["aca"].enabled_tools == ["reference_search"]
     assert profiles["aca"].enabled_skills == ["reference_lookup"]
+    assert len(profiles["aca"].skill_assignments) == 1
+    assert profiles["aca"].skill_assignments[0].delegation_mode == "prefer_delegate"
+    assert profiles["aca"].skill_assignments[0].delegate_agent_id == "research_worker"
+
+
+def test_filesystem_profile_loader_rejects_unknown_delegation_mode(tmp_path: Path) -> None:
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+    (profiles_dir / "aca.yaml").write_text(
+        "\n".join(
+            [
+                "name: Aca FS",
+                "skill_assignments:",
+                "  - skill_name: reference_lookup",
+                "    delegation_mode: unknown_mode",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    loader = FileSystemProfileLoader(
+        profiles_dir,
+        default_model="fallback-model",
+    )
+
+    with pytest.raises(ValueError, match="Unsupported delegation_mode"):
+        loader.load_all()
 
 
 def test_filesystem_binding_loader_loads_yaml_rules(tmp_path: Path) -> None:

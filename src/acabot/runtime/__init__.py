@@ -22,6 +22,7 @@ from .context_compactor import (
 )
 from .control_plane import (
     ActiveRunSnapshot,
+    AgentSkillSnapshot,
     AgentSwitchSnapshot,
     MemoryQuerySnapshot,
     PluginReloadSnapshot,
@@ -51,6 +52,7 @@ from .model_agent_runtime import (
 )
 from .models import (
     AgentProfile,
+    DelegationMode,
     ApprovalRequired,
     ApprovalDecisionResult,
     AgentRuntimeResult,
@@ -76,6 +78,7 @@ from .models import (
     RunRecord,
     RunStatus,
     RunStep,
+    SkillAssignment,
     ThreadRecord,
     ThreadState,
 )
@@ -127,12 +130,13 @@ from .retrieval_planner import PromptAssemblyConfig, RetrievalPlanner
 from .router import InboundRuleRegistry, RuntimeRouter
 from .runs import InMemoryRunManager, RunManager, StoreBackedRunManager
 from .skills import (
-    DelegatedSubagentRequest,
-    DelegatedSubagentResult,
     RegisteredSkill,
+    ResolvedSkillAssignment,
     SkillRegistry,
     SkillSpec,
     SkillType,
+    SubagentDelegationRequest,
+    SubagentDelegationResult,
 )
 from .sqlite_stores import (
     SQLiteChannelEventStore,
@@ -175,6 +179,7 @@ __all__ = [
     "ContextCompactionResult",
     "ContextCompactor",
     "ActiveRunSnapshot",
+    "AgentSkillSnapshot",
     "AgentSwitchSnapshot",
     "MemoryQuerySnapshot",
     "PluginReloadSnapshot",
@@ -240,12 +245,15 @@ __all__ = [
     "RuntimePluginManager",
     "RuntimePluginSpec",
     "RuntimeToolRegistration",
+    "DelegationMode",
+    "SkillAssignment",
     "SkillType",
     "SkillSpec",
     "RegisteredSkill",
+    "ResolvedSkillAssignment",
     "SkillRegistry",
-    "DelegatedSubagentRequest",
-    "DelegatedSubagentResult",
+    "SubagentDelegationRequest",
+    "SubagentDelegationResult",
     "load_runtime_plugin",
     "load_runtime_plugins_from_config",
     "parse_runtime_plugin_spec",

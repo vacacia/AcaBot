@@ -278,6 +278,13 @@ async def test_build_runtime_components_expands_enabled_skills_into_visible_tool
                         "prompt_ref": "prompt/aca",
                         "default_model": "runtime-model",
                         "enabled_skills": ["sample_configured_skill"],
+                        "skill_assignments": [
+                            {
+                                "skill_name": "sample_configured_skill",
+                                "delegation_mode": "prefer_delegate",
+                                "delegate_agent_id": "sample_worker",
+                            }
+                        ],
                     }
                 },
                 "prompts": {
@@ -308,6 +315,9 @@ async def test_build_runtime_components_expands_enabled_skills_into_visible_tool
     visible_tools = components.tool_broker.visible_tools(profile)
 
     assert profile.enabled_skills == ["sample_configured_skill"]
+    assert len(profile.skill_assignments) == 1
+    assert profile.skill_assignments[0].delegation_mode == "prefer_delegate"
+    assert profile.skill_assignments[0].delegate_agent_id == "sample_worker"
     assert [tool.name for tool in visible_tools] == ["sample_configured_tool"]
     assert any(
         tool.name == "sample_configured_tool"

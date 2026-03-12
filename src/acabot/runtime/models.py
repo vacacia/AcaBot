@@ -26,6 +26,7 @@ CommitWhen = Literal["success", "failure", "waiting_approval", "always"]
 ApprovalDecision = Literal["approved", "rejected"]
 MemoryEditMode = Literal["readonly", "draft", "private"]
 PromptSlotPosition = Literal["system_message", "history_prefix", "tool_result", "private_scratchpad"]
+DelegationMode = Literal["inline", "prefer_delegate", "must_delegate", "manual"]
 
 
 @dataclass(slots=True)
@@ -160,18 +161,48 @@ class ThreadState:
 
 
 @dataclass(slots=True)
+class SkillAssignment:
+    """一条 agent 到 skill 的赋能关系.
+
+    Attributes:
+        skill_name (str): 目标 skill 标识.
+        delegation_mode (DelegationMode): 当前 agent 使用该 skill 的委派策略.
+        delegate_agent_id (str): 命中委派策略时的目标 subagent 标识.
+        notes (str): 面向 operator 的补充说明.
+        metadata (dict[str, Any]): 附加元数据.
+    """
+
+    skill_name: str
+    delegation_mode: DelegationMode = "inline"
+    delegate_agent_id: str = ""
+    notes: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class AgentProfile:
     """agent 的静态配置 snapshot.
 
-    agent 是谁? 默认用什么模型? 可以看到哪些工具? 
+    agent 是谁, 默认用什么模型, 可见哪些工具和 skill assignment, 都在这里表达.
+
+    Attributes:
+        agent_id (str): 唯一标识.
+        name (str): 展示名称.
+        prompt_ref (str): prompt 文件引用.
+        default_model (str): 默认模型名.
+        enabled_tools (list[str]): 直接暴露给模型的工具白名单.
+        enabled_skills (list[str]): 以 inline 策略启用的 skill 简写列表.
+        skill_assignments (list[SkillAssignment]): 显式 skill assignment 和 delegation policy.
+        config (dict[str, Any]): 原始 profile 配置快照.
     """
 
     agent_id: str # 唯一标识
-    name: str 
+    name: str
     prompt_ref: str # prompt 文件引用
     default_model: str
     enabled_tools: list[str] = field(default_factory=list)
     enabled_skills: list[str] = field(default_factory=list)
+    skill_assignments: list[SkillAssignment] = field(default_factory=list)
     config: dict[str, Any] = field(default_factory=dict)
 
 

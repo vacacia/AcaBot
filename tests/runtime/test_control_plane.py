@@ -15,6 +15,7 @@ from acabot.runtime import (
     RuntimePluginContext,
     RuntimePluginManager,
     RuntimeRouter,
+    SkillAssignment,
     SkillRegistry,
     SkillSpec,
     ThreadPipeline,
@@ -290,6 +291,67 @@ async def test_runtime_control_plane_can_list_skills() -> None:
 
     assert len(skills) == 1
     assert skills[0].skill_name == "status_runtime_skill"
+
+
+async def test_runtime_control_plane_can_list_agent_skills() -> None:
+    gateway = FakeGateway()
+    skill_registry = SkillRegistry()
+    plugin_manager = RuntimePluginManager(
+        config=Config({}),
+        gateway=gateway,
+        tool_broker=ToolBroker(skill_registry=skill_registry),
+        skill_registry=skill_registry,
+        plugins=[StatusRuntimePlugin()],
+    )
+    profile_registry = AgentProfileRegistry(
+        profiles={
+            "aca": AgentProfile(
+                agent_id="aca",
+                name="Aca",
+                prompt_ref="prompt/default",
+                default_model="test-model",
+                skill_assignments=[
+                    SkillAssignment(
+                        skill_name="status_runtime_skill",
+                        delegation_mode="prefer_delegate",
+                        delegate_agent_id="status_worker",
+                    )
+                ],
+            )
+        },
+        default_agent_id="aca",
+    )
+    app = RuntimeApp(
+        gateway=gateway,
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=InMemoryThreadManager(),
+        run_manager=InMemoryRunManager(),
+        channel_event_store=InMemoryChannelEventStore(),
+        pipeline=ThreadPipeline(
+            agent_runtime=FakeAgentRuntime(),
+            outbox=Outbox(gateway=gateway, store=FakeMessageStore()),
+            run_manager=InMemoryRunManager(),
+            thread_manager=InMemoryThreadManager(),
+            plugin_manager=plugin_manager,
+        ),
+        profile_loader=_profile_loader,
+        plugin_manager=plugin_manager,
+    )
+    control_plane = RuntimeControlPlane(
+        app=app,
+        run_manager=app.run_manager,
+        profile_registry=profile_registry,
+        plugin_manager=plugin_manager,
+        skill_registry=skill_registry,
+    )
+    await plugin_manager.ensure_started()
+
+    skills = await control_plane.list_agent_skills("aca")
+
+    assert len(skills) == 1
+    assert skills[0].skill_name == "status_runtime_skill"
+    assert skills[0].delegation_mode == "prefer_delegate"
+    assert skills[0].delegate_agent_id == "status_worker"
 
 
 async def test_runtime_control_plane_can_switch_thread_agent_override() -> None:

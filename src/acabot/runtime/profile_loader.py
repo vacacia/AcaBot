@@ -16,7 +16,47 @@ import yaml
 
 from acabot.types import StandardEvent
 
-from .models import AgentProfile, BindingRule, RouteDecision
+from .models import AgentProfile, BindingRule, RouteDecision, SkillAssignment
+
+
+def parse_skill_assignments(raw_items: object) -> list[SkillAssignment]:
+    """把 profile 配置里的 skill assignment 归一化.
+
+    Args:
+        raw_items: 原始 `skill_assignments` 配置.
+
+    Returns:
+        归一化后的 SkillAssignment 列表.
+
+    Raises:
+        ValueError: 配置项不是合法的 mapping 或字符串时抛出.
+    """
+
+    allowed_modes = {"inline", "prefer_delegate", "must_delegate", "manual"}
+    assignments: list[SkillAssignment] = []
+    for item in list(raw_items or []):
+        if isinstance(item, str):
+            assignments.append(SkillAssignment(skill_name=str(item)))
+            continue
+        if not isinstance(item, dict):
+            raise ValueError("Skill assignment must be a mapping or string")
+        delegation_mode = str(item.get("delegation_mode", "inline") or "inline")
+        if delegation_mode not in allowed_modes:
+            raise ValueError(f"Unsupported delegation_mode: {delegation_mode}")
+        assignments.append(
+            SkillAssignment(
+                skill_name=str(item.get("skill_name", "") or ""),
+                delegation_mode=delegation_mode,
+                delegate_agent_id=str(item.get("delegate_agent_id", "") or ""),
+                notes=str(item.get("notes", "") or ""),
+                metadata={
+                    key: value
+                    for key, value in dict(item).items()
+                    if key not in {"skill_name", "delegation_mode", "delegate_agent_id", "notes"}
+                },
+            )
+        )
+    return [item for item in assignments if item.skill_name]
 
 
 class PromptLoader(ABC):
@@ -320,6 +360,7 @@ class FileSystemProfileLoader:
             default_model=str(raw.get("default_model", "") or self.default_model),
             enabled_tools=[str(item) for item in list(raw.get("enabled_tools", []) or [])],
             enabled_skills=[str(item) for item in list(raw.get("enabled_skills", []) or [])],
+            skill_assignments=parse_skill_assignments(raw.get("skill_assignments", [])),
             config=dict(raw),
         )
 

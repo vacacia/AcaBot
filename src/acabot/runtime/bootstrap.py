@@ -61,6 +61,7 @@ from .profile_loader import (
     ProfileLoader,
     PromptLoader,
     StaticPromptLoader,
+    parse_skill_assignments,
 )
 from .reference_backend import (
     LocalReferenceBackend,
@@ -336,6 +337,7 @@ def _build_profiles(config: Config) -> dict[str, AgentProfile]:
                 ),
                 enabled_tools=list(profile_conf.get("enabled_tools", [])),
                 enabled_skills=list(profile_conf.get("enabled_skills", [])),
+                skill_assignments=parse_skill_assignments(profile_conf.get("skill_assignments", [])),
                 config=dict(profile_conf),
             )
         return profiles
@@ -349,6 +351,7 @@ def _build_profiles(config: Config) -> dict[str, AgentProfile]:
             default_model=agent_conf.get("default_model", "gpt-4o-mini"),
             enabled_tools=list(runtime_conf.get("enabled_tools", [])),
             enabled_skills=list(runtime_conf.get("enabled_skills", [])),
+            skill_assignments=parse_skill_assignments(runtime_conf.get("skill_assignments", [])),
             config=dict(agent_conf),
         )
     }
