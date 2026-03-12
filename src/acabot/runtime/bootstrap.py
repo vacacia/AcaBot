@@ -34,6 +34,7 @@ from .context_compactor import (
     ContextCompactor,
     ModelContextSummarizer,
 )
+from .control_plane import RuntimeControlPlane
 from .event_policy import EventPolicyRegistry
 from .event_store import InMemoryChannelEventStore
 from .gateway_protocol import GatewayProtocol
@@ -100,6 +101,7 @@ class RuntimeComponents:
         retrieval_planner (RetrievalPlanner): 负责 retrieval planning 和 prompt assembly 的 planner.
         reference_backend (ReferenceBackend): on-demand `reference / notebook` provider.
         plugin_manager (RuntimePluginManager): runtime world 的插件管理器.
+        control_plane (RuntimeControlPlane): 本地 control plane 入口.
         prompt_loader (PromptLoader): 按 `prompt_ref` 加载 system prompt 的 loader.
         profile_loader (ProfileLoader): 按 `RouteDecision` 加载 profile 的 loader.
         tool_broker (ToolBroker): runtime 侧统一工具入口.
@@ -122,6 +124,7 @@ class RuntimeComponents:
     retrieval_planner: RetrievalPlanner
     reference_backend: ReferenceBackend
     plugin_manager: RuntimePluginManager
+    control_plane: RuntimeControlPlane
     prompt_loader: PromptLoader
     profile_loader: ProfileLoader
     tool_broker: ToolBroker
@@ -255,6 +258,11 @@ def build_runtime_components(
         reference_backend=runtime_reference_backend,
         plugin_manager=runtime_plugin_manager,
     )
+    control_plane = RuntimeControlPlane(
+        app=app,
+        run_manager=runtime_run_manager,
+        plugin_manager=runtime_plugin_manager,
+    )
 
     return RuntimeComponents(
         gateway=gateway,
@@ -269,6 +277,7 @@ def build_runtime_components(
         retrieval_planner=runtime_retrieval_planner,
         reference_backend=runtime_reference_backend,
         plugin_manager=runtime_plugin_manager,
+        control_plane=control_plane,
         prompt_loader=prompt_loader,
         profile_loader=profile_registry,
         tool_broker=runtime_tool_broker,

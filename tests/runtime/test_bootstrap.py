@@ -332,6 +332,31 @@ async def test_build_runtime_components_loads_profiles_and_prompts_from_filesyst
     assert prompt == "You are Aca from filesystem."
 
 
+async def test_build_runtime_components_exposes_control_plane() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "fallback-model",
+                "system_prompt": "Fallback prompt.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    status = await components.control_plane.get_status()
+
+    assert components.control_plane.app is components.app
+    assert status.active_run_count == 0
+    assert status.loaded_plugins == []
+
+
 async def test_build_runtime_components_loads_binding_rules_from_filesystem(
     tmp_path: Path,
 ) -> None:

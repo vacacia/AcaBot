@@ -25,6 +25,7 @@ from acabot.runtime import (
     RetrievalPlanner,
     RouteDecision,
     RuntimeComponents,
+    RuntimeControlPlane,
     SQLiteMessageStore,
 )
 
@@ -263,28 +264,7 @@ async def test_run_starts_and_stops_runtime_app(monkeypatch) -> None:
     monkeypatch.setattr(
         main_module,
         "build_runtime_app",
-        lambda config: RuntimeComponents(
-            gateway=FakeGateway(),
-            router=None,  # type: ignore[arg-type]
-            thread_manager=None,  # type: ignore[arg-type]
-            run_manager=None,  # type: ignore[arg-type]
-            channel_event_store=InMemoryChannelEventStore(),
-            message_store=InMemoryMessageStore(),
-            memory_store=InMemoryMemoryStore(),
-            memory_broker=MemoryBroker(),
-                context_compactor=ContextCompactor(ContextCompactionConfig()),
-                retrieval_planner=RetrievalPlanner(PromptAssemblyConfig()),
-                reference_backend=NullReferenceBackend(),
-                plugin_manager=None,  # type: ignore[arg-type]
-                prompt_loader=None,  # type: ignore[arg-type]
-                profile_loader=None,  # type: ignore[arg-type]
-                tool_broker=None,  # type: ignore[arg-type]
-            agent_runtime=None,  # type: ignore[arg-type]
-            approval_resumer=NoopApprovalResumer(),
-            outbox=None,  # type: ignore[arg-type]
-            pipeline=None,  # type: ignore[arg-type]
-            app=FakeApp(),
-        ),
+        lambda config: _runtime_components_for_main_test(FakeApp()),
     )
 
     async def fake_wait_for_shutdown_signal() -> None:
@@ -302,6 +282,41 @@ async def test_run_starts_and_stops_runtime_app(monkeypatch) -> None:
 
     assert started == ["start"]
     assert stopped == ["stop"]
+
+
+def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
+    """构造 `_run` 测试使用的最小 RuntimeComponents.
+
+    Args:
+        app: 需要被 `_run` 启停的 fake app.
+
+    Returns:
+        一份最小 RuntimeComponents.
+    """
+
+    return RuntimeComponents(
+        gateway=FakeGateway(),
+        router=None,  # type: ignore[arg-type]
+        thread_manager=None,  # type: ignore[arg-type]
+        run_manager=None,  # type: ignore[arg-type]
+        channel_event_store=InMemoryChannelEventStore(),
+        message_store=InMemoryMessageStore(),
+        memory_store=InMemoryMemoryStore(),
+        memory_broker=MemoryBroker(),
+        context_compactor=ContextCompactor(ContextCompactionConfig()),
+        retrieval_planner=RetrievalPlanner(PromptAssemblyConfig()),
+        reference_backend=NullReferenceBackend(),
+        plugin_manager=None,  # type: ignore[arg-type]
+        control_plane=None,  # type: ignore[arg-type]
+        prompt_loader=None,  # type: ignore[arg-type]
+        profile_loader=None,  # type: ignore[arg-type]
+        tool_broker=None,  # type: ignore[arg-type]
+        agent_runtime=None,  # type: ignore[arg-type]
+        approval_resumer=NoopApprovalResumer(),
+        outbox=None,  # type: ignore[arg-type]
+        pipeline=None,  # type: ignore[arg-type]
+        app=app,
+    )
 
 
 async def test_wait_for_shutdown_signal_returns_when_event_is_set(monkeypatch) -> None:

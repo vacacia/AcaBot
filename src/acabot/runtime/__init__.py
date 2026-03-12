@@ -20,6 +20,12 @@ from .context_compactor import (
     ModelContextSummarizer,
     NullContextSummarizer,
 )
+from .control_plane import (
+    ActiveRunSnapshot,
+    PluginReloadSnapshot,
+    RuntimeControlPlane,
+    RuntimeStatusSnapshot,
+)
 from .event_policy import EventPolicyRegistry
 from .event_store import InMemoryChannelEventStore
 from .memory_broker import (
@@ -156,6 +162,10 @@ __all__ = [
     "ContextCompactionConfig",
     "ContextCompactionResult",
     "ContextCompactor",
+    "ActiveRunSnapshot",
+    "PluginReloadSnapshot",
+    "RuntimeControlPlane",
+    "RuntimeStatusSnapshot",
     "ContextSummarizer",
     "ModelContextSummarizer",
     "DeliveryResult",
