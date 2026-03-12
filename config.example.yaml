@@ -1,56 +1,106 @@
-
 # 复制为 config.yaml 后修改
 
-# --- Gateway (NapCat WebSocket 服务) ---
+# --- Gateway ---
 gateway:
-  host: "0.0.0.0"       # 监听地址
-  port: 8080             # 监听端口
-  timeout: 10.0          # 发送/API 调用超时(秒)
+  host: "0.0.0.0"
+  port: 8080
+  timeout: 10.0
 
-# --- Agent (LLM 调用) ---
+# --- Agent ---
 agent:
-  default_model: "deepseek-chat"   # 默认模型
-  max_tool_rounds: 30             # 最大 tool 调用轮次
-  system_prompt: "you are a helpful assistant."
+  default_model: "openai/gemini-3-flash-preview"
+  max_tool_rounds: 30
 
-# --- Session ---
-session:
-  max_messages: 20       # 每个会话保留的最大消息数
+# --- Runtime ---
+runtime:
+  default_agent_id: "aca"
 
-# --- Pipeline ---
-pipeline:
-  error_reply: "出了点问题, 请稍后再试"  # Agent 出错时的回复, 留空则不回复
+  # 最小 profile 定义. 后续也可以改成 filesystem layout.
+  profiles:
+    aca:
+      name: "Aca"
+      prompt_ref: "prompt/default"
+      default_model: "openai/gemini-3-flash-preview"
+      enabled_tools: []
 
-# --- 消息存储 ---
-store:
-  db_path: "data/db/acabot.db"  # SQLite 数据库路径, 目录不存在会自动创建
+  prompts:
+    prompt/default: |
+      you are a helpful assistant.
 
-# --- 内置 Hook ---
-hooks:
-  # 多模态预处理 — 图片/表情/语音/视频 → 文字描述
-  multimodal:
+  persistence:
+    sqlite_path: "data/db/acabot-runtime.db"
+
+  prompt_assembly:
+    history_max_messages: 24
+    keep_recent_messages: 12
+    summary_slot_position: "history_prefix"
+    sticky_slot_position: "system_message"
+    retrieval_slot_position: "system_message"
+    sticky_message_role: "system"
+    summary_message_role: "user"
+    retrieval_message_role: "system"
+
+  context_compaction:
     enabled: true
-    vision_model: ""   # 图片转述模型, 留空则图片只占位不描述
+    strategy: "summarize"
+    max_context_ratio: 0.7
+    preserve_recent: 10
+    summary_model: ""
+    summary_max_chars: 1200
+    system_prompt_reserve_tokens: 800
+    prompt_slot_reserve_tokens: 1200
+    tool_schema_reserve_tokens: 800
 
-  # 上下文压缩 — LLM 调用前裁剪过长的对话
-  context_compress:
-    enabled: true
-    strategy: "truncate"       # "truncate"(砍旧消息) 或 "summarize"(LLM 摘要, 暂未实现)
-    max_context_ratio: 0.7     # 模型上下文窗口的可用比例(剩余留给 response)
-    preserve_recent: 10        # 至少保留最近 N 轮
+  # 最小静态 route. 需要更复杂配置时, 推荐改用 filesystem layout.
+  binding_rules:
+    - rule_id: "private-default"
+      priority: 10
+      match:
+        channel_scope: "qq:user:10001"
+      agent_id: "aca"
 
-# --- 日志 ---
-logging:
-  level: "INFO"          # DEBUG / INFO / WARNING / ERROR
+  inbound_rules:
+    - rule_id: "private-respond"
+      priority: 10
+      match:
+        platform: "qq"
+        event_type: "message"
+      run_mode: "respond"
 
-# --- 插件配置 ---
+  event_policies:
+    - policy_id: "message-default"
+      priority: 10
+      match:
+        platform: "qq"
+        event_type: "message"
+      persist_event: true
+      extract_to_memory: true
+      memory_scopes:
+        - "episodic"
+
+  plugins:
+    - "acabot.runtime.plugins.ops_control:OpsControlPlugin"
+
+  # 可选: 从 filesystem layout 读取 profiles / prompts / rules
+  # filesystem:
+  #   enabled: true
+  #   base_dir: "."
+  #   profiles_dir: "profiles"
+  #   prompts_dir: "prompts"
+  #   bindings_dir: "bindings"
+  #   inbound_rules_dir: "inbound_rules"
+  #   event_policies_dir: "event_policies"
+
+  # 可选: reference / notebook backend
+  # reference:
+  #   enabled: true
+  #   provider: "local"
+  #   local:
+  #     sqlite_path: "data/reference.sqlite3"
+
+# --- Runtime plugin config ---
 plugins:
-  napcat_tools:
-    # 启用的工具列表, 留空则注册全部
-    enabled_tools:
-      - get_user_info
-      - get_group_info
-      - get_group_member_info
-      - get_group_member_list
-      - get_message
-    # 后续可加操作类: group_ban, group_kick, recall 等
+  ops_control:
+    prefix: "/"
+    allowed_actor_ids:
+      - "qq:user:10001"
