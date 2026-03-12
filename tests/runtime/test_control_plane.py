@@ -146,8 +146,67 @@ async def test_runtime_control_plane_reports_status_snapshot() -> None:
     assert status.interrupted_run_ids == [running.run_id]
     assert status.active_run_count == 1
     assert status.active_runs[0].run_id == waiting.run_id
+    assert status.active_runs[0].run_kind == "user"
+    assert status.active_runs[0].parent_run_id == ""
+    assert status.active_runs[0].delegated_skill == ""
     assert status.pending_approval_count == 1
     assert status.pending_approvals[0].approval_context["approval_id"] == "approval:1"
+
+
+async def test_runtime_control_plane_reports_child_run_metadata() -> None:
+    gateway = FakeGateway()
+    run_manager = InMemoryRunManager()
+    skill_registry = SkillRegistry()
+    plugin_manager = RuntimePluginManager(
+        config=Config({}),
+        gateway=gateway,
+        tool_broker=ToolBroker(skill_registry=skill_registry),
+        skill_registry=skill_registry,
+    )
+    app = RuntimeApp(
+        gateway=gateway,
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=InMemoryThreadManager(),
+        run_manager=run_manager,
+        channel_event_store=InMemoryChannelEventStore(),
+        pipeline=ThreadPipeline(
+            agent_runtime=FakeAgentRuntime(),
+            outbox=Outbox(gateway=gateway, store=FakeMessageStore()),
+            run_manager=run_manager,
+            thread_manager=InMemoryThreadManager(),
+            plugin_manager=plugin_manager,
+        ),
+        profile_loader=_profile_loader,
+        plugin_manager=plugin_manager,
+    )
+    control_plane = RuntimeControlPlane(
+        app=app,
+        run_manager=run_manager,
+        plugin_manager=plugin_manager,
+    )
+
+    run = await run_manager.open(
+        event=_event(),
+        decision=RouteDecision(
+            thread_id="subagent:run:parent:worker:abcd1234",
+            actor_id="qq:user:10001",
+            agent_id="worker",
+            channel_scope="qq:user:10001",
+            metadata={
+                "run_kind": "subagent",
+                "parent_run_id": "run:parent",
+                "delegated_skill": "excel_processing",
+            },
+        ),
+    )
+    await run_manager.mark_running(run.run_id)
+
+    status = await control_plane.get_status()
+
+    assert status.active_run_count == 1
+    assert status.active_runs[0].run_kind == "subagent"
+    assert status.active_runs[0].parent_run_id == "run:parent"
+    assert status.active_runs[0].delegated_skill == "excel_processing"
 
 
 async def test_runtime_control_plane_can_reload_plugins() -> None:

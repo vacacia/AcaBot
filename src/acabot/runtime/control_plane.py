@@ -42,6 +42,9 @@ class ActiveRunSnapshot:
         agent_id (str): 当前 run 使用的 agent.
         status (str): 当前 run 状态.
         started_at (int): 当前 run 开始时间.
+        run_kind (str): 当前 run 类型, 例如 `user` 或 `subagent`.
+        parent_run_id (str): 父 run 标识. 非 child run 时为空.
+        delegated_skill (str): 当前 delegated skill 名. 非 child run 时为空.
     """
 
     run_id: str
@@ -50,6 +53,9 @@ class ActiveRunSnapshot:
     agent_id: str
     status: str
     started_at: int
+    run_kind: str = "user"
+    parent_run_id: str = ""
+    delegated_skill: str = ""
 
 
 @dataclass(slots=True)
@@ -267,6 +273,9 @@ class RuntimeControlPlane:
                     agent_id=run.agent_id,
                     status=run.status,
                     started_at=run.started_at,
+                    run_kind=str(run.metadata.get("run_kind", "user") or "user"),
+                    parent_run_id=str(run.metadata.get("parent_run_id", "") or ""),
+                    delegated_skill=str(run.metadata.get("delegated_skill", "") or ""),
                 )
                 for run in active_runs
             ],

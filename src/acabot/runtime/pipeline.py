@@ -15,7 +15,14 @@ from acabot.types import Action, ActionType
 
 from .agent_runtime import AgentRuntime
 from .context_compactor import ContextCompactor
-from .models import AgentRuntimeResult, DispatchReport, PlannedAction, RunContext
+from .models import (
+    AgentRuntimeResult,
+    DeliveryResult,
+    DispatchReport,
+    OutboxItem,
+    PlannedAction,
+    RunContext,
+)
 from .memory_broker import MemoryBroker
 from .outbox import Outbox
 from .plugin_manager import RuntimeHookPoint, RuntimePluginManager
@@ -73,11 +80,12 @@ class ThreadPipeline:
         self.tool_broker = tool_broker
         self.plugin_manager = plugin_manager
     # region execute
-    async def execute(self, ctx: RunContext) -> None:
+    async def execute(self, ctx: RunContext, *, deliver_actions: bool = True) -> None:
         """执行一条最小 runtime 主线.
 
         Args:
             ctx: 当前 run 的完整执行上下文.
+            deliver_actions: 是否把动作真正发到外部平台.
         """
         # 标记 run 状态为 running
         await self.run_manager.mark_running(ctx.run.run_id)
@@ -169,13 +177,16 @@ class ThreadPipeline:
             # -----------------------------------------------------
             # 发送回复
             # -----------------------------------------------------
-            await self._run_plugin_hooks(RuntimeHookPoint.BEFORE_SEND, ctx)
-            if ctx.actions:
-                # 通过 Outbox 发送
-                ctx.delivery_report = await self.outbox.dispatch(ctx)
+            if deliver_actions:
+                await self._run_plugin_hooks(RuntimeHookPoint.BEFORE_SEND, ctx)
+                if ctx.actions:
+                    # 通过 Outbox 发送
+                    ctx.delivery_report = await self.outbox.dispatch(ctx)
+                else:
+                    ctx.delivery_report = DispatchReport()
+                await self._run_plugin_hooks(RuntimeHookPoint.ON_SENT, ctx)
             else:
-                ctx.delivery_report = DispatchReport()
-            await self._run_plugin_hooks(RuntimeHookPoint.ON_SENT, ctx)
+                ctx.delivery_report = self._build_internal_delivery_report(ctx)
             # -----------------------------------------------------
             # 收尾
             # -----------------------------------------------------
@@ -454,3 +465,37 @@ class ThreadPipeline:
             },
             *list(messages),
         ]
+
+    # region 内部发送
+    @staticmethod
+    def _build_internal_delivery_report(ctx: RunContext) -> DispatchReport:
+        """为隔离执行模式构造一份内部送达报告.
+
+        Args:
+            ctx: 当前 run 的执行上下文.
+
+        Returns:
+            一份把当前动作视为内部已提交的 DispatchReport.
+        """
+
+        delivered_items = [
+            OutboxItem(
+                thread_id=ctx.thread.thread_id,
+                run_id=ctx.run.run_id,
+                agent_id=ctx.profile.agent_id,
+                plan=plan,
+                metadata={"delivery_mode": "internal"},
+            )
+            for plan in ctx.actions
+        ]
+        return DispatchReport(
+            results=[
+                DeliveryResult(
+                    action_id=item.plan.action_id,
+                    ok=True,
+                    raw={"internal": True},
+                )
+                for item in delivered_items
+            ],
+            delivered_items=delivered_items,
+        )

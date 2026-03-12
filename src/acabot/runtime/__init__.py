@@ -152,6 +152,7 @@ from .subagent_delegation import (
     SubagentExecutorRegistration,
     SubagentExecutorRegistry,
 )
+from .subagent_execution import LocalSubagentExecutionService
 from .sqlite_stores import (
     SQLiteChannelEventStore,
     SQLiteMemoryStore,
@@ -274,6 +275,7 @@ __all__ = [
     "RegisteredSubagentExecutor",
     "SubagentExecutorRegistry",
     "SubagentDelegationBroker",
+    "LocalSubagentExecutionService",
     "load_runtime_plugin",
     "load_runtime_plugins_from_config",
     "parse_runtime_plugin_spec",

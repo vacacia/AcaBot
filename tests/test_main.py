@@ -18,6 +18,7 @@ from acabot.runtime import (
     InMemoryChannelEventStore,
     InMemoryMemoryStore,
     InMemoryMessageStore,
+    LocalSubagentExecutionService,
     MemoryBroker,
     NoopApprovalResumer,
     NullReferenceBackend,
@@ -315,6 +316,12 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
         subagent_delegator=SubagentDelegationBroker(
             skill_registry=skill_registry,
             executor_registry=executor_registry,
+        ),
+        subagent_execution_service=LocalSubagentExecutionService(
+            thread_manager=None,  # type: ignore[arg-type]
+            run_manager=None,  # type: ignore[arg-type]
+            pipeline=None,  # type: ignore[arg-type]
+            profile_loader=lambda decision: None,  # type: ignore[return-value]
         ),
         memory_broker=MemoryBroker(),
         context_compactor=ContextCompactor(ContextCompactionConfig()),

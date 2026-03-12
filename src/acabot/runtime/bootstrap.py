@@ -85,6 +85,7 @@ from .stores import ChannelEventStore, MemoryStore, MessageStore
 from .structured_memory import StoreBackedMemoryRetriever, StructuredMemoryExtractor
 from .skills import SkillRegistry
 from .subagent_delegation import SubagentDelegationBroker, SubagentExecutorRegistry
+from .subagent_execution import LocalSubagentExecutionService
 from .tool_broker import ToolBroker
 from .threads import InMemoryThreadManager, StoreBackedThreadManager, ThreadManager
 
@@ -105,6 +106,7 @@ class RuntimeComponents:
         skill_registry (SkillRegistry): 显式 skill 注册表.
         subagent_executor_registry (SubagentExecutorRegistry): subagent executor 注册表.
         subagent_delegator (SubagentDelegationBroker): subagent delegation 编排入口.
+        subagent_execution_service (LocalSubagentExecutionService): 本地 child run delegation 服务.
         memory_broker (MemoryBroker): 长期记忆统一入口.
         context_compactor (ContextCompactor): 负责 token-aware working memory compaction 的 compactor.
         retrieval_planner (RetrievalPlanner): 负责 retrieval planning 和 prompt assembly 的 planner.
@@ -132,6 +134,7 @@ class RuntimeComponents:
     skill_registry: SkillRegistry
     subagent_executor_registry: SubagentExecutorRegistry
     subagent_delegator: SubagentDelegationBroker
+    subagent_execution_service: LocalSubagentExecutionService
     memory_broker: MemoryBroker
     context_compactor: ContextCompactor
     retrieval_planner: RetrievalPlanner
@@ -285,6 +288,17 @@ def build_runtime_components(
         tool_broker=runtime_tool_broker,
         plugin_manager=runtime_plugin_manager,
     )
+    runtime_subagent_execution_service = LocalSubagentExecutionService(
+        thread_manager=runtime_thread_manager,
+        run_manager=runtime_run_manager,
+        pipeline=pipeline,
+        profile_loader=profile_registry.load,
+    )
+    _register_local_subagent_executors(
+        registry=runtime_subagent_executor_registry,
+        profiles=profiles,
+        service=runtime_subagent_execution_service,
+    )
     app = RuntimeApp(
         gateway=gateway,
         router=runtime_router,
@@ -322,6 +336,7 @@ def build_runtime_components(
         skill_registry=runtime_skill_registry,
         subagent_executor_registry=runtime_subagent_executor_registry,
         subagent_delegator=runtime_subagent_delegator,
+        subagent_execution_service=runtime_subagent_execution_service,
         memory_broker=runtime_memory_broker,
         context_compactor=runtime_context_compactor,
         retrieval_planner=runtime_retrieval_planner,
@@ -355,6 +370,34 @@ def _profiles_have_delegated_skills(profiles: dict[str, AgentProfile]) -> bool:
             if assignment.delegation_mode in {"prefer_delegate", "must_delegate"}:
                 return True
     return False
+
+
+def _register_local_subagent_executors(
+    *,
+    registry: SubagentExecutorRegistry,
+    profiles: dict[str, AgentProfile],
+    service: LocalSubagentExecutionService,
+) -> None:
+    """把已加载 profiles 注册成默认本地 subagent executors.
+
+    Args:
+        registry: subagent executor 注册表.
+        profiles: 当前 runtime 已加载的 profile 映射.
+        service: 复用 runtime 主线的本地 child run delegation 服务.
+    """
+
+    # region local profiles -> executors
+    for profile in profiles.values():
+        registry.register(
+            profile.agent_id,
+            service.execute,
+            source="runtime:local_profile",
+            metadata={
+                "kind": "local_profile",
+                "profile_name": profile.name,
+            },
+        )
+    # endregion
 
 
 #  config.yaml 里提取
