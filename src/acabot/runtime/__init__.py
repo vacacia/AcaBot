@@ -90,6 +90,7 @@ from .plugins import ReferenceToolsPlugin
 from .profile_loader import (
     AgentProfileRegistry,
     ChainedPromptLoader,
+    FileSystemBindingLoader,
     FileSystemProfileLoader,
     FileSystemPromptLoader,
     ProfileLoader,
@@ -170,6 +171,7 @@ __all__ = [
     "LegacyAgentRuntime",
     "FileSystemProfileLoader",
     "FileSystemPromptLoader",
+    "FileSystemBindingLoader",
     "MemoryBlock",
     "MemoryBroker",
     "MemoryEditMode",

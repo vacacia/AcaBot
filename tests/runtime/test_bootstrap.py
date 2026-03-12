@@ -332,6 +332,80 @@ async def test_build_runtime_components_loads_profiles_and_prompts_from_filesyst
     assert prompt == "You are Aca from filesystem."
 
 
+async def test_build_runtime_components_loads_binding_rules_from_filesystem(
+    tmp_path: Path,
+) -> None:
+    bindings_dir = tmp_path / "bindings"
+    bindings_dir.mkdir()
+    (bindings_dir / "group.yaml").write_text(
+        "\n".join(
+            [
+                "agent_id: group",
+                "priority: 60",
+                "match:",
+                "  channel_scope: qq:group:20002",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    config = Config(
+        {
+            "agent": {
+                "default_model": "fallback-model",
+                "system_prompt": "Fallback prompt.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "profiles": {
+                    "aca": {
+                        "name": "Aca",
+                        "prompt_ref": "prompt/aca",
+                        "default_model": "model-a",
+                    },
+                    "group": {
+                        "name": "Group",
+                        "prompt_ref": "prompt/group",
+                        "default_model": "model-g",
+                    },
+                },
+                "prompts": {
+                    "prompt/aca": "You are Aca.",
+                    "prompt/group": "You are the group agent.",
+                },
+                "filesystem": {
+                    "enabled": True,
+                    "base_dir": str(tmp_path),
+                },
+            },
+        }
+    )
+    gateway = FakeGateway()
+    agent = FakeAgent(FakeAgentResponse(text="hello group", model_used="model-g"))
+    components = build_runtime_components(config, gateway=gateway, agent=agent)
+    event = StandardEvent(
+        event_id="evt-group-fs-1",
+        event_type="message",
+        platform="qq",
+        timestamp=456,
+        source=EventSource(
+            platform="qq",
+            message_type="group",
+            user_id="10001",
+            group_id="20002",
+        ),
+        segments=[MsgSegment(type="text", data={"text": "hello group"})],
+        raw_message_id="msg-group-fs-1",
+        sender_nickname="acacia",
+        sender_role=None,
+    )
+
+    components.app.install()
+    await gateway.handler(event)
+
+    assert agent.calls[0]["system_prompt"] == "You are the group agent."
+    assert agent.calls[0]["model"] == "model-g"
+
+
 async def test_build_runtime_components_uses_channel_binding_for_group_event() -> None:
     config = Config(
         {
@@ -1146,3 +1220,47 @@ def test_build_runtime_components_rejects_thread_id_in_binding_rules() -> None:
         return
 
     raise AssertionError("Expected thread_id in binding_rules to raise ValueError")
+
+
+def test_build_runtime_components_rejects_thread_id_in_filesystem_binding_rules(
+    tmp_path: Path,
+) -> None:
+    bindings_dir = tmp_path / "bindings"
+    bindings_dir.mkdir()
+    (bindings_dir / "bad.yaml").write_text(
+        "\n".join(
+            [
+                "agent_id: aca",
+                "match:",
+                "  thread_id: runtime-internal",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    config = Config(
+        {
+            "agent": {
+                "default_model": "fallback-model",
+                "system_prompt": "Fallback prompt.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "filesystem": {
+                    "enabled": True,
+                    "base_dir": str(tmp_path),
+                },
+            },
+        }
+    )
+
+    try:
+        build_runtime_components(
+            config,
+            gateway=FakeGateway(),
+            agent=FakeAgent(FakeAgentResponse(text="ok")),
+        )
+    except ValueError as exc:
+        assert "must not declare thread_id" in str(exc)
+        return
+
+    raise AssertionError("Expected filesystem binding_rules thread_id to raise ValueError")

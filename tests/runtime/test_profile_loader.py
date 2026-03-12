@@ -3,6 +3,7 @@ from pathlib import Path
 from acabot.runtime import (
     AgentProfile,
     ChainedPromptLoader,
+    FileSystemBindingLoader,
     FileSystemProfileLoader,
     FileSystemPromptLoader,
     RouteDecision,
@@ -117,3 +118,47 @@ def test_filesystem_profile_loader_loads_yaml_profiles(tmp_path: Path) -> None:
     assert profiles["aca"].name == "Aca FS"
     assert profiles["aca"].default_model == "fs-model"
     assert profiles["aca"].enabled_tools == ["reference_search"]
+
+
+def test_filesystem_binding_loader_loads_yaml_rules(tmp_path: Path) -> None:
+    bindings_dir = tmp_path / "bindings"
+    bindings_dir.mkdir()
+    (bindings_dir / "group.yaml").write_text(
+        "\n".join(
+            [
+                "agent_id: group",
+                "priority: 40",
+                "match:",
+                "  channel_scope: qq:group:20002",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (bindings_dir / "notice.yaml").write_text(
+        "\n".join(
+            [
+                "rules:",
+                "  - agent_id: notice",
+                "    priority: 80",
+                "    match:",
+                "      event_type: member_join",
+                "  - rule_id: mention",
+                "    agent_id: group",
+                "    match:",
+                "      targets_self: true",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    loader = FileSystemBindingLoader(bindings_dir)
+
+    rules = loader.load_all()
+
+    assert [rule["rule_id"] for rule in rules] == [
+        "fs:group",
+        "fs:notice:0",
+        "mention",
+    ]
+    assert rules[0]["match"]["channel_scope"] == "qq:group:20002"
+    assert rules[1]["match"]["event_type"] == "member_join"
+    assert rules[2]["match"]["targets_self"] is True

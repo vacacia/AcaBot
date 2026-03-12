@@ -323,6 +323,90 @@ class FileSystemProfileLoader:
         )
 
 
+class FileSystemBindingLoader:
+    """从 `bindings/` 目录读取 binding rule 配置.
+
+    Attributes:
+        root (Path): binding 配置根目录.
+    """
+
+    def __init__(self, root: str | Path) -> None:
+        """初始化文件系统 binding loader.
+
+        Args:
+            root: binding 配置根目录.
+        """
+
+        self.root = Path(root)
+
+    def load_all(self) -> list[dict[str, Any]]:
+        """扫描目录并加载全部 binding 配置.
+
+        Returns:
+            归一化后的 rule 配置列表.
+        """
+
+        rules: list[dict[str, Any]] = []
+        if not self.root.exists():
+            return rules
+        for path in sorted(self.root.glob("*.y*ml")):
+            rules.extend(self._load_file(path))
+        return rules
+
+    def _load_file(self, path: Path) -> list[dict[str, Any]]:
+        """从单个 YAML 文件加载 rule 配置.
+
+        支持 3 种格式:
+        - 顶层是单条 rule mapping.
+        - 顶层是 rule list.
+        - 顶层是 `{rules: [...]}`.
+
+        Args:
+            path: 当前 YAML 文件路径.
+
+        Returns:
+            归一化后的 rule 配置列表.
+
+        Raises:
+            ValueError: 文件格式不是合法 mapping 或 list 时抛出.
+        """
+
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if isinstance(raw, list):
+            items = raw
+        elif isinstance(raw, dict):
+            nested = raw.get("rules")
+            items = nested if isinstance(nested, list) else [raw]
+        else:
+            raise ValueError(f"Binding file must be a mapping or list: {path}")
+
+        rules: list[dict[str, Any]] = []
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                raise ValueError(f"Binding rule must be a mapping: {path}")
+            rule_conf = dict(item)
+            rule_conf.setdefault("rule_id", self._default_rule_id(path, index, len(items)))
+            rules.append(rule_conf)
+        return rules
+
+    @staticmethod
+    def _default_rule_id(path: Path, index: int, total: int) -> str:
+        """为缺省 rule_id 生成稳定值.
+
+        Args:
+            path: 当前规则来源文件.
+            index: 规则在文件中的序号.
+            total: 当前文件中的规则总数.
+
+        Returns:
+            生成后的默认 rule_id.
+        """
+
+        if total == 1:
+            return f"fs:{path.stem}"
+        return f"fs:{path.stem}:{index}"
+
+
 class AgentProfileRegistry(ProfileLoader):
     """同时管理 profile 和 binding rule 的最小 registry.
 

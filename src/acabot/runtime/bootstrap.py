@@ -52,6 +52,7 @@ from .plugin_manager import (
 from .profile_loader import (
     AgentProfileRegistry,
     ChainedPromptLoader,
+    FileSystemBindingLoader,
     FileSystemProfileLoader,
     FileSystemPromptLoader,
     ProfileLoader,
@@ -180,7 +181,7 @@ def build_runtime_components(
     profiles.update(filesystem_profiles)
     prompt_loader = _build_prompt_loader(config, profiles)
     default_agent_id = runtime_conf.get("default_agent_id", next(iter(profiles)))
-    rules = _build_binding_rules(config)
+    rules = _build_binding_rules(config) + _build_filesystem_binding_rules(config)
     inbound_rules = _build_inbound_rules(config)
     event_policies = _build_event_policies(config)
     profile_registry = AgentProfileRegistry(
@@ -450,32 +451,45 @@ def _build_binding_rules(config: Config) -> list[BindingRule]:
     rules: list[BindingRule] = []
 
     for index, rule_conf in enumerate(rules_conf):
-        match_conf = dict(rule_conf.get("match", {}))
-        if "thread_id" in match_conf:
-            # thread_id 是 runtime internal
-            # 配置文件只允许声明稳定的匹配条件, 例如:
-            # event_type, message_subtype, notice_type, notice_subtype,
-            # actor_id, channel_scope, targets_self, mentioned_everyone, sender_roles
-            raise ValueError("binding_rules in config must not declare thread_id")
         rules.append(
-            BindingRule(
-                rule_id=str(rule_conf.get("rule_id", f"rule:{index}")),
-                agent_id=str(rule_conf["agent_id"]),
-                priority=int(rule_conf.get("priority", 100)),
-                thread_id=None,
-                event_type=_optional_str(match_conf.get("event_type")),
-                message_subtype=_optional_str(match_conf.get("message_subtype")),
-                notice_type=_optional_str(match_conf.get("notice_type")),
-                notice_subtype=_optional_str(match_conf.get("notice_subtype")),
-                actor_id=_optional_str(match_conf.get("actor_id")),
-                channel_scope=_optional_str(match_conf.get("channel_scope")),
-                targets_self=_optional_bool(match_conf.get("targets_self")),
-                mentioned_everyone=_optional_bool(match_conf.get("mentioned_everyone")),
-                sender_roles=[str(role) for role in match_conf.get("sender_roles", [])],
-                metadata=dict(rule_conf.get("metadata", {})),
+            _parse_binding_rule_config(
+                rule_conf,
+                default_rule_id=f"rule:{index}",
             )
         )
 
+    return rules
+
+
+def _build_filesystem_binding_rules(config: Config) -> list[BindingRule]:
+    """从 `bindings/` 目录构造 binding rule 列表.
+
+    Args:
+        config: 项目配置对象.
+
+    Returns:
+        文件系统中的 binding rule 列表. 未启用时返回空列表.
+    """
+
+    runtime_conf = config.get("runtime", {})
+    fs_conf = dict(runtime_conf.get("filesystem", {}))
+    if not bool(fs_conf.get("enabled", False)):
+        return []
+
+    bindings_dir = _resolve_filesystem_path(
+        fs_conf,
+        key="bindings_dir",
+        default="bindings",
+    )
+    loader = FileSystemBindingLoader(bindings_dir)
+    rules: list[BindingRule] = []
+    for index, rule_conf in enumerate(loader.load_all()):
+        rules.append(
+            _parse_binding_rule_config(
+                rule_conf,
+                default_rule_id=f"fs_rule:{index}",
+            )
+        )
     return rules
 
 
@@ -846,6 +860,46 @@ def _optional_str(value: object) -> str | None:
     if value in (None, ""):
         return None
     return str(value)
+
+
+def _parse_binding_rule_config(
+    rule_conf: dict[str, object],
+    *,
+    default_rule_id: str,
+) -> BindingRule:
+    """把原始配置映射解析成 BindingRule.
+
+    Args:
+        rule_conf: 原始 rule 配置映射.
+        default_rule_id: 配置未声明 rule_id 时使用的默认值.
+
+    Returns:
+        解析后的 BindingRule.
+
+    Raises:
+        ValueError: 配置文件试图声明 runtime internal 的 `thread_id`.
+        KeyError: 配置缺少 `agent_id`.
+    """
+
+    match_conf = dict(rule_conf.get("match", {}))
+    if "thread_id" in match_conf:
+        raise ValueError("binding_rules in config must not declare thread_id")
+    return BindingRule(
+        rule_id=str(rule_conf.get("rule_id", default_rule_id)),
+        agent_id=str(rule_conf["agent_id"]),
+        priority=int(rule_conf.get("priority", 100)),
+        thread_id=None,
+        event_type=_optional_str(match_conf.get("event_type")),
+        message_subtype=_optional_str(match_conf.get("message_subtype")),
+        notice_type=_optional_str(match_conf.get("notice_type")),
+        notice_subtype=_optional_str(match_conf.get("notice_subtype")),
+        actor_id=_optional_str(match_conf.get("actor_id")),
+        channel_scope=_optional_str(match_conf.get("channel_scope")),
+        targets_self=_optional_bool(match_conf.get("targets_self")),
+        mentioned_everyone=_optional_bool(match_conf.get("mentioned_everyone")),
+        sender_roles=[str(role) for role in match_conf.get("sender_roles", [])],
+        metadata=dict(rule_conf.get("metadata", {})),
+    )
 
 
 def _optional_bool(value: object) -> bool | None:
