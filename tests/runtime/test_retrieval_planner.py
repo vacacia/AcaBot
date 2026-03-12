@@ -5,6 +5,9 @@ from acabot.runtime import (
     RetrievalPlanner,
     RouteDecision,
     RunContext,
+    SkillAssignment,
+    SkillRegistry,
+    SkillSpec,
 )
 from acabot.runtime.models import RunRecord, ThreadState
 from acabot.types import EventSource, MsgSegment, StandardEvent
@@ -145,3 +148,40 @@ def test_retrieval_planner_allows_custom_slot_message_roles() -> None:
     assert messages[0]["role"] == "user"
     assert messages[1]["role"] == "system"
     assert messages[2]["role"] == "user"
+
+
+def test_retrieval_planner_injects_skill_guides() -> None:
+    registry = SkillRegistry()
+    registry.register_skill(
+        SkillSpec(
+            skill_name="excel_processing",
+            skill_type="workflow",
+            title="Excel Processing",
+            description="处理 Excel 文件的工作流.",
+            tool_names=["read_excel", "write_excel"],
+            workflow_guide="先检查文件结构, 再读取, 清洗, 汇总, 最后导出结果.",
+            reference_hint="遇到复杂格式时先看 reference 样例.",
+        ),
+        source="test",
+    )
+    planner = RetrievalPlanner(
+        PromptAssemblyConfig(),
+        skill_registry=registry,
+    )
+    ctx = _ctx()
+    ctx.profile.skill_assignments = [
+        SkillAssignment(
+            skill_name="excel_processing",
+            delegation_mode="prefer_delegate",
+            delegate_agent_id="excel_worker",
+        )
+    ]
+    ctx.retrieval_plan = planner.prepare(ctx)
+
+    messages = planner.assemble(ctx, memory_blocks=[])
+
+    assert [slot.slot_type for slot in ctx.prompt_slots] == ["skill_guides"]
+    assert messages[0]["role"] == "system"
+    assert "Excel Processing" in str(messages[0]["content"])
+    assert "delegation=prefer_delegate" in str(messages[0]["content"])
+    assert "delegate_agent=excel_worker" in str(messages[0]["content"])

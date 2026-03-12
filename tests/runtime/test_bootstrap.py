@@ -1332,6 +1332,9 @@ def test_build_runtime_components_applies_prompt_assembly_config() -> None:
                 "default_prompt_ref": "prompt/default",
                 "prompt_assembly": {
                     "sticky_intro": "稳定规则如下",
+                    "skill_intro": "技能说明如下",
+                    "skill_slot_position": "history_prefix",
+                    "skill_message_role": "user",
                     "summary_slot_position": "history_prefix",
                     "summary_message_role": "system",
                 },
@@ -1346,8 +1349,12 @@ def test_build_runtime_components_applies_prompt_assembly_config() -> None:
     )
 
     assert components.retrieval_planner.config.sticky_intro == "稳定规则如下"
+    assert components.retrieval_planner.config.skill_intro == "技能说明如下"
+    assert components.retrieval_planner.config.skill_slot_position == "history_prefix"
+    assert components.retrieval_planner.config.skill_message_role == "user"
     assert components.retrieval_planner.config.summary_slot_position == "history_prefix"
     assert components.retrieval_planner.config.summary_message_role == "system"
+    assert components.retrieval_planner.skill_registry is components.skill_registry
 
 
 def test_build_runtime_components_applies_context_compaction_config() -> None:

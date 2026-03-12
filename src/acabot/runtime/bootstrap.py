@@ -228,7 +228,11 @@ def build_runtime_components(
         config,
         agent=agent,
     )
-    runtime_retrieval_planner = retrieval_planner or _build_retrieval_planner(config)
+    runtime_retrieval_planner = retrieval_planner or _build_retrieval_planner(
+        config,
+        skill_registry=runtime_skill_registry,
+    )
+    runtime_retrieval_planner.skill_registry = runtime_skill_registry
     runtime_reference_backend = reference_backend or _build_reference_backend(config)
     runtime_tool_broker = tool_broker or ToolBroker(skill_registry=runtime_skill_registry)
     runtime_tool_broker.skill_registry = runtime_skill_registry
@@ -771,11 +775,16 @@ def _build_reference_backend(config: Config) -> ReferenceBackend:
     raise ValueError(f"unsupported runtime.reference provider: {provider}")
 
 
-def _build_retrieval_planner(config: Config) -> RetrievalPlanner:
+def _build_retrieval_planner(
+    config: Config,
+    *,
+    skill_registry: SkillRegistry | None = None,
+) -> RetrievalPlanner:
     """根据配置构造 RetrievalPlanner.
 
     Args:
         config: 项目配置对象.
+        skill_registry: 可选的显式 skill 注册表.
 
     Returns:
         默认的 RetrievalPlanner 实现.
@@ -789,6 +798,7 @@ def _build_retrieval_planner(config: Config) -> RetrievalPlanner:
         PromptAssemblyConfig(
             # sticky_notes 插入位置：默认 system_message
             sticky_slot_position=str(prompt_conf.get("sticky_slot_position", "system_message")),
+            skill_slot_position=str(prompt_conf.get("skill_slot_position", "system_message")),
             # summary 插入位置：默认 history_prefix 历史消息之前
             summary_slot_position=str(prompt_conf.get("summary_slot_position", "history_prefix")),
             # retrieved_memory 插入位置：默认 system_message
@@ -796,12 +806,19 @@ def _build_retrieval_planner(config: Config) -> RetrievalPlanner:
                 prompt_conf.get("retrieval_slot_position", "system_message")
             ),
             sticky_message_role=str(prompt_conf.get("sticky_message_role", "system")),
+            skill_message_role=str(prompt_conf.get("skill_message_role", "system")),
             summary_message_role=str(prompt_conf.get("summary_message_role", "user")),
             retrieval_message_role=str(prompt_conf.get("retrieval_message_role", "system")),
             sticky_intro=str(
                 prompt_conf.get(
                     "sticky_intro",
                     "以下是稳定事实和长期规则. 默认可信, 除非当前上下文明确冲突.",
+                )
+            ),
+            skill_intro=str(
+                prompt_conf.get(
+                    "skill_intro",
+                    "以下是当前 agent 已启用的 skill 指引. 先判断是否匹配当前任务, 再决定直接执行还是后续委派.",
                 )
             ),
             summary_prefix=str(
@@ -834,7 +851,8 @@ def _build_retrieval_planner(config: Config) -> RetrievalPlanner:
                     ["sticky_note", "semantic", "relationship", "episodic"],
                 )
             ],
-        )
+        ),
+        skill_registry=skill_registry,
     )
 
 

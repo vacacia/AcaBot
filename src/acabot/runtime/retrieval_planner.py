@@ -31,6 +31,7 @@ from typing import Any
 
 from .memory_broker import MemoryBlock
 from .models import PromptSlot, RetrievalPlan, RunContext
+from .skills import SkillRegistry
 
 _KNOWN_MEMORY_SCOPES = {"relationship", "user", "channel", "global"}
 _KNOWN_MEMORY_TYPES = {"sticky_note", "semantic", "relationship", "episodic", "reference", "task"}
@@ -43,12 +44,15 @@ class PromptAssemblyConfig:
 
     Attributes:
         sticky_slot_position (str): sticky note 默认注入位置.
+        skill_slot_position (str): skill guide 默认注入位置.
         summary_slot_position (str): thread summary 默认注入位置.
         retrieval_slot_position (str): retrieval memory 默认注入位置.
         sticky_message_role (str): sticky note 注入到 messages 时使用的 role.
+        skill_message_role (str): skill guide 注入到 messages 时使用的 role.
         summary_message_role (str): thread summary 注入到 messages 时使用的 role.
         retrieval_message_role (str): retrieval memory 注入到 messages 时使用的 role.
         sticky_intro (str): sticky note slot 的提示模板.
+        skill_intro (str): skill guide slot 的提示模板.
         summary_prefix (str): thread summary compaction prefix.
         summary_suffix (str): thread summary compaction suffix.
         retrieval_intro (str): retrieval slot 的提示模板.
@@ -57,12 +61,15 @@ class PromptAssemblyConfig:
     """
 
     sticky_slot_position: str = "system_message"
+    skill_slot_position: str = "system_message"
     summary_slot_position: str = "history_prefix"
     retrieval_slot_position: str = "system_message"
     sticky_message_role: str = "system"
+    skill_message_role: str = "system"
     summary_message_role: str = "user"
     retrieval_message_role: str = "system"
     sticky_intro: str = "以下是稳定事实和长期规则. 默认可信, 除非当前上下文明确冲突."
+    skill_intro: str = "以下是当前 agent 已启用的 skill 指引. 先判断是否匹配当前任务, 再决定直接执行还是后续委派."
     summary_prefix: str = (
         "The conversation history before this point was compacted into the following summary:\n\n"
         "<summary>\n"
@@ -86,16 +93,24 @@ class RetrievalPlanner:
 
     Attributes:
         config (PromptAssemblyConfig): 当前 planner 的配置.
+        skill_registry (SkillRegistry | None): 可选的显式 skill 注册表.
     """
 
-    def __init__(self, config: PromptAssemblyConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: PromptAssemblyConfig | None = None,
+        *,
+        skill_registry: SkillRegistry | None = None,
+    ) -> None:
         """初始化 RetrievalPlanner.
 
         Args:
             config: 可选的 prompt assembly 配置.
+            skill_registry: 可选的显式 skill 注册表.
         """
 
         self.config = config or PromptAssemblyConfig()
+        self.skill_registry = skill_registry
 
     def prepare(self, ctx: RunContext) -> RetrievalPlan:
         """为当前 run 计算 retrieval plan.
@@ -171,6 +186,21 @@ class RetrievalPlanner:
                         "memory_count": len(sticky_blocks),
                         "source_ids": [source_id for block in sticky_blocks for source_id in block.source_ids],
                     },
+                )
+            )
+
+        skill_guides = self._collect_skill_guides(ctx)
+        if skill_guides:
+            slots.append(
+                PromptSlot(
+                    slot_id="slot:skills",
+                    slot_type="skill_guides",
+                    title="Skill Guides",
+                    content=self._format_skill_guides(skill_guides),
+                    position=self.config.skill_slot_position,
+                    message_role=self.config.skill_message_role,
+                    stable=True,
+                    metadata={"skill_count": len(skill_guides)},
                 )
             )
 
@@ -290,6 +320,64 @@ class RetrievalPlanner:
         lines = [self.config.sticky_intro]
         for block in blocks:
             lines.append(f"- {block.content}")
+        return "\n".join(lines)
+
+    def _collect_skill_guides(self, ctx: RunContext) -> list[dict[str, Any]]:
+        """收集当前 profile 可见的 skill guide.
+
+        Args:
+            ctx: 当前 run 的执行上下文.
+
+        Returns:
+            归一化后的 skill guide 列表.
+        """
+
+        if self.skill_registry is None:
+            return []
+
+        guides: list[dict[str, Any]] = []
+        for item in self.skill_registry.resolve_assignments(ctx.profile):
+            spec = item.registered.spec
+            if not spec.workflow_guide and not spec.reference_hint:
+                continue
+            guides.append(
+                {
+                    "skill_name": spec.skill_name,
+                    "skill_type": spec.skill_type,
+                    "title": spec.title,
+                    "workflow_guide": spec.workflow_guide,
+                    "reference_hint": spec.reference_hint,
+                    "delegation_mode": item.assignment.delegation_mode,
+                    "delegate_agent_id": item.assignment.delegate_agent_id,
+                }
+            )
+        return guides
+
+    def _format_skill_guides(self, guides: list[dict[str, Any]]) -> str:
+        """把 skill guide 列表格式化成 slot 文本.
+
+        Args:
+            guides: 当前 profile 可见的 skill guide 列表.
+
+        Returns:
+            最终注入到 prompt slot 的文本.
+        """
+
+        lines = [self.config.skill_intro]
+        for guide in guides:
+            suffix = ""
+            if guide["delegation_mode"] != "inline":
+                suffix = (
+                    f" delegation={guide['delegation_mode']}"
+                    f" delegate_agent={guide['delegate_agent_id'] or '-'}"
+                )
+            lines.append(
+                f"- {guide['title']} ({guide['skill_name']}, {guide['skill_type']}){suffix}"
+            )
+            if guide["workflow_guide"]:
+                lines.append(f"  workflow: {guide['workflow_guide']}")
+            if guide["reference_hint"]:
+                lines.append(f"  reference: {guide['reference_hint']}")
         return "\n".join(lines)
 
     def _format_retrieved_memory(self, blocks: list[MemoryBlock]) -> str:
