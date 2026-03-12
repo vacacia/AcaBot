@@ -739,7 +739,8 @@ async def test_runtime_app_can_reload_plugins_from_config() -> None:
         plugin_manager=plugin_manager,
     )
 
-    loaded = await app.reload_plugins()
+    loaded, missing = await app.reload_plugins()
 
     assert loaded == ["sample_configured_runtime"]
+    assert missing == []
     assert SampleConfiguredRuntimePlugin.setup_calls == 1

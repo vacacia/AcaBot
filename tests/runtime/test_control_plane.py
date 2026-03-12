@@ -173,6 +173,60 @@ async def test_runtime_control_plane_can_reload_plugins() -> None:
     result = await control_plane.reload_plugins()
 
     assert result.loaded_plugins == ["sample_configured_runtime"]
+    assert result.missing_plugins == []
+
+
+async def test_runtime_control_plane_can_reload_selected_plugins() -> None:
+    from tests.runtime.runtime_plugin_samples import (
+        AnotherConfiguredRuntimePlugin,
+        SampleConfiguredRuntimePlugin,
+    )
+
+    SampleConfiguredRuntimePlugin.reset()
+    AnotherConfiguredRuntimePlugin.reset()
+    gateway = FakeGateway()
+    plugin_manager = RuntimePluginManager(
+        config=Config(
+            {
+                "runtime": {
+                    "plugins": [
+                        "tests.runtime.runtime_plugin_samples:SampleConfiguredRuntimePlugin",
+                        "tests.runtime.runtime_plugin_samples:AnotherConfiguredRuntimePlugin",
+                    ],
+                },
+            }
+        ),
+        gateway=gateway,
+        tool_broker=ToolBroker(),
+    )
+    app = RuntimeApp(
+        gateway=gateway,
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=InMemoryThreadManager(),
+        run_manager=InMemoryRunManager(),
+        channel_event_store=InMemoryChannelEventStore(),
+        pipeline=ThreadPipeline(
+            agent_runtime=FakeAgentRuntime(),
+            outbox=Outbox(gateway=gateway, store=FakeMessageStore()),
+            run_manager=InMemoryRunManager(),
+            thread_manager=InMemoryThreadManager(),
+            plugin_manager=plugin_manager,
+        ),
+        profile_loader=_profile_loader,
+        plugin_manager=plugin_manager,
+    )
+    control_plane = RuntimeControlPlane(
+        app=app,
+        run_manager=app.run_manager,
+        plugin_manager=plugin_manager,
+    )
+
+    await control_plane.reload_plugins()
+    result = await control_plane.reload_plugins(["sample_configured_runtime", "missing_plugin"])
+
+    assert result.requested_plugins == ["sample_configured_runtime", "missing_plugin"]
+    assert result.loaded_plugins == ["sample_configured_runtime"]
+    assert result.missing_plugins == ["missing_plugin"]
 
 
 async def test_runtime_control_plane_can_switch_thread_agent_override() -> None:

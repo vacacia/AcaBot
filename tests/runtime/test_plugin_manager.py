@@ -276,14 +276,53 @@ async def test_runtime_plugin_manager_reload_clears_old_tools_and_reloads() -> N
         enabled_tools=["sample_configured_tool"],
     )
 
-    loaded_names = await manager.reload_from_config()
+    loaded_names, missing = await manager.reload_from_config()
     visible_before = tool_broker.visible_tools(sample_profile)
-    loaded_again = await manager.reload_from_config()
+    loaded_again, missing_again = await manager.reload_from_config()
     visible_after = tool_broker.visible_tools(sample_profile)
 
     assert loaded_names == ["sample_configured_runtime"]
     assert loaded_again == ["sample_configured_runtime"]
+    assert missing == []
+    assert missing_again == []
     assert [tool.name for tool in visible_before] == ["sample_configured_tool"]
     assert [tool.name for tool in visible_after] == ["sample_configured_tool"]
     assert SampleConfiguredRuntimePlugin.setup_calls == 2
     assert SampleConfiguredRuntimePlugin.teardown_calls == 1
+
+
+async def test_runtime_plugin_manager_can_reload_selected_plugins_only() -> None:
+    from tests.runtime.runtime_plugin_samples import (
+        AnotherConfiguredRuntimePlugin,
+        SampleConfiguredRuntimePlugin,
+    )
+
+    SampleConfiguredRuntimePlugin.reset()
+    AnotherConfiguredRuntimePlugin.reset()
+    config = Config(
+        {
+            "runtime": {
+                "plugins": [
+                    "tests.runtime.runtime_plugin_samples:SampleConfiguredRuntimePlugin",
+                    "tests.runtime.runtime_plugin_samples:AnotherConfiguredRuntimePlugin",
+                ],
+            },
+        }
+    )
+    manager = RuntimePluginManager(
+        config=config,
+        gateway=FakeGateway(),
+        tool_broker=ToolBroker(),
+    )
+
+    loaded_names, missing = await manager.reload_from_config()
+    reloaded_names, missing_after = await manager.reload_from_config(["sample_configured_runtime"])
+
+    assert loaded_names == ["sample_configured_runtime", "another_configured_runtime"]
+    assert missing == []
+    assert reloaded_names == ["sample_configured_runtime"]
+    assert missing_after == []
+    assert SampleConfiguredRuntimePlugin.setup_calls == 2
+    assert SampleConfiguredRuntimePlugin.teardown_calls == 1
+    assert AnotherConfiguredRuntimePlugin.setup_calls == 1
+    assert AnotherConfiguredRuntimePlugin.teardown_calls == 0

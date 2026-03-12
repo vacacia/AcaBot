@@ -266,6 +266,7 @@ def build_runtime_components(
         profile_registry=profile_registry,
         plugin_manager=runtime_plugin_manager,
     )
+    runtime_plugin_manager.attach_control_plane(control_plane)
 
     return RuntimeComponents(
         gateway=gateway,

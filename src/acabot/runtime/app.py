@@ -125,16 +125,19 @@ class RuntimeApp:
         if stop_error is not None:
             raise stop_error
 
-    async def reload_plugins(self) -> list[str]:
+    async def reload_plugins(self, plugin_names: list[str] | None = None) -> tuple[list[str], list[str]]:
         """按当前配置重载 runtime plugins.
 
+        Args:
+            plugin_names: 可选的插件名列表. 缺省时重载全部插件.
+
         Returns:
-            重载后成功加载的插件名列表.
+            `(loaded_plugins, missing_plugins)` 元组.
         """
 
         if self.plugin_manager is None:
-            return []
-        return await self.plugin_manager.reload_from_config()
+            return [], list(plugin_names or [])
+        return await self.plugin_manager.reload_from_config(plugin_names)
 
     async def handle_event(self, event: StandardEvent) -> None:
         """处理一条来自 gateway 的标准事件.

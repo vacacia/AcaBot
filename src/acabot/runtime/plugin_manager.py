@@ -22,7 +22,7 @@ import importlib
 from dataclasses import dataclass, field
 from enum import Enum
 import logging
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from acabot.agent import ToolDef
 from acabot.config import Config
@@ -31,6 +31,9 @@ from .gateway_protocol import GatewayProtocol
 from .models import RunContext
 from .reference_backend import ReferenceBackend
 from .tool_broker import ToolBroker
+
+if TYPE_CHECKING:
+    from .control_plane import RuntimeControlPlane
 
 logger = logging.getLogger("acabot.runtime.plugin")
 
@@ -171,12 +174,14 @@ class RuntimePluginContext:
         gateway (GatewayProtocol): 当前 gateway, 用于发送主动消息.
         tool_broker (ToolBroker): runtime 统一工具入口.
         reference_backend (ReferenceBackend | None): reference provider.
+        control_plane (RuntimeControlPlane | None): 本地 control plane 入口.
     """
 
     config: Config
     gateway: GatewayProtocol
     tool_broker: ToolBroker
     reference_backend: ReferenceBackend | None = None
+    control_plane: RuntimeControlPlane | None = None
 
     def get_plugin_config(self, plugin_name: str) -> dict[str, object]:
         """读取插件配置.
@@ -263,9 +268,11 @@ class RuntimePluginManager:
         gateway (GatewayProtocol): 当前 gateway.
         tool_broker (ToolBroker): runtime 工具入口.
         reference_backend (ReferenceBackend | None): reference provider.
+        control_plane (RuntimeControlPlane | None): 本地 control plane 入口.
         hooks (RuntimeHookRegistry): runtime hook 注册表.
         loaded (list[RuntimePlugin]): 已加载插件列表, 按加载顺序.
         _names (set[str]): 已加载插件名集合, 用于去重.
+        _plugin_hooks (dict[str, list[tuple[RuntimeHookPoint, RuntimeHook]]]): 每个插件注册过的 hooks.
         _pending (list[RuntimePlugin]): 等待 load 的插件列表.
         _started (bool): 是否已经完成插件加载.
     """
@@ -277,6 +284,7 @@ class RuntimePluginManager:
         gateway: GatewayProtocol,
         tool_broker: ToolBroker,
         reference_backend: ReferenceBackend | None = None,
+        control_plane: RuntimeControlPlane | None = None,
         plugins: list[RuntimePlugin] | None = None,
     ) -> None:
         """初始化 RuntimePluginManager.
@@ -288,6 +296,7 @@ class RuntimePluginManager:
             gateway: 当前 gateway.
             tool_broker: runtime 工具入口.
             reference_backend: 可选的 reference provider.
+            control_plane: 可选的本地 control plane 入口.
             plugins: 启动时需要加载的插件实例列表.
         """
 
@@ -296,12 +305,15 @@ class RuntimePluginManager:
         self.tool_broker = tool_broker
         # TODO: 收窄成 ReferenceService, 或者不暴露?
         self.reference_backend = reference_backend
+        self.control_plane = control_plane
         # 创建空的 hook 注册表
         self.hooks = RuntimeHookRegistry()
         # 维护加载顺序的列表, teardown 时逆序清理
         self.loaded: list[RuntimePlugin] = []
         # 快速去重检查
         self._names: set[str] = set()
+        # 记录每个插件实际注册的 hooks, 便于精确卸载和重建 registry
+        self._plugin_hooks: dict[str, list[tuple[RuntimeHookPoint, RuntimeHook]]] = {}
         # 延迟加载队列, 支持动态添加插件
         self._pending: list[RuntimePlugin] = list(plugins or [])
         self._started = False
@@ -320,6 +332,15 @@ class RuntimePluginManager:
         # 简单追加到队列, 不检查重复(去重在 load_plugin 时)
         self._pending.append(plugin)
 
+    def attach_control_plane(self, control_plane: RuntimeControlPlane) -> None:
+        """把本地 control plane 接到 plugin manager.
+
+        Args:
+            control_plane: 当前 runtime 的本地 control plane.
+        """
+
+        self.control_plane = control_plane
+
     async def ensure_started(self) -> None:
         """确保待加载插件已经完成 setup 和注册.
 
@@ -337,6 +358,7 @@ class RuntimePluginManager:
                 gateway=self.gateway,
                 tool_broker=self.tool_broker,
                 reference_backend=self.reference_backend,
+                control_plane=self.control_plane,
             )
             # 复制并清空 pending, 防止 load 过程中 add_plugin 导致重复
             pending = list(self._pending)
@@ -381,6 +403,7 @@ class RuntimePluginManager:
             gateway=self.gateway,
             tool_broker=self.tool_broker,
             reference_backend=self.reference_backend,
+            control_plane=self.control_plane,
         )
         # 步骤 3: 调用 setup, 失败则跳过整个插件
         try:
@@ -390,8 +413,10 @@ class RuntimePluginManager:
             return
 
         # 步骤 4: 注册 hooks 到各个 Point
-        for point, hook in plugin.hooks():
+        plugin_hooks = list(plugin.hooks())
+        for point, hook in plugin_hooks:
             self.hooks.register(point, hook)
+        self._plugin_hooks[plugin.name] = plugin_hooks
         # 步骤 5: 注册 tools 到 ToolBroker, 带插件来源标记
         for tool in plugin.tools():
             self.tool_broker.register_legacy_tool(
@@ -443,6 +468,61 @@ class RuntimePluginManager:
         # 默认返回 continue
         return RuntimeHookResult()
 
+    async def unload_plugins(self, plugin_names: list[str]) -> list[str]:
+        """按插件名卸载已加载插件.
+
+        Args:
+            plugin_names: 要卸载的插件名列表.
+
+        Returns:
+            实际被卸载的插件名列表, 按原加载顺序返回.
+        """
+
+        if not plugin_names:
+            return []
+
+        unload_set = set(plugin_names)
+        removed_names: list[str] = []
+
+        for plugin in reversed(self.loaded):
+            if plugin.name not in unload_set:
+                continue
+            # 切断响应
+            removed = self.tool_broker.unregister_source(f"plugin:{plugin.name}")
+            if removed:
+                logger.info(
+                    "Runtime plugin tools removed: plugin=%s tools=%s",
+                    plugin.name,
+                    ",".join(removed),
+                )
+            try:
+                await plugin.teardown()
+            except Exception:
+                logger.exception("Runtime plugin '%s' teardown failed", plugin.name)
+            removed_names.append(plugin.name)
+
+        if not removed_names:
+            return []
+
+        removed_set = set(removed_names)
+        self.loaded = [plugin for plugin in self.loaded if plugin.name not in removed_set]
+        self._names = {plugin.name for plugin in self.loaded}
+        for plugin_name in removed_set:
+            self._plugin_hooks.pop(plugin_name, None)
+        self._rebuild_hook_registry()
+        return [plugin.name for plugin in self.loaded if plugin.name in removed_set] or [
+            plugin_name for plugin_name in plugin_names if plugin_name in removed_set
+        ]
+
+    def _rebuild_hook_registry(self) -> None:
+        """根据当前已加载插件重建 hook registry."""
+
+        # Atomic
+        self.hooks = RuntimeHookRegistry()
+        for plugin in self.loaded:
+            for point, hook in self._plugin_hooks.get(plugin.name, []):
+                self.hooks.register(point, hook)
+
     async def teardown_all(self) -> None:
         """逆序清理所有已加载插件.
 
@@ -474,24 +554,77 @@ class RuntimePluginManager:
         # 清空状态, 允许重新加载
         self.loaded.clear()
         self._names.clear()
+        self._plugin_hooks.clear()
         self.hooks = RuntimeHookRegistry()
         self._started = False
 
-    async def reload_from_config(self) -> list[str]:
+    async def reload_from_config(self, plugin_names: list[str] | None = None) -> tuple[list[str], list[str]]:
         """按当前 Config 重新加载 runtime plugins.
 
         热重载流程: 先 teardown 所有现有插件, 再从配置重新加载.
         这是实现插件热更新的入口, 可在运行时动态调整插件配置.
 
-        Returns:
-            重载后成功加载的插件名列表.
-        """
+        Args:
+            plugin_names: 可选的插件名列表. 缺省时重载全部插件.
 
+        Returns:
+            `(loaded_plugins, missing_plugins)` 元组.
+        """
+        # 预先构建新配置
         plugins = load_runtime_plugins_from_config(self.config)
-        await self.teardown_all()
-        self._pending = plugins
-        await self.ensure_started()
-        return [plugin.name for plugin in self.loaded]
+        if not plugin_names:
+            await self.teardown_all()
+            self._pending = plugins
+            await self.ensure_started()
+            return [plugin.name for plugin in self.loaded], []
+
+        requested_names: list[str] = []
+        seen: set[str] = set()
+        for plugin_name in plugin_names:
+            plugin_name = str(plugin_name).strip()
+            if not plugin_name or plugin_name in seen:
+                continue
+            requested_names.append(plugin_name)
+            seen.add(plugin_name)
+
+        if not requested_names:
+            return [], []
+
+        # 对象按插件名做映射
+        plugin_by_name = {plugin.name: plugin for plugin in plugins}
+        # 配置文件里不存在的插件
+        missing = [plugin_name for plugin_name in requested_names if plugin_name not in plugin_by_name]
+        # 被要求重载的、且成功找到新实例的 插件对象
+        selected = [plugin_by_name[plugin_name] for plugin_name in requested_names if plugin_name in plugin_by_name]
+
+        if self._started:
+            # 在 unload_plugins 中:
+            # 1. 根据 plugin_name 反向摘除该插件注册的所有 tool
+            # 2. 调用旧实例的 target.teardown() 清理资源或者停止内部 task
+            # 3. 将其从 loaded 和 _plugin_hooks 列表中删除
+            await self.unload_plugins(requested_names)
+        else:
+            # 如果系统未 start，仅将待加载队列中的 plugin 排查掉
+            self._pending = [
+                plugin
+                for plugin in self._pending
+                if plugin.name not in set(requested_names)
+            ]
+        # 仅允许使用部分 API
+        context = RuntimePluginContext(
+            config=self.config,
+            gateway=self.gateway,
+            tool_broker=self.tool_broker,
+            reference_backend=self.reference_backend,
+            control_plane=self.control_plane,
+        )
+        # 新插件实例，重新执行 load_plugin
+        # 1. new_target.setup(context)
+        # 2. self.hooks.register(...)
+        # 3. self.tool_broker.register(..., source=...)
+        for plugin in selected:
+            await self.load_plugin(plugin, context)
+        return [plugin.name for plugin in selected if plugin.name in self._names], missing
 
 
 # endregion

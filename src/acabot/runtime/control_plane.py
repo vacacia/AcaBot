@@ -92,10 +92,14 @@ class PluginReloadSnapshot:
     """一次 plugin reload 的最小结果.
 
     Attributes:
+        requested_plugins (list[str]): 当前请求重载的插件名列表. 为空表示全量重载.
         loaded_plugins (list[str]): reload 后成功加载的插件名列表.
+        missing_plugins (list[str]): 配置里不存在的插件名列表.
     """
 
+    requested_plugins: list[str] = field(default_factory=list)
     loaded_plugins: list[str] = field(default_factory=list)
+    missing_plugins: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -137,9 +141,12 @@ class MemoryQuerySnapshot:
 class RuntimeControlPlane:
     """runtime 的最小本地 control plane.
 
-    当前只暴露:
+    当前暴露:
     - `get_status`
     - `reload_plugins`
+    - `switch_thread_agent`
+    - `clear_thread_agent_override`
+    - `show_memory`
 
     后续 `/status`, `/reload_plugin`, WebUI 都应优先通过这层进入 runtime.
     """
@@ -197,15 +204,22 @@ class RuntimeControlPlane:
             interrupted_run_ids=list(self.app.last_recovery_report.interrupted_run_ids),
         )
 
-    async def reload_plugins(self) -> PluginReloadSnapshot:
+    async def reload_plugins(self, plugin_names: list[str] | None = None) -> PluginReloadSnapshot:
         """按当前配置重载 runtime plugins.
+
+        Args:
+            plugin_names: 可选的插件名列表. 为空时执行全量重载.
 
         Returns:
             一份 PluginReloadSnapshot.
         """
 
-        loaded = await self.app.reload_plugins()
-        return PluginReloadSnapshot(loaded_plugins=list(loaded))
+        loaded, missing = await self.app.reload_plugins(plugin_names)
+        return PluginReloadSnapshot(
+            requested_plugins=list(plugin_names or []),
+            loaded_plugins=list(loaded),
+            missing_plugins=list(missing),
+        )
 
     async def switch_thread_agent(
         self,
