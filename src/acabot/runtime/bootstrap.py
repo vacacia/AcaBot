@@ -78,6 +78,7 @@ from .sqlite_stores import (
     SQLiteRunStore,
     SQLiteThreadStore,
 )
+from .sticky_notes import StickyNotesService
 from .stores import ChannelEventStore, MemoryStore, MessageStore
 from .structured_memory import StoreBackedMemoryRetriever, StructuredMemoryExtractor
 from .tool_broker import ToolBroker
@@ -96,6 +97,7 @@ class RuntimeComponents:
         channel_event_store (ChannelEventStore): 保存 inbound event facts 的 ChannelEventStore.
         message_store (MessageStore): 保存 delivered facts 的 MessageStore.
         memory_store (MemoryStore): 保存长期记忆项的 MemoryStore.
+        sticky_notes (StickyNotesService): sticky note 的受控服务层.
         memory_broker (MemoryBroker): 长期记忆统一入口.
         context_compactor (ContextCompactor): 负责 token-aware working memory compaction 的 compactor.
         retrieval_planner (RetrievalPlanner): 负责 retrieval planning 和 prompt assembly 的 planner.
@@ -119,6 +121,7 @@ class RuntimeComponents:
     channel_event_store: ChannelEventStore
     message_store: MessageStore
     memory_store: MemoryStore
+    sticky_notes: StickyNotesService
     memory_broker: MemoryBroker
     context_compactor: ContextCompactor
     retrieval_planner: RetrievalPlanner
@@ -209,6 +212,7 @@ def build_runtime_components(
     runtime_channel_event_store = channel_event_store or _build_channel_event_store(config)
     runtime_message_store = message_store or _build_message_store(config)
     runtime_memory_store = memory_store or _build_memory_store(config)
+    runtime_sticky_notes = StickyNotesService(store=runtime_memory_store)
     runtime_memory_broker = memory_broker or _build_memory_broker(
         config,
         memory_store=runtime_memory_store,
@@ -226,6 +230,7 @@ def build_runtime_components(
         gateway=gateway,
         tool_broker=runtime_tool_broker,
         reference_backend=runtime_reference_backend,
+        sticky_notes=runtime_sticky_notes,
         plugins=configured_plugins,
     )
     runtime_approval_resumer = approval_resumer or NoopApprovalResumer()
@@ -276,6 +281,7 @@ def build_runtime_components(
         channel_event_store=runtime_channel_event_store,
         message_store=runtime_message_store,
         memory_store=runtime_memory_store,
+        sticky_notes=runtime_sticky_notes,
         memory_broker=runtime_memory_broker,
         context_compactor=runtime_context_compactor,
         retrieval_planner=runtime_retrieval_planner,

@@ -97,3 +97,34 @@ async def test_sqlite_memory_store_filters_by_memory_type_and_limit(tmp_path) ->
 
     assert len(rows) == 1
     assert rows[0].memory_id == "memory:3"
+
+
+async def test_sqlite_memory_store_can_delete_by_memory_id(tmp_path) -> None:
+    store = SQLiteMemoryStore(tmp_path / "runtime.sqlite3")
+    item = MemoryItem(
+        memory_id="memory:delete",
+        scope="channel",
+        scope_key="qq:group:20002",
+        memory_type="sticky_note",
+        content="群规: 先看公告",
+        edit_mode="readonly",
+        author="user",
+        confidence=1.0,
+        source_run_id=None,
+        source_event_id=None,
+        tags=["rule"],
+        metadata={"note_key": "group_rule"},
+        created_at=123,
+        updated_at=123,
+    )
+
+    await store.upsert(item)
+    deleted = await store.delete("memory:delete")
+    rows = await store.find(
+        scope="channel",
+        scope_key="qq:group:20002",
+        memory_types=["sticky_note"],
+    )
+
+    assert deleted is True
+    assert rows == []

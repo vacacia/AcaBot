@@ -550,6 +550,24 @@ class SQLiteMemoryStore(_SQLiteStoreBase, MemoryStore):
             rows = self._conn.execute("\n".join(query), tuple(params)).fetchall()
         return [self._row_to_memory_item(row) for row in rows]
 
+    async def delete(self, memory_id: str) -> bool:
+        """按 memory_id 删除一条长期记忆项.
+
+        Args:
+            memory_id: 目标 memory_id.
+
+        Returns:
+            当前记忆是否存在并已删除.
+        """
+
+        async with self._lock:
+            cursor = self._conn.execute(
+                "DELETE FROM memory_items WHERE memory_id = ?",
+                (memory_id,),
+            )
+            self._conn.commit()
+        return cursor.rowcount > 0
+
     def _ensure_schema(self) -> None:
         """初始化 memory_items 表结构."""
 

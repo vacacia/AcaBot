@@ -81,5 +81,20 @@ class InMemoryMemoryStore(MemoryStore):
         return list(items)
         # endregion
 
+    async def delete(self, memory_id: str) -> bool:
+        """按 memory_id 删除一条长期记忆项.
+
+        Args:
+            memory_id: 目标 memory_id.
+
+        Returns:
+            当前记忆是否存在并已删除.
+        """
+
+        existed = memory_id in self._items
+        if existed:
+            del self._items[memory_id]
+        return existed
+
 
 # endregion

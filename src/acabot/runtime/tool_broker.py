@@ -869,8 +869,10 @@ class ToolBroker:
             metadata={
                 "channel_scope": ctx.decision.channel_scope,
                 "event_id": ctx.event.event_id,
+                "event_timestamp": ctx.event.timestamp,
                 "sender_role": ctx.event.sender_role or "",
                 "platform": ctx.event.platform,
+                "message_type": ctx.event.source.message_type,
             },
         )
 

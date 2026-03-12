@@ -24,13 +24,15 @@ from enum import Enum
 import logging
 from typing import TYPE_CHECKING, Any, Literal
 
-from acabot.agent import ToolDef
+from acabot.agent import ToolDef, ToolSpec
 from acabot.config import Config
 
 from .gateway_protocol import GatewayProtocol
 from .models import RunContext
 from .reference_backend import ReferenceBackend
+from .sticky_notes import StickyNotesService
 from .tool_broker import ToolBroker
+from .tool_broker import ToolHandler as RuntimeToolHandler
 
 if TYPE_CHECKING:
     from .control_plane import RuntimeControlPlane
@@ -163,6 +165,21 @@ class RuntimePluginSpec:
 
 
 @dataclass(slots=True)
+class RuntimeToolRegistration:
+    """一条 runtime-native 工具注册项.
+
+    Attributes:
+        spec (ToolSpec): 模型可见的工具 schema.
+        handler (RuntimeToolHandler): 可拿到 ToolExecutionContext 的工具执行逻辑.
+        metadata (dict[str, Any]): 附加注册元数据.
+    """
+
+    spec: ToolSpec
+    handler: RuntimeToolHandler
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class RuntimePluginContext:
     """插件 setup 时可见的最小 runtime 上下文.
 
@@ -174,6 +191,7 @@ class RuntimePluginContext:
         gateway (GatewayProtocol): 当前 gateway, 用于发送主动消息.
         tool_broker (ToolBroker): runtime 统一工具入口.
         reference_backend (ReferenceBackend | None): reference provider.
+        sticky_notes (StickyNotesService | None): sticky note 的受控服务层.
         control_plane (RuntimeControlPlane | None): 本地 control plane 入口.
     """
 
@@ -181,6 +199,7 @@ class RuntimePluginContext:
     gateway: GatewayProtocol
     tool_broker: ToolBroker
     reference_backend: ReferenceBackend | None = None
+    sticky_notes: StickyNotesService | None = None
     control_plane: RuntimeControlPlane | None = None
 
     def get_plugin_config(self, plugin_name: str) -> dict[str, object]:
@@ -247,6 +266,18 @@ class RuntimePlugin(ABC):
         # 子类可重写, 返回要注册的工具定义
         return []
 
+    def runtime_tools(self) -> list[RuntimeToolRegistration]:
+        """返回 runtime-native 工具定义.
+
+        这类工具的 handler 会直接拿到 ToolExecutionContext, 适合
+        需要读取 actor/channel/thread 作用域的能力.
+
+        Returns:
+            RuntimeToolRegistration 列表. 默认空列表.
+        """
+
+        return []
+
     async def teardown(self) -> None:
         """在 runtime 停止或热卸载时清理资源."""
         # 子类可重写, 默认空实现
@@ -268,6 +299,7 @@ class RuntimePluginManager:
         gateway (GatewayProtocol): 当前 gateway.
         tool_broker (ToolBroker): runtime 工具入口.
         reference_backend (ReferenceBackend | None): reference provider.
+        sticky_notes (StickyNotesService | None): sticky note 服务.
         control_plane (RuntimeControlPlane | None): 本地 control plane 入口.
         hooks (RuntimeHookRegistry): runtime hook 注册表.
         loaded (list[RuntimePlugin]): 已加载插件列表, 按加载顺序.
@@ -284,6 +316,7 @@ class RuntimePluginManager:
         gateway: GatewayProtocol,
         tool_broker: ToolBroker,
         reference_backend: ReferenceBackend | None = None,
+        sticky_notes: StickyNotesService | None = None,
         control_plane: RuntimeControlPlane | None = None,
         plugins: list[RuntimePlugin] | None = None,
     ) -> None:
@@ -296,6 +329,7 @@ class RuntimePluginManager:
             gateway: 当前 gateway.
             tool_broker: runtime 工具入口.
             reference_backend: 可选的 reference provider.
+            sticky_notes: 可选的 sticky note 服务.
             control_plane: 可选的本地 control plane 入口.
             plugins: 启动时需要加载的插件实例列表.
         """
@@ -305,6 +339,7 @@ class RuntimePluginManager:
         self.tool_broker = tool_broker
         # TODO: 收窄成 ReferenceService, 或者不暴露?
         self.reference_backend = reference_backend
+        self.sticky_notes = sticky_notes
         self.control_plane = control_plane
         # 创建空的 hook 注册表
         self.hooks = RuntimeHookRegistry()
@@ -358,6 +393,7 @@ class RuntimePluginManager:
                 gateway=self.gateway,
                 tool_broker=self.tool_broker,
                 reference_backend=self.reference_backend,
+                sticky_notes=self.sticky_notes,
                 control_plane=self.control_plane,
             )
             # 复制并清空 pending, 防止 load 过程中 add_plugin 导致重复
@@ -403,6 +439,7 @@ class RuntimePluginManager:
             gateway=self.gateway,
             tool_broker=self.tool_broker,
             reference_backend=self.reference_backend,
+            sticky_notes=self.sticky_notes,
             control_plane=self.control_plane,
         )
         # 步骤 3: 调用 setup, 失败则跳过整个插件
@@ -417,8 +454,20 @@ class RuntimePluginManager:
         for point, hook in plugin_hooks:
             self.hooks.register(point, hook)
         self._plugin_hooks[plugin.name] = plugin_hooks
+        runtime_tools = list(plugin.runtime_tools())
+        for registration in runtime_tools:
+            self.tool_broker.register_tool(
+                registration.spec,
+                registration.handler,
+                source=f"plugin:{plugin.name}",
+                metadata={
+                    "plugin_name": plugin.name,
+                    **dict(registration.metadata),
+                },
+            )
         # 步骤 5: 注册 tools 到 ToolBroker, 带插件来源标记
-        for tool in plugin.tools():
+        legacy_tools = list(plugin.tools())
+        for tool in legacy_tools:
             self.tool_broker.register_legacy_tool(
                 tool,
                 source=f"plugin:{plugin.name}", # 打上命名空间标签, 方便统一卸载
@@ -431,8 +480,8 @@ class RuntimePluginManager:
         logger.info(
             "Runtime plugin loaded: %s (%s hooks, %s tools)",
             plugin.name,
-            len(plugin.hooks()),
-            len(plugin.tools()),
+            len(plugin_hooks),
+            len(runtime_tools) + len(legacy_tools),
         )
 
     async def run_hooks(self, point: RuntimeHookPoint, ctx: RunContext) -> RuntimeHookResult:
@@ -616,6 +665,7 @@ class RuntimePluginManager:
             gateway=self.gateway,
             tool_broker=self.tool_broker,
             reference_backend=self.reference_backend,
+            sticky_notes=self.sticky_notes,
             control_plane=self.control_plane,
         )
         # 新插件实例，重新执行 load_plugin

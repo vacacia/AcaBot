@@ -89,11 +89,12 @@ from .plugin_manager import (
     RuntimePluginContext,
     RuntimePluginManager,
     RuntimePluginSpec,
+    RuntimeToolRegistration,
     load_runtime_plugin,
     load_runtime_plugins_from_config,
     parse_runtime_plugin_spec,
 )
-from .plugins import NapCatToolsPlugin, OpsControlPlugin, ReferenceToolsPlugin
+from .plugins import NapCatToolsPlugin, OpsControlPlugin, ReferenceToolsPlugin, StickyNotesPlugin
 from .profile_loader import (
     AgentProfileRegistry,
     ChainedPromptLoader,
@@ -131,6 +132,7 @@ from .sqlite_stores import (
     SQLiteRunStore,
     SQLiteThreadStore,
 )
+from .sticky_notes import StickyNotesService
 from .stores import ChannelEventStore, MemoryStore, MessageStore, RunStore, ThreadStore
 from .structured_memory import StoreBackedMemoryRetriever, StructuredMemoryExtractor
 from .tool_broker import (
@@ -227,12 +229,14 @@ __all__ = [
     "RuntimePluginContext",
     "RuntimePluginManager",
     "RuntimePluginSpec",
+    "RuntimeToolRegistration",
     "load_runtime_plugin",
     "load_runtime_plugins_from_config",
     "parse_runtime_plugin_spec",
     "NapCatToolsPlugin",
     "OpsControlPlugin",
     "ReferenceToolsPlugin",
+    "StickyNotesPlugin",
     "RunContext",
     "RunManager",
     "RunRecord",
@@ -248,6 +252,7 @@ __all__ = [
     "SQLiteMessageStore",
     "SQLiteRunStore",
     "SQLiteThreadStore",
+    "StickyNotesService",
     "ReferenceBackend",
     "ReferenceBodyLevel",
     "ReferenceDocument",
