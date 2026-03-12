@@ -10,7 +10,6 @@ from typing import Any
 from .base import BaseAgent
 from .response import AgentResponse, ToolCallRecord
 from .tool import (
-    ToolDef,
     ToolExecutionResult,
     ToolExecutor,
     ToolSpec,
@@ -46,80 +45,6 @@ class LitellmAgent(BaseAgent):
 
         self.default_model = default_model
         self.max_tool_rounds = max_tool_rounds
-        self._registered_tools: dict[str, ToolDef] = {}
-
-    # region legacy convenience
-    def register_tool(self, tool: ToolDef) -> None:
-        """注册一条 legacy convenience tool.
-
-        Args:
-            tool: 要注册的 ToolDef.
-        """
-
-        self._registered_tools[tool.name] = tool
-
-    def _registered_specs(self) -> list[ToolSpec]:
-        """返回当前已注册工具对应的 ToolSpec 列表.
-
-        Returns:
-            当前已注册的 ToolSpec 列表.
-        """
-
-        return [tool.to_spec() for tool in self._registered_tools.values()]
-
-    async def _run_registered_tool(
-        self,
-        tool_name: str,
-        arguments: dict[str, Any],
-    ) -> ToolExecutionResult:
-        """执行一条已注册的 legacy convenience tool.
-
-        Args:
-            tool_name: 目标 tool name.
-            arguments: tool 参数.
-
-        Returns:
-            标准化后的 ToolExecutionResult.
-        """
-
-        tool_def = self._registered_tools.get(tool_name)
-        if tool_def is None:
-            return ToolExecutionResult(
-                content=json.dumps(
-                    {"error": f"Unknown tool: {tool_name}"},
-                    ensure_ascii=False,
-                )
-            )
-        try:
-            raw = tool_def.handler(arguments)
-            if isawaitable(raw):
-                raw = await raw
-        except Exception as exc:
-            return ToolExecutionResult(
-                content=json.dumps({"error": str(exc)}, ensure_ascii=False),
-                raw={"error": str(exc)},
-            )
-        return normalize_tool_result(raw)
-
-    async def _execute_tool(
-        self,
-        tool_name: str,
-        arguments: dict[str, Any],
-    ) -> tuple[str | list[dict[str, Any]], list[Any]]:
-        """执行一条 registered tool 的 legacy compatibility wrapper.
-
-        Args:
-            tool_name: 目标 tool name.
-            arguments: tool 参数.
-
-        Returns:
-            `(content, attachments)`.
-        """
-
-        result = await self._run_registered_tool(tool_name, arguments)
-        return result.content, list(result.attachments)
-
-    # endregion
 
     # region run
     async def run(
@@ -268,11 +193,7 @@ class LitellmAgent(BaseAgent):
             `(active_tools, active_executor)`.
         """
 
-        if tools is not None:
-            return list(tools), tool_executor
-        if not self._registered_tools:
-            return [], None
-        return self._registered_specs(), self._run_registered_tool
+        return list(tools or []), tool_executor
 
     def _build_tools_param(self, tools: list[ToolSpec]) -> list[dict[str, Any]] | None:
         """把 ToolSpec 列表转成 OpenAI function calling 格式.

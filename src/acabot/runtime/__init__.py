@@ -42,7 +42,6 @@ from .memory_broker import (
 )
 from .memory_item_store import InMemoryMemoryStore
 from .memory_store import InMemoryMessageStore
-from .legacy_agent_runtime import LegacyAgentRuntime
 from .model_agent_runtime import (
     ModelAgentRuntime,
     ToolRuntime,
@@ -184,7 +183,6 @@ __all__ = [
     "InMemoryRunManager",
     "InMemoryMessageStore",
     "InMemoryThreadManager",
-    "LegacyAgentRuntime",
     "FileSystemProfileLoader",
     "FileSystemPromptLoader",
     "FileSystemBindingLoader",

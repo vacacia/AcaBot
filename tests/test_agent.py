@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, patch
 from acabot.agent import (
     AgentResponse,
     BaseAgent,
-    ToolDef,
     ToolExecutionResult,
     ToolSpec,
 )
@@ -86,21 +85,6 @@ class TestToolCalling:
     @pytest.fixture
     def agent(self):
         return LitellmAgent(default_model="gpt-4o-mini")
-
-    def test_register_tool_keeps_legacy_convenience_path(self, agent):
-        async def get_time(params):
-            return {"time": "2026-03-03 12:00:00"}
-
-        agent.register_tool(
-            ToolDef(
-                name="get_time",
-                description="Get current time",
-                parameters={"type": "object", "properties": {}},
-                handler=get_time,
-            )
-        )
-
-        assert "get_time" in agent._registered_tools
 
     async def test_tool_loop_with_explicit_tools_and_executor(self, agent):
         tool_spec = ToolSpec(
@@ -237,72 +221,3 @@ class TestToolCalling:
                     tools=[tool_spec],
                     tool_executor=tool_executor,
                 )
-
-    async def test_registered_tools_still_work_without_explicit_executor(self, agent):
-        async def get_time(params):
-            return {"time": "2026-03-03 12:00:00"}
-
-        agent.register_tool(
-            ToolDef(
-                name="get_time",
-                description="Get current time",
-                parameters={"type": "object", "properties": {}},
-                handler=get_time,
-            )
-        )
-
-        tc_msg = _make_msg(
-            content=None,
-            role="assistant",
-            tool_calls=[
-                type(
-                    "TC",
-                    (),
-                    {
-                        "id": "call_1",
-                        "type": "function",
-                        "function": type(
-                            "F",
-                            (),
-                            {"name": "get_time", "arguments": "{}"},
-                        )(),
-                    },
-                )()
-            ],
-        )
-        tc_resp = AsyncMock()
-        tc_resp.choices = [type("C", (), {"message": tc_msg})()]
-        tc_resp.usage = type(
-            "U",
-            (),
-            {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-        )()
-
-        final_resp = AsyncMock()
-        final_resp.choices = [
-            type(
-                "C",
-                (),
-                {
-                    "message": type(
-                        "M",
-                        (),
-                        {"content": "It is 2026-03-03 12:00:00", "tool_calls": None},
-                    )()
-                },
-            )()
-        ]
-        final_resp.usage = type(
-            "U",
-            (),
-            {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30},
-        )()
-
-        with patch("acabot.agent.agent.acompletion", side_effect=[tc_resp, final_resp]):
-            resp = await agent.run(
-                system_prompt="test",
-                messages=[{"role": "user", "content": "time?"}],
-            )
-
-        assert resp.text == "It is 2026-03-03 12:00:00"
-        assert len(resp.tool_calls_made) == 1

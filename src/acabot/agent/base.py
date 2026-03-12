@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
 
 from .response import AgentResponse
-from .tool import ToolDef, ToolExecutor, ToolSpec
+from .tool import ToolExecutor, ToolSpec
 
 
 class BaseAgent(ABC):
@@ -18,16 +17,6 @@ class BaseAgent(ABC):
 
     从 agent 内部拆出来.
     """
-
-    @abstractmethod
-    def register_tool(self, tool: ToolDef) -> None:
-        """注册一条 legacy convenience tool.
-
-        Args:
-            tool: schema 和 handler 打包在一起的 ToolDef.
-        """
-
-        ...
 
     @abstractmethod
     async def run(
