@@ -752,6 +752,67 @@ async def test_build_runtime_components_applies_inbound_rules() -> None:
     assert await components.channel_event_store.get_thread_events("qq:user:10001") == []
 
 
+async def test_build_runtime_components_loads_inbound_rules_from_filesystem(
+    tmp_path: Path,
+) -> None:
+    inbound_dir = tmp_path / "inbound_rules"
+    inbound_dir.mkdir()
+    (inbound_dir / "poke.yaml").write_text(
+        "\n".join(
+            [
+                "run_mode: silent_drop",
+                "match:",
+                "  platform: qq",
+                "  event_type: poke",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    config = Config(
+        {
+            "agent": {
+                "default_model": "test-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "default_prompt_ref": "prompt/default",
+                "filesystem": {
+                    "enabled": True,
+                    "base_dir": str(tmp_path),
+                },
+            },
+        }
+    )
+    gateway = FakeGateway()
+    agent = FakeAgent(FakeAgentResponse(text="should not send"))
+    components = build_runtime_components(config, gateway=gateway, agent=agent)
+    event = StandardEvent(
+        event_id="evt-poke-fs-1",
+        event_type="poke",
+        platform="qq",
+        timestamp=123,
+        source=EventSource(
+            platform="qq",
+            message_type="private",
+            user_id="10001",
+            group_id=None,
+        ),
+        segments=[],
+        raw_message_id="",
+        sender_nickname="",
+        sender_role=None,
+        operator_id="10001",
+    )
+
+    components.app.install()
+    await gateway.handler(event)
+
+    assert agent.calls == []
+    assert gateway.sent == []
+    assert await components.channel_event_store.get_thread_events("qq:user:10001") == []
+
+
 async def test_build_runtime_components_records_record_only_notice_event() -> None:
     config = Config(
         {
@@ -862,6 +923,76 @@ async def test_build_runtime_components_applies_event_policies_to_run_metadata()
 
     run = next(iter(components.run_manager._runs.values()))
     assert run.metadata["event_policy_id"] == "group-poke-memory"
+    assert run.metadata["event_extract_to_memory"] is True
+    assert run.metadata["event_memory_scopes"] == ["episodic", "relationship"]
+    assert await components.channel_event_store.get_thread_events("qq:group:20002") == []
+
+
+async def test_build_runtime_components_loads_event_policies_from_filesystem(
+    tmp_path: Path,
+) -> None:
+    policies_dir = tmp_path / "event_policies"
+    policies_dir.mkdir()
+    (policies_dir / "poke.yaml").write_text(
+        "\n".join(
+            [
+                "match:",
+                "  platform: qq",
+                "  event_type: poke",
+                "  channel_scope: qq:group:20002",
+                "persist_event: false",
+                "extract_to_memory: true",
+                "memory_scopes:",
+                "  - episodic",
+                "  - relationship",
+                "tags:",
+                "  - notice",
+                "  - poke",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    config = Config(
+        {
+            "agent": {
+                "default_model": "test-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "default_prompt_ref": "prompt/default",
+                "filesystem": {
+                    "enabled": True,
+                    "base_dir": str(tmp_path),
+                },
+            },
+        }
+    )
+    gateway = FakeGateway()
+    agent = FakeAgent(FakeAgentResponse(text="hello back"))
+    components = build_runtime_components(config, gateway=gateway, agent=agent)
+    event = StandardEvent(
+        event_id="evt-poke-memory-fs-1",
+        event_type="poke",
+        platform="qq",
+        timestamp=321,
+        source=EventSource(
+            platform="qq",
+            message_type="group",
+            user_id="10001",
+            group_id="20002",
+        ),
+        segments=[],
+        raw_message_id="",
+        sender_nickname="acacia",
+        sender_role="member",
+        operator_id="10001",
+    )
+
+    components.app.install()
+    await gateway.handler(event)
+
+    run = next(iter(components.run_manager._runs.values()))
     assert run.metadata["event_extract_to_memory"] is True
     assert run.metadata["event_memory_scopes"] == ["episodic", "relationship"]
     assert await components.channel_event_store.get_thread_events("qq:group:20002") == []

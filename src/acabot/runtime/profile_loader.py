@@ -346,6 +346,15 @@ class FileSystemBindingLoader:
             归一化后的 rule 配置列表.
         """
 
+        return self._load_rule_files()
+
+    def _load_rule_files(self) -> list[dict[str, Any]]:
+        """扫描目录并读取全部 rule 文件.
+
+        Returns:
+            归一化后的 rule 配置列表.
+        """
+
         rules: list[dict[str, Any]] = []
         if not self.root.exists():
             return rules
@@ -385,7 +394,10 @@ class FileSystemBindingLoader:
             if not isinstance(item, dict):
                 raise ValueError(f"Binding rule must be a mapping: {path}")
             rule_conf = dict(item)
-            rule_conf.setdefault("rule_id", self._default_rule_id(path, index, len(items)))
+            rule_conf.setdefault(
+                self._default_id_field(),
+                self._default_rule_id(path, index, len(items)),
+            )
             rules.append(rule_conf)
         return rules
 
@@ -405,6 +417,60 @@ class FileSystemBindingLoader:
         if total == 1:
             return f"fs:{path.stem}"
         return f"fs:{path.stem}:{index}"
+
+    @staticmethod
+    def _default_id_field() -> str:
+        """返回当前规则类型的默认 ID 字段名.
+
+        Returns:
+            默认 ID 字段名.
+        """
+
+        return "rule_id"
+
+
+class FileSystemInboundRuleLoader(FileSystemBindingLoader):
+    """从 `inbound_rules/` 目录读取 inbound rule 配置.
+
+    Attributes:
+        root (Path): inbound rule 配置根目录.
+    """
+
+    def load_all(self) -> list[dict[str, Any]]:
+        """扫描目录并加载全部 inbound rule 配置.
+
+        Returns:
+            归一化后的 inbound rule 配置列表.
+        """
+
+        return self._load_rule_files()
+
+
+class FileSystemEventPolicyLoader(FileSystemBindingLoader):
+    """从 `event_policies/` 目录读取 event policy 配置.
+
+    Attributes:
+        root (Path): event policy 配置根目录.
+    """
+
+    def load_all(self) -> list[dict[str, Any]]:
+        """扫描目录并加载全部 event policy 配置.
+
+        Returns:
+            归一化后的 event policy 配置列表.
+        """
+
+        return self._load_rule_files()
+
+    @staticmethod
+    def _default_id_field() -> str:
+        """返回 event policy 的默认 ID 字段名.
+
+        Returns:
+            默认的 policy_id 字段名.
+        """
+
+        return "policy_id"
 
 
 class AgentProfileRegistry(ProfileLoader):

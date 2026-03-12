@@ -4,6 +4,8 @@ from acabot.runtime import (
     AgentProfile,
     ChainedPromptLoader,
     FileSystemBindingLoader,
+    FileSystemEventPolicyLoader,
+    FileSystemInboundRuleLoader,
     FileSystemProfileLoader,
     FileSystemPromptLoader,
     RouteDecision,
@@ -162,3 +164,64 @@ def test_filesystem_binding_loader_loads_yaml_rules(tmp_path: Path) -> None:
     assert rules[0]["match"]["channel_scope"] == "qq:group:20002"
     assert rules[1]["match"]["event_type"] == "member_join"
     assert rules[2]["match"]["targets_self"] is True
+
+
+def test_filesystem_inbound_rule_loader_loads_rule_files(tmp_path: Path) -> None:
+    inbound_dir = tmp_path / "inbound_rules"
+    inbound_dir.mkdir()
+    (inbound_dir / "mentions.yaml").write_text(
+        "\n".join(
+            [
+                "run_mode: record_only",
+                "match:",
+                "  event_type: message",
+                "  targets_self: true",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    loader = FileSystemInboundRuleLoader(inbound_dir)
+
+    rules = loader.load_all()
+
+    assert rules == [
+        {
+            "rule_id": "fs:mentions",
+            "run_mode": "record_only",
+            "match": {
+                "event_type": "message",
+                "targets_self": True,
+            },
+        }
+    ]
+
+
+def test_filesystem_event_policy_loader_loads_rule_list(tmp_path: Path) -> None:
+    policies_dir = tmp_path / "event_policies"
+    policies_dir.mkdir()
+    (policies_dir / "notice.yaml").write_text(
+        "\n".join(
+            [
+                "rules:",
+                "  - policy_id: poke-memory",
+                "    match:",
+                "      event_type: poke",
+                "    persist_event: false",
+                "    extract_to_memory: true",
+                "  - match:",
+                "      notice_type: member_join",
+                "    tags:",
+                "      - notice",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    loader = FileSystemEventPolicyLoader(policies_dir)
+
+    rules = loader.load_all()
+
+    assert rules[0]["policy_id"] == "poke-memory"
+    assert rules[0]["extract_to_memory"] is True
+    assert rules[1]["policy_id"] == "fs:notice:1"
+    assert rules[1]["match"]["notice_type"] == "member_join"
+    assert rules[1]["tags"] == ["notice"]

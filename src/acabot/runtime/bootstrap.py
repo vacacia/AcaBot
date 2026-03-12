@@ -53,6 +53,8 @@ from .profile_loader import (
     AgentProfileRegistry,
     ChainedPromptLoader,
     FileSystemBindingLoader,
+    FileSystemEventPolicyLoader,
+    FileSystemInboundRuleLoader,
     FileSystemProfileLoader,
     FileSystemPromptLoader,
     ProfileLoader,
@@ -182,8 +184,8 @@ def build_runtime_components(
     prompt_loader = _build_prompt_loader(config, profiles)
     default_agent_id = runtime_conf.get("default_agent_id", next(iter(profiles)))
     rules = _build_binding_rules(config) + _build_filesystem_binding_rules(config)
-    inbound_rules = _build_inbound_rules(config)
-    event_policies = _build_event_policies(config)
+    inbound_rules = _build_inbound_rules(config) + _build_filesystem_inbound_rules(config)
+    event_policies = _build_event_policies(config) + _build_filesystem_event_policies(config)
     profile_registry = AgentProfileRegistry(
         profiles=profiles,
         default_agent_id=default_agent_id,
@@ -508,26 +510,45 @@ def _build_inbound_rules(config: Config) -> list[InboundRule]:
     rules: list[InboundRule] = []
 
     for index, rule_conf in enumerate(rules_conf):
-        match_conf = dict(rule_conf.get("match", {}))
         rules.append(
-            InboundRule(
-                rule_id=str(rule_conf.get("rule_id", f"inbound:{index}")),
-                run_mode=_parse_run_mode(rule_conf.get("run_mode", "respond")),
-                priority=int(rule_conf.get("priority", 100)),
-                platform=_optional_str(match_conf.get("platform")),
-                event_type=_optional_str(match_conf.get("event_type")),
-                message_subtype=_optional_str(match_conf.get("message_subtype")),
-                notice_type=_optional_str(match_conf.get("notice_type")),
-                notice_subtype=_optional_str(match_conf.get("notice_subtype")),
-                actor_id=_optional_str(match_conf.get("actor_id")),
-                channel_scope=_optional_str(match_conf.get("channel_scope")),
-                targets_self=_optional_bool(match_conf.get("targets_self")),
-                mentioned_everyone=_optional_bool(match_conf.get("mentioned_everyone")),
-                sender_roles=[str(role) for role in match_conf.get("sender_roles", [])],
-                metadata=dict(rule_conf.get("metadata", {})),
+            _parse_inbound_rule_config(
+                rule_conf,
+                default_rule_id=f"inbound:{index}",
             )
         )
 
+    return rules
+
+
+def _build_filesystem_inbound_rules(config: Config) -> list[InboundRule]:
+    """从 `inbound_rules/` 目录构造 inbound rule 列表.
+
+    Args:
+        config: 项目配置对象.
+
+    Returns:
+        文件系统中的 inbound rule 列表. 未启用时返回空列表.
+    """
+
+    runtime_conf = config.get("runtime", {})
+    fs_conf = dict(runtime_conf.get("filesystem", {}))
+    if not bool(fs_conf.get("enabled", False)):
+        return []
+
+    inbound_dir = _resolve_filesystem_path(
+        fs_conf,
+        key="inbound_rules_dir",
+        default="inbound_rules",
+    )
+    loader = FileSystemInboundRuleLoader(inbound_dir)
+    rules: list[InboundRule] = []
+    for index, rule_conf in enumerate(loader.load_all()):
+        rules.append(
+            _parse_inbound_rule_config(
+                rule_conf,
+                default_rule_id=f"fs_inbound:{index}",
+            )
+        )
     return rules
 
 
@@ -546,29 +567,45 @@ def _build_event_policies(config: Config) -> list[EventPolicy]:
     policies: list[EventPolicy] = []
 
     for index, policy_conf in enumerate(policies_conf):
-        match_conf = dict(policy_conf.get("match", {}))
         policies.append(
-            EventPolicy(
-                policy_id=str(policy_conf.get("policy_id", f"event_policy:{index}")),
-                priority=int(policy_conf.get("priority", 100)),
-                platform=_optional_str(match_conf.get("platform")),
-                event_type=_optional_str(match_conf.get("event_type")),
-                message_subtype=_optional_str(match_conf.get("message_subtype")),
-                notice_type=_optional_str(match_conf.get("notice_type")),
-                notice_subtype=_optional_str(match_conf.get("notice_subtype")),
-                actor_id=_optional_str(match_conf.get("actor_id")),
-                channel_scope=_optional_str(match_conf.get("channel_scope")),
-                targets_self=_optional_bool(match_conf.get("targets_self")),
-                mentioned_everyone=_optional_bool(match_conf.get("mentioned_everyone")),
-                sender_roles=[str(role) for role in match_conf.get("sender_roles", [])],
-                persist_event=bool(policy_conf.get("persist_event", True)),
-                extract_to_memory=bool(policy_conf.get("extract_to_memory", False)),
-                memory_scopes=[str(scope) for scope in policy_conf.get("memory_scopes", [])],
-                tags=[str(tag) for tag in policy_conf.get("tags", [])],
-                metadata=dict(policy_conf.get("metadata", {})),
+            _parse_event_policy_config(
+                policy_conf,
+                default_policy_id=f"event_policy:{index}",
             )
         )
 
+    return policies
+
+
+def _build_filesystem_event_policies(config: Config) -> list[EventPolicy]:
+    """从 `event_policies/` 目录构造 event policy 列表.
+
+    Args:
+        config: 项目配置对象.
+
+    Returns:
+        文件系统中的 event policy 列表. 未启用时返回空列表.
+    """
+
+    runtime_conf = config.get("runtime", {})
+    fs_conf = dict(runtime_conf.get("filesystem", {}))
+    if not bool(fs_conf.get("enabled", False)):
+        return []
+
+    policies_dir = _resolve_filesystem_path(
+        fs_conf,
+        key="event_policies_dir",
+        default="event_policies",
+    )
+    loader = FileSystemEventPolicyLoader(policies_dir)
+    policies: list[EventPolicy] = []
+    for index, policy_conf in enumerate(loader.load_all()):
+        policies.append(
+            _parse_event_policy_config(
+                policy_conf,
+                default_policy_id=f"fs_event_policy:{index}",
+            )
+        )
     return policies
 
 
@@ -899,6 +936,77 @@ def _parse_binding_rule_config(
         mentioned_everyone=_optional_bool(match_conf.get("mentioned_everyone")),
         sender_roles=[str(role) for role in match_conf.get("sender_roles", [])],
         metadata=dict(rule_conf.get("metadata", {})),
+    )
+
+
+def _parse_inbound_rule_config(
+    rule_conf: dict[str, object],
+    *,
+    default_rule_id: str,
+) -> InboundRule:
+    """把原始配置映射解析成 InboundRule.
+
+    Args:
+        rule_conf: 原始 inbound rule 配置映射.
+        default_rule_id: 配置未声明 rule_id 时使用的默认值.
+
+    Returns:
+        解析后的 InboundRule.
+    """
+
+    match_conf = dict(rule_conf.get("match", {}))
+    return InboundRule(
+        rule_id=str(rule_conf.get("rule_id", default_rule_id)),
+        run_mode=_parse_run_mode(rule_conf.get("run_mode", "respond")),
+        priority=int(rule_conf.get("priority", 100)),
+        platform=_optional_str(match_conf.get("platform")),
+        event_type=_optional_str(match_conf.get("event_type")),
+        message_subtype=_optional_str(match_conf.get("message_subtype")),
+        notice_type=_optional_str(match_conf.get("notice_type")),
+        notice_subtype=_optional_str(match_conf.get("notice_subtype")),
+        actor_id=_optional_str(match_conf.get("actor_id")),
+        channel_scope=_optional_str(match_conf.get("channel_scope")),
+        targets_self=_optional_bool(match_conf.get("targets_self")),
+        mentioned_everyone=_optional_bool(match_conf.get("mentioned_everyone")),
+        sender_roles=[str(role) for role in match_conf.get("sender_roles", [])],
+        metadata=dict(rule_conf.get("metadata", {})),
+    )
+
+
+def _parse_event_policy_config(
+    policy_conf: dict[str, object],
+    *,
+    default_policy_id: str,
+) -> EventPolicy:
+    """把原始配置映射解析成 EventPolicy.
+
+    Args:
+        policy_conf: 原始 event policy 配置映射.
+        default_policy_id: 配置未声明 policy_id 时使用的默认值.
+
+    Returns:
+        解析后的 EventPolicy.
+    """
+
+    match_conf = dict(policy_conf.get("match", {}))
+    return EventPolicy(
+        policy_id=str(policy_conf.get("policy_id", default_policy_id)),
+        priority=int(policy_conf.get("priority", 100)),
+        platform=_optional_str(match_conf.get("platform")),
+        event_type=_optional_str(match_conf.get("event_type")),
+        message_subtype=_optional_str(match_conf.get("message_subtype")),
+        notice_type=_optional_str(match_conf.get("notice_type")),
+        notice_subtype=_optional_str(match_conf.get("notice_subtype")),
+        actor_id=_optional_str(match_conf.get("actor_id")),
+        channel_scope=_optional_str(match_conf.get("channel_scope")),
+        targets_self=_optional_bool(match_conf.get("targets_self")),
+        mentioned_everyone=_optional_bool(match_conf.get("mentioned_everyone")),
+        sender_roles=[str(role) for role in match_conf.get("sender_roles", [])],
+        persist_event=bool(policy_conf.get("persist_event", True)),
+        extract_to_memory=bool(policy_conf.get("extract_to_memory", False)),
+        memory_scopes=[str(scope) for scope in policy_conf.get("memory_scopes", [])],
+        tags=[str(tag) for tag in policy_conf.get("tags", [])],
+        metadata=dict(policy_conf.get("metadata", {})),
     )
 
 
