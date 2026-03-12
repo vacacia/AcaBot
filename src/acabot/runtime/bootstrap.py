@@ -50,6 +50,7 @@ from .plugin_manager import (
     RuntimePluginManager,
     load_runtime_plugins_from_config,
 )
+from .plugins import SkillDelegationPlugin
 from .profile_loader import (
     AgentProfileRegistry,
     ChainedPromptLoader,
@@ -83,6 +84,7 @@ from .sticky_notes import StickyNotesService
 from .stores import ChannelEventStore, MemoryStore, MessageStore
 from .structured_memory import StoreBackedMemoryRetriever, StructuredMemoryExtractor
 from .skills import SkillRegistry
+from .subagent_delegation import SubagentDelegationBroker, SubagentExecutorRegistry
 from .tool_broker import ToolBroker
 from .threads import InMemoryThreadManager, StoreBackedThreadManager, ThreadManager
 
@@ -101,6 +103,8 @@ class RuntimeComponents:
         memory_store (MemoryStore): 保存长期记忆项的 MemoryStore.
         sticky_notes (StickyNotesService): sticky note 的受控服务层.
         skill_registry (SkillRegistry): 显式 skill 注册表.
+        subagent_executor_registry (SubagentExecutorRegistry): subagent executor 注册表.
+        subagent_delegator (SubagentDelegationBroker): subagent delegation 编排入口.
         memory_broker (MemoryBroker): 长期记忆统一入口.
         context_compactor (ContextCompactor): 负责 token-aware working memory compaction 的 compactor.
         retrieval_planner (RetrievalPlanner): 负责 retrieval planning 和 prompt assembly 的 planner.
@@ -126,6 +130,8 @@ class RuntimeComponents:
     memory_store: MemoryStore
     sticky_notes: StickyNotesService
     skill_registry: SkillRegistry
+    subagent_executor_registry: SubagentExecutorRegistry
+    subagent_delegator: SubagentDelegationBroker
     memory_broker: MemoryBroker
     context_compactor: ContextCompactor
     retrieval_planner: RetrievalPlanner
@@ -160,6 +166,8 @@ def build_runtime_components(
     plugin_manager: RuntimePluginManager | None = None,
     tool_broker: ToolBroker | None = None,
     skill_registry: SkillRegistry | None = None,
+    subagent_executor_registry: SubagentExecutorRegistry | None = None,
+    subagent_delegator: SubagentDelegationBroker | None = None,
     approval_resumer: ApprovalResumer | None = None,
     plugins: list[RuntimePlugin] | None = None,
 ) -> RuntimeComponents:
@@ -182,6 +190,8 @@ def build_runtime_components(
         plugin_manager: 可选的 RuntimePluginManager 实现.
         tool_broker: 可选的 ToolBroker 实现.
         skill_registry: 可选的 SkillRegistry 实现.
+        subagent_executor_registry: 可选的 subagent executor 注册表.
+        subagent_delegator: 可选的 subagent delegation 编排入口.
         approval_resumer: 可选的 approval resumer.
         plugins: 启动时要加载的 runtime plugin 实例列表.
 
@@ -220,6 +230,11 @@ def build_runtime_components(
     runtime_memory_store = memory_store or _build_memory_store(config)
     runtime_sticky_notes = StickyNotesService(store=runtime_memory_store)
     runtime_skill_registry = skill_registry or SkillRegistry()
+    runtime_subagent_executor_registry = subagent_executor_registry or SubagentExecutorRegistry()
+    runtime_subagent_delegator = subagent_delegator or SubagentDelegationBroker(
+        skill_registry=runtime_skill_registry,
+        executor_registry=runtime_subagent_executor_registry,
+    )
     runtime_memory_broker = memory_broker or _build_memory_broker(
         config,
         memory_store=runtime_memory_store,
@@ -237,6 +252,11 @@ def build_runtime_components(
     runtime_tool_broker = tool_broker or ToolBroker(skill_registry=runtime_skill_registry)
     runtime_tool_broker.skill_registry = runtime_skill_registry
     configured_plugins = plugins if plugins is not None else load_runtime_plugins_from_config(config)
+    if _profiles_have_delegated_skills(profiles) and not any(
+        plugin.name == SkillDelegationPlugin.name
+        for plugin in configured_plugins
+    ):
+        configured_plugins = [*configured_plugins, SkillDelegationPlugin()]
     runtime_plugin_manager = plugin_manager or RuntimePluginManager(
         config=config,
         gateway=gateway,
@@ -244,6 +264,7 @@ def build_runtime_components(
         reference_backend=runtime_reference_backend,
         sticky_notes=runtime_sticky_notes,
         skill_registry=runtime_skill_registry,
+        subagent_delegator=runtime_subagent_delegator,
         plugins=configured_plugins,
     )
     runtime_approval_resumer = approval_resumer or NoopApprovalResumer()
@@ -284,8 +305,10 @@ def build_runtime_components(
         profile_registry=profile_registry,
         plugin_manager=runtime_plugin_manager,
         skill_registry=runtime_skill_registry,
+        subagent_executor_registry=runtime_subagent_executor_registry,
     )
     runtime_plugin_manager.attach_control_plane(control_plane)
+    runtime_plugin_manager.attach_subagent_delegator(runtime_subagent_delegator)
 
     return RuntimeComponents(
         gateway=gateway,
@@ -297,6 +320,8 @@ def build_runtime_components(
         memory_store=runtime_memory_store,
         sticky_notes=runtime_sticky_notes,
         skill_registry=runtime_skill_registry,
+        subagent_executor_registry=runtime_subagent_executor_registry,
+        subagent_delegator=runtime_subagent_delegator,
         memory_broker=runtime_memory_broker,
         context_compactor=runtime_context_compactor,
         retrieval_planner=runtime_retrieval_planner,
@@ -312,6 +337,24 @@ def build_runtime_components(
         pipeline=pipeline,
         app=app,
     )
+
+
+#  config.yaml 里提取
+def _profiles_have_delegated_skills(profiles: dict[str, AgentProfile]) -> bool:
+    """判断当前 profile 集合里是否存在 delegated skill.
+
+    Args:
+        profiles: 当前 runtime 已加载的 profile 映射.
+
+    Returns:
+        是否存在 `prefer_delegate` 或 `must_delegate` 的 skill assignment.
+    """
+
+    for profile in profiles.values():
+        for assignment in profile.skill_assignments:
+            if assignment.delegation_mode in {"prefer_delegate", "must_delegate"}:
+                return True
+    return False
 
 
 #  config.yaml 里提取
@@ -796,12 +839,12 @@ def _build_retrieval_planner(
     
     return RetrievalPlanner(
         PromptAssemblyConfig(
-            # sticky_notes 插入位置：默认 system_message
+            # sticky_notes 插入位置: 默认 system_message
             sticky_slot_position=str(prompt_conf.get("sticky_slot_position", "system_message")),
             skill_slot_position=str(prompt_conf.get("skill_slot_position", "system_message")),
-            # summary 插入位置：默认 history_prefix 历史消息之前
+            # summary 插入位置: 默认 history_prefix 历史消息之前
             summary_slot_position=str(prompt_conf.get("summary_slot_position", "history_prefix")),
-            # retrieved_memory 插入位置：默认 system_message
+            # retrieved_memory 插入位置: 默认 system_message
             retrieval_slot_position=str(
                 prompt_conf.get("retrieval_slot_position", "system_message")
             ),

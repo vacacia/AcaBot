@@ -29,6 +29,8 @@ from acabot.runtime import (
     SkillRegistry,
     SQLiteMessageStore,
     StickyNotesService,
+    SubagentDelegationBroker,
+    SubagentExecutorRegistry,
 )
 
 
@@ -296,6 +298,9 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
         一份最小 RuntimeComponents.
     """
 
+    skill_registry = SkillRegistry()
+    executor_registry = SubagentExecutorRegistry()
+
     return RuntimeComponents(
         gateway=FakeGateway(),
         router=None,  # type: ignore[arg-type]
@@ -305,7 +310,12 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
         message_store=InMemoryMessageStore(),
         memory_store=InMemoryMemoryStore(),
         sticky_notes=StickyNotesService(store=InMemoryMemoryStore()),
-        skill_registry=SkillRegistry(),
+        skill_registry=skill_registry,
+        subagent_executor_registry=executor_registry,
+        subagent_delegator=SubagentDelegationBroker(
+            skill_registry=skill_registry,
+            executor_registry=executor_registry,
+        ),
         memory_broker=MemoryBroker(),
         context_compactor=ContextCompactor(ContextCompactionConfig()),
         retrieval_planner=RetrievalPlanner(PromptAssemblyConfig()),

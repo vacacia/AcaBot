@@ -9,6 +9,8 @@ from acabot.runtime import (
     MemoryItem,
     Outbox,
     RouteDecision,
+    SubagentDelegationBroker,
+    SubagentExecutorRegistry,
     RuntimeApp,
     RuntimeControlPlane,
     RuntimePlugin,
@@ -352,6 +354,54 @@ async def test_runtime_control_plane_can_list_agent_skills() -> None:
     assert skills[0].skill_name == "status_runtime_skill"
     assert skills[0].delegation_mode == "prefer_delegate"
     assert skills[0].delegate_agent_id == "status_worker"
+
+
+async def test_runtime_control_plane_can_list_subagent_executors() -> None:
+    from tests.runtime.runtime_plugin_samples import SampleDelegationWorkerPlugin
+
+    gateway = FakeGateway()
+    skill_registry = SkillRegistry()
+    executor_registry = SubagentExecutorRegistry()
+    plugin_manager = RuntimePluginManager(
+        config=Config({}),
+        gateway=gateway,
+        tool_broker=ToolBroker(skill_registry=skill_registry),
+        skill_registry=skill_registry,
+        subagent_delegator=SubagentDelegationBroker(
+            skill_registry=skill_registry,
+            executor_registry=executor_registry,
+        ),
+        plugins=[SampleDelegationWorkerPlugin()],
+    )
+    app = RuntimeApp(
+        gateway=gateway,
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=InMemoryThreadManager(),
+        run_manager=InMemoryRunManager(),
+        channel_event_store=InMemoryChannelEventStore(),
+        pipeline=ThreadPipeline(
+            agent_runtime=FakeAgentRuntime(),
+            outbox=Outbox(gateway=gateway, store=FakeMessageStore()),
+            run_manager=InMemoryRunManager(),
+            thread_manager=InMemoryThreadManager(),
+            plugin_manager=plugin_manager,
+        ),
+        profile_loader=_profile_loader,
+        plugin_manager=plugin_manager,
+    )
+    control_plane = RuntimeControlPlane(
+        app=app,
+        run_manager=app.run_manager,
+        plugin_manager=plugin_manager,
+        subagent_executor_registry=executor_registry,
+    )
+    await plugin_manager.ensure_started()
+
+    items = await control_plane.list_subagent_executors()
+
+    assert len(items) == 1
+    assert items[0].agent_id == "sample_worker"
+    assert items[0].source == "plugin:sample_delegation_worker"
 
 
 async def test_runtime_control_plane_can_switch_thread_agent_override() -> None:

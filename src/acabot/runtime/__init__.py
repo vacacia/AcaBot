@@ -29,6 +29,7 @@ from .control_plane import (
     RuntimeControlPlane,
     RuntimeStatusSnapshot,
     SkillSnapshot,
+    SubagentExecutorSnapshot,
 )
 from .event_policy import EventPolicyRegistry
 from .event_store import InMemoryChannelEventStore
@@ -98,7 +99,13 @@ from .plugin_manager import (
     load_runtime_plugins_from_config,
     parse_runtime_plugin_spec,
 )
-from .plugins import NapCatToolsPlugin, OpsControlPlugin, ReferenceToolsPlugin, StickyNotesPlugin
+from .plugins import (
+    NapCatToolsPlugin,
+    OpsControlPlugin,
+    ReferenceToolsPlugin,
+    SkillDelegationPlugin,
+    StickyNotesPlugin,
+)
 from .profile_loader import (
     AgentProfileRegistry,
     ChainedPromptLoader,
@@ -137,6 +144,13 @@ from .skills import (
     SkillType,
     SubagentDelegationRequest,
     SubagentDelegationResult,
+)
+from .subagent_delegation import (
+    RegisteredSubagentExecutor,
+    SubagentDelegationBroker,
+    SubagentExecutor,
+    SubagentExecutorRegistration,
+    SubagentExecutorRegistry,
 )
 from .sqlite_stores import (
     SQLiteChannelEventStore,
@@ -186,6 +200,7 @@ __all__ = [
     "RuntimeControlPlane",
     "RuntimeStatusSnapshot",
     "SkillSnapshot",
+    "SubagentExecutorSnapshot",
     "ContextSummarizer",
     "ModelContextSummarizer",
     "DeliveryResult",
@@ -254,12 +269,18 @@ __all__ = [
     "SkillRegistry",
     "SubagentDelegationRequest",
     "SubagentDelegationResult",
+    "SubagentExecutor",
+    "SubagentExecutorRegistration",
+    "RegisteredSubagentExecutor",
+    "SubagentExecutorRegistry",
+    "SubagentDelegationBroker",
     "load_runtime_plugin",
     "load_runtime_plugins_from_config",
     "parse_runtime_plugin_spec",
     "NapCatToolsPlugin",
     "OpsControlPlugin",
     "ReferenceToolsPlugin",
+    "SkillDelegationPlugin",
     "StickyNotesPlugin",
     "RunContext",
     "RunManager",

@@ -60,6 +60,7 @@ def _ops_config() -> Config:
                 "plugins": [
                     "acabot.runtime.plugins:OpsControlPlugin",
                     "tests.runtime.runtime_plugin_samples:SampleConfiguredRuntimePlugin",
+                    "tests.runtime.runtime_plugin_samples:SampleDelegationWorkerPlugin",
                 ],
             },
             "plugins": {
@@ -113,6 +114,19 @@ async def test_ops_control_plugin_can_list_agent_skills() -> None:
     assert "sample_configured_skill" in gateway.sent[0].payload["text"]
     assert "mode=prefer_delegate" in gateway.sent[0].payload["text"]
     assert "delegate=sample_worker" in gateway.sent[0].payload["text"]
+
+
+async def test_ops_control_plugin_can_list_subagents() -> None:
+    gateway = FakeGateway()
+    agent = FakeAgent(FakeAgentResponse(text="should not be used"))
+    components = build_runtime_components(_ops_config(), gateway=gateway, agent=agent)
+
+    components.app.install()
+    await gateway.handler(_message_event("/subagents"))
+
+    assert agent.calls == []
+    assert len(gateway.sent) == 1
+    assert "sample_worker" in gateway.sent[0].payload["text"]
 
 
 async def test_ops_control_plugin_can_switch_thread_agent() -> None:

@@ -167,6 +167,17 @@ class OpsControlPlugin(RuntimePlugin):
                 )
             return "\n".join(lines)
 
+        if command == "subagents":
+            items = await self._control_plane.list_subagent_executors()
+            if not items:
+                return "subagents: no registered executors"
+            lines = ["subagents:"]
+            for item in items:
+                lines.append(
+                    f"- {item.agent_id} source={item.source or '-'}"
+                )
+            return "\n".join(lines)
+
         if command == "reload_plugins":
             result = await self._control_plane.reload_plugins()
             return self._format_reload_result(result)

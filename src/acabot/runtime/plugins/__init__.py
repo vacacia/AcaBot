@@ -3,11 +3,13 @@
 from .napcat_tools import NapCatToolsPlugin
 from .ops_control import OpsControlPlugin
 from .reference_tools import ReferenceToolsPlugin
+from .skill_delegation import SkillDelegationPlugin
 from .sticky_notes import StickyNotesPlugin
 
 __all__ = [
     "NapCatToolsPlugin",
     "OpsControlPlugin",
     "ReferenceToolsPlugin",
+    "SkillDelegationPlugin",
     "StickyNotesPlugin",
 ]

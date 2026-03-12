@@ -659,6 +659,27 @@ class ToolBroker:
         Returns:
             一个按 profile 声明顺序过滤后的 ToolSpec 列表.
         """
+        tool_names = self._allowed_tool_names(profile)
+        if not tool_names:
+            return []
+
+        visible: list[ToolSpec] = []
+        for tool_name in tool_names:
+            registered = self._tools.get(tool_name)
+            if registered is None:
+                continue
+            visible.append(registered.spec)
+        return visible
+
+    def _allowed_tool_names(self, profile: AgentProfile) -> list[str]:
+        """计算当前 profile 可用的工具名集合.
+
+        Args:
+            profile: 当前 run 命中的 AgentProfile.
+
+        Returns:
+            去重后且按声明顺序展开的工具名列表.
+        """
 
         tool_names: list[str] = []
         for tool_name in profile.enabled_tools:
@@ -670,17 +691,28 @@ class ToolBroker:
                 if tool_name in tool_names:
                     continue
                 tool_names.append(tool_name)
+            if self._should_expose_delegate_tool(profile) and "delegate_skill" not in tool_names:
+                tool_names.append("delegate_skill")
+        return tool_names
 
-        if not tool_names:
-            return []
+    def _should_expose_delegate_tool(self, profile: AgentProfile) -> bool:
+        """判断当前 profile 是否应看到 `delegate_skill`.
 
-        visible: list[ToolSpec] = []
-        for tool_name in tool_names:
-            registered = self._tools.get(tool_name)
-            if registered is None:
-                continue
-            visible.append(registered.spec)
-        return visible
+        Args:
+            profile: 当前 run 命中的 AgentProfile.
+
+        Returns:
+            当前 profile 是否存在可自动委派的 skill assignment.
+        """
+
+        if self.skill_registry is None:
+            return False
+        if "delegate_skill" not in self._tools:
+            return False
+        for item in self.skill_registry.resolve_assignments(profile):
+            if item.assignment.delegation_mode in {"prefer_delegate", "must_delegate"}:
+                return True
+        return False
 
     def build_tool_runtime(self, ctx: RunContext) -> ToolRuntime:
         """为一次 run 构造 ToolRuntime.
@@ -805,7 +837,7 @@ class ToolBroker:
                 arguments=arguments,
             )
 
-        if tool_name not in ctx.profile.enabled_tools:
+        if tool_name not in self._allowed_tool_names(ctx.profile):
             return await self._reject(
                 message=f"Tool not enabled for profile: {tool_name}",
                 audit_record=audit_record,

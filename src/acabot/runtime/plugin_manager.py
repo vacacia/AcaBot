@@ -32,6 +32,10 @@ from .models import RunContext
 from .reference_backend import ReferenceBackend
 from .skills import SkillRegistry, SkillSpec
 from .sticky_notes import StickyNotesService
+from .subagent_delegation import (
+    SubagentDelegationBroker,
+    SubagentExecutorRegistration,
+)
 from .tool_broker import ToolBroker
 from .tool_broker import ToolHandler as RuntimeToolHandler
 
@@ -195,6 +199,7 @@ class RuntimePluginContext:
         sticky_notes (StickyNotesService | None): sticky note 的受控服务层.
         skill_registry (SkillRegistry | None): 显式 skill 注册表.
         control_plane (RuntimeControlPlane | None): 本地 control plane 入口.
+        subagent_delegator (SubagentDelegationBroker | None): subagent delegation 编排入口.
     """
 
     config: Config
@@ -204,6 +209,7 @@ class RuntimePluginContext:
     sticky_notes: StickyNotesService | None = None
     skill_registry: SkillRegistry | None = None
     control_plane: RuntimeControlPlane | None = None
+    subagent_delegator: SubagentDelegationBroker | None = None
 
     def get_plugin_config(self, plugin_name: str) -> dict[str, object]:
         """读取插件配置.
@@ -290,6 +296,15 @@ class RuntimePlugin(ABC):
 
         return []
 
+    def subagent_executors(self) -> list[SubagentExecutorRegistration]:
+        """返回插件声明的 subagent executors.
+
+        Returns:
+            SubagentExecutorRegistration 列表. 默认空列表.
+        """
+
+        return []
+
     async def teardown(self) -> None:
         """在 runtime 停止或热卸载时清理资源."""
         # 子类可重写, 默认空实现
@@ -314,6 +329,7 @@ class RuntimePluginManager:
         sticky_notes (StickyNotesService | None): sticky note 服务.
         skill_registry (SkillRegistry | None): 显式 skill 注册表.
         control_plane (RuntimeControlPlane | None): 本地 control plane 入口.
+        subagent_delegator (SubagentDelegationBroker | None): subagent delegation 编排入口.
         hooks (RuntimeHookRegistry): runtime hook 注册表.
         loaded (list[RuntimePlugin]): 已加载插件列表, 按加载顺序.
         _names (set[str]): 已加载插件名集合, 用于去重.
@@ -332,6 +348,7 @@ class RuntimePluginManager:
         sticky_notes: StickyNotesService | None = None,
         skill_registry: SkillRegistry | None = None,
         control_plane: RuntimeControlPlane | None = None,
+        subagent_delegator: SubagentDelegationBroker | None = None,
         plugins: list[RuntimePlugin] | None = None,
     ) -> None:
         """初始化 RuntimePluginManager.
@@ -346,6 +363,7 @@ class RuntimePluginManager:
             sticky_notes: 可选的 sticky note 服务.
             skill_registry: 可选的显式 skill 注册表.
             control_plane: 可选的本地 control plane 入口.
+            subagent_delegator: 可选的 subagent delegation 编排入口.
             plugins: 启动时需要加载的插件实例列表.
         """
 
@@ -357,6 +375,7 @@ class RuntimePluginManager:
         self.sticky_notes = sticky_notes
         self.skill_registry = skill_registry
         self.control_plane = control_plane
+        self.subagent_delegator = subagent_delegator
         # 创建空的 hook 注册表
         self.hooks = RuntimeHookRegistry()
         # 维护加载顺序的列表, teardown 时逆序清理
@@ -392,6 +411,15 @@ class RuntimePluginManager:
 
         self.control_plane = control_plane
 
+    def attach_subagent_delegator(self, subagent_delegator: SubagentDelegationBroker) -> None:
+        """把 subagent delegation broker 接到 plugin manager.
+
+        Args:
+            subagent_delegator: 当前 runtime 的 delegation broker.
+        """
+
+        self.subagent_delegator = subagent_delegator
+
     async def ensure_started(self) -> None:
         """确保待加载插件已经完成 setup 和注册.
 
@@ -412,6 +440,7 @@ class RuntimePluginManager:
                 sticky_notes=self.sticky_notes,
                 skill_registry=self.skill_registry,
                 control_plane=self.control_plane,
+                subagent_delegator=self.subagent_delegator,
             )
             # 复制并清空 pending, 防止 load 过程中 add_plugin 导致重复
             pending = list(self._pending)
@@ -459,6 +488,7 @@ class RuntimePluginManager:
             sticky_notes=self.sticky_notes,
             skill_registry=self.skill_registry,
             control_plane=self.control_plane,
+            subagent_delegator=self.subagent_delegator,
         )
         # 步骤 3: 调用 setup, 失败则跳过整个插件
         try:
@@ -479,6 +509,18 @@ class RuntimePluginManager:
                     skill,
                     source=f"plugin:{plugin.name}",
                     metadata={"plugin_name": plugin.name},
+                )
+        plugin_executors = list(plugin.subagent_executors())
+        if self.subagent_delegator is not None:
+            for registration in plugin_executors:
+                self.subagent_delegator.executor_registry.register(
+                    registration.agent_id,
+                    registration.executor,
+                    source=f"plugin:{plugin.name}",
+                    metadata={
+                        "plugin_name": plugin.name,
+                        **dict(registration.metadata),
+                    },
                 )
         runtime_tools = list(plugin.runtime_tools())
         for registration in runtime_tools:
@@ -504,11 +546,12 @@ class RuntimePluginManager:
         self.loaded.append(plugin)
         self._names.add(plugin.name)
         logger.info(
-            "Runtime plugin loaded: %s (%s hooks, %s tools, %s skills)",
+            "Runtime plugin loaded: %s (%s hooks, %s tools, %s skills, %s executors)",
             plugin.name,
             len(plugin_hooks),
             len(runtime_tools) + len(legacy_tools),
             len(plugin_skills),
+            len(plugin_executors),
         )
 
     async def run_hooks(self, point: RuntimeHookPoint, ctx: RunContext) -> RuntimeHookResult:
@@ -571,6 +614,16 @@ class RuntimePluginManager:
                         plugin.name,
                         ",".join(removed_skills),
                     )
+            if self.subagent_delegator is not None:
+                removed_executors = self.subagent_delegator.executor_registry.unregister_source(
+                    f"plugin:{plugin.name}"
+                )
+                if removed_executors:
+                    logger.info(
+                        "Runtime plugin subagent executors removed: plugin=%s executors=%s",
+                        plugin.name,
+                        ",".join(removed_executors),
+                    )
             # 切断响应
             removed = self.tool_broker.unregister_source(f"plugin:{plugin.name}")
             if removed:
@@ -631,6 +684,16 @@ class RuntimePluginManager:
                         "Runtime plugin skills removed: plugin=%s skills=%s",
                         plugin.name,
                         ",".join(removed_skills),
+                    )
+            if self.subagent_delegator is not None:
+                removed_executors = self.subagent_delegator.executor_registry.unregister_source(
+                    f"plugin:{plugin.name}"
+                )
+                if removed_executors:
+                    logger.info(
+                        "Runtime plugin subagent executors removed: plugin=%s executors=%s",
+                        plugin.name,
+                        ",".join(removed_executors),
                     )
             removed = self.tool_broker.unregister_source(f"plugin:{plugin.name}")
             if removed:
@@ -711,6 +774,7 @@ class RuntimePluginManager:
             sticky_notes=self.sticky_notes,
             skill_registry=self.skill_registry,
             control_plane=self.control_plane,
+            subagent_delegator=self.subagent_delegator,
         )
         # 新插件实例，重新执行 load_plugin
         # 1. new_target.setup(context)

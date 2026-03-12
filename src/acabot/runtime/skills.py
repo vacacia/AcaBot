@@ -90,6 +90,8 @@ class SubagentDelegationRequest:
     Attributes:
         skill_name (str): 本次委派对应的 skill.
         parent_run_id (str): 发起委派的父 run 标识.
+        parent_thread_id (str): 发起委派的父 thread 标识.
+        parent_agent_id (str): 发起委派的父 agent 标识.
         actor_id (str): 当前 actor.
         channel_scope (str): 当前 channel scope.
         delegate_agent_id (str): 目标 subagent 标识.
@@ -99,6 +101,8 @@ class SubagentDelegationRequest:
 
     skill_name: str
     parent_run_id: str
+    parent_thread_id: str
+    parent_agent_id: str
     actor_id: str
     channel_scope: str
     delegate_agent_id: str
@@ -116,6 +120,7 @@ class SubagentDelegationResult:
         delegated_run_id (str): 子 run 标识.
         summary (str): 面向父 agent 的结果摘要.
         artifacts (list[dict[str, Any]]): 子 agent 产出的结构化 artifacts.
+        error (str): 失败时的简短错误信息.
         metadata (dict[str, Any]): 附加元数据.
     """
 
@@ -124,6 +129,7 @@ class SubagentDelegationResult:
     delegated_run_id: str = ""
     summary: str = ""
     artifacts: list[dict[str, Any]] = field(default_factory=list)
+    error: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

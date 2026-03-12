@@ -318,7 +318,8 @@ async def test_build_runtime_components_expands_enabled_skills_into_visible_tool
     assert len(profile.skill_assignments) == 1
     assert profile.skill_assignments[0].delegation_mode == "prefer_delegate"
     assert profile.skill_assignments[0].delegate_agent_id == "sample_worker"
-    assert [tool.name for tool in visible_tools] == ["sample_configured_tool"]
+    assert [tool.name for tool in visible_tools] == ["sample_configured_tool", "delegate_skill"]
+    assert components.subagent_delegator.executor_registry.list_all() == []
     assert any(
         tool.name == "sample_configured_tool"
         for tool in components.tool_broker.visible_tools(

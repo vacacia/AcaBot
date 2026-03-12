@@ -7,7 +7,14 @@
 from __future__ import annotations
 
 from acabot.agent import ToolDef
-from acabot.runtime import RuntimePlugin, RuntimePluginContext, SkillSpec
+from acabot.runtime import (
+    RuntimePlugin,
+    RuntimePluginContext,
+    SkillSpec,
+    SubagentDelegationRequest,
+    SubagentDelegationResult,
+    SubagentExecutorRegistration,
+)
 
 
 class SampleConfiguredRuntimePlugin(RuntimePlugin):
@@ -117,5 +124,51 @@ class AnotherConfiguredRuntimePlugin(RuntimePlugin):
                 title="Another Configured Skill",
                 description="用于测试精确 reload 的第二条 skill.",
                 tool_names=[],
+            )
+        ]
+
+
+class SampleDelegationWorkerPlugin(RuntimePlugin):
+    """用于 subagent delegation 测试的 worker 插件."""
+
+    name = "sample_delegation_worker"
+
+    async def setup(self, runtime: RuntimePluginContext) -> None:
+        """记录 setup 但不做额外初始化.
+
+        Args:
+            runtime: runtime plugin 上下文.
+        """
+
+        _ = runtime
+
+    def subagent_executors(self) -> list[SubagentExecutorRegistration]:
+        """返回一个样例 subagent executor.
+
+        Returns:
+            一条 `sample_worker` executor 注册项.
+        """
+
+        async def execute(request: SubagentDelegationRequest) -> SubagentDelegationResult:
+            task = str(request.payload.get("task", "") or "")
+            return SubagentDelegationResult(
+                skill_name=request.skill_name,
+                ok=True,
+                delegated_run_id=f"subrun:{request.parent_run_id}",
+                summary=f"worker handled: {task}",
+                artifacts=[
+                    {
+                        "type": "delegation_result",
+                        "skill_name": request.skill_name,
+                        "task": task,
+                    }
+                ],
+            )
+
+        return [
+            SubagentExecutorRegistration(
+                agent_id="sample_worker",
+                executor=execute,
+                metadata={"label": "sample"},
             )
         ]

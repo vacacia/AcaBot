@@ -26,6 +26,7 @@ from .profile_loader import AgentProfileRegistry
 from .runs import RunManager
 from .skills import RegisteredSkill, ResolvedSkillAssignment, SkillRegistry
 from .stores import MemoryStore
+from .subagent_delegation import RegisteredSubagentExecutor, SubagentExecutorRegistry
 from .threads import ThreadManager
 
 
@@ -183,6 +184,21 @@ class AgentSkillSnapshot:
     notes: str = ""
 
 
+@dataclass(slots=True)
+class SubagentExecutorSnapshot:
+    """当前已注册 subagent executor 的轻量快照.
+
+    Attributes:
+        agent_id (str): 对应的 subagent 标识.
+        source (str): 注册来源.
+        metadata (dict[str, object]): 附加元数据.
+    """
+
+    agent_id: str
+    source: str = ""
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
 # endregion
 
 
@@ -210,6 +226,7 @@ class RuntimeControlPlane:
         profile_registry: AgentProfileRegistry | None = None,
         plugin_manager: RuntimePluginManager | None = None,
         skill_registry: SkillRegistry | None = None,
+        subagent_executor_registry: SubagentExecutorRegistry | None = None,
     ) -> None:
         """初始化 RuntimeControlPlane.
 
@@ -221,6 +238,7 @@ class RuntimeControlPlane:
             profile_registry: 可选的 profile registry, 用于校验 agent 是否存在.
             plugin_manager: 可选的 runtime plugin manager.
             skill_registry: 可选的显式 skill 注册表.
+            subagent_executor_registry: 可选的 subagent executor 注册表.
         """
 
         self.app = app
@@ -230,6 +248,7 @@ class RuntimeControlPlane:
         self.profile_registry = profile_registry
         self.plugin_manager = plugin_manager
         self.skill_registry = skill_registry
+        self.subagent_executor_registry = subagent_executor_registry
 
     async def get_status(self) -> RuntimeStatusSnapshot:
         """读取当前 runtime 的最小状态快照.
@@ -426,6 +445,20 @@ class RuntimeControlPlane:
             for item in self.skill_registry.resolve_assignments(profile)
         ]
 
+    async def list_subagent_executors(self) -> list[SubagentExecutorSnapshot]:
+        """列出当前已注册的 subagent executors.
+
+        Returns:
+            SubagentExecutorSnapshot 列表.
+        """
+
+        if self.subagent_executor_registry is None:
+            return []
+        return [
+            self._to_subagent_executor_snapshot(item)
+            for item in self.subagent_executor_registry.list_all()
+        ]
+
     def _list_loaded_plugins(self) -> list[str]:
         """返回当前已加载插件名列表.
 
@@ -492,6 +525,23 @@ class RuntimeControlPlane:
             delegation_mode=item.assignment.delegation_mode,
             delegate_agent_id=item.assignment.delegate_agent_id,
             notes=item.assignment.notes,
+        )
+
+    @staticmethod
+    def _to_subagent_executor_snapshot(item: RegisteredSubagentExecutor) -> SubagentExecutorSnapshot:
+        """把 RegisteredSubagentExecutor 转成 SubagentExecutorSnapshot.
+
+        Args:
+            item: 当前注册的 subagent executor.
+
+        Returns:
+            对应的 SubagentExecutorSnapshot.
+        """
+
+        return SubagentExecutorSnapshot(
+            agent_id=item.agent_id,
+            source=item.source,
+            metadata=dict(item.metadata),
         )
 
 

@@ -6,6 +6,8 @@ from acabot.runtime import (
     AgentProfile,
     InMemoryRunManager,
     SkillRegistry,
+    SubagentDelegationBroker,
+    SubagentExecutorRegistry,
     InMemoryThreadManager,
     Outbox,
     PlannedAction,
@@ -183,6 +185,33 @@ async def test_runtime_plugin_manager_registers_tools_and_lifecycle() -> None:
 
     await manager.teardown_all()
     assert plugin.teardown_calls == 1
+
+
+async def test_runtime_plugin_manager_registers_and_unloads_subagent_executors() -> None:
+    from tests.runtime.runtime_plugin_samples import SampleDelegationWorkerPlugin
+
+    registry = SkillRegistry()
+    executor_registry = SubagentExecutorRegistry()
+    manager = RuntimePluginManager(
+        config=Config({}),
+        gateway=FakeGateway(),
+        tool_broker=ToolBroker(skill_registry=registry),
+        skill_registry=registry,
+        subagent_delegator=SubagentDelegationBroker(
+            skill_registry=registry,
+            executor_registry=executor_registry,
+        ),
+        plugins=[SampleDelegationWorkerPlugin()],
+    )
+
+    await manager.ensure_started()
+    before = [item.agent_id for item in executor_registry.list_all()]
+    removed = await manager.unload_plugins(["sample_delegation_worker"])
+    after = [item.agent_id for item in executor_registry.list_all()]
+
+    assert before == ["sample_worker"]
+    assert removed == ["sample_delegation_worker"]
+    assert after == []
 
 
 async def test_thread_pipeline_can_be_short_circuited_by_runtime_plugin() -> None:
