@@ -51,6 +51,8 @@ class FakeAgent:
         messages: list[dict[str, Any]],
         model: str | None = None,
         *,
+        request_options=None,
+        max_tool_rounds=None,
         tools=None,
         tool_executor=None,
     ) -> AgentResponse:
@@ -72,6 +74,8 @@ class FakeAgent:
                 "system_prompt": system_prompt,
                 "messages": list(messages),
                 "model": model,
+                "request_options": dict(request_options or {}),
+                "max_tool_rounds": max_tool_rounds,
                 "tools": tools,
                 "tool_executor": tool_executor,
             }
@@ -99,6 +103,8 @@ class ToolCallingAgent:
         messages: list[dict[str, Any]],
         model: str | None = None,
         *,
+        request_options=None,
+        max_tool_rounds=None,
         tools=None,
         tool_executor=None,
     ) -> AgentResponse:
@@ -120,6 +126,8 @@ class ToolCallingAgent:
                 "system_prompt": system_prompt,
                 "messages": list(messages),
                 "model": model,
+                "request_options": dict(request_options or {}),
+                "max_tool_rounds": max_tool_rounds,
                 "tools": list(tools or []),
                 "tool_executor": tool_executor,
             }
@@ -254,6 +262,20 @@ async def test_model_agent_runtime_builds_failed_result() -> None:
     assert result.status == "failed"
     assert result.error == "boom"
     assert result.actions == []
+
+
+async def test_model_agent_runtime_passes_profile_max_tool_rounds_override() -> None:
+    agent = FakeAgent(AgentResponse(text="hello back", model_used="test-model"))
+    runtime = ModelAgentRuntime(
+        agent=agent,
+        prompt_loader=StaticPromptLoader({"prompt/default": "You are Aca."}),
+    )
+    ctx = _context()
+    ctx.profile.config["max_tool_rounds"] = 9
+
+    await runtime.execute(ctx)
+
+    assert agent.calls[0]["max_tool_rounds"] == 9
 
 
 async def test_model_agent_runtime_passes_tools_from_resolver() -> None:

@@ -90,6 +90,9 @@ runtime:
   #   bindings_dir: "bindings"
   #   inbound_rules_dir: "inbound_rules"
   #   event_policies_dir: "event_policies"
+  #   model_providers_dir: "models/providers"
+  #   model_presets_dir: "models/presets"
+  #   model_bindings_dir: "models/bindings"
 
   # 可选: reference / notebook backend
   # reference:

@@ -81,10 +81,12 @@ class ApprovalToolAgent:
         messages: list[dict[str, object]],
         model: str | None = None,
         *,
+        request_options=None,
+        max_tool_rounds=None,
         tools=None,
         tool_executor=None,
     ):
-        _ = system_prompt, messages, model, tools
+        _ = system_prompt, messages, model, request_options, max_tool_rounds, tools
         if tool_executor is not None:
             await tool_executor("restricted", {"danger": True})
         raise AssertionError("approval interrupt should stop the agent loop")
@@ -119,6 +121,22 @@ class RecordingMemoryBroker(MemoryBroker):
 
     async def extract_after_run(self, ctx: RunContext) -> None:
         self.extract_calls.append(ctx)
+
+
+class ExplodingCompactor:
+    def snapshot_thread(self, thread) -> None:
+        _ = thread
+        raise AssertionError("record_only should not snapshot for compaction")
+
+
+class ExplodingRetrievalPlanner:
+    def prepare(self, ctx: RunContext):
+        _ = ctx
+        raise AssertionError("record_only should not build retrieval plan")
+
+    def assemble(self, ctx: RunContext, *, memory_blocks):
+        _ = ctx, memory_blocks
+        raise AssertionError("record_only should not assemble prompt")
 
 
 def _mock_token_counter(model: str = "", messages=None, **kwargs) -> int:
@@ -846,3 +864,51 @@ async def test_thread_pipeline_fails_when_approval_prompt_not_delivered() -> Non
     record = next(iter(audit.records.values()))
     assert record.status == "failed"
     assert record.error == "approval prompt not delivered"
+
+
+async def test_thread_pipeline_record_only_skips_compaction_and_retrieval() -> None:
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    gateway = FakeGateway()
+    store = FakeMessageStore()
+    memory_broker = RecordingMemoryBroker()
+    pipeline = ThreadPipeline(
+        agent_runtime=FakeAgentRuntime(),
+        outbox=Outbox(gateway=gateway, store=store),
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+        memory_broker=memory_broker,
+        context_compactor=ExplodingCompactor(),  # type: ignore[arg-type]
+        retrieval_planner=ExplodingRetrievalPlanner(),  # type: ignore[arg-type]
+    )
+
+    event = _event()
+    decision = RouteDecision(
+        thread_id="qq:user:10001",
+        actor_id="qq:user:10001",
+        agent_id="aca",
+        channel_scope="qq:user:10001",
+        run_mode="record_only",
+    )
+    thread = await thread_manager.get_or_create(
+        thread_id=decision.thread_id,
+        channel_scope=decision.channel_scope,
+        last_event_at=event.timestamp,
+    )
+    run = await run_manager.open(event=event, decision=decision)
+    ctx = RunContext(
+        run=run,
+        event=event,
+        decision=decision,
+        thread=thread,
+        profile=_profile(),
+    )
+
+    await pipeline.execute(ctx)
+
+    updated_run = await run_manager.get(run.run_id)
+    assert updated_run is not None
+    assert updated_run.status == "completed"
+    assert memory_broker.retrieve_calls == []
+    assert len(memory_broker.extract_calls) == 1
+    assert gateway.sent == []

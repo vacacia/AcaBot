@@ -15,6 +15,7 @@ from acabot.runtime import (
     AgentProfile,
     ContextCompactionConfig,
     ContextCompactor,
+    FileSystemModelRegistryManager,
     InMemoryChannelEventStore,
     InMemoryMemoryStore,
     InMemoryMessageStore,
@@ -80,7 +81,6 @@ class FakeGateway:
 class FakeAgent:
     """用于 main 测试的最小默认 agent."""
 
-    default_model: str
     max_tool_rounds: int
 
     async def run(
@@ -88,6 +88,11 @@ class FakeAgent:
         system_prompt: str,
         messages: list[dict[str, Any]],
         model: str | None = None,
+        *,
+        request_options=None,
+        max_tool_rounds=None,
+        tools=None,
+        tool_executor=None,
     ) -> Any:
         """模拟执行一次 agent run.
 
@@ -95,11 +100,13 @@ class FakeAgent:
             system_prompt: 本次调用使用的 system prompt.
             messages: 上下文消息列表.
             model: 可选的模型名覆盖.
+            request_options: 当前 run 解析好的 request options.
 
         Returns:
             一个最小响应对象.
         """
 
+        _ = request_options, max_tool_rounds, tools, tool_executor
         return type(
             "Response",
             (),
@@ -109,7 +116,7 @@ class FakeAgent:
                 "error": None,
                 "usage": {},
                 "tool_calls_made": [],
-                "model_used": model or self.default_model,
+                "model_used": model or "",
                 "raw": {"system_prompt": system_prompt, "messages": messages},
             },
         )()
@@ -154,7 +161,6 @@ def test_build_runtime_app_uses_factories_and_runtime_config() -> None:
         agent_conf = config.get("agent", {})
         seen["agent"] = agent_conf
         return FakeAgent(
-            default_model=agent_conf.get("default_model", "gpt-4o-mini"),
             max_tool_rounds=agent_conf.get("max_tool_rounds", 5),
         )
 
@@ -196,7 +202,7 @@ def test_build_runtime_app_uses_factories_and_runtime_config() -> None:
     )
 
     assert seen["gateway"]["port"] == 9100
-    assert seen["agent"]["default_model"] == "claude-test"
+    assert seen["agent"]["max_tool_rounds"] == 9
     assert components.router.default_agent_id == "aca"
     assert components.prompt_loader.load("prompt/aca") == "You are Aca."
     assert profile.name == "Aca"
@@ -234,7 +240,6 @@ def test_build_runtime_app_keeps_bootstrap_sqlite_selection(tmp_path) -> None:
         config,
         gateway_factory=lambda config: FakeGateway(),
         agent_factory=lambda config: FakeAgent(
-            default_model=config.get("agent", {}).get("default_model", "gpt-4o-mini"),
             max_tool_rounds=config.get("agent", {}).get("max_tool_rounds", 5),
         ),
     )
@@ -326,6 +331,11 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
         memory_broker=MemoryBroker(),
         context_compactor=ContextCompactor(ContextCompactionConfig()),
         retrieval_planner=RetrievalPlanner(PromptAssemblyConfig()),
+        model_registry_manager=FileSystemModelRegistryManager(
+            providers_dir="/tmp/acabot-test-models/providers",
+            presets_dir="/tmp/acabot-test-models/presets",
+            bindings_dir="/tmp/acabot-test-models/bindings",
+        ),
         reference_backend=NullReferenceBackend(),
         plugin_manager=None,  # type: ignore[arg-type]
         control_plane=None,  # type: ignore[arg-type]

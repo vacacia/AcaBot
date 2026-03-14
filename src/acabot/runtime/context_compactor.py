@@ -218,14 +218,20 @@ class ModelContextSummarizer:
             ctx=ctx,
             dropped_messages=dropped_messages,
         )
-        response = await self.agent.complete(
-            system_prompt=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
-            model=self.config.summary_model or ctx.profile.default_model,
-        )
-        if response.error:
-            return ""
-        return _truncate_text(response.text or "", self.config.summary_max_chars)
+        for request in self._summary_requests(ctx):
+            # 这个模型的最大窗口装不装得下要压缩的上下文?
+            if not self._candidate_has_context_window(request, user_prompt):
+                continue
+            response = await self.agent.complete(
+                system_prompt=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}],
+                model=request.model,
+                request_options=request.to_request_options(),
+            )
+            if response.error:
+                continue
+            return _truncate_text(response.text or "", self.config.summary_max_chars)
+        return ""
 
     # region prompt构造
     def _build_prompts(
@@ -270,6 +276,46 @@ class ModelContextSummarizer:
                 "</conversation>\n\n"
                 "Return the summary only."
             ),
+        )
+
+    def _summary_requests(self, ctx: RunContext):
+        """返回当前摘要路径的候选模型链."""
+
+        request = ctx.summary_model_request
+        if request is not None:
+            yield request
+            for item in request.fallback_requests:
+                yield item
+            return
+
+        model = str(self.config.summary_model or ctx.profile.default_model or "")
+        if model:
+            from .model_registry import RuntimeModelRequest
+
+            yield RuntimeModelRequest(
+                provider_kind="legacy",
+                model=model,
+                binding_id="legacy:summary_model" if self.config.summary_model else "legacy:profile_default_model",
+            )
+
+    def _candidate_has_context_window(
+        self,
+        request,
+        user_prompt: str,
+    ) -> bool:
+        """判断候选摘要模型是否足以容纳当前摘要输入."""
+
+        if request.context_window <= 0:
+            return True
+        estimated = self._estimate_summary_tokens(request.model, user_prompt)
+        return request.context_window >= estimated
+
+    def _estimate_summary_tokens(self, model: str, user_prompt: str) -> int:
+        messages = [{"role": "user", "content": user_prompt}]
+        return max(
+            1,
+            self._count_tokens(model, messages)
+            + self.config.system_prompt_reserve_tokens,
         )
 
     def _serialize_messages(self, messages: list[dict[str, Any]]) -> str:
@@ -387,8 +433,17 @@ class ContextCompactor:
         # -----------------------------------------------------
         active_snapshot = snapshot or self.snapshot_thread(ctx.thread)
         messages = [dict(message) for message in active_snapshot.working_messages]
-        model = ctx.profile.default_model
-        context_window = self._get_context_window(model)
+        model_request = ctx.model_request
+        model = (
+            model_request.model
+            if model_request is not None and model_request.model
+            else ctx.profile.default_model
+        )
+        context_window = (
+            model_request.context_window
+            if model_request is not None and model_request.context_window > 0
+            else self._get_context_window(model)
+        )
         budget = self._history_budget(context_window)
         before_tokens = self._count_tokens(model, messages)
         effective_summary = active_snapshot.working_summary.strip()
@@ -723,7 +778,11 @@ class ContextCompactor:
             "turns_kept": result.kept_turns,
             "turns_dropped": result.dropped_turns,
             "strategy_used": result.strategy_used,
-            "model": ctx.profile.default_model,
+            "model": (
+                ctx.model_request.model
+                if ctx.model_request is not None and ctx.model_request.model
+                else ctx.profile.default_model
+            ),
         }
 
     # endregion

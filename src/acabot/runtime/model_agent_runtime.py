@@ -142,6 +142,9 @@ class ModelAgentRuntime(AgentRuntime):
 
         ctx.system_prompt = self.prompt_loader.load(ctx.profile.prompt_ref)
         tool_runtime = await self._resolve_tool_runtime(ctx)
+        capability_error = self._validate_model_capabilities(ctx, tool_runtime)
+        if capability_error is not None:
+            return capability_error
         try:
             response = await self._call_agent(ctx, tool_runtime)
         except ApprovalRequired as exc:
@@ -178,22 +181,73 @@ class ModelAgentRuntime(AgentRuntime):
         Returns:
             底层 agent 返回的 AgentResponse.
         """
-
+        
+        # 从 RunContext.model_request 中提取出模型名字符串: model_request -> resolved_model 
+        resolved_model = (
+            ctx.model_request.model
+            if ctx.model_request is not None and ctx.model_request.model
+            else ctx.profile.default_model
+        )
+        request_options = (
+            ctx.model_request.to_request_options()
+            if ctx.model_request is not None
+            else None
+        )
+        max_tool_rounds = self._resolve_max_tool_rounds(ctx)
         # 防止幻觉, 适配 API, 省 token
         if not tool_runtime.tools and tool_runtime.tool_executor is None:
             return await self.agent.run(
                 system_prompt=ctx.system_prompt,
                 messages=ctx.messages,
-                model=ctx.profile.default_model,
+                model=resolved_model,
+                request_options=request_options,
+                max_tool_rounds=max_tool_rounds,
             )
 
         return await self.agent.run(
             system_prompt=ctx.system_prompt,
             messages=ctx.messages,
-            model=ctx.profile.default_model,
+            model=resolved_model,
+            request_options=request_options,
+            max_tool_rounds=max_tool_rounds,
             tools=tool_runtime.tools,
             tool_executor=tool_runtime.tool_executor,
         )
+
+    @staticmethod
+    def _validate_model_capabilities(
+        ctx: RunContext,
+        tool_runtime: ToolRuntime,
+    ) -> AgentRuntimeResult | None:
+        """在真正调用模型前执行最小 capability 检查."""
+
+        request = ctx.model_request
+        if request is None:
+            return None
+        # request.supports_tools 是模型能力的声明
+        if (tool_runtime.tools or tool_runtime.tool_executor is not None) and not request.supports_tools:
+            return AgentRuntimeResult(
+                status="failed",
+                error=f"model does not support tools: {request.model}",
+                metadata={
+                    "provider_kind": request.provider_kind,
+                    "binding_id": request.binding_id,
+                    "preset_id": request.preset_id,
+                },
+            )
+        return None
+
+    @staticmethod
+    def _resolve_max_tool_rounds(ctx: RunContext) -> int | None:
+        """按当前 profile 解析本次 run 的 tool loop 上限."""
+
+        raw = ctx.profile.config.get("max_tool_rounds")
+        if raw not in {None, ""}:
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                return None
+        return None
 
     def _to_runtime_result(
         self,

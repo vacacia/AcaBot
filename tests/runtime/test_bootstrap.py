@@ -71,6 +71,8 @@ class FakeAgent:
         messages: list[dict[str, Any]],
         model: str | None = None,
         *,
+        request_options=None,
+        max_tool_rounds=None,
         tools=None,
         tool_executor=None,
     ) -> FakeAgentResponse:
@@ -80,6 +82,8 @@ class FakeAgent:
             system_prompt: 本次调用使用的 system prompt.
             messages: 传给模型的消息列表.
             model: 模型覆盖.
+            request_options: 当前 run 解析好的 request options.
+            max_tool_rounds: 当前 run 允许的最大 tool loop 轮数.
             tools: 当前 run 可见工具.
             tool_executor: 当前 run 的工具执行器.
 
@@ -92,6 +96,8 @@ class FakeAgent:
                 "system_prompt": system_prompt,
                 "messages": list(messages),
                 "model": model,
+                "request_options": dict(request_options or {}),
+                "max_tool_rounds": max_tool_rounds,
                 "tools": list(tools or []),
                 "tool_executor": tool_executor,
             }

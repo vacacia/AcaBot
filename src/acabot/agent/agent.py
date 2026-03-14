@@ -35,15 +35,13 @@ class LitellmAgent(BaseAgent):
     agent 自己不再默认拥有执行权.
     """
 
-    def __init__(self, default_model: str = "gpt-4o-mini", max_tool_rounds: int = 5):
+    def __init__(self, max_tool_rounds: int = 30):
         """初始化 LitellmAgent.
 
         Args:
-            default_model: 默认使用的 model name.
-            max_tool_rounds: 最多允许多少轮 tool calling.
+            max_tool_rounds: 缺省的 tool loop 上限. Runtime 可在每次调用时覆盖.
         """
 
-        self.default_model = default_model
         self.max_tool_rounds = max_tool_rounds
 
     # region run
@@ -53,6 +51,8 @@ class LitellmAgent(BaseAgent):
         messages: list[dict[str, Any]],
         model: str | None = None,
         *,
+        request_options: dict[str, Any] | None = None,
+        max_tool_rounds: int | None = None,
         tools: list[ToolSpec] | None = None,
         tool_executor: ToolExecutor | None = None,
     ) -> AgentResponse:
@@ -61,7 +61,9 @@ class LitellmAgent(BaseAgent):
         Args:
             system_prompt: 本次调用使用的 system prompt.
             messages: 传给 model 的 message list.
-            model: 可选的 model override.
+            model: 可选的 model override. Runtime 层必须拥有决定 model 和 agent 的最高权力.
+            request_options: 当前 run 已解析好的 provider 请求选项.
+            max_tool_rounds: 当前 run 允许的最大 tool loop 轮数. 缺省时回退到实例默认值.
             tools: 当前 run 暴露给 LLM 的工具 schema.
             tool_executor: 当前 run 使用的外部 tool executor.
 
@@ -69,8 +71,12 @@ class LitellmAgent(BaseAgent):
             一份 AgentResponse.
         """
 
-        use_model = model or self.default_model
+        use_model = str(model or "").strip()
+        if not use_model:
+            return AgentResponse(error="model is required", model_used="")
+        active_max_tool_rounds = self._resolve_max_tool_rounds(max_tool_rounds)
         active_tools, active_executor = self._resolve_tool_runtime(tools, tool_executor)
+        # 如果有工具但没有 executor, 报错返回
         if active_tools and active_executor is None:
             return AgentResponse(
                 error="tool_executor is required when tools are provided",
@@ -84,9 +90,12 @@ class LitellmAgent(BaseAgent):
         tool_calls_made: list[ToolCallRecord] = []
         all_attachments = []
 
-        for _ in range(self.max_tool_rounds + 1):
+        for _ in range(active_max_tool_rounds + 1):
             try:
                 kwargs: dict[str, Any] = {"model": use_model, "messages": full_messages}
+                # 合并配置文件里的额外配置 (比如 api_key, temperature)
+                # 但不允许覆盖 model, messages, tools 这些主参数
+                kwargs.update(self._normalized_request_options(request_options))
                 if tools_param:
                     kwargs["tools"] = tools_param
 
@@ -128,7 +137,7 @@ class LitellmAgent(BaseAgent):
             )
 
         return AgentResponse(
-            error=f"Tool calling exceeded max rounds ({self.max_tool_rounds})",
+            error=f"Tool calling exceeded max rounds ({active_max_tool_rounds})",
             model_used=use_model,
         )
 
@@ -140,6 +149,7 @@ class LitellmAgent(BaseAgent):
         system_prompt: str,
         messages: list[dict[str, Any]],
         model: str | None = None,
+        request_options: dict[str, Any] | None = None,
     ) -> AgentResponse:
         """执行一次不带 tool loop 的 completion.
 
@@ -147,16 +157,21 @@ class LitellmAgent(BaseAgent):
             system_prompt: 本次调用使用的 system prompt.
             messages: 传给 model 的 message list.
             model: 可选的 model override.
+            request_options: 当前 run 已解析好的 provider 请求选项.
 
         Returns:
             一份 AgentResponse.
         """
 
         completion = self._get_acompletion()
-        use_model = model or self.default_model
+        use_model = str(model or "").strip()
+        if not use_model:
+            return AgentResponse(error="model is required", model_used="")
         full_messages = [{"role": "system", "content": system_prompt}] + list(messages)
         try:
-            response = completion(model=use_model, messages=full_messages)
+            kwargs: dict[str, Any] = {"model": use_model, "messages": full_messages}
+            kwargs.update(self._normalized_request_options(request_options))
+            response = completion(**kwargs)
             if isawaitable(response):
                 response = await response
             choice = response.choices[0]
@@ -218,6 +233,26 @@ class LitellmAgent(BaseAgent):
             }
             for tool in tools
         ]
+
+    def _resolve_max_tool_rounds(self, value: int | None) -> int:
+        """解析本次调用实际使用的 tool loop 上限."""
+
+        if value is None:
+            return max(0, int(self.max_tool_rounds))
+        return max(0, int(value))
+
+    @staticmethod
+    def _normalized_request_options(
+        request_options: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """过滤不应覆盖主参数的 request options.
+        """
+
+        options = dict(request_options or {})
+        options.pop("model", None)
+        options.pop("messages", None)
+        options.pop("tools", None)
+        return options
 
     async def _handle_tool_calls(
         self,

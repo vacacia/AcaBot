@@ -1,4 +1,4 @@
-"""runtime.runs 定义 run 生命周期管理接口和内存实现.
+"""runtime.runs 定义 run 生命周期管理接口.
 
 RunManager 负责把一次 agent 执行变成正式对象, 并维护状态迁移.
 
@@ -13,12 +13,13 @@ from abc import ABC, abstractmethod
 
 from acabot.types import StandardEvent
 
+from .model_registry import PersistedModelSnapshot
 from .models import RouteDecision, RunRecord, RunStatus, RunStep
 from .stores import RunStore
 
 _ACTIVE_STATUSES: set[RunStatus] = {"queued", "running", "waiting_approval"}
 
-
+# region RunManager
 class RunManager(ABC):
     """run 生命周期管理接口.
     
@@ -26,7 +27,13 @@ class RunManager(ABC):
     """
 
     @abstractmethod
-    async def open(self, *, event: StandardEvent, decision: RouteDecision) -> RunRecord:
+    async def open(
+        self,
+        *,
+        event: StandardEvent,
+        decision: RouteDecision,
+        model_snapshot: PersistedModelSnapshot | None = None,
+    ) -> RunRecord:
         """根据 event 和 route 决策创建一条新的 run 记录."""
 
         ...
@@ -117,12 +124,9 @@ class RunManager(ABC):
 
         ...
 
-
+# region 内存版 RunManager
 class InMemoryRunManager(RunManager):
-    """内存版 RunManager.
-
-    当前实现暂不依赖数据库.
-    """
+    """内存版 RunManager."""
 
     def __init__(self) -> None:
         """初始化 run 表, step 表和取消请求集合."""
@@ -131,7 +135,13 @@ class InMemoryRunManager(RunManager):
         self._steps: dict[str, list[RunStep]] = {}
         self._cancel_requested: set[str] = set()
 
-    async def open(self, *, event: StandardEvent, decision: RouteDecision) -> RunRecord:
+    async def open(
+        self,
+        *,
+        event: StandardEvent,
+        decision: RouteDecision,
+        model_snapshot: PersistedModelSnapshot | None = None,
+    ) -> RunRecord:
         """创建一条新的 run 记录, 初始状态为 queued."""
 
         run = RunRecord(
@@ -142,7 +152,14 @@ class InMemoryRunManager(RunManager):
             trigger_event_id=event.event_id,
             status="queued",
             started_at=event.timestamp,
-            metadata=dict(decision.metadata),
+            metadata={
+                **dict(decision.metadata),
+                **(
+                    {"model_snapshot": model_snapshot.to_dict()}
+                    if model_snapshot is not None
+                    else {}
+                ),
+            },
         )
         self._runs[run.run_id] = run
         self._steps[run.run_id] = []
@@ -280,7 +297,7 @@ class InMemoryRunManager(RunManager):
 
         return int(time.time())
 
-
+# region RunStore 的 RunManager
 class StoreBackedRunManager(RunManager):
     """基于 RunStore 的 RunManager.
 
@@ -301,7 +318,13 @@ class StoreBackedRunManager(RunManager):
         self._runs: dict[str, RunRecord] = {}
         self._cancel_requested: set[str] = set()
 
-    async def open(self, *, event: StandardEvent, decision: RouteDecision) -> RunRecord:
+    async def open(
+        self,
+        *,
+        event: StandardEvent,
+        decision: RouteDecision,
+        model_snapshot: PersistedModelSnapshot | None = None,
+    ) -> RunRecord:
         """创建一条新的 run 记录, 初始状态为 queued.
 
         Args:
@@ -320,7 +343,14 @@ class StoreBackedRunManager(RunManager):
             trigger_event_id=event.event_id,
             status="queued",
             started_at=event.timestamp,
-            metadata=dict(decision.metadata),
+            metadata={
+                **dict(decision.metadata),
+                **(
+                    {"model_snapshot": model_snapshot.to_dict()}
+                    if model_snapshot is not None
+                    else {}
+                ),
+            },
         )
         self._runs[run.run_id] = run
         await self.store.create_run(run)

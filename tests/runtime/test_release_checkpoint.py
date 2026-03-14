@@ -49,6 +49,8 @@ class EchoCheckpointAgent(BaseAgent):
         messages: list[dict[str, Any]],
         model: str | None = None,
         *,
+        request_options=None,
+        max_tool_rounds=None,
         tools=None,
         tool_executor=None,
     ) -> AgentResponse:
@@ -58,6 +60,8 @@ class EchoCheckpointAgent(BaseAgent):
             system_prompt: 当前 system prompt.
             messages: 当前消息列表.
             model: 当前模型名.
+            request_options: 当前 run 解析好的 request options.
+            max_tool_rounds: 当前 run 允许的最大 tool loop 轮数.
             tools: 当前 run 暴露的 tools.
             tool_executor: 当前 run 的 tool executor.
 
@@ -70,6 +74,8 @@ class EchoCheckpointAgent(BaseAgent):
                 "system_prompt": system_prompt,
                 "messages": list(messages),
                 "model": model,
+                "request_options": dict(request_options or {}),
+                "max_tool_rounds": max_tool_rounds,
                 "tools": list(tools or []),
                 "tool_executor": tool_executor,
             }
@@ -84,6 +90,7 @@ class EchoCheckpointAgent(BaseAgent):
         system_prompt: str,
         messages: list[dict[str, Any]],
         model: str | None = None,
+        request_options=None,
     ) -> AgentResponse:
         """执行一次最小摘要调用.
 
@@ -96,7 +103,7 @@ class EchoCheckpointAgent(BaseAgent):
             一份普通摘要响应.
         """
 
-        _ = system_prompt, messages
+        _ = system_prompt, messages, request_options
         return AgentResponse(text=self.summary_text, model_used=model or "")
 
 
@@ -118,6 +125,8 @@ class ApprovalCheckpointAgent(BaseAgent):
         messages: list[dict[str, Any]],
         model: str | None = None,
         *,
+        request_options=None,
+        max_tool_rounds=None,
         tools=None,
         tool_executor=None,
     ) -> AgentResponse:
@@ -127,6 +136,8 @@ class ApprovalCheckpointAgent(BaseAgent):
             system_prompt: 当前 system prompt.
             messages: 当前消息列表.
             model: 当前模型名.
+            request_options: 当前 run 解析好的 request options.
+            max_tool_rounds: 当前 run 允许的最大 tool loop 轮数.
             tools: 当前 run 暴露的 tools.
             tool_executor: 当前 run 的 tool executor.
 
@@ -139,6 +150,8 @@ class ApprovalCheckpointAgent(BaseAgent):
                 "system_prompt": system_prompt,
                 "messages": list(messages),
                 "model": model,
+                "request_options": dict(request_options or {}),
+                "max_tool_rounds": max_tool_rounds,
                 "tools": list(tools or []),
                 "tool_executor": tool_executor,
             }
@@ -152,6 +165,7 @@ class ApprovalCheckpointAgent(BaseAgent):
         system_prompt: str,
         messages: list[dict[str, Any]],
         model: str | None = None,
+        request_options=None,
     ) -> AgentResponse:
         """执行一次最小摘要调用.
 
@@ -164,7 +178,7 @@ class ApprovalCheckpointAgent(BaseAgent):
             一份普通摘要响应.
         """
 
-        _ = system_prompt, messages
+        _ = system_prompt, messages, request_options
         return AgentResponse(text=self.summary_text, model_used=model or "")
 
 

@@ -23,7 +23,7 @@ def _make_msg(**kwargs):
 class TestLitellmAgent:
     @pytest.fixture
     def agent(self):
-        return LitellmAgent(default_model="gpt-4o-mini")
+        return LitellmAgent()
 
     def test_is_base_agent(self, agent):
         assert isinstance(agent, BaseAgent)
@@ -43,6 +43,7 @@ class TestLitellmAgent:
             resp = await agent.run(
                 system_prompt="test",
                 messages=[{"role": "user", "content": "hi"}],
+                model="gpt-4o-mini",
             )
 
         assert resp.text == "Hello!"
@@ -75,16 +76,28 @@ class TestLitellmAgent:
             resp = await agent.run(
                 system_prompt="test",
                 messages=[{"role": "user", "content": "hi"}],
+                model="gpt-4o-mini",
             )
 
         assert resp.error is not None
         assert "API error" in resp.error
 
+    async def test_requires_explicit_model_when_no_legacy_fallback(self):
+        agent = LitellmAgent()
+
+        resp = await agent.run(
+            system_prompt="test",
+            messages=[{"role": "user", "content": "hi"}],
+        )
+
+        assert resp.error == "model is required"
+        assert resp.model_used == ""
+
 
 class TestToolCalling:
     @pytest.fixture
     def agent(self):
-        return LitellmAgent(default_model="gpt-4o-mini")
+        return LitellmAgent()
 
     async def test_tool_loop_with_explicit_tools_and_executor(self, agent):
         tool_spec = ToolSpec(
@@ -151,6 +164,7 @@ class TestToolCalling:
             resp = await agent.run(
                 system_prompt="test",
                 messages=[{"role": "user", "content": "time?"}],
+                model="gpt-4o-mini",
                 tools=[tool_spec],
                 tool_executor=tool_executor,
             )
@@ -170,6 +184,7 @@ class TestToolCalling:
         resp = await agent.run(
             system_prompt="test",
             messages=[{"role": "user", "content": "time?"}],
+            model="gpt-4o-mini",
             tools=[tool_spec],
         )
 
@@ -218,6 +233,57 @@ class TestToolCalling:
                 await agent.run(
                     system_prompt="test",
                     messages=[{"role": "user", "content": "time?"}],
+                    model="gpt-4o-mini",
                     tools=[tool_spec],
                     tool_executor=tool_executor,
                 )
+
+    async def test_max_tool_rounds_override_is_applied(self, agent):
+        tc_msg = _make_msg(
+            content=None,
+            role="assistant",
+            tool_calls=[
+                type(
+                    "TC",
+                    (),
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": type(
+                            "F",
+                            (),
+                            {"name": "get_time", "arguments": "{}"},
+                        )(),
+                    },
+                )()
+            ],
+        )
+        tc_resp = AsyncMock()
+        tc_resp.choices = [type("C", (), {"message": tc_msg})()]
+        tc_resp.usage = type(
+            "U",
+            (),
+            {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        )()
+
+        async def tool_executor(tool_name, arguments):
+            _ = tool_name, arguments
+            return ToolExecutionResult(content="{}", raw={})
+
+        with patch("acabot.agent.agent.acompletion", return_value=tc_resp):
+            resp = await agent.run(
+                system_prompt="test",
+                messages=[{"role": "user", "content": "time?"}],
+                model="gpt-4o-mini",
+                max_tool_rounds=0,
+                tools=[
+                    ToolSpec(
+                        name="get_time",
+                        description="Get current time",
+                        parameters={"type": "object", "properties": {}},
+                    )
+                ],
+                tool_executor=tool_executor,
+            )
+
+        assert resp.error == "Tool calling exceeded max rounds (0)"

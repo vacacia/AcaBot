@@ -7,9 +7,12 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from acabot.types import Action, StandardEvent
+
+if TYPE_CHECKING:
+    from .model_registry import RuntimeModelRequest
 
 RunStatus = Literal[
     "queued",
@@ -894,6 +897,8 @@ class RunContext:
     decision: RouteDecision
     thread: ThreadState
     profile: AgentProfile
+    model_request: "RuntimeModelRequest | None" = None
+    summary_model_request: "RuntimeModelRequest | None" = None
     messages: list[dict[str, Any]] = field(default_factory=list)
     retrieval_plan: RetrievalPlan | None = None
     memory_blocks: list["MemoryBlock"] = field(default_factory=list)

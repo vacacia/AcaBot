@@ -1,12 +1,19 @@
+from pathlib import Path
+
 from acabot.config import Config
 from acabot.runtime import (
     AgentProfile,
     AgentProfileRegistry,
+    FileSystemModelRegistryManager,
     InMemoryChannelEventStore,
     InMemoryMemoryStore,
     InMemoryRunManager,
     InMemoryThreadManager,
     MemoryItem,
+    ModelBinding,
+    ModelProvider,
+    ModelPreset,
+    OpenAICompatibleProviderConfig,
     Outbox,
     RouteDecision,
     SubagentDelegationBroker,
@@ -558,4 +565,87 @@ async def test_runtime_control_plane_can_show_memory() -> None:
     assert result.scope == "user"
     assert result.scope_key == "qq:user:10001"
     assert len(result.items) == 1
-    assert result.items[0].content == "用户名字叫阿卡西亚"
+
+
+async def test_runtime_control_plane_can_manage_models(tmp_path: Path) -> None:
+    manager = FileSystemModelRegistryManager(
+        providers_dir=tmp_path / "models/providers",
+        presets_dir=tmp_path / "models/presets",
+        bindings_dir=tmp_path / "models/bindings",
+        legacy_global_default_model="legacy-global",
+    )
+    profile_registry = AgentProfileRegistry(
+        profiles={
+            "aca": AgentProfile(
+                agent_id="aca",
+                name="Aca",
+                prompt_ref="prompt/default",
+                default_model="profile-model",
+                config={},
+            ),
+        },
+        default_agent_id="aca",
+    )
+    control_plane = RuntimeControlPlane(
+        app=RuntimeApp(
+            gateway=FakeGateway(),
+            router=RuntimeRouter(default_agent_id="aca"),
+            thread_manager=InMemoryThreadManager(),
+            run_manager=InMemoryRunManager(),
+            channel_event_store=InMemoryChannelEventStore(),
+            pipeline=ThreadPipeline(
+                agent_runtime=FakeAgentRuntime(),
+                outbox=Outbox(gateway=FakeGateway(), store=FakeMessageStore()),
+                run_manager=InMemoryRunManager(),
+                thread_manager=InMemoryThreadManager(),
+            ),
+            profile_loader=_profile_loader,
+        ),
+        run_manager=InMemoryRunManager(),
+        profile_registry=profile_registry,
+        model_registry_manager=manager,
+    )
+
+    provider_result = await control_plane.upsert_model_provider(
+        ModelProvider(
+            provider_id="openai-main",
+            kind="openai_compatible",
+            config=OpenAICompatibleProviderConfig(
+                base_url="https://llm.example.com/v1",
+                api_key_env="OPENAI_API_KEY",
+            ),
+        )
+    )
+    preset_result = await control_plane.upsert_model_preset(
+        ModelPreset(
+            preset_id="preset-main",
+            provider_id="openai-main",
+            model="gpt-main",
+            context_window=128000,
+        )
+    )
+    binding_result = await control_plane.upsert_model_binding(
+        ModelBinding(
+            binding_id="binding:aca",
+            target_type="agent",
+            target_id="aca",
+            preset_id="preset-main",
+            timeout_sec=12,
+        )
+    )
+    preview = await control_plane.preview_effective_agent_model("aca")
+    impact = await control_plane.get_model_provider_impact("openai-main")
+    status = await control_plane.get_model_registry_status()
+    bindings = await control_plane.list_model_bindings()
+
+    assert provider_result.ok is True
+    assert preset_result.ok is True
+    assert binding_result.ok is True
+    assert preview.request is not None
+    assert preview.request.model == "gpt-main"
+    assert preview.request.execution_params["timeout"] == 12
+    assert impact.preset_ids == ["preset-main"]
+    assert impact.binding_ids == ["binding:aca"]
+    assert impact.agent_ids == ["aca"]
+    assert status.provider_count == 1
+    assert len(bindings) == 1

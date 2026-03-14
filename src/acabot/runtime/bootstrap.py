@@ -42,6 +42,7 @@ from .memory_broker import MemoryBroker
 from .memory_item_store import InMemoryMemoryStore
 from .memory_store import InMemoryMessageStore
 from .model_agent_runtime import ModelAgentRuntime
+from .model_registry import FileSystemModelRegistryManager
 from .models import AgentProfile, BindingRule, EventPolicy, InboundRule
 from .outbox import Outbox
 from .pipeline import ThreadPipeline
@@ -110,6 +111,7 @@ class RuntimeComponents:
         memory_broker (MemoryBroker): 长期记忆统一入口.
         context_compactor (ContextCompactor): 负责 token-aware working memory compaction 的 compactor.
         retrieval_planner (RetrievalPlanner): 负责 retrieval planning 和 prompt assembly 的 planner.
+        model_registry_manager (FileSystemModelRegistryManager): 模型真源与 active registry 管理器.
         reference_backend (ReferenceBackend): on-demand `reference / notebook` provider.
         plugin_manager (RuntimePluginManager): runtime world 的插件管理器.
         control_plane (RuntimeControlPlane): 本地 control plane 入口.
@@ -138,6 +140,7 @@ class RuntimeComponents:
     memory_broker: MemoryBroker
     context_compactor: ContextCompactor
     retrieval_planner: RetrievalPlanner
+    model_registry_manager: FileSystemModelRegistryManager
     reference_backend: ReferenceBackend
     plugin_manager: RuntimePluginManager
     control_plane: RuntimeControlPlane
@@ -165,6 +168,7 @@ def build_runtime_components(
     memory_broker: MemoryBroker | None = None,
     context_compactor: ContextCompactor | None = None,
     retrieval_planner: RetrievalPlanner | None = None,
+    model_registry_manager: FileSystemModelRegistryManager | None = None,
     reference_backend: ReferenceBackend | None = None,
     plugin_manager: RuntimePluginManager | None = None,
     tool_broker: ToolBroker | None = None,
@@ -189,6 +193,7 @@ def build_runtime_components(
         memory_broker: 可选的 MemoryBroker 实现.
         context_compactor: 可选的 ContextCompactor 实现.
         retrieval_planner: 可选的 RetrievalPlanner 实现.
+        model_registry_manager: 可选的模型注册表管理器.
         reference_backend: 可选的 ReferenceBackend 实现.
         plugin_manager: 可选的 RuntimePluginManager 实现.
         tool_broker: 可选的 ToolBroker 实现.
@@ -252,6 +257,7 @@ def build_runtime_components(
     )
     runtime_retrieval_planner.skill_registry = runtime_skill_registry
     runtime_reference_backend = reference_backend or _build_reference_backend(config)
+    runtime_model_registry_manager = model_registry_manager or _build_model_registry_manager(config)
     runtime_tool_broker = tool_broker or ToolBroker(skill_registry=runtime_skill_registry)
     runtime_tool_broker.skill_registry = runtime_skill_registry
     configured_plugins = plugins if plugins is not None else load_runtime_plugins_from_config(config)
@@ -310,6 +316,7 @@ def build_runtime_components(
         approval_resumer=runtime_approval_resumer,
         reference_backend=runtime_reference_backend,
         plugin_manager=runtime_plugin_manager,
+        model_registry_manager=runtime_model_registry_manager,
     )
     control_plane = RuntimeControlPlane(
         app=app,
@@ -320,6 +327,7 @@ def build_runtime_components(
         plugin_manager=runtime_plugin_manager,
         skill_registry=runtime_skill_registry,
         subagent_executor_registry=runtime_subagent_executor_registry,
+        model_registry_manager=runtime_model_registry_manager,
     )
     runtime_plugin_manager.attach_control_plane(control_plane)
     runtime_plugin_manager.attach_subagent_delegator(runtime_subagent_delegator)
@@ -340,6 +348,7 @@ def build_runtime_components(
         memory_broker=runtime_memory_broker,
         context_compactor=runtime_context_compactor,
         retrieval_planner=runtime_retrieval_planner,
+        model_registry_manager=runtime_model_registry_manager,
         reference_backend=runtime_reference_backend,
         plugin_manager=runtime_plugin_manager,
         control_plane=control_plane,
@@ -557,6 +566,34 @@ def _resolve_filesystem_path(
     if raw_value.is_absolute():
         return raw_value
     return base_dir / raw_value
+
+
+def _build_model_registry_manager(config: Config) -> FileSystemModelRegistryManager:
+    """根据现有 filesystem layout 构造模型注册表管理器."""
+
+    runtime_conf = config.get("runtime", {})
+    fs_conf = dict(runtime_conf.get("filesystem", {}))
+    manager = FileSystemModelRegistryManager(
+        providers_dir=_resolve_filesystem_path(
+            fs_conf,
+            key="model_providers_dir",
+            default="models/providers",
+        ),
+        presets_dir=_resolve_filesystem_path(
+            fs_conf,
+            key="model_presets_dir",
+            default="models/presets",
+        ),
+        bindings_dir=_resolve_filesystem_path(
+            fs_conf,
+            key="model_bindings_dir",
+            default="models/bindings",
+        ),
+        legacy_global_default_model=str(config.get("agent", {}).get("default_model", "") or ""),
+        legacy_summary_model=str(runtime_conf.get("context_compaction", {}).get("summary_model", "") or ""),
+    )
+    manager.reload_now()
+    return manager
 
 
 def _build_binding_rules(config: Config) -> list[BindingRule]:

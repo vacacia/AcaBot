@@ -1,4 +1,4 @@
-from acabot.runtime import InMemoryRunManager, RouteDecision, RunStep
+from acabot.runtime import InMemoryRunManager, PersistedModelSnapshot, RouteDecision, RunStep
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
 
@@ -102,3 +102,31 @@ async def test_run_manager_marks_interrupted_as_terminal_state() -> None:
     assert updated.status == "interrupted"
     assert updated.error == "process restarted before run finished"
     assert updated.finished_at is not None
+
+
+async def test_run_manager_open_persists_model_snapshot_metadata() -> None:
+    manager = InMemoryRunManager()
+    snapshot = PersistedModelSnapshot(
+        binding_id="binding:aca",
+        provider_id="openai-main",
+        preset_id="preset:main",
+        provider_kind="openai_compatible",
+        api_key_env="OPENAI_API_KEY",
+        model="gpt-main",
+        context_window=128000,
+        supports_tools=True,
+        supports_vision=False,
+        resolved_non_secret_params={"api_base": "https://llm.example.com/v1"},
+    )
+
+    run = await manager.open(
+        event=_event(),
+        decision=_decision(),
+        model_snapshot=snapshot,
+    )
+
+    updated = await manager.get(run.run_id)
+
+    assert updated is not None
+    assert updated.metadata["model_snapshot"]["model"] == "gpt-main"
+    assert updated.metadata["model_snapshot"]["binding_id"] == "binding:aca"

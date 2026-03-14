@@ -99,6 +99,15 @@ class ThreadPipeline:
             # 锁内: 写入用户消息 + 创建 thread 快照
             async with ctx.thread.lock:
                 self._append_incoming_message(ctx)
+            # -----------------------------------------------------
+            # record_only 模式
+            # -----------------------------------------------------
+            if ctx.decision.run_mode == "record_only":
+                await self.thread_manager.save(ctx.thread)
+                await self.run_manager.mark_completed(ctx.run.run_id)
+                await self._extract_memory_safely(ctx)
+                return  # 不进入 compaction / retrieval / prompt assembly / LLM
+            async with ctx.thread.lock:
                 if self.context_compactor is not None:
                     compaction_snapshot = self.context_compactor.snapshot_thread(ctx.thread)
             # -----------------------------------------------------
@@ -149,15 +158,6 @@ class ThreadPipeline:
                 else:
                     # 没有 planner, 直接使用 compaction 后的消息
                     ctx.messages = list(ctx.metadata.get("effective_compacted_messages", ctx.thread.working_messages))
-            # -----------------------------------------------------
-            # record_only 模式
-            # -----------------------------------------------------
-            if ctx.decision.run_mode == "record_only":
-                await self.thread_manager.save(ctx.thread)
-                await self.run_manager.mark_completed(ctx.run.run_id)
-                await self._extract_memory_safely(ctx)
-                return # 不调用 LLM
-
             # -----------------------------------------------------
             # 注入记忆, 调用 Agent
             # -----------------------------------------------------

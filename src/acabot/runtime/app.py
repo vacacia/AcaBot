@@ -15,6 +15,7 @@ from acabot.types import StandardEvent
 
 from .approval_resumer import ApprovalResumer, ApprovalResumeResult, NoopApprovalResumer
 from .gateway_protocol import GatewayProtocol
+from .model_registry import FileSystemModelRegistryManager, PersistedModelSnapshot, RuntimeModelRequest
 from .models import (
     ApprovalDecisionResult,
     AgentProfile,
@@ -58,6 +59,7 @@ class RuntimeApp:
         approval_resumer: ApprovalResumer | None = None,
         reference_backend: ReferenceBackend | None = None,
         plugin_manager: RuntimePluginManager | None = None,
+        model_registry_manager: FileSystemModelRegistryManager | None = None,
     ) -> None:
         """初始化 RuntimeApp.
 
@@ -72,6 +74,7 @@ class RuntimeApp:
             approval_resumer: approval 通过后的续执行器.
             reference_backend: `reference / notebook` provider. 默认允许 lazy init.
             plugin_manager: runtime world 的插件管理器.
+            model_registry_manager: 运行时模型注册表管理器.
         """
 
         self.gateway = gateway
@@ -84,6 +87,7 @@ class RuntimeApp:
         self.approval_resumer = approval_resumer or NoopApprovalResumer()
         self.reference_backend = reference_backend
         self.plugin_manager = plugin_manager
+        self.model_registry_manager = model_registry_manager
         self.last_recovery_report = RecoveryReport()
         self._pending_approvals: dict[str, PendingApprovalRecord] = {}
 
@@ -152,13 +156,42 @@ class RuntimeApp:
             decision = await self.router.route(event)
             if decision.run_mode == "silent_drop":
                 return
+            # 根据路由决策, 创建或获取当前的对话 Thread
             thread = await self.thread_manager.get_or_create(
                 thread_id=decision.thread_id,
                 channel_scope=decision.channel_scope,
                 last_event_at=event.timestamp,
             )
+            # 是否应用 thread 级别的 **agent** override
             decision = self._apply_thread_agent_override(decision, thread)
-            run = await self.run_manager.open(event=event, decision=decision)
+            try:
+                # 先契约, 后执行
+                profile = self._load_profile_for_event(decision)
+                model_request, model_snapshot, summary_model_request = self._resolve_model_requests(
+                    decision=decision,
+                    profile=profile,
+                )
+            except Exception as exc:
+                # 路由或配置加载失败, 无法继续正常 run 了. 记录一个 run 来关联这个事件, 并收尾为 failed.
+                run = await self.run_manager.open(event=event, decision=decision)
+                run_id = run.run_id
+                if decision.metadata.get("event_persist", True):
+                    await self.channel_event_store.save(
+                        self._build_channel_event_record(
+                            event=event,
+                            decision=decision,
+                            run_id=run.run_id,
+                        )
+                    )
+                await self._mark_failed_safely(run.run_id, f"runtime app crashed: {exc}")
+                logger.exception("Failed before run setup completed: event_id=%s", event.event_id)
+                return
+            # 这次对话绑定了某个特定的模型凭证
+            run = await self.run_manager.open(
+                event=event,
+                decision=decision,
+                model_snapshot=model_snapshot,
+            )
             run_id = run.run_id
             if decision.metadata.get("event_persist", True):
                 await self.channel_event_store.save(
@@ -168,13 +201,15 @@ class RuntimeApp:
                         run_id=run.run_id,
                     )
                 )
-            profile = self._load_profile_for_event(decision)
+            
             ctx = RunContext(
                 run=run,
                 event=event,
                 decision=decision,
                 thread=thread,
                 profile=profile,
+                model_request=model_request, # 解析出的 model 被打包进 RunContext
+                summary_model_request=summary_model_request,
             )
             await self.pipeline.execute(ctx)
         except Exception as exc:
@@ -198,9 +233,45 @@ class RuntimeApp:
                 agent_id=decision.agent_id,
                 name=decision.agent_id,
                 prompt_ref="prompt/record_only",
-                default_model="record-only",
+                default_model="",
             )
         return self.profile_loader(decision)
+
+    def _resolve_model_requests(
+        self,
+        *,
+        decision: RouteDecision,
+        profile: AgentProfile,
+    ) -> tuple[
+        RuntimeModelRequest | None,
+        PersistedModelSnapshot | None,
+        RuntimeModelRequest | None,
+    ]:
+        """通过 Router 决定了Agent ID, 并加载该 Agent 的Profile
+
+        从 ModelRegistryManager 解析出本次 **run** 和 summary 使用的模型请求配置.
+        
+        Returns:
+            model_request、model_snapshot、summary_model_request 三元组.
+
+        """
+
+        manager = self.model_registry_manager
+        if manager is None:
+            return None, None, None
+        explicit_profile_default_model = str(profile.config.get("default_model", "") or "")
+        # 向 ModelRegistryManager 要当前这次 Run 需要的所有模型物料
+        model_request, model_snapshot = manager.resolve_run_request(
+            run_mode=decision.run_mode,
+            agent_id=profile.agent_id,
+            explicit_profile_default_model=explicit_profile_default_model,
+            effective_profile_default_model=profile.default_model,
+        )
+
+        summary_model_request = manager.resolve_summary_request(
+            primary_request=model_request,
+        )
+        return model_request, model_snapshot, summary_model_request
 
     @staticmethod
     def _build_channel_event_record(
@@ -243,6 +314,7 @@ class RuntimeApp:
             raw_event=dict(event.raw_event),
         )
 
+    # region override decision
     @staticmethod
     def _apply_thread_agent_override(
         decision: RouteDecision,
@@ -258,6 +330,7 @@ class RuntimeApp:
             应用 override 后的 RouteDecision. 未声明 override 时返回原对象.
         """
 
+        # 有没有手动指定的命令
         override_agent_id = str(thread.metadata.get("thread_agent_override", "") or "")
         if not override_agent_id:
             return decision

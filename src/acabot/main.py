@@ -82,7 +82,6 @@ def create_agent(config: Config) -> BaseAgent:
     from .agent.agent import LitellmAgent
 
     return LitellmAgent(
-        default_model=agent_conf.get("default_model", "gpt-4o-mini"),
         max_tool_rounds=agent_conf.get("max_tool_rounds", 5),
     )
 

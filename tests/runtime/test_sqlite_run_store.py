@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from acabot.runtime import SQLiteRunStore, StoreBackedRunManager, RouteDecision
+from acabot.runtime import PersistedModelSnapshot, SQLiteRunStore, StoreBackedRunManager, RouteDecision
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
 
@@ -116,3 +116,37 @@ async def test_store_backed_run_manager_persists_interrupted_state(
     assert restored.status == "interrupted"
     assert restored.error == "process restarted before run finished"
     assert active_runs == []
+
+
+async def test_store_backed_run_manager_persists_model_snapshot_metadata(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "runtime.db"
+    store = SQLiteRunStore(db_path)
+    manager = StoreBackedRunManager(store)
+    snapshot = PersistedModelSnapshot(
+        binding_id="binding:aca",
+        provider_id="openai-main",
+        preset_id="preset:main",
+        provider_kind="openai_compatible",
+        api_key_env="OPENAI_API_KEY",
+        model="gpt-main",
+        context_window=128000,
+        supports_tools=True,
+        supports_vision=False,
+        resolved_non_secret_params={"api_base": "https://llm.example.com/v1"},
+    )
+
+    try:
+        run = await manager.open(
+            event=_event(),
+            decision=_decision(),
+            model_snapshot=snapshot,
+        )
+        restored = await manager.get(run.run_id)
+    finally:
+        store.close()
+
+    assert restored is not None
+    assert restored.metadata["model_snapshot"]["provider_id"] == "openai-main"
+    assert restored.metadata["model_snapshot"]["model"] == "gpt-main"

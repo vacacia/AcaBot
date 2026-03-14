@@ -24,6 +24,8 @@ class ConfigExampleAgent(BaseAgent):
         messages: list[dict[str, object]],
         model: str | None = None,
         *,
+        request_options=None,
+        max_tool_rounds=None,
         tools=None,
         tool_executor=None,
     ) -> AgentResponse:
@@ -33,6 +35,8 @@ class ConfigExampleAgent(BaseAgent):
             system_prompt: 当前 system prompt.
             messages: 当前消息列表.
             model: 当前模型名.
+            request_options: 当前 run 解析好的 request options.
+            max_tool_rounds: 当前 run 允许的最大 tool loop 轮数.
             tools: 当前可见 tools.
             tool_executor: 当前 tool executor.
 
@@ -40,7 +44,7 @@ class ConfigExampleAgent(BaseAgent):
             一份最小 AgentResponse.
         """
 
-        _ = system_prompt, messages, model, tools, tool_executor
+        _ = system_prompt, messages, model, request_options, max_tool_rounds, tools, tool_executor
         return AgentResponse(text="ok")
 
     async def complete(
@@ -48,6 +52,7 @@ class ConfigExampleAgent(BaseAgent):
         system_prompt: str,
         messages: list[dict[str, object]],
         model: str | None = None,
+        request_options=None,
     ) -> AgentResponse:
         """返回一份最小摘要响应.
 
@@ -60,7 +65,7 @@ class ConfigExampleAgent(BaseAgent):
             一份最小 AgentResponse.
         """
 
-        _ = system_prompt, messages, model
+        _ = system_prompt, messages, model, request_options
         return AgentResponse(text="summary")
 
 

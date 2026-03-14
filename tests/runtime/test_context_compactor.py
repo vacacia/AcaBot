@@ -131,12 +131,14 @@ class _SummaryAgent:
         system_prompt: str,
         messages: list[dict[str, object]],
         model: str | None = None,
+        request_options=None,
     ):
         self.calls.append(
             {
                 "system_prompt": system_prompt,
                 "messages": list(messages),
                 "model": model,
+                "request_options": dict(request_options or {}),
             }
         )
         return type(
