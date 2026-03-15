@@ -12,6 +12,8 @@ from typing import Any
 from acabot.config import Config
 from acabot.main import build_runtime_app, create_message_store, wait_for_shutdown_signal
 from acabot.runtime import (
+    ComputerRuntime,
+    ComputerRuntimeConfig,
     AgentProfile,
     ContextCompactionConfig,
     ContextCompactor,
@@ -335,6 +337,12 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
             providers_dir="/tmp/acabot-test-models/providers",
             presets_dir="/tmp/acabot-test-models/presets",
             bindings_dir="/tmp/acabot-test-models/bindings",
+        ),
+        computer_runtime=ComputerRuntime(
+            config=ComputerRuntimeConfig(
+                root_dir="/tmp/acabot-test-computer",
+                skill_catalog_dir="/tmp/acabot-test-computer/catalog/skills",
+            )
         ),
         reference_backend=NullReferenceBackend(),
         plugin_manager=None,  # type: ignore[arg-type]

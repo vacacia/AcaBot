@@ -4,6 +4,9 @@ from acabot.config import Config
 from acabot.runtime import (
     AgentProfile,
     AgentProfileRegistry,
+    ComputerRuntime,
+    ComputerRuntimeConfig,
+    ComputerRuntimeOverride,
     FileSystemModelRegistryManager,
     InMemoryChannelEventStore,
     InMemoryMemoryStore,
@@ -16,6 +19,7 @@ from acabot.runtime import (
     OpenAICompatibleProviderConfig,
     Outbox,
     RouteDecision,
+    RunContext,
     SubagentDelegationBroker,
     SubagentExecutorRegistry,
     RuntimeApp,
@@ -649,3 +653,301 @@ async def test_runtime_control_plane_can_manage_models(tmp_path: Path) -> None:
     assert impact.agent_ids == ["aca"]
     assert status.provider_count == 1
     assert len(bindings) == 1
+
+
+async def test_runtime_control_plane_can_list_workspaces(tmp_path: Path) -> None:
+    app = RuntimeApp(
+        gateway=FakeGateway(),
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=InMemoryThreadManager(),
+        run_manager=InMemoryRunManager(),
+        channel_event_store=InMemoryChannelEventStore(),
+        pipeline=ThreadPipeline(
+            agent_runtime=FakeAgentRuntime(),
+            outbox=Outbox(gateway=FakeGateway(), store=FakeMessageStore()),
+            run_manager=InMemoryRunManager(),
+            thread_manager=InMemoryThreadManager(),
+        ),
+        profile_loader=_profile_loader,
+    )
+    computer_runtime = ComputerRuntime(
+        config=ComputerRuntimeConfig(
+            root_dir=str(tmp_path / "workspaces"),
+            skill_catalog_dir=str(tmp_path / "workspaces/catalog/skills"),
+        )
+    )
+    thread = await app.thread_manager.get_or_create(
+        thread_id="qq:user:10001",
+        channel_scope="qq:user:10001",
+    )
+    ctx = RunContext(
+        run=await app.run_manager.open(
+            event=_event(),
+            decision=RouteDecision(
+                thread_id="qq:user:10001",
+                actor_id="qq:user:10001",
+                agent_id="aca",
+                channel_scope="qq:user:10001",
+            ),
+        ),
+        event=_event(),
+        decision=RouteDecision(
+            thread_id="qq:user:10001",
+            actor_id="qq:user:10001",
+            agent_id="aca",
+            channel_scope="qq:user:10001",
+        ),
+        thread=thread,
+        profile=_profile_loader(
+            RouteDecision(
+                thread_id="qq:user:10001",
+                actor_id="qq:user:10001",
+                agent_id="aca",
+                channel_scope="qq:user:10001",
+            )
+        ),
+    )
+    await computer_runtime.prepare_run_context(ctx)
+    control_plane = RuntimeControlPlane(
+        app=app,
+        run_manager=app.run_manager,
+        thread_manager=app.thread_manager,
+        computer_runtime=computer_runtime,
+    )
+
+    items = await control_plane.list_workspaces()
+
+    assert len(items) == 1
+    assert items[0].thread_id == "qq:user:10001"
+
+    attachments = await control_plane.list_workspace_attachments(thread_id="qq:user:10001")
+    sandbox = await control_plane.get_sandbox_status(thread_id="qq:user:10001")
+
+    assert attachments == []
+    assert sandbox.backend_kind == "host"
+
+
+async def test_runtime_control_plane_lists_workspace_activity_from_exec_steps(
+    tmp_path: Path,
+) -> None:
+    run_manager = InMemoryRunManager()
+    app = RuntimeApp(
+        gateway=FakeGateway(),
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=InMemoryThreadManager(),
+        run_manager=run_manager,
+        channel_event_store=InMemoryChannelEventStore(),
+        pipeline=ThreadPipeline(
+            agent_runtime=FakeAgentRuntime(),
+            outbox=Outbox(gateway=FakeGateway(), store=FakeMessageStore()),
+            run_manager=run_manager,
+            thread_manager=InMemoryThreadManager(),
+        ),
+        profile_loader=_profile_loader,
+    )
+    computer_runtime = ComputerRuntime(
+        config=ComputerRuntimeConfig(
+            root_dir=str(tmp_path / "workspaces"),
+            skill_catalog_dir=str(tmp_path / "workspaces/catalog/skills"),
+        ),
+        run_manager=run_manager,
+    )
+    thread = await app.thread_manager.get_or_create(
+        thread_id="qq:user:10001",
+        channel_scope="qq:user:10001",
+    )
+    run = await run_manager.open(
+        event=_event(),
+        decision=RouteDecision(
+            thread_id="qq:user:10001",
+            actor_id="qq:user:10001",
+            agent_id="aca",
+            channel_scope="qq:user:10001",
+        ),
+    )
+    ctx = RunContext(
+        run=run,
+        event=_event(),
+        decision=RouteDecision(
+            thread_id="qq:user:10001",
+            actor_id="qq:user:10001",
+            agent_id="aca",
+            channel_scope="qq:user:10001",
+        ),
+        thread=thread,
+        profile=_profile_loader(
+            RouteDecision(
+                thread_id="qq:user:10001",
+                actor_id="qq:user:10001",
+                agent_id="aca",
+                channel_scope="qq:user:10001",
+            )
+        ),
+    )
+    await computer_runtime.prepare_run_context(ctx)
+    await computer_runtime.exec_once(
+        thread_id=thread.thread_id,
+        run_id=run.run_id,
+        command="printf 'activity'",
+        policy=ctx.computer_policy_effective,
+    )
+    control_plane = RuntimeControlPlane(
+        app=app,
+        run_manager=run_manager,
+        computer_runtime=computer_runtime,
+    )
+
+    items = await control_plane.list_workspace_activity(
+        thread_id="qq:user:10001",
+        step_types=["exec"],
+    )
+
+    assert len(items) == 1
+    assert items[0].thread_id == "qq:user:10001"
+    assert items[0].payload["command"] == "printf 'activity'"
+
+
+async def test_runtime_control_plane_prune_workspace_force_cancels_active_run(
+    tmp_path: Path,
+) -> None:
+    run_manager = InMemoryRunManager()
+    thread_manager = InMemoryThreadManager()
+    app = RuntimeApp(
+        gateway=FakeGateway(),
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=thread_manager,
+        run_manager=run_manager,
+        channel_event_store=InMemoryChannelEventStore(),
+        pipeline=ThreadPipeline(
+            agent_runtime=FakeAgentRuntime(),
+            outbox=Outbox(gateway=FakeGateway(), store=FakeMessageStore()),
+            run_manager=run_manager,
+            thread_manager=thread_manager,
+        ),
+        profile_loader=_profile_loader,
+    )
+    computer_runtime = ComputerRuntime(
+        config=ComputerRuntimeConfig(
+            root_dir=str(tmp_path / "workspaces"),
+            skill_catalog_dir=str(tmp_path / "workspaces/catalog/skills"),
+        ),
+        run_manager=run_manager,
+    )
+    thread = await thread_manager.get_or_create(
+        thread_id="qq:user:10001",
+        channel_scope="qq:user:10001",
+    )
+    run = await run_manager.open(
+        event=_event(),
+        decision=RouteDecision(
+            thread_id="qq:user:10001",
+            actor_id="qq:user:10001",
+            agent_id="aca",
+            channel_scope="qq:user:10001",
+        ),
+    )
+    await run_manager.mark_running(run.run_id)
+    ctx = RunContext(
+        run=run,
+        event=_event(),
+        decision=RouteDecision(
+            thread_id="qq:user:10001",
+            actor_id="qq:user:10001",
+            agent_id="aca",
+            channel_scope="qq:user:10001",
+        ),
+        thread=thread,
+        profile=_profile_loader(
+            RouteDecision(
+                thread_id="qq:user:10001",
+                actor_id="qq:user:10001",
+                agent_id="aca",
+                channel_scope="qq:user:10001",
+            )
+        ),
+    )
+    await computer_runtime.prepare_run_context(ctx)
+    session = await computer_runtime.open_session(
+        thread_id=thread.thread_id,
+        run_id=run.run_id,
+        agent_id="aca",
+        policy=ctx.computer_policy_effective,
+    )
+    control_plane = RuntimeControlPlane(
+        app=app,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+        computer_runtime=computer_runtime,
+    )
+
+    result = await control_plane.prune_workspace(
+        thread_id=thread.thread_id,
+        force=True,
+    )
+    updated = await run_manager.get(run.run_id)
+    items = await control_plane.list_workspace_activity(
+        thread_id=thread.thread_id,
+        step_types=["workspace_prune"],
+    )
+
+    assert result.ok is True
+    assert updated is not None
+    assert updated.status == "cancelled"
+    assert session.session_id not in computer_runtime.list_session_ids(thread.thread_id)
+    assert len(items) == 1
+
+
+async def test_runtime_control_plane_rejects_active_thread_computer_override_without_force(
+    tmp_path: Path,
+) -> None:
+    run_manager = InMemoryRunManager()
+    thread_manager = InMemoryThreadManager()
+    app = RuntimeApp(
+        gateway=FakeGateway(),
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=thread_manager,
+        run_manager=run_manager,
+        channel_event_store=InMemoryChannelEventStore(),
+        pipeline=ThreadPipeline(
+            agent_runtime=FakeAgentRuntime(),
+            outbox=Outbox(gateway=FakeGateway(), store=FakeMessageStore()),
+            run_manager=run_manager,
+            thread_manager=thread_manager,
+        ),
+        profile_loader=_profile_loader,
+    )
+    computer_runtime = ComputerRuntime(
+        config=ComputerRuntimeConfig(
+            root_dir=str(tmp_path / "workspaces"),
+            skill_catalog_dir=str(tmp_path / "workspaces/catalog/skills"),
+        ),
+        run_manager=run_manager,
+    )
+    thread = await thread_manager.get_or_create(
+        thread_id="qq:user:10001",
+        channel_scope="qq:user:10001",
+    )
+    run = await run_manager.open(
+        event=_event(),
+        decision=RouteDecision(
+            thread_id=thread.thread_id,
+            actor_id="qq:user:10001",
+            agent_id="aca",
+            channel_scope="qq:user:10001",
+        ),
+    )
+    await run_manager.mark_running(run.run_id)
+    control_plane = RuntimeControlPlane(
+        app=app,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+        computer_runtime=computer_runtime,
+    )
+
+    result = await control_plane.set_thread_computer_override(
+        thread_id=thread.thread_id,
+        override=ComputerRuntimeOverride(backend="docker"),
+    )
+
+    assert result.ok is False
+    assert result.message == "thread in use"

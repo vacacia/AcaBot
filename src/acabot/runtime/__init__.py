@@ -1,7 +1,17 @@
-"""核心运行时对象.
+"""AcaBot 核心执行引擎 (Runtime Engine).
 
-这里先集中暴露数据模型, router, manager, store interface.
-后续 App, ThreadPipeline, Outbox 继续挂到这一层.
+Runtime 层是将 AcaBot 各大组件拼装起来
+当 Gateway 接收并解析消息后, 会将标准事件交由本层的 `RuntimeApp` 进行主循环处理
+
+此 `__init__.py` 是 Runtime 层对外的“统一暴露点” (Facade), 集中导出了所有运行时所需的稳定基础对象,主要分为以下几个子域: 
+
+1. 编排与调度 (Orchestration): `RuntimeApp`, `AgentRuntime`, `ThreadManager`, `RunManager`
+2. 认知与记忆 (Cognition & Memory): `ModelRegistry` (模型调度), `MemoryBroker` (上下文压缩与存储)
+3. 交互与沙箱 (Tools & Compute): `ToolBroker` (工具收发), `ComputerService` (终端执行与工作区隔离)
+4. 身份与委派 (Identity & Delegation): `AgentProfile` (人格设定), `SubagentExecutionService` (主副 Agent 委派)
+
+由于依赖反转, `computer` 作为物理沙箱抽象在此处定义
+而将沙箱暴漏为 LLM 工具的具体适配器逻辑位于 `runtime.plugins.computer_tool_adapter`。
 """
 
 from .agent_runtime import AgentRuntime
@@ -12,6 +22,26 @@ from .approval_resumer import (
 )
 from .app import RuntimeApp
 from .bootstrap import RuntimeComponents, build_runtime_components
+from .computer import (
+    AttachmentSnapshot,
+    AttachmentStageResult,
+    CommandExecutionResult,
+    CommandSession,
+    ComputerBackend,
+    ComputerRuntimeConfig,
+    ComputerPolicy,
+    ComputerRuntimeOverride,
+    ComputerRuntime,
+    DockerSandboxBackend,
+    HostComputerBackend,
+    RemoteComputerBackend,
+    WorkspaceFileEntry,
+    WorkspaceManager,
+    WorkspaceSandboxStatus,
+    WorkspaceState,
+    parse_computer_override,
+    parse_computer_policy,
+)
 from .context_compactor import (
     ContextCompactionConfig,
     ContextCompactionResult,
@@ -119,6 +149,7 @@ from .plugin_manager import (
     parse_runtime_plugin_spec,
 )
 from .plugins import (
+    ComputerToolAdapterPlugin,
     NapCatToolsPlugin,
     OpsControlPlugin,
     ReferenceToolsPlugin,
@@ -209,6 +240,11 @@ __all__ = [
     "ChainedPromptLoader",
     "ChannelEventRecord",
     "ChannelEventStore",
+    "ComputerBackend",
+    "ComputerRuntimeConfig",
+    "ComputerPolicy",
+    "ComputerRuntimeOverride",
+    "ComputerRuntime",
     "ContextCompactionConfig",
     "ContextCompactionResult",
     "ContextCompactor",
@@ -225,6 +261,7 @@ __all__ = [
     "ModelContextSummarizer",
     "DeliveryResult",
     "DispatchReport",
+    "DockerSandboxBackend",
     "build_runtime_components",
     "EventPolicy",
     "EventPolicyDecision",
@@ -235,6 +272,7 @@ __all__ = [
     "InMemoryRunManager",
     "InMemoryMessageStore",
     "InMemoryThreadManager",
+    "HostComputerBackend",
     "FileSystemProfileLoader",
     "FileSystemPromptLoader",
     "FileSystemBindingLoader",
@@ -284,6 +322,8 @@ __all__ = [
     "PromptAssemblyConfig",
     "PromptLoader",
     "PromptSlot",
+    "parse_computer_override",
+    "parse_computer_policy",
     "RouteDecision",
     "RecoveryReport",
     "RuntimeComponents",
@@ -315,6 +355,7 @@ __all__ = [
     "load_runtime_plugin",
     "load_runtime_plugins_from_config",
     "parse_runtime_plugin_spec",
+    "ComputerToolAdapterPlugin",
     "NapCatToolsPlugin",
     "OpsControlPlugin",
     "ReferenceToolsPlugin",
@@ -357,6 +398,15 @@ __all__ = [
     "ThreadRecord",
     "ThreadState",
     "ThreadStore",
+    "WorkspaceFileEntry",
+    "WorkspaceManager",
+    "WorkspaceSandboxStatus",
+    "WorkspaceState",
+    "AttachmentSnapshot",
+    "AttachmentStageResult",
+    "CommandExecutionResult",
+    "CommandSession",
+    "RemoteComputerBackend",
     "AllowAllToolPolicy",
     "InMemoryToolAudit",
     "ToolRuntime",

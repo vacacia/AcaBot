@@ -14,6 +14,7 @@ from typing import Callable
 from acabot.types import StandardEvent
 
 from .approval_resumer import ApprovalResumer, ApprovalResumeResult, NoopApprovalResumer
+from .computer import ComputerRuntime
 from .gateway_protocol import GatewayProtocol
 from .model_registry import FileSystemModelRegistryManager, PersistedModelSnapshot, RuntimeModelRequest
 from .models import (
@@ -60,6 +61,7 @@ class RuntimeApp:
         reference_backend: ReferenceBackend | None = None,
         plugin_manager: RuntimePluginManager | None = None,
         model_registry_manager: FileSystemModelRegistryManager | None = None,
+        computer_runtime: ComputerRuntime | None = None,
     ) -> None:
         """初始化 RuntimeApp.
 
@@ -75,6 +77,7 @@ class RuntimeApp:
             reference_backend: `reference / notebook` provider. 默认允许 lazy init.
             plugin_manager: runtime world 的插件管理器.
             model_registry_manager: 运行时模型注册表管理器.
+            computer_runtime: 运行时 computer 基础设施入口.
         """
 
         self.gateway = gateway
@@ -88,6 +91,7 @@ class RuntimeApp:
         self.reference_backend = reference_backend
         self.plugin_manager = plugin_manager
         self.model_registry_manager = model_registry_manager
+        self.computer_runtime = computer_runtime
         self.last_recovery_report = RecoveryReport()
         self._pending_approvals: dict[str, PendingApprovalRecord] = {}
 
@@ -634,10 +638,12 @@ class RuntimeApp:
         """
 
         try:
+            run = await self.run_manager.get(run_id)
             await self.run_manager.append_step(
                 RunStep(
                     step_id=f"step:{uuid.uuid4().hex}",
                     run_id=run_id,
+                    thread_id=run.thread_id if run is not None else "",
                     step_type=step_type,
                     status=status,
                     payload=payload,

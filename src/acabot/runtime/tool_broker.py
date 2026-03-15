@@ -28,6 +28,10 @@
 - 最小 audit 记录
 - approval 触发和 prompt 生成
 - 把 `ToolResult.user_actions/artifacts` 累积到 run 级别状态
+
+注意:
+- tool 是“给模型调用的接口形态”
+- ToolBroker 只负责编排工具协议, 不关心某个 tool 背后的基础设施细节
 """
 
 from __future__ import annotations
@@ -925,6 +929,70 @@ class ToolBroker:
                 "sender_role": ctx.event.sender_role or "",
                 "platform": ctx.event.platform,
                 "message_type": ctx.event.source.message_type,
+                "workspace_visible_root": (
+                    ctx.workspace_state.workspace_visible_root
+                    if ctx.workspace_state is not None
+                    else ""
+                ),
+                "workspace_host_path": (
+                    ctx.workspace_state.workspace_host_path
+                    if ctx.workspace_state is not None
+                    else ""
+                ),
+                "backend_kind": (
+                    ctx.workspace_state.backend_kind
+                    if ctx.workspace_state is not None
+                    else ""
+                ),
+                "read_only": (
+                    bool(ctx.workspace_state.read_only)
+                    if ctx.workspace_state is not None
+                    else False
+                ),
+                "allow_write": (
+                    bool(ctx.computer_policy_effective.allow_write)
+                    if ctx.computer_policy_effective is not None
+                    else True
+                ),
+                "allow_exec": (
+                    bool(ctx.computer_policy_effective.allow_exec)
+                    if ctx.computer_policy_effective is not None
+                    else True
+                ),
+                "allow_sessions": (
+                    bool(ctx.computer_policy_effective.allow_sessions)
+                    if ctx.computer_policy_effective is not None
+                    else True
+                ),
+                "network_mode": (
+                    str(ctx.computer_policy_effective.network_mode)
+                    if ctx.computer_policy_effective is not None
+                    else "enabled"
+                ),
+                "active_session_ids": (
+                    list(ctx.workspace_state.active_session_ids)
+                    if ctx.workspace_state is not None
+                    else []
+                ),
+                "mirrored_skill_names": (
+                    list(ctx.workspace_state.mirrored_skill_names)
+                    if ctx.workspace_state is not None
+                    else []
+                ),
+                "staged_attachments": [
+                    {
+                        "event_id": item.event_id,
+                        "attachment_index": item.attachment_index,
+                        "type": item.type,
+                        "original_source": item.original_source,
+                        "source_kind": item.source_kind,
+                        "staged_path": item.staged_path,
+                        "size_bytes": item.size_bytes,
+                        "download_status": item.download_status,
+                        "error": item.error,
+                    }
+                    for item in ctx.attachment_snapshots
+                ],
             },
         )
 

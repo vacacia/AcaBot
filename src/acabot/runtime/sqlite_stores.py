@@ -998,15 +998,17 @@ class SQLiteRunStore(_SQLiteStoreBase, RunStore):
                 INSERT INTO run_steps (
                     step_id,
                     run_id,
+                    thread_id,
                     step_type,
                     status,
                     payload_json,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     step.step_id,
                     step.run_id,
+                    step.thread_id,
                     step.step_type,
                     step.status,
                     self._encode_json(step.payload),
@@ -1014,6 +1016,54 @@ class SQLiteRunStore(_SQLiteStoreBase, RunStore):
                 ),
             )
             self._conn.commit()
+
+    async def get_run_steps(
+        self,
+        run_id: str,
+        *,
+        limit: int | None = None,
+        step_types: list[str] | None = None,
+    ) -> list[RunStep]:
+        where = ["run_id = ?"]
+        params: list[object] = [run_id]
+        if step_types:
+            placeholders = ", ".join("?" for _ in step_types)
+            where.append(f"step_type IN ({placeholders})")
+            params.extend(step_types)
+        sql = (
+            "SELECT step_id, run_id, thread_id, step_type, status, payload_json, created_at "
+            f"FROM run_steps WHERE {' AND '.join(where)} ORDER BY created_at ASC"
+        )
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        async with self._lock:
+            rows = self._conn.execute(sql, tuple(params)).fetchall()
+        return [self._row_to_step(row) for row in rows]
+
+    async def get_thread_steps(
+        self,
+        thread_id: str,
+        *,
+        limit: int | None = None,
+        step_types: list[str] | None = None,
+    ) -> list[RunStep]:
+        where = ["thread_id = ?"]
+        params: list[object] = [thread_id]
+        if step_types:
+            placeholders = ", ".join("?" for _ in step_types)
+            where.append(f"step_type IN ({placeholders})")
+            params.extend(step_types)
+        sql = (
+            "SELECT step_id, run_id, thread_id, step_type, status, payload_json, created_at "
+            f"FROM run_steps WHERE {' AND '.join(where)} ORDER BY created_at ASC"
+        )
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        async with self._lock:
+            rows = self._conn.execute(sql, tuple(params)).fetchall()
+        return [self._row_to_step(row) for row in rows]
 
     def _ensure_schema(self) -> None:
         """初始化 runs 和 run_steps 表结构."""
@@ -1040,6 +1090,7 @@ class SQLiteRunStore(_SQLiteStoreBase, RunStore):
             CREATE TABLE IF NOT EXISTS run_steps (
                 step_id TEXT PRIMARY KEY,
                 run_id TEXT NOT NULL,
+                thread_id TEXT NOT NULL,
                 step_type TEXT NOT NULL,
                 status TEXT NOT NULL,
                 payload_json TEXT NOT NULL,
@@ -1049,6 +1100,9 @@ class SQLiteRunStore(_SQLiteStoreBase, RunStore):
         )
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_runs_status_started_at ON runs(status, started_at)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_run_steps_thread_created_at ON run_steps(thread_id, created_at)"
         )
         self._conn.commit()
 
@@ -1076,6 +1130,17 @@ class SQLiteRunStore(_SQLiteStoreBase, RunStore):
             error=None if row["error"] is None else str(row["error"]),
             approval_context=dict(self._decode_json(row["approval_context_json"])),
             metadata=dict(self._decode_json(row["metadata_json"])),
+        )
+
+    def _row_to_step(self, row: sqlite3.Row) -> RunStep:
+        return RunStep(
+            step_id=str(row["step_id"]),
+            run_id=str(row["run_id"]),
+            thread_id=str(row["thread_id"]),
+            step_type=str(row["step_type"]),
+            status=str(row["status"]),
+            payload=dict(self._decode_json(row["payload_json"])),
+            created_at=int(row["created_at"]),
         )
 
 

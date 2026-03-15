@@ -16,6 +16,7 @@ import yaml
 
 from acabot.types import StandardEvent
 
+from .computer import ComputerPolicy, parse_computer_policy
 from .models import AgentProfile, BindingRule, RouteDecision, SkillAssignment
 
 
@@ -314,6 +315,7 @@ class FileSystemProfileLoader:
         root: str | Path,
         *,
         default_model: str,
+        default_computer_policy: ComputerPolicy | None = None,
         prompt_prefix: str = "prompt",
     ) -> None:
         """初始化文件系统 profile loader.
@@ -321,11 +323,13 @@ class FileSystemProfileLoader:
         Args:
             root: profile 根目录.
             default_model: profile 文件未声明模型时的默认模型.
+            default_computer_policy: profile 文件未声明 computer 时的默认 computer policy.
             prompt_prefix: 默认 prompt_ref 前缀.
         """
 
         self.root = Path(root)
         self.default_model = default_model
+        self.default_computer_policy = default_computer_policy
         self.prompt_prefix = prompt_prefix.strip("/")
 
     def load_all(self) -> dict[str, AgentProfile]:
@@ -361,6 +365,10 @@ class FileSystemProfileLoader:
             enabled_tools=[str(item) for item in list(raw.get("enabled_tools", []) or [])],
             enabled_skills=[str(item) for item in list(raw.get("enabled_skills", []) or [])],
             skill_assignments=parse_skill_assignments(raw.get("skill_assignments", [])),
+            computer_policy=parse_computer_policy(
+                raw.get("computer"),
+                defaults=self.default_computer_policy,
+            ),
             config=dict(raw),
         )
 

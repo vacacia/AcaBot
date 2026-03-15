@@ -14,6 +14,7 @@ import logging
 from acabot.types import Action, ActionType
 
 from .agent_runtime import AgentRuntime
+from .computer import ComputerRuntime
 from .context_compactor import ContextCompactor
 from .models import (
     AgentRuntimeResult,
@@ -53,6 +54,7 @@ class ThreadPipeline:
         memory_broker: MemoryBroker | None = None,
         retrieval_planner: RetrievalPlanner | None = None,
         context_compactor: ContextCompactor | None = None,
+        computer_runtime: ComputerRuntime | None = None,
         tool_broker: ToolBroker | None = None,
         plugin_manager: RuntimePluginManager | None = None,
     ) -> None:
@@ -66,6 +68,7 @@ class ThreadPipeline:
             memory_broker: 可选的 MemoryBroker. 用于 retrieval 和 extraction.
             retrieval_planner: 可选的 RetrievalPlanner. 用于 planning 和 prompt assembly.
             context_compactor: 可选的 ContextCompactor. 用于 working memory compaction.
+            computer_runtime: 可选的 ComputerRuntime. 用于 workspace 准备和附件 staging.
             tool_broker: 可选的 ToolBroker. 用于 approval prompt 的 audit 回写.
             plugin_manager: 可选的 RuntimePluginManager. 用于 runtime hooks.
         """
@@ -77,6 +80,7 @@ class ThreadPipeline:
         self.memory_broker = memory_broker
         self.retrieval_planner = retrieval_planner
         self.context_compactor = context_compactor
+        self.computer_runtime = computer_runtime
         self.tool_broker = tool_broker
         self.plugin_manager = plugin_manager
     # region execute
@@ -103,6 +107,8 @@ class ThreadPipeline:
             # record_only 模式
             # -----------------------------------------------------
             if ctx.decision.run_mode == "record_only":
+                if self.computer_runtime is not None:
+                    await self.computer_runtime.prepare_run_context(ctx)
                 await self.thread_manager.save(ctx.thread)
                 await self.run_manager.mark_completed(ctx.run.run_id)
                 await self._extract_memory_safely(ctx)
@@ -161,6 +167,8 @@ class ThreadPipeline:
             # -----------------------------------------------------
             # 注入记忆, 调用 Agent
             # -----------------------------------------------------
+            if self.computer_runtime is not None:
+                await self.computer_runtime.prepare_run_context(ctx)
             await self._inject_memories(ctx)
             pre_agent_result = await self._run_plugin_hooks(RuntimeHookPoint.PRE_AGENT, ctx)
             if pre_agent_result.action == "skip_agent":

@@ -12,6 +12,11 @@
 - 插件不再依赖旧 Pipeline
 - 让插件可以注册 runtime hook 和 tool
 - 让 lifecycle 进入 RuntimeApp 的 start / stop
+
+注意:
+- plugin 是装配层
+- computer 这种基础设施由 bootstrap/runtime 先创建
+- plugin 只负责把这些能力暴露成 hook / tool / skill / executor 等形态接入
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from acabot.agent import ToolDef, ToolSpec
 from acabot.config import Config
 
+from .computer import ComputerRuntime
 from .gateway_protocol import GatewayProtocol
 from .models import RunContext
 from .reference_backend import ReferenceBackend
@@ -197,6 +203,7 @@ class RuntimePluginContext:
         tool_broker (ToolBroker): runtime 统一工具入口.
         reference_backend (ReferenceBackend | None): reference provider.
         sticky_notes (StickyNotesService | None): sticky note 的受控服务层.
+        computer_runtime (ComputerRuntime | None): computer 基础设施入口.
         skill_registry (SkillRegistry | None): 显式 skill 注册表.
         control_plane (RuntimeControlPlane | None): 本地 control plane 入口.
         subagent_delegator (SubagentDelegationBroker | None): subagent delegation 编排入口.
@@ -207,6 +214,7 @@ class RuntimePluginContext:
     tool_broker: ToolBroker
     reference_backend: ReferenceBackend | None = None
     sticky_notes: StickyNotesService | None = None
+    computer_runtime: ComputerRuntime | None = None
     skill_registry: SkillRegistry | None = None
     control_plane: RuntimeControlPlane | None = None
     subagent_delegator: SubagentDelegationBroker | None = None
@@ -312,7 +320,7 @@ class RuntimePlugin(ABC):
 # endregion
 
 
-# region manager
+# region Manager
 class RuntimePluginManager:
     """runtime world 的最小插件管理器.
 
@@ -346,6 +354,7 @@ class RuntimePluginManager:
         tool_broker: ToolBroker,
         reference_backend: ReferenceBackend | None = None,
         sticky_notes: StickyNotesService | None = None,
+        computer_runtime: ComputerRuntime | None = None,
         skill_registry: SkillRegistry | None = None,
         control_plane: RuntimeControlPlane | None = None,
         subagent_delegator: SubagentDelegationBroker | None = None,
@@ -361,6 +370,7 @@ class RuntimePluginManager:
             tool_broker: runtime 工具入口.
             reference_backend: 可选的 reference provider.
             sticky_notes: 可选的 sticky note 服务.
+            computer_runtime: 可选的 computer 基础设施入口.
             skill_registry: 可选的显式 skill 注册表.
             control_plane: 可选的本地 control plane 入口.
             subagent_delegator: 可选的 subagent delegation 编排入口.
@@ -373,6 +383,7 @@ class RuntimePluginManager:
         # TODO: 收窄成 ReferenceService, 或者不暴露?
         self.reference_backend = reference_backend
         self.sticky_notes = sticky_notes
+        self.computer_runtime = computer_runtime
         self.skill_registry = skill_registry
         self.control_plane = control_plane
         self.subagent_delegator = subagent_delegator
@@ -420,6 +431,11 @@ class RuntimePluginManager:
 
         self.subagent_delegator = subagent_delegator
 
+    def attach_computer_runtime(self, computer_runtime: ComputerRuntime) -> None:
+        """把 computer runtime 接到 plugin manager."""
+
+        self.computer_runtime = computer_runtime
+
     async def ensure_started(self) -> None:
         """确保待加载插件已经完成 setup 和注册.
 
@@ -438,6 +454,7 @@ class RuntimePluginManager:
                 tool_broker=self.tool_broker,
                 reference_backend=self.reference_backend,
                 sticky_notes=self.sticky_notes,
+                computer_runtime=self.computer_runtime,
                 skill_registry=self.skill_registry,
                 control_plane=self.control_plane,
                 subagent_delegator=self.subagent_delegator,
@@ -486,6 +503,7 @@ class RuntimePluginManager:
             tool_broker=self.tool_broker,
             reference_backend=self.reference_backend,
             sticky_notes=self.sticky_notes,
+            computer_runtime=self.computer_runtime,
             skill_registry=self.skill_registry,
             control_plane=self.control_plane,
             subagent_delegator=self.subagent_delegator,

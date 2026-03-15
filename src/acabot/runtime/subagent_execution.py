@@ -286,6 +286,7 @@ class LocalSubagentExecutionService:
                 RunStep(
                     step_id=f"step:delegation:{uuid.uuid4().hex}",
                     run_id=parent_run_id,
+                    thread_id=request.parent_thread_id,
                     step_type="subagent_delegation",
                     status=status,
                     payload={

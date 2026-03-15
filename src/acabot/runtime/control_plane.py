@@ -20,6 +20,13 @@ import time
 from dataclasses import dataclass, field
 
 from .app import RuntimeApp
+from .computer import (
+    ComputerRuntimeOverride,
+    ComputerRuntime,
+    WorkspaceFileEntry,
+    WorkspaceSandboxStatus,
+    WorkspaceState,
+)
 from .model_registry import (
     EffectiveModelSnapshot,
     FileSystemModelRegistryManager,
@@ -246,6 +253,7 @@ class RuntimeControlPlane:
         skill_registry: SkillRegistry | None = None,
         subagent_executor_registry: SubagentExecutorRegistry | None = None,
         model_registry_manager: FileSystemModelRegistryManager | None = None,
+        computer_runtime: ComputerRuntime | None = None,
     ) -> None:
         """初始化 RuntimeControlPlane.
 
@@ -259,6 +267,7 @@ class RuntimeControlPlane:
             skill_registry: 可选的显式 skill 注册表.
             subagent_executor_registry: 可选的 subagent executor 注册表.
             model_registry_manager: 可选的模型注册表管理器.
+            computer_runtime: 可选的 computer 基础设施入口.
         """
 
         self.app = app
@@ -270,6 +279,7 @@ class RuntimeControlPlane:
         self.skill_registry = skill_registry
         self.subagent_executor_registry = subagent_executor_registry
         self.model_registry_manager = model_registry_manager
+        self.computer_runtime = computer_runtime
 
     async def get_status(self) -> RuntimeStatusSnapshot:
         """读取当前 runtime 的最小状态快照.
@@ -655,6 +665,199 @@ class RuntimeControlPlane:
             return ModelRegistryStatusSnapshot(last_error="model registry unavailable")
         return self.model_registry_manager.status()
 
+    async def list_workspaces(self) -> list[WorkspaceState]:
+        if self.computer_runtime is None:
+            return []
+        return await self.computer_runtime.list_workspaces()
+
+    async def list_workspace_entries(
+        self,
+        *,
+        thread_id: str,
+        relative_path: str = "/",
+    ) -> list[WorkspaceFileEntry]:
+        if self.computer_runtime is None:
+            return []
+        return await self.computer_runtime.list_workspace_entries(
+            thread_id=thread_id,
+            relative_path=relative_path,
+        )
+
+    async def read_workspace_file(
+        self,
+        *,
+        thread_id: str,
+        relative_path: str,
+    ) -> str:
+        if self.computer_runtime is None:
+            raise RuntimeError("computer runtime unavailable")
+        return await self.computer_runtime.read_workspace_file(
+            thread_id=thread_id,
+            relative_path=relative_path,
+        )
+
+    async def list_workspace_sessions(self, *, thread_id: str) -> list[str]:
+        if self.computer_runtime is None:
+            return []
+        return self.computer_runtime.list_session_ids(thread_id)
+
+    async def list_workspace_attachments(self, *, thread_id: str) -> list[WorkspaceFileEntry]:
+        if self.computer_runtime is None:
+            return []
+        return await self.computer_runtime.list_workspace_attachments(thread_id=thread_id)
+
+    async def get_sandbox_status(self, *, thread_id: str) -> WorkspaceSandboxStatus:
+        if self.computer_runtime is None:
+            return WorkspaceSandboxStatus(
+                thread_id=thread_id,
+                backend_kind="",
+                active=False,
+                message="computer runtime unavailable",
+            )
+        return await self.computer_runtime.get_sandbox_status(thread_id)
+
+    async def list_mirrored_skills(self, *, thread_id: str) -> list[str]:
+        if self.computer_runtime is None:
+            return []
+        return self.computer_runtime.list_mirrored_skills(thread_id)
+
+    async def list_workspace_activity(
+        self,
+        *,
+        thread_id: str,
+        limit: int = 50,
+        step_types: list[str] | None = None,
+    ):
+        return await self.run_manager.list_thread_steps(
+            thread_id,
+            limit=limit,
+            step_types=step_types,
+        )
+
+    async def set_thread_computer_override(
+        self,
+        *,
+        thread_id: str,
+        override: ComputerRuntimeOverride,
+        force: bool = False,
+    ) -> AgentSwitchSnapshot:
+        if self.thread_manager is None:
+            return AgentSwitchSnapshot(ok=False, thread_id=thread_id, message="thread manager unavailable")
+        if self.computer_runtime is None:
+            return AgentSwitchSnapshot(ok=False, thread_id=thread_id, message="computer runtime unavailable")
+        thread = await self.thread_manager.get(thread_id)
+        if thread is None:
+            return AgentSwitchSnapshot(ok=False, thread_id=thread_id, message="thread not found")
+        active_runs = [
+            run for run in await self.run_manager.list_active()
+            if run.thread_id == thread_id
+        ]
+        active_sessions = self.computer_runtime.list_session_ids(thread_id)
+        if (active_runs or active_sessions) and not force:
+            return AgentSwitchSnapshot(ok=False, thread_id=thread_id, message="thread in use")
+        if force:
+            await self.computer_runtime.close_all_sessions(thread_id)
+            for run in active_runs:
+                await self.run_manager.append_step(
+                    self._control_plane_step(
+                        run_id=run.run_id,
+                        thread_id=thread_id,
+                        step_type="computer_override",
+                        status="cancelled",
+                        payload={"reason": "computer override changed by operator"},
+                    )
+                )
+                await self.run_manager.mark_cancelled(run.run_id, "computer override changed by operator")
+            await self.computer_runtime.stop_workspace_sandbox(thread_id)
+        await self.computer_runtime.set_thread_override(thread=thread, override=override)
+        await self.thread_manager.save(thread)
+        return AgentSwitchSnapshot(ok=True, thread_id=thread_id, message="computer override set")
+
+    async def clear_thread_computer_override(self, *, thread_id: str, force: bool = False) -> AgentSwitchSnapshot:
+        if self.thread_manager is None:
+            return AgentSwitchSnapshot(ok=False, thread_id=thread_id, message="thread manager unavailable")
+        if self.computer_runtime is None:
+            return AgentSwitchSnapshot(ok=False, thread_id=thread_id, message="computer runtime unavailable")
+        thread = await self.thread_manager.get(thread_id)
+        if thread is None:
+            return AgentSwitchSnapshot(ok=False, thread_id=thread_id, message="thread not found")
+        active_runs = [
+            run for run in await self.run_manager.list_active()
+            if run.thread_id == thread_id
+        ]
+        active_sessions = self.computer_runtime.list_session_ids(thread_id)
+        if (active_runs or active_sessions) and not force:
+            return AgentSwitchSnapshot(ok=False, thread_id=thread_id, message="thread in use")
+        if force:
+            await self.computer_runtime.close_all_sessions(thread_id)
+            for run in active_runs:
+                await self.run_manager.append_step(
+                    self._control_plane_step(
+                        run_id=run.run_id,
+                        thread_id=thread_id,
+                        step_type="computer_override_clear",
+                        status="cancelled",
+                        payload={"reason": "computer override cleared by operator"},
+                    )
+                )
+                await self.run_manager.mark_cancelled(run.run_id, "computer override cleared by operator")
+            await self.computer_runtime.stop_workspace_sandbox(thread_id)
+        await self.computer_runtime.clear_thread_override(thread=thread)
+        await self.thread_manager.save(thread)
+        return AgentSwitchSnapshot(ok=True, thread_id=thread_id, message="computer override cleared")
+
+    async def prune_workspace(self, *, thread_id: str, force: bool = False) -> AgentSwitchSnapshot:
+        if self.computer_runtime is None:
+            return AgentSwitchSnapshot(ok=False, thread_id=thread_id, message="computer runtime unavailable")
+        active_runs = [
+            run for run in await self.run_manager.list_active()
+            if run.thread_id == thread_id
+        ]
+        active_sessions = self.computer_runtime.list_session_ids(thread_id)
+        if (active_runs or active_sessions) and not force:
+            return AgentSwitchSnapshot(ok=False, thread_id=thread_id, message="workspace in use")
+        if force:
+            await self.computer_runtime.close_all_sessions(thread_id)
+            for run in active_runs:
+                await self.run_manager.append_step(
+                    self._control_plane_step(
+                        run_id=run.run_id,
+                        thread_id=thread_id,
+                        step_type="workspace_prune",
+                        status="cancelled",
+                        payload={"reason": "workspace pruned by operator"},
+                    )
+                )
+                await self.run_manager.mark_cancelled(run.run_id, "workspace pruned by operator")
+        await self.computer_runtime.prune_workspace(thread_id)
+        return AgentSwitchSnapshot(ok=True, thread_id=thread_id, message="workspace pruned")
+
+    async def stop_workspace_sandbox(self, *, thread_id: str, force: bool = False) -> AgentSwitchSnapshot:
+        if self.computer_runtime is None:
+            return AgentSwitchSnapshot(ok=False, thread_id=thread_id, message="computer runtime unavailable")
+        active_runs = [
+            run for run in await self.run_manager.list_active()
+            if run.thread_id == thread_id
+        ]
+        active_sessions = self.computer_runtime.list_session_ids(thread_id)
+        if (active_runs or active_sessions) and not force:
+            return AgentSwitchSnapshot(ok=False, thread_id=thread_id, message="sandbox in use")
+        if force:
+            await self.computer_runtime.close_all_sessions(thread_id)
+            for run in active_runs:
+                await self.run_manager.append_step(
+                    self._control_plane_step(
+                        run_id=run.run_id,
+                        thread_id=thread_id,
+                        step_type="sandbox_stop",
+                        status="cancelled",
+                        payload={"reason": "sandbox stopped by operator"},
+                    )
+                )
+                await self.run_manager.mark_cancelled(run.run_id, "sandbox stopped by operator")
+        await self.computer_runtime.stop_workspace_sandbox(thread_id)
+        return AgentSwitchSnapshot(ok=True, thread_id=thread_id, message="sandbox stopped")
+
     def _list_loaded_plugins(self) -> list[str]:
         """返回当前已加载插件名列表.
 
@@ -676,6 +879,27 @@ class RuntimeControlPlane:
         if self.skill_registry is None:
             return []
         return [item.spec.skill_name for item in self.skill_registry.list_all()]
+
+    @staticmethod
+    def _control_plane_step(
+        *,
+        run_id: str,
+        thread_id: str,
+        step_type: str,
+        status: str,
+        payload: dict[str, object],
+    ):
+        from .models import RunStep
+
+        return RunStep(
+            step_id=f"step:control:{int(time.time() * 1000)}:{step_type}:{run_id}",
+            run_id=run_id,
+            thread_id=thread_id,
+            step_type=step_type,
+            status=status,
+            payload=payload,
+            created_at=int(time.time()),
+        )
 
     @staticmethod
     def _to_skill_snapshot(item: RegisteredSkill) -> SkillSnapshot:

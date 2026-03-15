@@ -102,6 +102,30 @@ class RunManager(ABC):
         ...
 
     @abstractmethod
+    async def list_steps(
+        self,
+        run_id: str,
+        *,
+        limit: int | None = None,
+        step_types: list[str] | None = None,
+    ) -> list[RunStep]:
+        """按 run_id 查询步骤记录."""
+
+        ...
+
+    @abstractmethod
+    async def list_thread_steps(
+        self,
+        thread_id: str,
+        *,
+        limit: int | None = None,
+        step_types: list[str] | None = None,
+    ) -> list[RunStep]:
+        """按 thread_id 查询步骤记录."""
+
+        ...
+
+    @abstractmethod
     async def list_active(self) -> list[RunRecord]:
         """列出当前仍处于活跃状态的 runs."""
 
@@ -260,6 +284,42 @@ class InMemoryRunManager(RunManager):
         """返回仍然处于活跃状态的 runs."""
 
         return [run for run in self._runs.values() if run.status in _ACTIVE_STATUSES]
+
+    async def list_steps(
+        self,
+        run_id: str,
+        *,
+        limit: int | None = None,
+        step_types: list[str] | None = None,
+    ) -> list[RunStep]:
+        steps = list(self._steps.get(run_id, []))
+        if step_types:
+            allowed = set(step_types)
+            steps = [step for step in steps if step.step_type in allowed]
+        if limit is not None:
+            steps = steps[-int(limit):]
+        return steps
+
+    async def list_thread_steps(
+        self,
+        thread_id: str,
+        *,
+        limit: int | None = None,
+        step_types: list[str] | None = None,
+    ) -> list[RunStep]:
+        steps = [
+            step
+            for items in self._steps.values()
+            for step in items
+            if step.thread_id == thread_id
+        ]
+        if step_types:
+            allowed = set(step_types)
+            steps = [step for step in steps if step.step_type in allowed]
+        steps.sort(key=lambda item: item.created_at)
+        if limit is not None:
+            steps = steps[-int(limit):]
+        return steps
 
     async def cancel(self, run_id: str) -> bool:
         """登记一次取消请求.
@@ -509,6 +569,32 @@ class StoreBackedRunManager(RunManager):
         for run in runs:
             self._runs[run.run_id] = run
         return runs
+
+    async def list_steps(
+        self,
+        run_id: str,
+        *,
+        limit: int | None = None,
+        step_types: list[str] | None = None,
+    ) -> list[RunStep]:
+        return await self.store.get_run_steps(
+            run_id,
+            limit=limit,
+            step_types=step_types,
+        )
+
+    async def list_thread_steps(
+        self,
+        thread_id: str,
+        *,
+        limit: int | None = None,
+        step_types: list[str] | None = None,
+    ) -> list[RunStep]:
+        return await self.store.get_thread_steps(
+            thread_id,
+            limit=limit,
+            step_types=step_types,
+        )
 
     async def cancel(self, run_id: str) -> bool:
         """请求取消一个 run.

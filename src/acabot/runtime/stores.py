@@ -196,3 +196,27 @@ class RunStore(ABC):
         """追加一条 run step 审计记录."""
 
         ...
+
+    @abstractmethod
+    async def get_run_steps(
+        self,
+        run_id: str,
+        *,
+        limit: int | None = None,
+        step_types: list[str] | None = None,
+    ) -> list[RunStep]:
+        """按 run_id 查询步骤记录."""
+
+        ...
+
+    @abstractmethod
+    async def get_thread_steps(
+        self,
+        thread_id: str,
+        *,
+        limit: int | None = None,
+        step_types: list[str] | None = None,
+    ) -> list[RunStep]:
+        """按 thread_id 查询步骤记录."""
+
+        ...

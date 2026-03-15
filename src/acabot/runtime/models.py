@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from acabot.types import Action, StandardEvent
 
 if TYPE_CHECKING:
+    from .computer import AttachmentSnapshot, ComputerPolicy, WorkspaceState
     from .model_registry import RuntimeModelRequest
 
 RunStatus = Literal[
@@ -206,6 +207,7 @@ class AgentProfile:
     enabled_tools: list[str] = field(default_factory=list)
     enabled_skills: list[str] = field(default_factory=list)
     skill_assignments: list[SkillAssignment] = field(default_factory=list)
+    computer_policy: "ComputerPolicy | None" = None
     config: dict[str, Any] = field(default_factory=dict)
 
 
@@ -881,6 +883,7 @@ class RunStep:
     run_id: str
     step_type: str
     status: str
+    thread_id: str = ""
     payload: dict[str, Any] = field(default_factory=dict)
     created_at: int = 0
 
@@ -899,6 +902,10 @@ class RunContext:
     profile: AgentProfile
     model_request: "RuntimeModelRequest | None" = None
     summary_model_request: "RuntimeModelRequest | None" = None
+    workspace_state: "WorkspaceState | None" = None
+    attachment_snapshots: list["AttachmentSnapshot"] = field(default_factory=list)
+    computer_backend_kind: str = ""
+    computer_policy_effective: "ComputerPolicy | None" = None
     messages: list[dict[str, Any]] = field(default_factory=list)
     retrieval_plan: RetrievalPlan | None = None
     memory_blocks: list["MemoryBlock"] = field(default_factory=list)

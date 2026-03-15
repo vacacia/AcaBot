@@ -16,6 +16,11 @@ r"""runtime.bootstrap 提供 runtime 默认组装入口.
 
 负责把默认主线接起来.
 不关心具体业务策略, 只决定默认组件如何装配.
+
+
+- computer 在这里先作为基础设施创建
+- 再通过 plugin / tool adapter 暴露给 agent
+
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ from acabot.config import Config
 from .agent_runtime import AgentRuntime
 from .approval_resumer import ApprovalResumer, NoopApprovalResumer
 from .app import RuntimeApp
+from .computer import ComputerPolicy, ComputerRuntime, ComputerRuntimeConfig, parse_computer_policy
 from .context_compactor import (
     ContextCompactionConfig,
     ContextCompactor,
@@ -51,7 +57,7 @@ from .plugin_manager import (
     RuntimePluginManager,
     load_runtime_plugins_from_config,
 )
-from .plugins import SkillDelegationPlugin
+from .plugins import ComputerToolAdapterPlugin, SkillDelegationPlugin
 from .profile_loader import (
     AgentProfileRegistry,
     ChainedPromptLoader,
@@ -90,7 +96,7 @@ from .subagent_execution import LocalSubagentExecutionService
 from .tool_broker import ToolBroker
 from .threads import InMemoryThreadManager, StoreBackedThreadManager, ThreadManager
 
-
+# region RuntimeComponents
 @dataclass(slots=True)
 class RuntimeComponents:
     """runtime 组装结果.
@@ -112,6 +118,7 @@ class RuntimeComponents:
         context_compactor (ContextCompactor): 负责 token-aware working memory compaction 的 compactor.
         retrieval_planner (RetrievalPlanner): 负责 retrieval planning 和 prompt assembly 的 planner.
         model_registry_manager (FileSystemModelRegistryManager): 模型真源与 active registry 管理器.
+        computer_runtime (ComputerRuntime): computer 基础设施入口.
         reference_backend (ReferenceBackend): on-demand `reference / notebook` provider.
         plugin_manager (RuntimePluginManager): runtime world 的插件管理器.
         control_plane (RuntimeControlPlane): 本地 control plane 入口.
@@ -141,6 +148,7 @@ class RuntimeComponents:
     context_compactor: ContextCompactor
     retrieval_planner: RetrievalPlanner
     model_registry_manager: FileSystemModelRegistryManager
+    computer_runtime: ComputerRuntime
     reference_backend: ReferenceBackend
     plugin_manager: RuntimePluginManager
     control_plane: RuntimeControlPlane
@@ -153,7 +161,7 @@ class RuntimeComponents:
     pipeline: ThreadPipeline
     app: RuntimeApp
 
-
+# region 组装runtime
 def build_runtime_components(
     config: Config,
     *,
@@ -256,11 +264,18 @@ def build_runtime_components(
         skill_registry=runtime_skill_registry,
     )
     runtime_retrieval_planner.skill_registry = runtime_skill_registry
+    runtime_computer_runtime = _build_computer_runtime(
+        config,
+        gateway=gateway,
+        run_manager=runtime_run_manager,
+    )
     runtime_reference_backend = reference_backend or _build_reference_backend(config)
     runtime_model_registry_manager = model_registry_manager or _build_model_registry_manager(config)
     runtime_tool_broker = tool_broker or ToolBroker(skill_registry=runtime_skill_registry)
     runtime_tool_broker.skill_registry = runtime_skill_registry
     configured_plugins = plugins if plugins is not None else load_runtime_plugins_from_config(config)
+    if not any(plugin.name == ComputerToolAdapterPlugin.name for plugin in configured_plugins):
+        configured_plugins = [*configured_plugins, ComputerToolAdapterPlugin()]
     if _profiles_have_delegated_skills(profiles) and not any(
         plugin.name == SkillDelegationPlugin.name
         for plugin in configured_plugins
@@ -272,6 +287,7 @@ def build_runtime_components(
         tool_broker=runtime_tool_broker,
         reference_backend=runtime_reference_backend,
         sticky_notes=runtime_sticky_notes,
+        computer_runtime=runtime_computer_runtime,
         skill_registry=runtime_skill_registry,
         subagent_delegator=runtime_subagent_delegator,
         plugins=configured_plugins,
@@ -291,6 +307,7 @@ def build_runtime_components(
         memory_broker=runtime_memory_broker,
         retrieval_planner=runtime_retrieval_planner,
         context_compactor=runtime_context_compactor,
+        computer_runtime=runtime_computer_runtime,
         tool_broker=runtime_tool_broker,
         plugin_manager=runtime_plugin_manager,
     )
@@ -317,6 +334,7 @@ def build_runtime_components(
         reference_backend=runtime_reference_backend,
         plugin_manager=runtime_plugin_manager,
         model_registry_manager=runtime_model_registry_manager,
+        computer_runtime=runtime_computer_runtime,
     )
     control_plane = RuntimeControlPlane(
         app=app,
@@ -328,9 +346,11 @@ def build_runtime_components(
         skill_registry=runtime_skill_registry,
         subagent_executor_registry=runtime_subagent_executor_registry,
         model_registry_manager=runtime_model_registry_manager,
+        computer_runtime=runtime_computer_runtime,
     )
     runtime_plugin_manager.attach_control_plane(control_plane)
     runtime_plugin_manager.attach_subagent_delegator(runtime_subagent_delegator)
+    runtime_plugin_manager.attach_computer_runtime(runtime_computer_runtime)
 
     return RuntimeComponents(
         gateway=gateway,
@@ -349,6 +369,7 @@ def build_runtime_components(
         context_compactor=runtime_context_compactor,
         retrieval_planner=runtime_retrieval_planner,
         model_registry_manager=runtime_model_registry_manager,
+        computer_runtime=runtime_computer_runtime,
         reference_backend=runtime_reference_backend,
         plugin_manager=runtime_plugin_manager,
         control_plane=control_plane,
@@ -423,6 +444,7 @@ def _build_profiles(config: Config) -> dict[str, AgentProfile]:
     runtime_conf = config.get("runtime", {})
     agent_conf = config.get("agent", {})
     profiles_conf = runtime_conf.get("profiles", {})
+    default_computer_policy = _build_default_computer_policy(config)
     if profiles_conf:
         profiles: dict[str, AgentProfile] = {}
         for agent_id, profile_conf in profiles_conf.items():
@@ -437,6 +459,10 @@ def _build_profiles(config: Config) -> dict[str, AgentProfile]:
                 enabled_tools=list(profile_conf.get("enabled_tools", [])),
                 enabled_skills=list(profile_conf.get("enabled_skills", [])),
                 skill_assignments=parse_skill_assignments(profile_conf.get("skill_assignments", [])),
+                computer_policy=parse_computer_policy(
+                    profile_conf.get("computer"),
+                    defaults=default_computer_policy,
+                ),
                 config=dict(profile_conf),
             )
         return profiles
@@ -451,6 +477,7 @@ def _build_profiles(config: Config) -> dict[str, AgentProfile]:
             enabled_tools=list(runtime_conf.get("enabled_tools", [])),
             enabled_skills=list(runtime_conf.get("enabled_skills", [])),
             skill_assignments=parse_skill_assignments(runtime_conf.get("skill_assignments", [])),
+            computer_policy=default_computer_policy,
             config=dict(agent_conf),
         )
     }
@@ -484,6 +511,7 @@ def _build_filesystem_profiles(config: Config) -> dict[str, AgentProfile]:
     loader = FileSystemProfileLoader(
         profiles_dir,
         default_model=default_model,
+        default_computer_policy=_build_default_computer_policy(config),
     )
     return loader.load_all()
 
@@ -594,6 +622,77 @@ def _build_model_registry_manager(config: Config) -> FileSystemModelRegistryMana
     )
     manager.reload_now()
     return manager
+
+
+def _build_default_computer_policy(config: Config) -> ComputerPolicy:
+    """根据 runtime.computer 构造全局默认 computer policy."""
+
+    runtime_conf = config.get("runtime", {})
+    computer_conf = dict(runtime_conf.get("computer", {}))
+    defaults = ComputerPolicy(
+        backend=str(computer_conf.get("backend", "host") or "host"),
+        read_only=bool(computer_conf.get("read_only", False)),
+        allow_write=bool(computer_conf.get("allow_write", True)),
+        allow_exec=bool(computer_conf.get("allow_exec", True)),
+        allow_sessions=bool(computer_conf.get("allow_sessions", True)),
+        auto_stage_attachments=bool(computer_conf.get("auto_stage_attachments", True)),
+        network_mode=str(computer_conf.get("network_mode", "enabled") or "enabled"),
+    )
+    return parse_computer_policy(computer_conf, defaults=defaults)
+
+# region computer
+def _build_computer_runtime(
+    config: Config,
+    *,
+    gateway: GatewayProtocol,
+    run_manager: RunManager,
+) -> ComputerRuntime:
+    """根据配置构造 computer 基础设施运行时入口."""
+
+    runtime_conf = config.get("runtime", {})
+    fs_conf = dict(runtime_conf.get("filesystem", {}))
+    computer_conf = dict(runtime_conf.get("computer", {}))
+    root_dir = _resolve_filesystem_path(
+        fs_conf,
+        key="computer_root_dir",
+        default=str(Path.home() / ".acabot" / "workspaces"),
+    )
+    skill_catalog_dir = _resolve_filesystem_path(
+        fs_conf,
+        key="skill_catalog_dir",
+        default=str(root_dir / "catalog" / "skills"),
+    )
+    computer_config = ComputerRuntimeConfig(
+        root_dir=str(root_dir),
+        skill_catalog_dir=str(skill_catalog_dir),
+        max_attachment_size_bytes=int(
+            computer_conf.get("max_attachment_size_bytes", 64 * 1024 * 1024)
+        ),
+        max_total_attachment_bytes_per_run=int(
+            computer_conf.get("max_total_attachment_bytes_per_run", 256 * 1024 * 1024)
+        ),
+        attachment_download_timeout_sec=int(
+            computer_conf.get("attachment_download_timeout_sec", 30)
+        ),
+        attachment_download_retries=int(
+            computer_conf.get("attachment_download_retries", 2)
+        ),
+        exec_stdout_window_bytes=int(
+            computer_conf.get("exec_stdout_window_bytes", 256 * 1024)
+        ),
+        exec_stderr_window_bytes=int(
+            computer_conf.get("exec_stderr_window_bytes", 256 * 1024)
+        ),
+        docker_image=str(computer_conf.get("docker_image", "python:3.12-slim") or "python:3.12-slim"),
+        docker_network_mode=str(computer_conf.get("docker_network_mode", "bridge") or "bridge"),
+        docker_read_only_rootfs=bool(computer_conf.get("docker_read_only_rootfs", True)),
+    )
+    return ComputerRuntime(
+        config=computer_config,
+        gateway=gateway,
+        run_manager=run_manager,
+        default_policy=_build_default_computer_policy(config),
+    )
 
 
 def _build_binding_rules(config: Config) -> list[BindingRule]:

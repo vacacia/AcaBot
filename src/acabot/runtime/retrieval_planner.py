@@ -45,10 +45,12 @@ class PromptAssemblyConfig:
     Attributes:
         sticky_slot_position (str): sticky note 默认注入位置.
         skill_slot_position (str): skill guide 默认注入位置.
+        computer_slot_position (str): computer state 默认注入位置.
         summary_slot_position (str): thread summary 默认注入位置.
         retrieval_slot_position (str): retrieval memory 默认注入位置.
         sticky_message_role (str): sticky note 注入到 messages 时使用的 role.
         skill_message_role (str): skill guide 注入到 messages 时使用的 role.
+        computer_message_role (str): computer state 注入到 messages 时使用的 role.
         summary_message_role (str): thread summary 注入到 messages 时使用的 role.
         retrieval_message_role (str): retrieval memory 注入到 messages 时使用的 role.
         sticky_intro (str): sticky note slot 的提示模板.
@@ -62,10 +64,12 @@ class PromptAssemblyConfig:
 
     sticky_slot_position: str = "system_message"
     skill_slot_position: str = "system_message"
+    computer_slot_position: str = "system_message"
     summary_slot_position: str = "history_prefix"
     retrieval_slot_position: str = "system_message"
     sticky_message_role: str = "system"
     skill_message_role: str = "system"
+    computer_message_role: str = "system"
     summary_message_role: str = "user"
     retrieval_message_role: str = "system"
     sticky_intro: str = "以下是稳定事实和长期规则. 默认可信, 除非当前上下文明确冲突."
@@ -201,6 +205,25 @@ class RetrievalPlanner:
                     message_role=self.config.skill_message_role,
                     stable=True,
                     metadata={"skill_count": len(skill_guides)},
+                )
+            )
+
+        computer_state = self._collect_computer_state(ctx)
+        if computer_state:
+            slots.append(
+                PromptSlot(
+                    slot_id="slot:computer",
+                    slot_type="computer_state",
+                    title="Computer State",
+                    content=self._format_computer_state(computer_state),
+                    position=self.config.computer_slot_position,
+                    message_role=self.config.computer_message_role,
+                    stable=False,
+                    metadata={
+                        "backend_kind": computer_state["backend_kind"],
+                        "attachment_count": computer_state["attachment_count"],
+                        "session_count": len(computer_state["active_session_ids"]),
+                    },
                 )
             )
 
@@ -394,6 +417,36 @@ class RetrievalPlanner:
         for block in blocks:
             sections.append(f"[{block.title}]\n{block.content}")
         return "\n\n".join(sections)
+
+    @staticmethod
+    def _collect_computer_state(ctx: RunContext) -> dict[str, Any]:
+        state = ctx.workspace_state
+        if state is None:
+            return {}
+        return {
+            "backend_kind": state.backend_kind,
+            "workspace_visible_root": state.workspace_visible_root,
+            "read_only": state.read_only,
+            "available_tools": list(state.available_tools),
+            "attachment_count": state.attachment_count,
+            "active_session_ids": list(state.active_session_ids),
+            "mirrored_skill_names": list(state.mirrored_skill_names),
+        }
+
+    @staticmethod
+    def _format_computer_state(state: dict[str, Any]) -> str:
+        lines = [
+            "You have access to a computer workspace.",
+            f"- backend: {state['backend_kind']}",
+            f"- cwd: {state['workspace_visible_root']}",
+            f"- read_only: {state['read_only']}",
+            f"- available_tools: {', '.join(state['available_tools']) or '-'}",
+            f"- staged_attachments: {state['attachment_count']}",
+            f"- active_sessions: {len(state['active_session_ids'])}",
+            f"- mirrored_skills: {', '.join(state['mirrored_skill_names']) or '-'}",
+            "Use tools to inspect files, attachments, sessions, or command output in detail.",
+        ]
+        return "\n".join(lines)
 
     def _assemble_messages(self, plan: RetrievalPlan) -> list[dict[str, Any]]:
         """把 prompt slots 和对话消息拼成最终 message list.

@@ -78,6 +78,7 @@ async def test_run_manager_tracks_steps_and_cancellation() -> None:
         RunStep(
             step_id="step-1",
             run_id=run.run_id,
+            thread_id=run.thread_id,
             step_type="route",
             status="completed",
             created_at=123,
@@ -88,6 +89,27 @@ async def test_run_manager_tracks_steps_and_cancellation() -> None:
 
     assert cancelled is True
     assert manager.is_cancel_requested(run.run_id) is True
+
+
+async def test_run_manager_can_list_steps_by_thread() -> None:
+    manager = InMemoryRunManager()
+    run = await manager.open(event=_event(), decision=_decision())
+
+    await manager.append_step(
+        RunStep(
+            step_id="step-1",
+            run_id=run.run_id,
+            thread_id=run.thread_id,
+            step_type="exec",
+            status="completed",
+            created_at=123,
+        )
+    )
+
+    items = await manager.list_thread_steps(run.thread_id, step_types=["exec"])
+
+    assert len(items) == 1
+    assert items[0].thread_id == run.thread_id
 
 
 async def test_run_manager_marks_interrupted_as_terminal_state() -> None:

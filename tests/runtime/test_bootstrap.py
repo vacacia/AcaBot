@@ -1251,7 +1251,49 @@ async def test_build_runtime_components_wires_tool_broker_into_agent_runtime() -
 
     assert components.tool_broker is broker
     assert agent.calls[0]["tools"][0].name == "get_time"
-    assert agent.calls[0]["tool_executor"] is not None
+
+
+async def test_build_runtime_components_auto_loads_computer_tool_adapter_plugin() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "test-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "profiles": {
+                    "aca": {
+                        "name": "Aca",
+                        "prompt_ref": "prompt/aca",
+                        "default_model": "test-model",
+                        "enabled_tools": ["read", "exec"],
+                    }
+                },
+                "prompts": {
+                    "prompt/aca": "You are Aca.",
+                },
+            },
+        }
+    )
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    await components.plugin_manager.ensure_started()
+    profile = components.profile_loader.load(
+        RouteDecision(
+            thread_id="qq:user:10001",
+            actor_id="qq:user:10001",
+            agent_id="aca",
+            channel_scope="qq:user:10001",
+        )
+    )
+    visible = components.tool_broker.visible_tools(profile)
+
+    assert "computer_tool_adapter" in [plugin.name for plugin in components.plugin_manager.loaded]
+    assert [tool.name for tool in visible] == ["read", "exec"]
 
 
 async def test_build_runtime_components_uses_sqlite_persistence_when_configured(

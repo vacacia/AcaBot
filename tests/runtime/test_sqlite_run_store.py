@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from acabot.runtime import PersistedModelSnapshot, SQLiteRunStore, StoreBackedRunManager, RouteDecision
+from acabot.runtime import PersistedModelSnapshot, RunStep, SQLiteRunStore, StoreBackedRunManager, RouteDecision
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
 
@@ -150,3 +150,30 @@ async def test_store_backed_run_manager_persists_model_snapshot_metadata(
     assert restored is not None
     assert restored.metadata["model_snapshot"]["provider_id"] == "openai-main"
     assert restored.metadata["model_snapshot"]["model"] == "gpt-main"
+
+
+async def test_store_backed_run_manager_can_list_thread_steps(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "runtime.db"
+    store = SQLiteRunStore(db_path)
+    manager = StoreBackedRunManager(store)
+    run = await manager.open(event=_event(), decision=_decision())
+
+    try:
+        await manager.append_step(
+            RunStep(
+                step_id="step-1",
+                run_id=run.run_id,
+                thread_id=run.thread_id,
+                step_type="exec",
+                status="completed",
+                created_at=123,
+            )
+        )
+        items = await manager.list_thread_steps(run.thread_id, step_types=["exec"])
+    finally:
+        store.close()
+
+    assert len(items) == 1
+    assert items[0].thread_id == run.thread_id
