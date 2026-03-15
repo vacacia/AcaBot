@@ -19,9 +19,7 @@ runtime-env/.env
 runtime-env/config.yaml
 runtime-env/runtime-config/
 runtime-env/runtime-data/
-runtime-env/napcat/QQ/
-runtime-env/napcat/config/*
-!runtime-env/napcat/config/onebot11.json
+runtime-env/napcat
 *.db
 .env
 config.yaml

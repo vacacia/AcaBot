@@ -16,8 +16,9 @@
 
 from __future__ import annotations
 
+import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
 from .app import RuntimeApp
 from .computer import (
@@ -59,6 +60,52 @@ from .skills import ResolvedSkillAssignment, SkillCatalog
 from .stores import ChannelEventStore, MemoryStore, MessageStore
 from .subagent_delegation import RegisteredSubagentExecutor, SubagentExecutorRegistry
 from .threads import ThreadManager
+from .tool_broker import ToolBroker
+
+UI_EVENT_TYPE_OPTIONS = [
+    "message",
+    "poke",
+    "recall",
+    "member_join",
+    "member_leave",
+    "admin_change",
+    "file_upload",
+    "friend_added",
+    "mute_change",
+    "honor_change",
+    "title_change",
+    "lucky_king",
+]
+UI_MESSAGE_SUBTYPE_OPTIONS = [
+    "friend",
+    "normal",
+]
+UI_NOTICE_TYPE_OPTIONS = [
+    "notify",
+    "group_recall",
+    "friend_recall",
+    "group_increase",
+    "group_decrease",
+    "group_admin",
+    "group_upload",
+    "friend_add",
+    "group_ban",
+]
+UI_NOTICE_SUBTYPE_OPTIONS = [
+    "poke",
+    "invite",
+    "kick",
+    "kick_me",
+    "set",
+    "unset",
+    "ban",
+    "lift_ban",
+    "lucky_king",
+    "talkative",
+    "performer",
+    "emotion",
+    "title",
+]
 
 
 # region 状态模型
@@ -126,6 +173,22 @@ class RuntimeStatusSnapshot:
         """
 
         return len(self.pending_approvals)
+
+
+@dataclass(slots=True)
+class GatewayStatusSnapshot:
+    """当前 gateway 连接状态快照."""
+
+    gateway_type: str = ""
+    connection_mode: str = "reverse_ws_server"
+    listen_host: str = ""
+    listen_port: int = 0
+    listen_url: str = ""
+    server_running: bool = False
+    connected: bool = False
+    self_id: str = ""
+    supports_call_api: bool = False
+    token_configured: bool = False
 
 
 @dataclass(slots=True)
@@ -270,6 +333,7 @@ class RuntimeControlPlane:
         plugin_manager: RuntimePluginManager | None = None,
         skill_catalog: SkillCatalog | None = None,
         subagent_executor_registry: SubagentExecutorRegistry | None = None,
+        tool_broker: ToolBroker | None = None,
         model_registry_manager: FileSystemModelRegistryManager | None = None,
         computer_runtime: ComputerRuntime | None = None,
         reference_backend: ReferenceBackend | None = None,
@@ -288,6 +352,7 @@ class RuntimeControlPlane:
             plugin_manager: 可选的 runtime plugin manager.
             skill_catalog: 可选的统一 skill catalog.
             subagent_executor_registry: 可选的 subagent executor 注册表.
+            tool_broker: 可选的 tool broker, 用于给 WebUI 提供工具目录.
             model_registry_manager: 可选的模型注册表管理器.
             computer_runtime: 可选的 computer 基础设施入口.
             reference_backend: 可选的 reference backend.
@@ -304,6 +369,7 @@ class RuntimeControlPlane:
         self.plugin_manager = plugin_manager
         self.skill_catalog = skill_catalog
         self.subagent_executor_registry = subagent_executor_registry
+        self.tool_broker = tool_broker
         self.model_registry_manager = model_registry_manager
         self.computer_runtime = computer_runtime
         self.reference_backend = reference_backend
@@ -353,6 +419,27 @@ class RuntimeControlPlane:
             requested_plugins=list(plugin_names or []),
             loaded_plugins=list(loaded),
             missing_plugins=list(missing),
+        )
+
+    async def get_gateway_status(self) -> GatewayStatusSnapshot:
+        """读取当前 gateway 监听和连接状态."""
+
+        gateway = getattr(self.app, "gateway", None)
+        if gateway is None:
+            return GatewayStatusSnapshot()
+        host = str(getattr(gateway, "host", "") or "")
+        port = int(getattr(gateway, "port", 0) or 0)
+        return GatewayStatusSnapshot(
+            gateway_type=type(gateway).__name__,
+            connection_mode="reverse_ws_server",
+            listen_host=host,
+            listen_port=port,
+            listen_url=f"ws://{host}:{port}" if host and port else "",
+            server_running=bool(getattr(gateway, "_server", None)),
+            connected=bool(getattr(gateway, "_ws", None)),
+            self_id=str(getattr(gateway, "_self_id", "") or ""),
+            supports_call_api=callable(getattr(gateway, "call_api", None)),
+            token_configured=bool(str(getattr(gateway, "token", "") or "")),
         )
 
     async def switch_thread_agent(
@@ -512,6 +599,16 @@ class RuntimeControlPlane:
             raise RuntimeError("config control plane unavailable")
         return await self.config_control_plane.upsert_profile(payload)
 
+    async def get_gateway_config(self) -> dict[str, object]:
+        if self.config_control_plane is None:
+            return {}
+        return self.config_control_plane.get_gateway_config()
+
+    async def upsert_gateway_config(self, payload: dict[str, object]) -> dict[str, object]:
+        if self.config_control_plane is None:
+            raise RuntimeError("config control plane unavailable")
+        return await self.config_control_plane.upsert_gateway_config(payload)
+
     async def delete_profile(self, agent_id: str) -> bool:
         if self.config_control_plane is None:
             return False
@@ -646,6 +743,84 @@ class RuntimeControlPlane:
             self._to_subagent_executor_snapshot(item)
             for item in self.subagent_executor_registry.list_all()
         ]
+
+    async def list_available_tools(self) -> list[dict[str, object]]:
+        """列出当前 runtime 已注册工具目录."""
+
+        if self.tool_broker is None:
+            return []
+        return [dict(item) for item in self.tool_broker.list_registered_tools()]
+
+    async def get_ui_catalog(self) -> dict[str, object]:
+        """返回 WebUI 表单所需的选择项元数据."""
+
+        prompts = await self.list_prompts()
+        profiles = await self.list_profiles()
+        default_agent_id = ""
+        if self.profile_registry is not None:
+            default_agent_id = str(getattr(self.profile_registry, "default_agent_id", "") or "")
+        if not default_agent_id and profiles:
+            default_agent_id = str(profiles[0].get("agent_id", "") or "")
+        bot_profile = next((item for item in profiles if item.get("agent_id") == default_agent_id), None)
+        skills = await self.list_skills()
+        executors = await self.list_subagent_executors()
+        providers = await self.list_model_providers()
+        presets = await self.list_model_presets()
+        bindings = await self.list_model_bindings()
+        return {
+            "bot": {
+                "agent_id": default_agent_id,
+                "name": bot_profile.get("name", default_agent_id) if bot_profile is not None else default_agent_id,
+            },
+            "agents": [
+                {
+                    "agent_id": item["agent_id"],
+                    "name": item.get("name", item["agent_id"]),
+                }
+                for item in profiles
+            ],
+            "prompts": [
+                {
+                    "prompt_ref": item.get("prompt_ref", ""),
+                    "prompt_name": str(item.get("prompt_ref", "")).removeprefix("prompt/"),
+                    "source": item.get("source", ""),
+                }
+                for item in prompts
+            ],
+            "tools": await self.list_available_tools(),
+            "skills": [asdict(item) for item in skills],
+            "subagent_executors": [asdict(item) for item in executors],
+            "model_providers": [
+                {
+                    "provider_id": item.provider_id,
+                    "kind": item.kind,
+                }
+                for item in providers
+            ],
+            "model_presets": [
+                {
+                    "preset_id": item.preset_id,
+                    "provider_id": item.provider_id,
+                    "model": item.model,
+                }
+                for item in presets
+            ],
+            "model_bindings": [item.to_dict() for item in bindings],
+            "options": {
+                "provider_kinds": ["openai_compatible", "anthropic", "google_gemini"],
+                "binding_target_types": ["global", "agent", "system"],
+                "run_modes": ["respond", "record_only", "silent_drop"],
+                "event_types": list(UI_EVENT_TYPE_OPTIONS),
+                "message_subtypes": list(UI_MESSAGE_SUBTYPE_OPTIONS),
+                "notice_types": list(UI_NOTICE_TYPE_OPTIONS),
+                "notice_subtypes": list(UI_NOTICE_SUBTYPE_OPTIONS),
+                "sender_roles": ["owner", "admin", "member"],
+                "delegation_modes": ["inline", "prefer_delegate", "must_delegate", "manual"],
+                "computer_backends": ["host", "docker"],
+                "computer_network_modes": ["enabled", "disabled"],
+                "api_key_env_names": sorted(key for key in os.environ if key.endswith("_API_KEY")),
+            },
+        }
 
     async def list_threads(self, *, limit: int = 100):
         if self.thread_manager is None:

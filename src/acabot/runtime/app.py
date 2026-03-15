@@ -156,10 +156,28 @@ class RuntimeApp:
         """
         run_id: str | None = None
         try:
+            logger.info(
+                "Inbound event: event_id=%s type=%s channel=%s user=%s targets_self=%s preview=%s",
+                event.event_id,
+                event.event_type,
+                event.session_key,
+                event.source.user_id,
+                event.targets_self,
+                self._preview_event(event),
+            )
             if self.plugin_manager is not None:
                 await self.plugin_manager.ensure_started()
             decision = await self.router.route(event)
+            logger.info(
+                "Route resolved: event_id=%s agent=%s run_mode=%s thread=%s channel=%s",
+                event.event_id,
+                decision.agent_id,
+                decision.run_mode,
+                decision.thread_id,
+                decision.channel_scope,
+            )
             if decision.run_mode == "silent_drop":
+                logger.info("Event dropped by route: event_id=%s", event.event_id)
                 return
             # 根据路由决策, 创建或获取当前的对话 Thread
             thread = await self.thread_manager.get_or_create(
@@ -217,10 +235,25 @@ class RuntimeApp:
                 summary_model_request=summary_model_request,
             )
             await self.pipeline.execute(ctx)
+            logger.info(
+                "Run finished: run_id=%s status=%s agent=%s actions=%s error=%s",
+                ctx.run.run_id,
+                getattr(ctx.run, "status", ""),
+                ctx.run.agent_id,
+                len(ctx.actions),
+                getattr(ctx.response, "error", "") or "-",
+            )
         except Exception as exc:
             logger.exception("Failed to handle event: event_id=%s", event.event_id)
             if run_id is not None:
                 await self._mark_failed_safely(run_id, f"runtime app crashed: {exc}")
+
+    @staticmethod
+    def _preview_event(event: StandardEvent, max_len: int = 120) -> str:
+        text = event.message_preview or event.notice_preview or f"[{event.event_type}]"
+        if len(text) <= max_len:
+            return text
+        return f"{text[:max_len]}..."
 
     # region inbound事件
     def _load_profile_for_event(self, decision: RouteDecision) -> AgentProfile:

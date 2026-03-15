@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import signal
 from collections.abc import Callable
 
@@ -65,6 +66,7 @@ def create_gateway(config: Config) -> GatewayProtocol:
         host=gw_conf.get("host", "0.0.0.0"),
         port=gw_conf.get("port", 8080),
         timeout=gw_conf.get("timeout", 10.0),
+        token=gw_conf.get("token", ""),
     )
 
 
@@ -147,17 +149,58 @@ def build_runtime_app(
     )
 
 
+class ColorLogFormatter(logging.Formatter):
+    """为终端日志增加轻量 ANSI 颜色."""
+
+    LEVEL_COLORS = {
+        logging.DEBUG: "\033[36m",
+        logging.INFO: "\033[32m",
+        logging.WARNING: "\033[33m",
+        logging.ERROR: "\033[31m",
+        logging.CRITICAL: "\033[35m",
+    }
+    RESET = "\033[0m"
+
+    def __init__(self, fmt: str, *, use_color: bool) -> None:
+        super().__init__(fmt)
+        self.use_color = use_color
+
+    def format(self, record: logging.LogRecord) -> str:
+        if not self.use_color:
+            return super().format(record)
+        original_levelname = record.levelname
+        color = self.LEVEL_COLORS.get(record.levelno, "")
+        if color:
+            record.levelname = f"{color}{record.levelname}{self.RESET}"
+        try:
+            return super().format(record)
+        finally:
+            record.levelname = original_levelname
+
+
+class NoisyWebsocketHandshakeFilter(logging.Filter):
+    """过滤探测 HTTP 口误打到 WS 端口的已知噪音."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "opening handshake failed" not in str(record.getMessage() or "")
+
+
 def setup_logging(config: Config) -> None:
     log_conf = config.get("logging", {})
     level_name = log_conf.get("level", "INFO")
     level = getattr(logging, level_name.upper(), logging.INFO)
+    use_color = bool(log_conf.get("color", True)) and not bool(os.getenv("NO_COLOR"))
 
-    logging.basicConfig(
-        level=logging.WARNING,
-        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-        force=True,
+    handler = logging.StreamHandler()
+    handler.setFormatter(
+        ColorLogFormatter(
+            "%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+            use_color=use_color,
+        )
     )
+    logging.basicConfig(level=logging.WARNING, handlers=[handler], force=True)
     logging.getLogger("acabot").setLevel(level)
+    logging.getLogger("websockets.server").addFilter(NoisyWebsocketHandshakeFilter())
 
 
 async def wait_for_shutdown_signal() -> None:

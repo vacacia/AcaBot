@@ -507,6 +507,29 @@ class RuntimeConfigControlPlane:
     def list_profiles(self) -> list[dict[str, Any]]:
         return [_profile_to_config(item) for item in self.profile_registry.list_profiles()]
 
+    def get_gateway_config(self) -> dict[str, Any]:
+        gateway_conf = dict(self.config.get("gateway", {}) or {})
+        return {
+            "host": str(gateway_conf.get("host", "0.0.0.0") or "0.0.0.0"),
+            "port": int(gateway_conf.get("port", 8080) or 8080),
+            "timeout": float(gateway_conf.get("timeout", 10.0) or 10.0),
+            "token": str(gateway_conf.get("token", "") or ""),
+        }
+
+    async def upsert_gateway_config(self, payload: dict[str, Any]) -> dict[str, Any]:
+        gateway_conf = self.get_gateway_config()
+        next_conf = {
+            "host": str(payload.get("host", gateway_conf["host"]) or gateway_conf["host"]),
+            "port": int(payload.get("port", gateway_conf["port"]) or gateway_conf["port"]),
+            "timeout": float(payload.get("timeout", gateway_conf["timeout"]) or gateway_conf["timeout"]),
+            "token": str(payload.get("token", gateway_conf["token"]) or ""),
+        }
+        data = self.config.to_dict()
+        data["gateway"] = next_conf
+        self.config.replace(data)
+        self.config.save()
+        return self.get_gateway_config()
+
     def get_profile(self, agent_id: str) -> dict[str, Any] | None:
         profile = self.profile_registry.profiles.get(agent_id)
         if profile is None:

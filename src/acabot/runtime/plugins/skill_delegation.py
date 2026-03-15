@@ -64,15 +64,19 @@ class SkillDelegationPlugin(RuntimePlugin):
                 spec=ToolSpec(
                     name="delegate_skill",
                     description=(
-                        "Delegate a configured workflow or capability skill to a subagent. "
-                        "Use this when the current agent should hand the task to a dedicated worker."
+                        "Delegate work to a subagent. "
+                        "You can either delegate a configured skill_name or directly choose a delegate_agent_id."
                     ),
                     parameters={
                         "type": "object",
                         "properties": {
                             "skill_name": {
                                 "type": "string",
-                                "description": "Assigned skill name to delegate.",
+                                "description": "Optional assigned skill name to delegate.",
+                            },
+                            "delegate_agent_id": {
+                                "type": "string",
+                                "description": "Optional direct subagent id. Use this when you want to hand the task to a visible subagent directly.",
                             },
                             "task": {
                                 "type": "string",
@@ -83,7 +87,7 @@ class SkillDelegationPlugin(RuntimePlugin):
                                 "description": "Optional structured payload passed to the subagent.",
                             },
                         },
-                        "required": ["skill_name", "task"],
+                        "required": ["task"],
                     },
                 ),
                 handler=self._delegate_skill,
@@ -113,9 +117,15 @@ class SkillDelegationPlugin(RuntimePlugin):
             )
 
         skill_name = str(arguments.get("skill_name", "") or "").strip()
+        delegate_agent_id = str(arguments.get("delegate_agent_id", "") or "").strip()
         task = str(arguments.get("task", "") or "").strip()
         payload = dict(arguments.get("payload", {}) or {})
         payload.setdefault("task", task)
+        if not skill_name and not delegate_agent_id:
+            return ToolResult(
+                llm_content="Delegation failed: either skill_name or delegate_agent_id is required.",
+                raw={"ok": False, "reason": "delegation_target_missing"},
+            )
 
         result = await delegator.delegate(
             run_id=ctx.run_id,
@@ -125,6 +135,7 @@ class SkillDelegationPlugin(RuntimePlugin):
             parent_agent_id=ctx.agent_id,
             profile=ctx.profile,
             skill_name=skill_name,
+            delegate_agent_id=delegate_agent_id,
             payload=payload,
             metadata={
                 "requested_by": "delegate_skill",
@@ -133,10 +144,11 @@ class SkillDelegationPlugin(RuntimePlugin):
         )
         if not result.ok:
             return ToolResult(
-                llm_content=f"Delegation failed for {skill_name}: {result.error or 'unknown error'}",
+                llm_content=f"Delegation failed for {skill_name or delegate_agent_id}: {result.error or 'unknown error'}",
                 raw={
                     "ok": False,
                     "skill_name": skill_name,
+                    "delegate_agent_id": delegate_agent_id,
                     "error": result.error,
                     "metadata": dict(result.metadata),
                 },
@@ -144,7 +156,7 @@ class SkillDelegationPlugin(RuntimePlugin):
 
         return ToolResult(
             llm_content=(
-                f"Delegation completed for {skill_name}. "
+                f"Delegation completed for {skill_name or delegate_agent_id}. "
                 f"subagent={result.metadata.get('executor_agent_id', '') or '-'} "
                 f"summary={result.summary or 'done'}"
             ),
@@ -152,6 +164,7 @@ class SkillDelegationPlugin(RuntimePlugin):
             raw={
                 "ok": True,
                 "skill_name": skill_name,
+                "delegate_agent_id": delegate_agent_id,
                 "delegated_run_id": result.delegated_run_id,
                 "summary": result.summary,
                 "artifacts": list(result.artifacts),

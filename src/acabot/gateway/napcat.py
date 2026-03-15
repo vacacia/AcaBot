@@ -44,7 +44,7 @@ class NapCatGateway(BaseGateway):
         timeout: send / call_api 等待响应的超时秒数.
     """
 
-    def __init__(self, host: str = "0.0.0.0", port: int = 8080, timeout: float = 10.0):
+    def __init__(self, host: str = "0.0.0.0", port: int = 8080, timeout: float = 10.0, token: str = ""):
         """初始化 NapCatGateway.
 
         Args:
@@ -56,6 +56,7 @@ class NapCatGateway(BaseGateway):
         self.host = host
         self.port = port
         self.timeout = timeout
+        self.token = str(token or "")
         self._ws: ServerConnection | None = None
         self._on_event: Callable[[StandardEvent], Awaitable[None]] | None = None
         self._pending: dict[str, asyncio.Future] = {}  # echo → Future, 请求-响应匹配
@@ -105,6 +106,13 @@ class NapCatGateway(BaseGateway):
 
         if websockets is None:
             raise RuntimeError("websockets dependency is required to handle NapCat connections")
+        if self.token:
+            auth_header = str(ws.request.headers.get("Authorization", "") or "")
+            expected = f"Bearer {self.token}"
+            if auth_header != expected:
+                logger.warning("NapCat connection rejected: invalid Authorization header")
+                await ws.close(code=4401, reason="unauthorized")
+                return
         self._ws = ws
         self._self_id = ws.request.headers.get("X-Self-ID")
         logger.info(f"NapCat connected, self_id={self._self_id}")

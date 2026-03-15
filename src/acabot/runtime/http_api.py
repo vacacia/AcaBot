@@ -243,8 +243,16 @@ class RuntimeHttpApiServer:
                     "static_dir": str(self.static_dir) if self.static_dir is not None else "",
                 },
             }
+        if segments == ["ui", "catalog"] and method == "GET":
+            return self._ok(self._await(self.control_plane.get_ui_catalog()))
         if segments == ["status"] and method == "GET":
             return self._ok(self._await(self.control_plane.get_status()))
+        if segments == ["gateway", "config"] and method == "GET":
+            return self._ok(self._await(self.control_plane.get_gateway_config()))
+        if segments == ["gateway", "status"] and method == "GET":
+            return self._ok(self._await(self.control_plane.get_gateway_status()))
+        if segments == ["gateway", "config"] and method == "PUT":
+            return self._ok(self._await(self.control_plane.upsert_gateway_config(payload)))
         if segments == ["approvals"] and method == "GET":
             status = self._await(self.control_plane.get_status())
             return self._ok(status.pending_approvals)
@@ -487,7 +495,14 @@ class RuntimeHttpApiServer:
             if method == "PUT":
                 model = payload
                 model["provider_id"] = provider_id
-                return self._ok(self._await(self.control_plane.upsert_model_provider(_model_provider_from_payload(model))))
+                existing = self._await(self.control_plane.get_model_provider(provider_id))
+                return self._ok(
+                    self._await(
+                        self.control_plane.upsert_model_provider(
+                            _model_provider_from_payload(model, existing=existing)
+                        )
+                    )
+                )
             if method == "DELETE":
                 return self._ok(
                     self._await(
@@ -739,31 +754,51 @@ class RuntimeHttpApiServer:
         return future.result(timeout=self.request_timeout_sec)
 
 
-def _model_provider_from_payload(payload: dict[str, Any]):
+def _model_provider_from_payload(
+    payload: dict[str, Any],
+    *,
+    existing=None,
+):
     from .model_registry import (
         AnthropicProviderConfig,
         GoogleGeminiProviderConfig,
         ModelProvider,
         OpenAICompatibleProviderConfig,
+        _normalize_provider_auth_fields,
     )
 
+    existing_config = {}
+    if existing is not None:
+        existing_config = dict(existing.to_dict())
     normalized = {
+        **dict(existing_config.get("config", {}) or {}),
+        **{
+            key: value
+            for key, value in dict(existing_config).items()
+            if key not in {"provider_id", "kind"}
+        },
         **dict(payload.get("config", {}) or {}),
         **dict(payload),
     }
     kind = str(normalized.get("kind", "") or "")
     provider_id = str(normalized.get("provider_id", "") or "")
+    api_key_env, api_key = _normalize_provider_auth_fields(
+        api_key_env=str(normalized.get("api_key_env", "") or ""),
+        api_key=str(normalized.get("api_key", "") or ""),
+    )
     if kind == "openai_compatible":
         config = OpenAICompatibleProviderConfig(
             base_url=str(normalized.get("base_url", "") or ""),
-            api_key_env=str(normalized.get("api_key_env", "") or ""),
+            api_key_env=api_key_env,
+            api_key=api_key,
             default_headers=dict(normalized.get("default_headers", {}) or {}),
             default_query=dict(normalized.get("default_query", {}) or {}),
             default_body=dict(normalized.get("default_body", {}) or {}),
         )
     elif kind == "anthropic":
         config = AnthropicProviderConfig(
-            api_key_env=str(normalized.get("api_key_env", "") or ""),
+            api_key_env=api_key_env,
+            api_key=api_key,
             base_url=str(normalized.get("base_url", "") or ""),
             anthropic_version=str(normalized.get("anthropic_version", "") or ""),
             default_headers=dict(normalized.get("default_headers", {}) or {}),
@@ -772,7 +807,8 @@ def _model_provider_from_payload(payload: dict[str, Any]):
         )
     elif kind == "google_gemini":
         config = GoogleGeminiProviderConfig(
-            api_key_env=str(normalized.get("api_key_env", "") or ""),
+            api_key_env=api_key_env,
+            api_key=api_key,
             base_url=str(normalized.get("base_url", "") or ""),
             api_version=str(normalized.get("api_version", "") or ""),
             project_id=str(normalized.get("project_id", "") or ""),

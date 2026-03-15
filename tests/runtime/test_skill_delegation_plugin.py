@@ -147,3 +147,109 @@ async def test_delegate_skill_tool_calls_subagent_executor() -> None:
     assert result.raw["delegated_run_id"] == "subrun:run:delegate"
     assert result.raw["summary"] == "worker handled: 整理这份样例任务"
     assert result.metadata["delegate_agent_id"] == "sample_worker"
+
+
+async def test_delegate_skill_is_available_when_subagent_exists_without_skill_assignment() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "runtime-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "filesystem": {
+                    "enabled": True,
+                    "skill_catalog_dir": _skills_dir(),
+                },
+                "profiles": {
+                    "aca": {
+                        "name": "Aca",
+                        "prompt_ref": "prompt/aca",
+                        "default_model": "runtime-model",
+                        "skill_assignments": [],
+                    },
+                    "sample_worker": {
+                        "name": "Sample Worker",
+                        "prompt_ref": "prompt/sample_worker",
+                        "default_model": "runtime-model",
+                    },
+                },
+                "prompts": {
+                    "prompt/aca": "You are Aca.",
+                    "prompt/sample_worker": "You are a worker.",
+                },
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    await components.plugin_manager.ensure_started()
+
+    profile = components.profile_loader.profiles["aca"]
+    visible = components.tool_broker.visible_tools(profile)
+
+    assert "delegate_skill" in [tool.name for tool in visible]
+
+
+async def test_delegate_skill_tool_can_delegate_directly_to_subagent_id() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "runtime-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "filesystem": {
+                    "enabled": True,
+                    "skill_catalog_dir": _skills_dir(),
+                },
+                "profiles": {
+                    "aca": {
+                        "name": "Aca",
+                        "prompt_ref": "prompt/aca",
+                        "default_model": "runtime-model",
+                        "skill_assignments": [],
+                    },
+                    "sample_worker": {
+                        "name": "Sample Worker",
+                        "prompt_ref": "prompt/sample_worker",
+                        "default_model": "runtime-model",
+                    },
+                },
+                "prompts": {
+                    "prompt/aca": "You are Aca.",
+                    "prompt/sample_worker": "You are a worker.",
+                },
+                "plugins": [
+                    "tests.runtime.runtime_plugin_samples:SampleDelegationWorkerPlugin",
+                ],
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    await components.plugin_manager.ensure_started()
+
+    profile = components.profile_loader.profiles["aca"]
+    result = await components.tool_broker.execute(
+        tool_name="delegate_skill",
+        arguments={
+            "delegate_agent_id": "sample_worker",
+            "task": "直接处理这个任务",
+        },
+        ctx=_execution_ctx(profile),
+    )
+
+    assert result.raw["ok"] is True
+    assert result.metadata["delegate_agent_id"] == "sample_worker"
+    assert result.raw["summary"] == "worker handled: 直接处理这个任务"

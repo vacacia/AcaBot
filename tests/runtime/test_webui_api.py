@@ -176,6 +176,13 @@ async def test_runtime_http_api_server_serves_status_and_profile_crud(tmp_path: 
         assert status["ok"] is True
         assert "loaded_plugins" in status["data"]
 
+        catalog = await asyncio.to_thread(request_json, base_url, "/api/ui/catalog")
+        assert catalog["ok"] is True
+        assert "agents" in catalog["data"]
+        assert "tools" in catalog["data"]
+        assert "options" in catalog["data"]
+        assert "event_types" in catalog["data"]["options"]
+
         put_result = await asyncio.to_thread(
             request_json,
             base_url,

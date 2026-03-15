@@ -34,5 +34,7 @@ def resolve_model_requests_for_profile(
     )
     summary_model_request = manager.resolve_summary_request(
         primary_request=model_request,
+        profile_summary_preset_id=str(profile.config.get("summary_model_preset_id", "") or ""),
+        profile_summary_model=str(profile.config.get("summary_model", "") or ""),
     )
     return model_request, model_snapshot, summary_model_request

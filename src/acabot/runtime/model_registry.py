@@ -16,6 +16,7 @@ from dataclasses import asdict, dataclass, field
 from inspect import isawaitable
 import os
 from pathlib import Path
+import re
 from tempfile import NamedTemporaryFile
 from typing import Any, Literal
 
@@ -34,6 +35,21 @@ _SUPPORTED_BINDING_TARGETS: set[tuple[str, str]] = {
     ("global", "default"),
     ("system", "compactor_summary"),
 }
+_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _normalize_provider_auth_fields(
+    *,
+    api_key_env: str,
+    api_key: str = "",
+) -> tuple[str, str]:
+    normalized_env = str(api_key_env or "").strip()
+    normalized_key = str(api_key or "").strip()
+    if normalized_key:
+        return normalized_env, normalized_key
+    if normalized_env and not _ENV_NAME_RE.fullmatch(normalized_env):
+        return "", normalized_env
+    return normalized_env, normalized_key
 
 
 # region provider config
@@ -43,6 +59,7 @@ class OpenAICompatibleProviderConfig:
 
     base_url: str
     api_key_env: str
+    api_key: str = ""
     default_headers: dict[str, str] = field(default_factory=dict)
     default_query: dict[str, Any] = field(default_factory=dict)
     default_body: dict[str, Any] = field(default_factory=dict)
@@ -53,6 +70,7 @@ class AnthropicProviderConfig:
     """Anthropic provider 的静态配置."""
 
     api_key_env: str
+    api_key: str = ""
     base_url: str = ""
     anthropic_version: str = ""
     default_headers: dict[str, str] = field(default_factory=dict)
@@ -65,6 +83,7 @@ class GoogleGeminiProviderConfig:
     """Google Gemini provider 的静态配置."""
 
     api_key_env: str
+    api_key: str = ""
     base_url: str = ""
     api_version: str = ""
     project_id: str = ""
@@ -196,6 +215,7 @@ class RuntimeModelRequest:
     preset_id: str = ""
     binding_id: str = ""
     api_key_env: str = ""
+    api_key: str = ""
     provider_params: dict[str, Any] = field(default_factory=dict)
     model_params: dict[str, Any] = field(default_factory=dict)
     execution_params: dict[str, Any] = field(default_factory=dict)
@@ -218,6 +238,8 @@ class RuntimeModelRequest:
         api_key = ""
         if self.api_key_env:
             api_key = str(os.getenv(self.api_key_env, "") or "")
+        if not api_key and self.api_key:
+            api_key = str(self.api_key or "")
         if provider_kind == "openai_compatible":
             base_url = str(options.pop("base_url", "") or "")
             default_headers = dict(options.pop("default_headers", {}) or {})
@@ -350,6 +372,7 @@ class PersistedModelSnapshot:
             preset_id=self.preset_id,
             binding_id=self.binding_id,
             api_key_env=self.api_key_env,
+            api_key="",
             execution_params=dict(self.resolved_non_secret_params),
         )
 
@@ -551,8 +574,11 @@ class ModelRegistry:
         if not provider_id:
             raise ValueError("provider_id is required")
         config = provider.config
-        api_key_env = str(getattr(config, "api_key_env", "") or "").strip()
-        if not api_key_env:
+        api_key_env, api_key = _normalize_provider_auth_fields(
+            api_key_env=str(getattr(config, "api_key_env", "") or ""),
+            api_key=str(getattr(config, "api_key", "") or ""),
+        )
+        if not api_key_env and not api_key:
             raise ValueError(f"provider api_key_env is required: {provider.provider_id}")
         if provider.kind == "openai_compatible":
             base_url = str(getattr(config, "base_url", "") or "").strip()
@@ -863,7 +889,21 @@ class FileSystemModelRegistryManager:
         self,
         *,
         primary_request: RuntimeModelRequest | None,
+        profile_summary_preset_id: str = "",
+        profile_summary_model: str = "",
     ) -> RuntimeModelRequest | None:
+        if profile_summary_preset_id:
+            request = self._request_from_preset_id(None, profile_summary_preset_id)
+            if request is not None:
+                request.binding_id = "profile:summary_model_preset"
+                return request
+
+        if profile_summary_model:
+            return self._legacy_request(
+                profile_summary_model,
+                binding_id="legacy:profile_summary_model",
+            )
+
         binding = self.active_registry.binding_for_system("compactor_summary")
         if binding is not None:
             requests = [self._request_from_preset_id(binding, preset_id) for preset_id in binding.preset_ids]
@@ -1077,6 +1117,10 @@ class FileSystemModelRegistryManager:
         if provider is None:
             return None
         provider_params = asdict(provider.config)
+        api_key_env, api_key = _normalize_provider_auth_fields(
+            api_key_env=str(provider_params.pop("api_key_env", "") or ""),
+            api_key=str(provider_params.pop("api_key", "") or ""),
+        )
         model_params = dict(preset.model_params)
         execution_params: dict[str, Any] = {}
         if binding is not None and binding.timeout_sec is not None:
@@ -1092,7 +1136,8 @@ class FileSystemModelRegistryManager:
             provider_id=provider.provider_id,
             preset_id=preset.preset_id,
             binding_id=binding.binding_id if binding is not None else "",
-            api_key_env=str(getattr(provider.config, "api_key_env", "") or ""),
+            api_key_env=api_key_env,
+            api_key=api_key,
             provider_params=provider_params,
             model_params=model_params,
             execution_params=execution_params,
@@ -1163,9 +1208,14 @@ class FileSystemModelRegistryManager:
         provider_id = str(raw.get("provider_id", "") or path.stem)
         kind = str(raw.get("kind", "") or "")
         if kind == "openai_compatible":
+            api_key_env, api_key = _normalize_provider_auth_fields(
+                api_key_env=str(raw.get("api_key_env", "") or ""),
+                api_key=str(raw.get("api_key", "") or ""),
+            )
             config = OpenAICompatibleProviderConfig(
                 base_url=str(raw.get("base_url", "") or ""),
-                api_key_env=str(raw.get("api_key_env", "") or ""),
+                api_key_env=api_key_env,
+                api_key=api_key,
                 default_headers={
                     str(key): str(value)
                     for key, value in dict(raw.get("default_headers", {}) or {}).items()
@@ -1175,8 +1225,13 @@ class FileSystemModelRegistryManager:
             )
             return ModelProvider(provider_id=provider_id, kind="openai_compatible", config=config)
         if kind == "anthropic":
-            config = AnthropicProviderConfig(
+            api_key_env, api_key = _normalize_provider_auth_fields(
                 api_key_env=str(raw.get("api_key_env", "") or ""),
+                api_key=str(raw.get("api_key", "") or ""),
+            )
+            config = AnthropicProviderConfig(
+                api_key_env=api_key_env,
+                api_key=api_key,
                 base_url=str(raw.get("base_url", "") or ""),
                 anthropic_version=str(raw.get("anthropic_version", "") or ""),
                 default_headers={
@@ -1188,8 +1243,13 @@ class FileSystemModelRegistryManager:
             )
             return ModelProvider(provider_id=provider_id, kind="anthropic", config=config)
         if kind == "google_gemini":
-            config = GoogleGeminiProviderConfig(
+            api_key_env, api_key = _normalize_provider_auth_fields(
                 api_key_env=str(raw.get("api_key_env", "") or ""),
+                api_key=str(raw.get("api_key", "") or ""),
+            )
+            config = GoogleGeminiProviderConfig(
+                api_key_env=api_key_env,
+                api_key=api_key,
                 base_url=str(raw.get("base_url", "") or ""),
                 api_version=str(raw.get("api_version", "") or ""),
                 project_id=str(raw.get("project_id", "") or ""),

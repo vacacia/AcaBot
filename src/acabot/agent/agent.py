@@ -99,6 +99,14 @@ class LitellmAgent(BaseAgent):
                 if tools_param:
                     kwargs["tools"] = tools_param
 
+                logger.info(
+                    "LLM run request: model=%s messages=%s tools=%s request_options=%s",
+                    use_model,
+                    len(full_messages),
+                    len(active_tools),
+                    ",".join(sorted(kwargs.keys())),
+                )
+
                 response = completion(**kwargs)
                 if isawaitable(response):
                     response = await response
@@ -112,6 +120,12 @@ class LitellmAgent(BaseAgent):
 
             msg = choice.message
             if msg.tool_calls:
+                logger.info(
+                    "LLM requested tool calls: model=%s count=%s names=%s",
+                    use_model,
+                    len(msg.tool_calls),
+                    ",".join(tool_call.function.name for tool_call in msg.tool_calls),
+                )
                 if active_executor is None:
                     return AgentResponse(
                         error="LLM requested tool calls without tool_executor",
@@ -127,6 +141,15 @@ class LitellmAgent(BaseAgent):
                 )
                 continue
 
+            logger.info(
+                "LLM run completed: model=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s attachments=%s text_preview=%s",
+                use_model,
+                total_usage.get("prompt_tokens", 0),
+                total_usage.get("completion_tokens", 0),
+                total_usage.get("total_tokens", 0),
+                len(all_attachments),
+                self._preview_text(msg.content),
+            )
             return AgentResponse(
                 text=msg.content or "",
                 attachments=all_attachments,
@@ -171,11 +194,25 @@ class LitellmAgent(BaseAgent):
         try:
             kwargs: dict[str, Any] = {"model": use_model, "messages": full_messages}
             kwargs.update(self._normalized_request_options(request_options))
+            logger.info(
+                "LLM complete request: model=%s messages=%s request_options=%s",
+                use_model,
+                len(full_messages),
+                ",".join(sorted(kwargs.keys())),
+            )
             response = completion(**kwargs)
             if isawaitable(response):
                 response = await response
             choice = response.choices[0]
             usage = response.usage
+            logger.info(
+                "LLM complete finished: model=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s text_preview=%s",
+                use_model,
+                getattr(usage, "prompt_tokens", 0),
+                getattr(usage, "completion_tokens", 0),
+                getattr(usage, "total_tokens", 0),
+                self._preview_text(choice.message.content),
+            )
             return AgentResponse(
                 text=choice.message.content or "",
                 usage={
@@ -286,12 +323,24 @@ class LitellmAgent(BaseAgent):
             except json.JSONDecodeError:
                 arguments = {}
 
+            logger.info(
+                "Tool execution requested by LLM: name=%s args=%s",
+                tool_name,
+                self._preview_json(arguments),
+            )
+
             execution = tool_executor(tool_name, arguments)
             if isawaitable(execution):
                 execution = await execution
             if not isinstance(execution, ToolExecutionResult):
                 execution = normalize_tool_result(execution)
             all_attachments.extend(execution.attachments)
+            logger.info(
+                "Tool execution finished: name=%s attachments=%s content_preview=%s",
+                tool_name,
+                len(execution.attachments),
+                self._preview_text(execution.content),
+            )
             full_messages.append(
                 {
                     "role": "tool",
@@ -321,5 +370,22 @@ class LitellmAgent(BaseAgent):
         if acompletion is None:
             raise RuntimeError("litellm dependency is required to run LitellmAgent")
         return acompletion
+
+    @staticmethod
+    def _preview_text(value: Any, max_len: int = 120) -> str:
+        text = str(value or "").replace("\n", " ").strip()
+        if len(text) <= max_len:
+            return text
+        return f"{text[:max_len]}..."
+
+    @staticmethod
+    def _preview_json(value: Any, max_len: int = 160) -> str:
+        try:
+            text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+        except TypeError:
+            text = str(value)
+        if len(text) <= max_len:
+            return text
+        return f"{text[:max_len]}..."
 
     # endregion

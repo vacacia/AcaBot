@@ -145,7 +145,7 @@ class OpsControlPlugin(RuntimePlugin):
             if arguments:
                 items = await self._control_plane.list_agent_skills(arguments[0])
                 if not items:
-                    return f"skills: no assignments for {arguments[0]}"
+                    return f"skills: none for {arguments[0]}"
                 lines = [f"skills for {arguments[0]}:"]
                 for item in items:
                     resources = self._format_skill_resources(

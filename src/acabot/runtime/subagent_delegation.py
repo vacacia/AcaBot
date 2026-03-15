@@ -196,7 +196,8 @@ class SubagentDelegationBroker:
         channel_scope: str,
         parent_agent_id: str,
         profile: AgentProfile,
-        skill_name: str,
+        skill_name: str = "",
+        delegate_agent_id: str = "",
         payload: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> SubagentDelegationResult:
@@ -217,34 +218,48 @@ class SubagentDelegationBroker:
             一份 SubagentDelegationResult.
         """
 
-        assignment = self._resolve_assignment(profile, skill_name)
-        if assignment is None:
-            return self._failed(skill_name, "skill is not assigned to current agent")
-        if assignment.delegation_mode == "inline":
-            return self._failed(skill_name, "skill is configured for inline execution")
-        if assignment.delegation_mode == "manual":
-            return self._failed(skill_name, "skill requires manual delegation choice")
-        if not assignment.delegate_agent_id:
-            return self._failed(skill_name, "delegate_agent_id is missing")
-
-        executor_item = self.executor_registry.get(assignment.delegate_agent_id)
+        resolved_skill_name = str(skill_name or "").strip()
+        resolved_delegate_agent_id = str(delegate_agent_id or "").strip()
+        request_metadata = dict(metadata or {})
+        if resolved_delegate_agent_id:
+            executor_item = self.executor_registry.get(resolved_delegate_agent_id)
+            if executor_item is None:
+                return self._failed(resolved_skill_name or resolved_delegate_agent_id, f"subagent executor not found: {resolved_delegate_agent_id}")
+            resolved_skill_name = resolved_skill_name or f"subagent:{resolved_delegate_agent_id}"
+            request_metadata = {
+                "delegation_mode": "direct_subagent",
+                **request_metadata,
+            }
+        else:
+            assignment = self._resolve_assignment(profile, resolved_skill_name)
+            if assignment is None:
+                return self._failed(resolved_skill_name, "skill is not assigned to current agent")
+            if assignment.delegation_mode == "inline":
+                return self._failed(resolved_skill_name, "skill is configured for inline execution")
+            if assignment.delegation_mode == "manual":
+                return self._failed(resolved_skill_name, "skill requires manual delegation choice")
+            if not assignment.delegate_agent_id:
+                return self._failed(resolved_skill_name, "delegate_agent_id is missing")
+            resolved_delegate_agent_id = assignment.delegate_agent_id
+            executor_item = self.executor_registry.get(resolved_delegate_agent_id)
+            request_metadata = {
+                "delegation_mode": assignment.delegation_mode,
+                "notes": assignment.notes,
+                **request_metadata,
+            }
         if executor_item is None:
-            return self._failed(skill_name, f"subagent executor not found: {assignment.delegate_agent_id}")
+            return self._failed(resolved_skill_name, f"subagent executor not found: {resolved_delegate_agent_id}")
 
         request = SubagentDelegationRequest(
-            skill_name=skill_name,
+            skill_name=resolved_skill_name,
             parent_run_id=run_id,
             parent_thread_id=thread_id,
             parent_agent_id=parent_agent_id,
             actor_id=actor_id,
             channel_scope=channel_scope,
-            delegate_agent_id=assignment.delegate_agent_id,
+            delegate_agent_id=resolved_delegate_agent_id,
             payload=dict(payload or {}),
-            metadata={
-                "delegation_mode": assignment.delegation_mode,
-                "notes": assignment.notes,
-                **dict(metadata or {}),
-            },
+            metadata=request_metadata,
         )
         result = executor_item.executor(request)
         if isawaitable(result):
@@ -259,7 +274,7 @@ class SubagentDelegationBroker:
                 error=str(result.get("error", "") or ""),
                 metadata=dict(result.get("metadata", {}) or {}),
             )
-        result.metadata.setdefault("executor_agent_id", assignment.delegate_agent_id)
+        result.metadata.setdefault("executor_agent_id", resolved_delegate_agent_id)
         result.metadata.setdefault("executor_source", executor_item.source)
         return result
 

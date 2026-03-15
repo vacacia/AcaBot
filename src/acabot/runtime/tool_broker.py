@@ -56,6 +56,7 @@ from .models import (
     RunContext,
 )
 from .skills import SkillCatalog
+from .subagent_delegation import SubagentExecutorRegistry
 
 ToolHandler = Callable[[dict[str, Any], "ToolExecutionContext"], Awaitable[Any] | Any]
 
@@ -586,6 +587,8 @@ class ToolBroker:
         policy: ToolPolicy | None = None,
         audit: ToolAudit | None = None,
         skill_catalog: SkillCatalog | None = None,
+        subagent_executor_registry: SubagentExecutorRegistry | None = None,
+        default_agent_id: str = "",
     ) -> None:
         """初始化 ToolBroker.
 
@@ -599,6 +602,8 @@ class ToolBroker:
         self.policy = policy or AllowAllToolPolicy()
         self.audit = audit or InMemoryToolAudit()
         self.skill_catalog = skill_catalog
+        self.subagent_executor_registry = subagent_executor_registry
+        self.default_agent_id = str(default_agent_id or "")
 
     def register_tool(
         self,
@@ -673,6 +678,23 @@ class ToolBroker:
             removed.append(tool_name)
             del self._tools[tool_name]
         return removed
+
+    def list_registered_tools(self) -> list[dict[str, Any]]:
+        """列出当前全部已注册工具的轻量快照."""
+
+        items: list[dict[str, Any]] = []
+        for tool_name in sorted(self._tools):
+            registered = self._tools[tool_name]
+            items.append(
+                {
+                    "name": registered.spec.name,
+                    "description": registered.spec.description,
+                    "source": registered.source,
+                    "parameters": dict(registered.spec.parameters),
+                    "metadata": dict(registered.metadata),
+                }
+            )
+        return items
 
     def visible_tools(self, profile: AgentProfile) -> list[ToolSpec]:
         """返回当前 profile 可以看到的工具列表.
@@ -771,6 +793,24 @@ class ToolBroker:
             )
         return summaries
 
+    def _visible_subagent_summaries(self, profile: AgentProfile) -> list[dict[str, Any]]:
+        if self.default_agent_id and profile.agent_id != self.default_agent_id:
+            return []
+        if self.subagent_executor_registry is None:
+            return []
+        summaries: list[dict[str, Any]] = []
+        for item in self.subagent_executor_registry.list_all():
+            if item.agent_id == profile.agent_id:
+                continue
+            summaries.append(
+                {
+                    "agent_id": item.agent_id,
+                    "source": item.source,
+                    "profile_name": str(item.metadata.get("profile_name", "") or item.agent_id),
+                }
+            )
+        return summaries
+
     def _should_expose_delegate_tool(self, profile: AgentProfile) -> bool:
         """判断当前 profile 是否应看到 `delegate_skill`.
 
@@ -781,9 +821,15 @@ class ToolBroker:
             当前 profile 是否存在可自动委派的 skill assignment.
         """
 
-        if self.skill_catalog is None:
-            return False
         if "delegate_skill" not in self._tools:
+            return False
+        if self.subagent_executor_registry is not None and (
+            not self.default_agent_id or profile.agent_id == self.default_agent_id
+        ):
+            for item in self.subagent_executor_registry.list_all():
+                if item.agent_id != profile.agent_id:
+                    return True
+        if self.skill_catalog is None:
             return False
         for item in self.skill_catalog.resolve_assignments(profile):
             if item.assignment.delegation_mode in {"prefer_delegate", "must_delegate"}:
@@ -807,6 +853,7 @@ class ToolBroker:
             "visible_tools": [tool.name for tool in visible_tools],
             "visible_skills": [skill.skill_name for skill in self._visible_skills(ctx.profile)],
             "visible_skill_summaries": self._visible_skill_summaries(ctx.profile),
+            "visible_subagent_summaries": self._visible_subagent_summaries(ctx.profile),
         }
         if not visible_tools:
             return ToolRuntime(state=state, metadata=metadata)

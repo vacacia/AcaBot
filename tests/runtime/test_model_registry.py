@@ -170,6 +170,57 @@ async def test_model_registry_manager_summary_binding_supports_fallback_chain(
     assert all(item.binding_id == "binding:summary" for item in request.fallback_requests)
 
 
+async def test_model_registry_manager_prefers_profile_summary_preset_over_global_summary_binding(
+    tmp_path: Path,
+) -> None:
+    manager = _manager(tmp_path)
+    await manager.upsert_provider(
+        ModelProvider(
+            provider_id="openai-main",
+            kind="openai_compatible",
+            config=OpenAICompatibleProviderConfig(
+                base_url="https://llm.example.com/v1",
+                api_key_env="OPENAI_API_KEY",
+            ),
+        )
+    )
+    await manager.upsert_preset(
+        ModelPreset(
+            preset_id="summary-global",
+            provider_id="openai-main",
+            model="gpt-summary-global",
+            context_window=32000,
+            supports_tools=False,
+        )
+    )
+    await manager.upsert_preset(
+        ModelPreset(
+            preset_id="summary-profile",
+            provider_id="openai-main",
+            model="gpt-summary-profile",
+            context_window=16000,
+            supports_tools=False,
+        )
+    )
+    await manager.upsert_binding(
+        ModelBinding(
+            binding_id="binding:summary",
+            target_type="system",
+            target_id="compactor_summary",
+            preset_ids=["summary-global"],
+        )
+    )
+
+    request = manager.resolve_summary_request(
+        primary_request=None,
+        profile_summary_preset_id="summary-profile",
+    )
+
+    assert request is not None
+    assert request.model == "gpt-summary-profile"
+    assert request.binding_id == "profile:summary_model_preset"
+
+
 async def test_model_registry_manager_blocks_delete_without_force_and_cascades_with_force(
     tmp_path: Path,
 ) -> None:
@@ -257,3 +308,67 @@ async def test_model_registry_manager_health_check_is_explicit_and_optional(
     assert result.ok is True
     assert result.model == "gpt-main"
     assert manager.status().provider_count == 1
+
+
+async def test_model_registry_supports_inline_api_key_and_legacy_misfilled_env_field(
+    tmp_path: Path,
+) -> None:
+    providers_dir = tmp_path / "models/providers"
+    presets_dir = tmp_path / "models/presets"
+    bindings_dir = tmp_path / "models/bindings"
+    providers_dir.mkdir(parents=True)
+    presets_dir.mkdir(parents=True)
+    bindings_dir.mkdir(parents=True)
+
+    (providers_dir / "inline.yaml").write_text(
+        """
+provider_id: inline
+kind: openai_compatible
+base_url: https://llm.example.com/v1
+api_key_env: sk-inline-secret
+default_headers: {}
+default_query: {}
+default_body: {}
+""".strip(),
+        encoding="utf-8",
+    )
+    (presets_dir / "main.yaml").write_text(
+        """
+preset_id: main
+provider_id: inline
+model: gpt-main
+context_window: 64000
+supports_tools: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (bindings_dir / "global.yaml").write_text(
+        """
+binding_id: global-default
+target_type: global
+target_id: default
+preset_id: main
+""".strip(),
+        encoding="utf-8",
+    )
+
+    manager = FileSystemModelRegistryManager(
+        providers_dir=providers_dir,
+        presets_dir=presets_dir,
+        bindings_dir=bindings_dir,
+    )
+    await manager.reload()
+
+    request, snapshot = manager.resolve_run_request(
+        run_mode="respond",
+        agent_id="aca",
+        explicit_profile_default_model="",
+        effective_profile_default_model="",
+    )
+
+    assert request is not None
+    assert request.api_key == "sk-inline-secret"
+    assert request.api_key_env == ""
+    assert request.to_request_options()["api_key"] == "sk-inline-secret"
+    assert snapshot is not None
+    assert snapshot.api_key_env == ""

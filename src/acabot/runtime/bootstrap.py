@@ -109,7 +109,7 @@ def _build_builtin_runtime_plugins(
         ComputerToolAdapterPlugin(),
         SkillToolPlugin(),
     ]
-    if _profiles_have_delegated_skills(profiles):
+    if _profiles_have_delegated_skills(profiles) or len(profiles) > 1:
         builtin_plugins.append(SkillDelegationPlugin())
     return builtin_plugins
 
@@ -285,7 +285,11 @@ def build_runtime_components(
     )
     runtime_reference_backend = reference_backend or _build_reference_backend(config)
     runtime_model_registry_manager = model_registry_manager or _build_model_registry_manager(config)
-    runtime_tool_broker = tool_broker or ToolBroker(skill_catalog=runtime_skill_catalog)
+    runtime_tool_broker = tool_broker or ToolBroker(
+        skill_catalog=runtime_skill_catalog,
+        subagent_executor_registry=runtime_subagent_executor_registry,
+        default_agent_id=default_agent_id,
+    )
     runtime_tool_broker.skill_catalog = runtime_skill_catalog
     builtin_plugins = _build_builtin_runtime_plugins(profiles)
     configured_plugins = plugins if plugins is not None else load_runtime_plugins_from_config(config)
@@ -375,6 +379,7 @@ def build_runtime_components(
         plugin_manager=runtime_plugin_manager,
         skill_catalog=runtime_skill_catalog,
         subagent_executor_registry=runtime_subagent_executor_registry,
+        tool_broker=runtime_tool_broker,
         model_registry_manager=runtime_model_registry_manager,
         computer_runtime=runtime_computer_runtime,
         reference_backend=runtime_reference_backend,

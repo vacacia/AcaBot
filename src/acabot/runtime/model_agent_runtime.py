@@ -181,23 +181,27 @@ class ModelAgentRuntime(AgentRuntime):
         tool_runtime: ToolRuntime,
     ) -> str:
         skill_summaries = list(tool_runtime.metadata.get("visible_skill_summaries", []))
-        if not skill_summaries:
+        subagent_summaries = list(tool_runtime.metadata.get("visible_subagent_summaries", []))
+        if not skill_summaries and not subagent_summaries:
             return base_prompt
 
-        lines = ["Available Skills:"]
-        for item in skill_summaries:
-            delegation = str(item.get("delegation_mode", "inline") or "inline")
-            delegate_agent = str(item.get("delegate_agent_id", "") or "")
-            suffix = ""
-            if delegation != "inline":
-                suffix = (
-                    f" delegation={delegation}"
-                    f" delegate_agent={delegate_agent or '-'}"
+        lines: list[str] = []
+        if skill_summaries:
+            lines.append("Available Skills:")
+            for item in skill_summaries:
+                lines.append(
+                    f"- {str(item.get('skill_name', '') or '')}: "
+                    f"{str(item.get('description', '') or '')}"
                 )
-            lines.append(
-                f"- {str(item.get('skill_name', '') or '')}: "
-                f"{str(item.get('description', '') or '')}{suffix}"
-            )
+        if subagent_summaries:
+            if lines:
+                lines.append("")
+            lines.append("Available Subagents:")
+            for item in subagent_summaries:
+                lines.append(
+                    f"- {str(item.get('agent_id', '') or '')}: "
+                    f"{str(item.get('profile_name', '') or item.get('agent_id', '') or '')}"
+                )
         return f"{base_prompt.rstrip()}\n\n" + "\n".join(lines)
 
     async def _call_agent(self, ctx: RunContext, tool_runtime: ToolRuntime):
