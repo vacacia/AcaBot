@@ -7,6 +7,12 @@ from .test_bootstrap import FakeAgent, FakeAgentResponse
 from .test_outbox import FakeGateway
 
 
+def _skills_dir() -> str:
+    from pathlib import Path
+
+    return str(Path(__file__).resolve().parent.parent / "fixtures" / "skills")
+
+
 def _execution_ctx(profile) -> ToolExecutionContext:
     return ToolExecutionContext(
         run_id="run:delegate",
@@ -39,6 +45,10 @@ async def test_delegate_skill_is_auto_loaded_for_delegated_profiles() -> None:
             },
             "runtime": {
                 "default_agent_id": "aca",
+                "filesystem": {
+                    "enabled": True,
+                    "skill_catalog_dir": _skills_dir(),
+                },
                 "profiles": {
                     "aca": {
                         "name": "Aca",
@@ -86,6 +96,10 @@ async def test_delegate_skill_tool_calls_subagent_executor() -> None:
             },
             "runtime": {
                 "default_agent_id": "aca",
+                "filesystem": {
+                    "enabled": True,
+                    "skill_catalog_dir": _skills_dir(),
+                },
                 "profiles": {
                     "aca": {
                         "name": "Aca",

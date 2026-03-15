@@ -6,6 +6,12 @@ from .test_bootstrap import FakeAgent, FakeAgentResponse
 from .test_outbox import FakeGateway
 
 
+def _skills_dir() -> str:
+    from pathlib import Path
+
+    return str(Path(__file__).resolve().parent.parent / "fixtures" / "skills")
+
+
 def _message_event(text: str, *, event_id: str = "evt-1") -> StandardEvent:
     return StandardEvent(
         event_id=event_id,
@@ -34,6 +40,10 @@ def _ops_config() -> Config:
             },
             "runtime": {
                 "default_agent_id": "aca",
+                "filesystem": {
+                    "enabled": True,
+                    "skill_catalog_dir": _skills_dir(),
+                },
                 "profiles": {
                     "aca": {
                         "name": "Aca",
@@ -84,7 +94,7 @@ async def test_ops_control_plugin_handles_status_command() -> None:
     assert len(gateway.sent) == 1
     assert "active_runs=1" in gateway.sent[0].payload["text"]
     assert "loaded_plugins=ops_control" in gateway.sent[0].payload["text"]
-    assert "loaded_skills=sample_configured_skill" in gateway.sent[0].payload["text"]
+    assert "loaded_skills=excel_processing,sample_configured_skill" in gateway.sent[0].payload["text"]
 
 
 async def test_ops_control_plugin_can_list_skills() -> None:

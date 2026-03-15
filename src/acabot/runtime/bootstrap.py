@@ -57,7 +57,7 @@ from .plugin_manager import (
     RuntimePluginManager,
     load_runtime_plugins_from_config,
 )
-from .plugins import ComputerToolAdapterPlugin, SkillDelegationPlugin
+from .plugins import ComputerToolAdapterPlugin, SkillDelegationPlugin, SkillToolPlugin
 from .profile_loader import (
     AgentProfileRegistry,
     ChainedPromptLoader,
@@ -80,6 +80,7 @@ from .reference_backend import (
 from .retrieval_planner import PromptAssemblyConfig, RetrievalPlanner
 from .router import InboundRuleRegistry, RuntimeRouter
 from .runs import InMemoryRunManager, RunManager, StoreBackedRunManager
+from .skill_loader import FileSystemSkillPackageLoader
 from .sqlite_stores import (
     SQLiteChannelEventStore,
     SQLiteMemoryStore,
@@ -90,7 +91,7 @@ from .sqlite_stores import (
 from .sticky_notes import StickyNotesService
 from .stores import ChannelEventStore, MemoryStore, MessageStore
 from .structured_memory import StoreBackedMemoryRetriever, StructuredMemoryExtractor
-from .skills import SkillRegistry
+from .skills import SkillCatalog
 from .subagent_delegation import SubagentDelegationBroker, SubagentExecutorRegistry
 from .subagent_execution import LocalSubagentExecutionService
 from .tool_broker import ToolBroker
@@ -110,7 +111,7 @@ class RuntimeComponents:
         message_store (MessageStore): 保存 delivered facts 的 MessageStore.
         memory_store (MemoryStore): 保存长期记忆项的 MemoryStore.
         sticky_notes (StickyNotesService): sticky note 的受控服务层.
-        skill_registry (SkillRegistry): 显式 skill 注册表.
+        skill_catalog (SkillCatalog): 统一 skill catalog.
         subagent_executor_registry (SubagentExecutorRegistry): subagent executor 注册表.
         subagent_delegator (SubagentDelegationBroker): subagent delegation 编排入口.
         subagent_execution_service (LocalSubagentExecutionService): 本地 child run delegation 服务.
@@ -140,7 +141,7 @@ class RuntimeComponents:
     message_store: MessageStore
     memory_store: MemoryStore
     sticky_notes: StickyNotesService
-    skill_registry: SkillRegistry
+    skill_catalog: SkillCatalog
     subagent_executor_registry: SubagentExecutorRegistry
     subagent_delegator: SubagentDelegationBroker
     subagent_execution_service: LocalSubagentExecutionService
@@ -180,7 +181,7 @@ def build_runtime_components(
     reference_backend: ReferenceBackend | None = None,
     plugin_manager: RuntimePluginManager | None = None,
     tool_broker: ToolBroker | None = None,
-    skill_registry: SkillRegistry | None = None,
+    skill_catalog: SkillCatalog | None = None,
     subagent_executor_registry: SubagentExecutorRegistry | None = None,
     subagent_delegator: SubagentDelegationBroker | None = None,
     approval_resumer: ApprovalResumer | None = None,
@@ -205,7 +206,7 @@ def build_runtime_components(
         reference_backend: 可选的 ReferenceBackend 实现.
         plugin_manager: 可选的 RuntimePluginManager 实现.
         tool_broker: 可选的 ToolBroker 实现.
-        skill_registry: 可选的 SkillRegistry 实现.
+        skill_catalog: 可选的 SkillCatalog 实现.
         subagent_executor_registry: 可选的 subagent executor 注册表.
         subagent_delegator: 可选的 subagent delegation 编排入口.
         approval_resumer: 可选的 approval resumer.
@@ -245,10 +246,10 @@ def build_runtime_components(
     runtime_message_store = message_store or _build_message_store(config)
     runtime_memory_store = memory_store or _build_memory_store(config)
     runtime_sticky_notes = StickyNotesService(store=runtime_memory_store)
-    runtime_skill_registry = skill_registry or SkillRegistry()
+    runtime_skill_catalog = skill_catalog or _build_skill_catalog(config)
     runtime_subagent_executor_registry = subagent_executor_registry or SubagentExecutorRegistry()
     runtime_subagent_delegator = subagent_delegator or SubagentDelegationBroker(
-        skill_registry=runtime_skill_registry,
+        skill_catalog=runtime_skill_catalog,
         executor_registry=runtime_subagent_executor_registry,
     )
     runtime_memory_broker = memory_broker or _build_memory_broker(
@@ -259,11 +260,7 @@ def build_runtime_components(
         config,
         agent=agent,
     )
-    runtime_retrieval_planner = retrieval_planner or _build_retrieval_planner(
-        config,
-        skill_registry=runtime_skill_registry,
-    )
-    runtime_retrieval_planner.skill_registry = runtime_skill_registry
+    runtime_retrieval_planner = retrieval_planner or _build_retrieval_planner(config)
     runtime_computer_runtime = _build_computer_runtime(
         config,
         gateway=gateway,
@@ -271,11 +268,13 @@ def build_runtime_components(
     )
     runtime_reference_backend = reference_backend or _build_reference_backend(config)
     runtime_model_registry_manager = model_registry_manager or _build_model_registry_manager(config)
-    runtime_tool_broker = tool_broker or ToolBroker(skill_registry=runtime_skill_registry)
-    runtime_tool_broker.skill_registry = runtime_skill_registry
+    runtime_tool_broker = tool_broker or ToolBroker(skill_catalog=runtime_skill_catalog)
+    runtime_tool_broker.skill_catalog = runtime_skill_catalog
     configured_plugins = plugins if plugins is not None else load_runtime_plugins_from_config(config)
     if not any(plugin.name == ComputerToolAdapterPlugin.name for plugin in configured_plugins):
         configured_plugins = [*configured_plugins, ComputerToolAdapterPlugin()]
+    if not any(plugin.name == SkillToolPlugin.name for plugin in configured_plugins):
+        configured_plugins = [*configured_plugins, SkillToolPlugin()]
     if _profiles_have_delegated_skills(profiles) and not any(
         plugin.name == SkillDelegationPlugin.name
         for plugin in configured_plugins
@@ -288,7 +287,7 @@ def build_runtime_components(
         reference_backend=runtime_reference_backend,
         sticky_notes=runtime_sticky_notes,
         computer_runtime=runtime_computer_runtime,
-        skill_registry=runtime_skill_registry,
+        skill_catalog=runtime_skill_catalog,
         subagent_delegator=runtime_subagent_delegator,
         plugins=configured_plugins,
     )
@@ -343,7 +342,7 @@ def build_runtime_components(
         memory_store=runtime_memory_store,
         profile_registry=profile_registry,
         plugin_manager=runtime_plugin_manager,
-        skill_registry=runtime_skill_registry,
+        skill_catalog=runtime_skill_catalog,
         subagent_executor_registry=runtime_subagent_executor_registry,
         model_registry_manager=runtime_model_registry_manager,
         computer_runtime=runtime_computer_runtime,
@@ -361,7 +360,7 @@ def build_runtime_components(
         message_store=runtime_message_store,
         memory_store=runtime_memory_store,
         sticky_notes=runtime_sticky_notes,
-        skill_registry=runtime_skill_registry,
+        skill_catalog=runtime_skill_catalog,
         subagent_executor_registry=runtime_subagent_executor_registry,
         subagent_delegator=runtime_subagent_delegator,
         subagent_execution_service=runtime_subagent_execution_service,
@@ -457,7 +456,6 @@ def _build_profiles(config: Config) -> dict[str, AgentProfile]:
                     agent_conf.get("default_model", "gpt-4o-mini"),
                 ),
                 enabled_tools=list(profile_conf.get("enabled_tools", [])),
-                enabled_skills=list(profile_conf.get("enabled_skills", [])),
                 skill_assignments=parse_skill_assignments(profile_conf.get("skill_assignments", [])),
                 computer_policy=parse_computer_policy(
                     profile_conf.get("computer"),
@@ -475,7 +473,6 @@ def _build_profiles(config: Config) -> dict[str, AgentProfile]:
             prompt_ref=runtime_conf.get("default_prompt_ref", "prompt/default"),
             default_model=agent_conf.get("default_model", "gpt-4o-mini"),
             enabled_tools=list(runtime_conf.get("enabled_tools", [])),
-            enabled_skills=list(runtime_conf.get("enabled_skills", [])),
             skill_assignments=parse_skill_assignments(runtime_conf.get("skill_assignments", [])),
             computer_policy=default_computer_policy,
             config=dict(agent_conf),
@@ -999,15 +996,11 @@ def _build_reference_backend(config: Config) -> ReferenceBackend:
 
 def _build_retrieval_planner(
     config: Config,
-    *,
-    skill_registry: SkillRegistry | None = None,
 ) -> RetrievalPlanner:
     """根据配置构造 RetrievalPlanner.
 
     Args:
         config: 项目配置对象.
-        skill_registry: 可选的显式 skill 注册表.
-
     Returns:
         默认的 RetrievalPlanner 实现.
     """
@@ -1020,7 +1013,6 @@ def _build_retrieval_planner(
         PromptAssemblyConfig(
             # sticky_notes 插入位置: 默认 system_message
             sticky_slot_position=str(prompt_conf.get("sticky_slot_position", "system_message")),
-            skill_slot_position=str(prompt_conf.get("skill_slot_position", "system_message")),
             # summary 插入位置: 默认 history_prefix 历史消息之前
             summary_slot_position=str(prompt_conf.get("summary_slot_position", "history_prefix")),
             # retrieved_memory 插入位置: 默认 system_message
@@ -1028,19 +1020,12 @@ def _build_retrieval_planner(
                 prompt_conf.get("retrieval_slot_position", "system_message")
             ),
             sticky_message_role=str(prompt_conf.get("sticky_message_role", "system")),
-            skill_message_role=str(prompt_conf.get("skill_message_role", "system")),
             summary_message_role=str(prompt_conf.get("summary_message_role", "user")),
             retrieval_message_role=str(prompt_conf.get("retrieval_message_role", "system")),
             sticky_intro=str(
                 prompt_conf.get(
                     "sticky_intro",
                     "以下是稳定事实和长期规则. 默认可信, 除非当前上下文明确冲突.",
-                )
-            ),
-            skill_intro=str(
-                prompt_conf.get(
-                    "skill_intro",
-                    "以下是当前 agent 已启用的 skill 指引. 先判断是否匹配当前任务, 再决定直接执行还是后续委派.",
                 )
             ),
             summary_prefix=str(
@@ -1074,8 +1059,25 @@ def _build_retrieval_planner(
                 )
             ],
         ),
-        skill_registry=skill_registry,
     )
+
+
+def _build_skill_catalog(config: Config) -> SkillCatalog:
+    runtime_conf = config.get("runtime", {})
+    fs_conf = dict(runtime_conf.get("filesystem", {}))
+    computer_root_dir = _resolve_filesystem_path(
+        fs_conf,
+        key="computer_root_dir",
+        default=str(Path.home() / ".acabot" / "workspaces"),
+    )
+    skill_catalog_dir = _resolve_filesystem_path(
+        fs_conf,
+        key="skill_catalog_dir",
+        default=str(computer_root_dir / "catalog" / "skills"),
+    )
+    catalog = SkillCatalog(FileSystemSkillPackageLoader(skill_catalog_dir))
+    catalog.reload()
+    return catalog
 
 
 def _build_context_compactor(

@@ -30,7 +30,7 @@ from acabot.runtime import (
     RouteDecision,
     RuntimeComponents,
     RuntimeControlPlane,
-    SkillRegistry,
+    SkillCatalog,
     SQLiteMessageStore,
     StickyNotesService,
     SubagentDelegationBroker,
@@ -306,7 +306,7 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
         一份最小 RuntimeComponents.
     """
 
-    skill_registry = SkillRegistry()
+    skill_catalog = SkillCatalog()
     executor_registry = SubagentExecutorRegistry()
 
     return RuntimeComponents(
@@ -318,10 +318,10 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
         message_store=InMemoryMessageStore(),
         memory_store=InMemoryMemoryStore(),
         sticky_notes=StickyNotesService(store=InMemoryMemoryStore()),
-        skill_registry=skill_registry,
+        skill_catalog=skill_catalog,
         subagent_executor_registry=executor_registry,
         subagent_delegator=SubagentDelegationBroker(
-            skill_registry=skill_registry,
+            skill_catalog=skill_catalog,
             executor_registry=executor_registry,
         ),
         subagent_execution_service=LocalSubagentExecutionService(

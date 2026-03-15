@@ -1,11 +1,23 @@
+from pathlib import Path
+
 from acabot.runtime import (
     AgentProfile,
+    FileSystemSkillPackageLoader,
     SkillAssignment,
-    SkillRegistry,
-    SkillSpec,
+    SkillCatalog,
     SubagentDelegationBroker,
     SubagentExecutorRegistry,
 )
+
+
+def _fixtures_root() -> Path:
+    return Path(__file__).resolve().parent.parent / "fixtures" / "skills"
+
+
+def _catalog() -> SkillCatalog:
+    catalog = SkillCatalog(FileSystemSkillPackageLoader(_fixtures_root()))
+    catalog.reload()
+    return catalog
 
 
 def _profile(*, assignments: list[SkillAssignment]) -> AgentProfile:
@@ -19,17 +31,8 @@ def _profile(*, assignments: list[SkillAssignment]) -> AgentProfile:
 
 
 async def test_subagent_delegation_broker_rejects_missing_assignment() -> None:
-    registry = SkillRegistry()
-    registry.register_skill(
-        SkillSpec(
-            skill_name="excel_processing",
-            skill_type="workflow",
-            title="Excel Processing",
-            description="处理 Excel 文件.",
-        )
-    )
     broker = SubagentDelegationBroker(
-        skill_registry=registry,
+        skill_catalog=_catalog(),
         executor_registry=SubagentExecutorRegistry(),
     )
 
@@ -49,15 +52,6 @@ async def test_subagent_delegation_broker_rejects_missing_assignment() -> None:
 
 
 async def test_subagent_delegation_broker_calls_registered_executor() -> None:
-    registry = SkillRegistry()
-    registry.register_skill(
-        SkillSpec(
-            skill_name="excel_processing",
-            skill_type="workflow",
-            title="Excel Processing",
-            description="处理 Excel 文件.",
-        )
-    )
     executors = SubagentExecutorRegistry()
 
     async def worker(request):
@@ -71,7 +65,7 @@ async def test_subagent_delegation_broker_calls_registered_executor() -> None:
 
     executors.register("excel_worker", worker, source="test")
     broker = SubagentDelegationBroker(
-        skill_registry=registry,
+        skill_catalog=_catalog(),
         executor_registry=executors,
     )
 

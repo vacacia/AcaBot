@@ -363,7 +363,6 @@ class FileSystemProfileLoader:
             ),
             default_model=str(raw.get("default_model", "") or self.default_model),
             enabled_tools=[str(item) for item in list(raw.get("enabled_tools", []) or [])],
-            enabled_skills=[str(item) for item in list(raw.get("enabled_skills", []) or [])],
             skill_assignments=parse_skill_assignments(raw.get("skill_assignments", [])),
             computer_policy=parse_computer_policy(
                 raw.get("computer"),

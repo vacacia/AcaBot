@@ -1,13 +1,12 @@
+from pathlib import Path
 from typing import Any
 
 from acabot.agent import ToolDef
 from acabot.config import Config
 from acabot.runtime import (
     AgentProfile,
+    FileSystemSkillPackageLoader,
     InMemoryRunManager,
-    SkillRegistry,
-    SubagentDelegationBroker,
-    SubagentExecutorRegistry,
     InMemoryThreadManager,
     Outbox,
     PlannedAction,
@@ -19,17 +18,29 @@ from acabot.runtime import (
     RuntimePlugin,
     RuntimePluginContext,
     RuntimePluginManager,
-    load_runtime_plugins_from_config,
+    SkillCatalog,
+    SubagentDelegationBroker,
+    SubagentExecutorRegistry,
     ThreadPipeline,
     ToolBroker,
+    load_runtime_plugins_from_config,
 )
 from acabot.types import Action, ActionType, EventSource, MsgSegment, StandardEvent
 
 from .test_outbox import FakeGateway, FakeMessageStore
-# region fake plugin
-class ReplyShortcutHook(RuntimeHook):
-    """在 PRE_AGENT 阶段直接回消息的最小 hook."""
 
+
+def _fixtures_root() -> Path:
+    return Path(__file__).resolve().parent.parent / "fixtures" / "skills"
+
+
+def _catalog() -> SkillCatalog:
+    catalog = SkillCatalog(FileSystemSkillPackageLoader(_fixtures_root()))
+    catalog.reload()
+    return catalog
+
+
+class ReplyShortcutHook(RuntimeHook):
     name = "reply_shortcut"
 
     async def handle(self, ctx: RunContext) -> RuntimeHookResult:
@@ -48,50 +59,21 @@ class ReplyShortcutHook(RuntimeHook):
 
 
 class EchoRuntimePlugin(RuntimePlugin):
-    """用于 runtime plugin 测试的最小插件.
-
-    Attributes:
-        name (str): 插件名.
-        setup_calls (int): setup 调用次数.
-        teardown_calls (int): teardown 调用次数.
-        setup_config (dict[str, object]): setup 时读取到的插件配置.
-    """
-
     name = "echo_runtime"
 
     def __init__(self) -> None:
-        """初始化测试插件."""
-
         self.setup_calls = 0
         self.teardown_calls = 0
         self.setup_config: dict[str, object] = {}
 
     async def setup(self, runtime: RuntimePluginContext) -> None:
-        """记录 setup 调用和配置.
-
-        Args:
-            runtime: runtime plugin 上下文.
-        """
-
         self.setup_calls += 1
         self.setup_config = runtime.get_plugin_config(self.name)
 
     def hooks(self) -> list[tuple[RuntimeHookPoint, RuntimeHook]]:
-        """返回测试用 hook 列表.
-
-        Returns:
-            一条 PRE_AGENT hook.
-        """
-
         return [(RuntimeHookPoint.PRE_AGENT, ReplyShortcutHook())]
 
     def tools(self) -> list[ToolDef]:
-        """返回测试用 legacy ToolDef.
-
-        Returns:
-            一条 `echo_plugin_tool`.
-        """
-
         async def handler(arguments: dict[str, Any]) -> Any:
             return {"echo": arguments.get("text", "")}
 
@@ -101,9 +83,7 @@ class EchoRuntimePlugin(RuntimePlugin):
                 description="Echo text from runtime plugin.",
                 parameters={
                     "type": "object",
-                    "properties": {
-                        "text": {"type": "string"},
-                    },
+                    "properties": {"text": {"type": "string"}},
                     "required": ["text"],
                 },
                 handler=handler,
@@ -111,12 +91,7 @@ class EchoRuntimePlugin(RuntimePlugin):
         ]
 
     async def teardown(self) -> None:
-        """记录 teardown 调用."""
-
         self.teardown_calls += 1
-
-
-# endregion
 
 
 class FailingAgentRuntime:
@@ -166,13 +141,12 @@ def _profile() -> AgentProfile:
 async def test_runtime_plugin_manager_registers_tools_and_lifecycle() -> None:
     config = Config({"plugins": {"echo_runtime": {"enabled": True, "mode": "test"}}})
     plugin = EchoRuntimePlugin()
-    skill_registry = SkillRegistry()
-    tool_broker = ToolBroker(skill_registry=skill_registry)
+    tool_broker = ToolBroker(skill_catalog=_catalog())
     manager = RuntimePluginManager(
         config=config,
         gateway=FakeGateway(),
         tool_broker=tool_broker,
-        skill_registry=skill_registry,
+        skill_catalog=_catalog(),
         plugins=[plugin],
     )
 
@@ -190,15 +164,15 @@ async def test_runtime_plugin_manager_registers_tools_and_lifecycle() -> None:
 async def test_runtime_plugin_manager_registers_and_unloads_subagent_executors() -> None:
     from tests.runtime.runtime_plugin_samples import SampleDelegationWorkerPlugin
 
-    registry = SkillRegistry()
+    catalog = _catalog()
     executor_registry = SubagentExecutorRegistry()
     manager = RuntimePluginManager(
         config=Config({}),
         gateway=FakeGateway(),
-        tool_broker=ToolBroker(skill_registry=registry),
-        skill_registry=registry,
+        tool_broker=ToolBroker(skill_catalog=catalog),
+        skill_catalog=catalog,
         subagent_delegator=SubagentDelegationBroker(
-            skill_registry=registry,
+            skill_catalog=catalog,
             executor_registry=executor_registry,
         ),
         plugins=[SampleDelegationWorkerPlugin()],
@@ -218,11 +192,12 @@ async def test_thread_pipeline_can_be_short_circuited_by_runtime_plugin() -> Non
     plugin = EchoRuntimePlugin()
     gateway = FakeGateway()
     outbox = Outbox(gateway=gateway, store=FakeMessageStore())
-    tool_broker = ToolBroker()
+    tool_broker = ToolBroker(skill_catalog=_catalog())
     plugin_manager = RuntimePluginManager(
         config=Config({}),
         gateway=gateway,
         tool_broker=tool_broker,
+        skill_catalog=_catalog(),
         plugins=[plugin],
     )
     await plugin_manager.ensure_started()
@@ -294,20 +269,20 @@ async def test_runtime_plugin_manager_reload_clears_old_tools_and_reloads() -> N
             },
         }
     )
-    skill_registry = SkillRegistry()
-    tool_broker = ToolBroker(skill_registry=skill_registry)
+    catalog = _catalog()
+    tool_broker = ToolBroker(skill_catalog=catalog)
     manager = RuntimePluginManager(
         config=config,
         gateway=FakeGateway(),
         tool_broker=tool_broker,
-        skill_registry=skill_registry,
+        skill_catalog=catalog,
     )
     sample_profile = AgentProfile(
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
         default_model="test-model",
-        enabled_skills=["sample_configured_skill"],
+        enabled_tools=["sample_configured_tool"],
     )
 
     loaded_names, missing = await manager.reload_from_config()
@@ -321,7 +296,6 @@ async def test_runtime_plugin_manager_reload_clears_old_tools_and_reloads() -> N
     assert missing_again == []
     assert [tool.name for tool in visible_before] == ["sample_configured_tool"]
     assert [tool.name for tool in visible_after] == ["sample_configured_tool"]
-    assert [item.spec.skill_name for item in skill_registry.list_all()] == ["sample_configured_skill"]
     assert SampleConfiguredRuntimePlugin.setup_calls == 2
     assert SampleConfiguredRuntimePlugin.teardown_calls == 1
 
@@ -344,12 +318,12 @@ async def test_runtime_plugin_manager_can_reload_selected_plugins_only() -> None
             },
         }
     )
-    skill_registry = SkillRegistry()
+    catalog = _catalog()
     manager = RuntimePluginManager(
         config=config,
         gateway=FakeGateway(),
-        tool_broker=ToolBroker(skill_registry=skill_registry),
-        skill_registry=skill_registry,
+        tool_broker=ToolBroker(skill_catalog=catalog),
+        skill_catalog=catalog,
     )
 
     loaded_names, missing = await manager.reload_from_config()
@@ -363,7 +337,3 @@ async def test_runtime_plugin_manager_can_reload_selected_plugins_only() -> None
     assert SampleConfiguredRuntimePlugin.teardown_calls == 1
     assert AnotherConfiguredRuntimePlugin.setup_calls == 1
     assert AnotherConfiguredRuntimePlugin.teardown_calls == 0
-    assert [item.spec.skill_name for item in skill_registry.list_all()] == [
-        "another_configured_skill",
-        "sample_configured_skill",
-    ]

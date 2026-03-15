@@ -55,7 +55,7 @@ from .models import (
     PlannedAction,
     RunContext,
 )
-from .skills import SkillRegistry
+from .skills import SkillCatalog
 
 ToolHandler = Callable[[dict[str, Any], "ToolExecutionContext"], Awaitable[Any] | Any]
 
@@ -565,20 +565,20 @@ class ToolBroker:
         *,
         policy: ToolPolicy | None = None,
         audit: ToolAudit | None = None,
-        skill_registry: SkillRegistry | None = None,
+        skill_catalog: SkillCatalog | None = None,
     ) -> None:
         """初始化 ToolBroker.
 
         Args:
             policy: 可选的动态 policy.
             audit: 可选的审计 sink.
-            skill_registry: 可选的显式 skill 注册表.
+            skill_catalog: 可选的统一 skill catalog.
         """
 
         self._tools: dict[str, RegisteredTool] = {}
         self.policy = policy or AllowAllToolPolicy()
         self.audit = audit or InMemoryToolAudit()
-        self.skill_registry = skill_registry
+        self.skill_catalog = skill_catalog
 
     def register_tool(
         self,
@@ -672,8 +672,25 @@ class ToolBroker:
             registered = self._tools.get(tool_name)
             if registered is None:
                 continue
-            visible.append(registered.spec)
+            visible.append(self._build_visible_spec(profile, registered))
         return visible
+
+    def _build_visible_spec(
+        self,
+        profile: AgentProfile,
+        registered: RegisteredTool,
+    ) -> ToolSpec:
+        if registered.spec.name != "skill":
+            return ToolSpec(
+                name=registered.spec.name,
+                description=registered.spec.description,
+                parameters=dict(registered.spec.parameters),
+            )
+        return ToolSpec(
+            name=registered.spec.name,
+            description=self._skill_tool_description(profile),
+            parameters=dict(registered.spec.parameters),
+        )
 
     def _allowed_tool_names(self, profile: AgentProfile) -> list[str]:
         """计算当前 profile 可用的工具名集合.
@@ -690,14 +707,49 @@ class ToolBroker:
             if tool_name in tool_names:
                 continue
             tool_names.append(tool_name)
-        if self.skill_registry is not None:
-            for tool_name in self.skill_registry.visible_tool_names(profile):
-                if tool_name in tool_names:
-                    continue
-                tool_names.append(tool_name)
-            if self._should_expose_delegate_tool(profile) and "delegate_skill" not in tool_names:
-                tool_names.append("delegate_skill")
+        if self._should_expose_skill_tool(profile) and "skill" not in tool_names:
+            tool_names.append("skill")
+        if self._should_expose_delegate_tool(profile) and "delegate_skill" not in tool_names:
+            tool_names.append("delegate_skill")
         return tool_names
+
+    def _should_expose_skill_tool(self, profile: AgentProfile) -> bool:
+        if self.skill_catalog is None:
+            return False
+        if "skill" not in self._tools:
+            return False
+        return bool(self.skill_catalog.visible_skills(profile))
+
+    def _skill_tool_description(self, profile: AgentProfile) -> str:
+        base = "Use skill(name=...) to read an assigned skill's SKILL.md."
+        visible = self._visible_skills(profile)
+        if not visible:
+            return base
+        details = "; ".join(
+            f"{item.skill_name}: {item.description}" for item in visible
+        )
+        return f"{base} Available skills: {details}"
+
+    def _visible_skills(self, profile: AgentProfile):
+        if self.skill_catalog is None:
+            return []
+        return self.skill_catalog.visible_skills(profile)
+
+    def _visible_skill_summaries(self, profile: AgentProfile) -> list[dict[str, Any]]:
+        if self.skill_catalog is None:
+            return []
+        summaries: list[dict[str, Any]] = []
+        for item in self.skill_catalog.resolve_assignments(profile):
+            summaries.append(
+                {
+                    "skill_name": item.skill.skill_name,
+                    "description": item.skill.description,
+                    "display_name": item.skill.display_name,
+                    "delegation_mode": item.assignment.delegation_mode,
+                    "delegate_agent_id": item.assignment.delegate_agent_id,
+                }
+            )
+        return summaries
 
     def _should_expose_delegate_tool(self, profile: AgentProfile) -> bool:
         """判断当前 profile 是否应看到 `delegate_skill`.
@@ -709,11 +761,11 @@ class ToolBroker:
             当前 profile 是否存在可自动委派的 skill assignment.
         """
 
-        if self.skill_registry is None:
+        if self.skill_catalog is None:
             return False
         if "delegate_skill" not in self._tools:
             return False
-        for item in self.skill_registry.resolve_assignments(profile):
+        for item in self.skill_catalog.resolve_assignments(profile):
             if item.assignment.delegation_mode in {"prefer_delegate", "must_delegate"}:
                 return True
         return False
@@ -733,11 +785,8 @@ class ToolBroker:
         metadata = {
             "source": "tool_broker",
             "visible_tools": [tool.name for tool in visible_tools],
-            "visible_skills": (
-                [skill.skill_name for skill in self.skill_registry.visible_skills(ctx.profile)]
-                if self.skill_registry is not None
-                else []
-            ),
+            "visible_skills": [skill.skill_name for skill in self._visible_skills(ctx.profile)],
+            "visible_skill_summaries": self._visible_skill_summaries(ctx.profile),
         }
         if not visible_tools:
             return ToolRuntime(state=state, metadata=metadata)

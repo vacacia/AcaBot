@@ -32,6 +32,7 @@ from acabot.types import EventAttachment
 if TYPE_CHECKING:
     from .models import RunContext
     from .runs import RunManager
+    from .skills import SkillCatalog
 
 
 ComputerBackendKind = str
@@ -931,6 +932,7 @@ class ComputerRuntime:
         }
         self.attachment_resolver: AttachmentResolver = GatewayAttachmentResolver()
         self._sessions: dict[str, dict[str, CommandSession]] = {}
+        self._loaded_skills: dict[str, set[str]] = {}
 
     async def prepare_run_context(self, ctx: "RunContext") -> None:
         policy = self.effective_policy_for_ctx(ctx)
@@ -1088,6 +1090,32 @@ class ComputerRuntime:
         shutil.copytree(source, target)
         return str(target)
 
+    def mark_skill_loaded(self, thread_id: str, skill_name: str) -> None:
+        if not skill_name:
+            return
+        self._loaded_skills.setdefault(thread_id, set()).add(skill_name)
+
+    def list_loaded_skills(self, thread_id: str) -> list[str]:
+        return sorted(self._loaded_skills.get(thread_id, set()))
+
+    async def ensure_loaded_skills_mirrored(
+        self,
+        thread_id: str,
+        skill_catalog: "SkillCatalog",
+    ) -> list[str]:
+        mirrored: list[str] = []
+        for skill_name in self.list_loaded_skills(thread_id):
+            manifest = skill_catalog.get(skill_name)
+            if manifest is None:
+                continue
+            await self.ensure_skill_mirrored(
+                thread_id=thread_id,
+                skill_name=skill_name,
+                source_dir=manifest.root_dir,
+            )
+            mirrored.append(skill_name)
+        return mirrored
+
     def list_mirrored_skills(self, thread_id: str) -> list[str]:
         skills_dir = self.workspace_manager.skills_dir_for_thread(thread_id)
         if not skills_dir.exists():
@@ -1099,6 +1127,7 @@ class ComputerRuntime:
         if skills_dir.exists():
             shutil.rmtree(skills_dir)
         skills_dir.mkdir(parents=True, exist_ok=True)
+        self._loaded_skills.pop(thread_id, None)
 
     async def exec_once(
         self,
@@ -1247,6 +1276,7 @@ class ComputerRuntime:
     async def prune_workspace(self, thread_id: str) -> None:
         await self.close_all_sessions(thread_id)
         await self.stop_workspace_sandbox(thread_id)
+        self._loaded_skills.pop(thread_id, None)
         workspace = self.workspace_manager.workspace_dir_for_thread(thread_id)
         if workspace.exists():
             shutil.rmtree(workspace)

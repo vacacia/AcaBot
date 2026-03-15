@@ -1,94 +1,75 @@
-from acabot.config import Config
-from acabot.runtime import AgentProfile, SkillAssignment, SkillRegistry, ToolBroker
-from acabot.runtime.plugin_manager import RuntimePluginManager
+from pathlib import Path
 
-from .test_outbox import FakeGateway
+from acabot.agent import ToolSpec
+from acabot.runtime import AgentProfile, SkillAssignment, SkillCatalog, ToolBroker
+from acabot.runtime.skill_loader import FileSystemSkillPackageLoader
 
 
-def _profile(
-    *,
-    enabled_skills: list[str],
-    skill_assignments: list[SkillAssignment] | None = None,
-) -> AgentProfile:
+def _fixtures_root() -> Path:
+    return Path(__file__).resolve().parent.parent / "fixtures" / "skills"
+
+
+def _catalog() -> SkillCatalog:
+    catalog = SkillCatalog(FileSystemSkillPackageLoader(_fixtures_root()))
+    catalog.reload()
+    return catalog
+
+
+def _profile(*, assignments: list[SkillAssignment]) -> AgentProfile:
     return AgentProfile(
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
         default_model="test-model",
-        enabled_skills=enabled_skills,
-        skill_assignments=list(skill_assignments or []),
+        skill_assignments=list(assignments),
     )
 
 
-async def test_skill_registry_registers_and_unregisters_by_source() -> None:
-    from tests.runtime.runtime_plugin_samples import SampleConfiguredRuntimePlugin
+def test_skill_catalog_lists_fixture_skills() -> None:
+    catalog = _catalog()
 
-    registry = SkillRegistry()
-    broker = ToolBroker(skill_registry=registry)
-    manager = RuntimePluginManager(
-        config=Config({}),
-        gateway=FakeGateway(),
-        tool_broker=broker,
-        skill_registry=registry,
-        plugins=[SampleConfiguredRuntimePlugin()],
+    assert [item.skill_name for item in catalog.list_all()] == [
+        "excel_processing",
+        "sample_configured_skill",
+    ]
+
+
+async def test_tool_broker_exposes_skill_tool_for_assigned_skills() -> None:
+    catalog = _catalog()
+    broker = ToolBroker(skill_catalog=catalog)
+    broker.register_tool(
+        ToolSpec(
+            name="skill",
+            description="placeholder",
+            parameters={"type": "object", "properties": {"name": {"type": "string"}}},
+        ),
+        lambda arguments, ctx: {"ok": True},  # type: ignore[arg-type]
     )
 
-    await manager.ensure_started()
-    before = registry.list_all()
-    removed = registry.unregister_source("plugin:sample_configured_runtime")
-    after = registry.list_all()
-
-    assert [item.spec.skill_name for item in before] == ["sample_configured_skill"]
-    assert removed == ["sample_configured_skill"]
-    assert after == []
-
-
-async def test_tool_broker_expands_tools_from_enabled_skills() -> None:
-    from tests.runtime.runtime_plugin_samples import SampleConfiguredRuntimePlugin
-
-    registry = SkillRegistry()
-    broker = ToolBroker(skill_registry=registry)
-    manager = RuntimePluginManager(
-        config=Config({}),
-        gateway=FakeGateway(),
-        tool_broker=broker,
-        skill_registry=registry,
-        plugins=[SampleConfiguredRuntimePlugin()],
+    visible = broker.visible_tools(
+        _profile(assignments=[SkillAssignment(skill_name="sample_configured_skill")])
     )
-    await manager.ensure_started()
 
-    visible = broker.visible_tools(_profile(enabled_skills=["sample_configured_skill"]))
-
-    assert [tool.name for tool in visible] == ["sample_configured_tool"]
+    assert [tool.name for tool in visible] == ["skill"]
+    assert "sample_configured_skill" in visible[0].description
 
 
-async def test_skill_registry_resolves_explicit_assignments() -> None:
-    from tests.runtime.runtime_plugin_samples import SampleConfiguredRuntimePlugin
+def test_skill_catalog_resolves_explicit_assignments() -> None:
+    catalog = _catalog()
 
-    registry = SkillRegistry()
-    manager = RuntimePluginManager(
-        config=Config({}),
-        gateway=FakeGateway(),
-        tool_broker=ToolBroker(skill_registry=registry),
-        skill_registry=registry,
-        plugins=[SampleConfiguredRuntimePlugin()],
-    )
-    await manager.ensure_started()
-
-    resolved = registry.resolve_assignments(
+    resolved = catalog.resolve_assignments(
         _profile(
-            enabled_skills=[],
-            skill_assignments=[
+            assignments=[
                 SkillAssignment(
                     skill_name="sample_configured_skill",
                     delegation_mode="prefer_delegate",
                     delegate_agent_id="excel_worker",
                 )
-            ],
+            ]
         )
     )
 
     assert len(resolved) == 1
-    assert resolved[0].registered.spec.skill_name == "sample_configured_skill"
+    assert resolved[0].skill.skill_name == "sample_configured_skill"
     assert resolved[0].assignment.delegation_mode == "prefer_delegate"
     assert resolved[0].assignment.delegate_agent_id == "excel_worker"

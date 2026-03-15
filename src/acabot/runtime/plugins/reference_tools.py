@@ -28,7 +28,6 @@ from ..reference_backend import (
     ReferenceDocumentInput,
     ReferenceMode,
 )
-from ..skills import SkillSpec
 
 
 class ReferenceToolsPlugin(RuntimePlugin):
@@ -127,32 +126,6 @@ class ReferenceToolsPlugin(RuntimePlugin):
                 },
                 handler=self._read,
             ),
-        ]
-
-    def skills(self) -> list[SkillSpec]:
-        """返回 reference 相关显式 skill 定义.
-
-        Returns:
-            一条 `reference_lookup` capability skill.
-        """
-
-        return [
-            SkillSpec(
-                skill_name="reference_lookup",
-                skill_type="capability",
-                title="Reference Lookup",
-                description="按需检索和读取高精度 reference / notebook 资料.",
-                tool_names=[
-                    "reference_add_document",
-                    "reference_search",
-                    "reference_read",
-                ],
-                workflow_guide=(
-                    "先用 reference_search 查 overview, "
-                    "必要时再用 reference_read 读取全文."
-                ),
-                reference_hint="reference 默认按需查询, 不应每轮自动注入.",
-            )
         ]
 
     # region handler

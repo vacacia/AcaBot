@@ -154,6 +154,7 @@ from .plugins import (
     OpsControlPlugin,
     ReferenceToolsPlugin,
     SkillDelegationPlugin,
+    SkillToolPlugin,
     StickyNotesPlugin,
 )
 from .profile_loader import (
@@ -186,12 +187,15 @@ from .reference_backend import (
 from .retrieval_planner import PromptAssemblyConfig, RetrievalPlanner
 from .router import InboundRuleRegistry, RuntimeRouter
 from .runs import InMemoryRunManager, RunManager, StoreBackedRunManager
+from .skill_loader import FileSystemSkillPackageLoader
+from .skill_package import (
+    SkillPackageDocument,
+    SkillPackageFormatError,
+    SkillPackageManifest,
+)
 from .skills import (
-    RegisteredSkill,
     ResolvedSkillAssignment,
-    SkillRegistry,
-    SkillSpec,
-    SkillType,
+    SkillCatalog,
     SubagentDelegationRequest,
     SubagentDelegationResult,
 )
@@ -339,11 +343,12 @@ __all__ = [
     "RuntimeToolRegistration",
     "DelegationMode",
     "SkillAssignment",
-    "SkillType",
-    "SkillSpec",
-    "RegisteredSkill",
+    "SkillCatalog",
     "ResolvedSkillAssignment",
-    "SkillRegistry",
+    "FileSystemSkillPackageLoader",
+    "SkillPackageDocument",
+    "SkillPackageFormatError",
+    "SkillPackageManifest",
     "SubagentDelegationRequest",
     "SubagentDelegationResult",
     "SubagentExecutor",
@@ -360,6 +365,7 @@ __all__ = [
     "OpsControlPlugin",
     "ReferenceToolsPlugin",
     "SkillDelegationPlugin",
+    "SkillToolPlugin",
     "StickyNotesPlugin",
     "RunContext",
     "RunManager",

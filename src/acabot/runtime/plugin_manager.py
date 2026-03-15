@@ -16,7 +16,7 @@
 注意:
 - plugin 是装配层
 - computer 这种基础设施由 bootstrap/runtime 先创建
-- plugin 只负责把这些能力暴露成 hook / tool / skill / executor 等形态接入
+- plugin 只负责把这些能力暴露成 hook / tool / executor 等形态接入
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ from .computer import ComputerRuntime
 from .gateway_protocol import GatewayProtocol
 from .models import RunContext
 from .reference_backend import ReferenceBackend
-from .skills import SkillRegistry, SkillSpec
+from .skills import SkillCatalog
 from .sticky_notes import StickyNotesService
 from .subagent_delegation import (
     SubagentDelegationBroker,
@@ -204,7 +204,7 @@ class RuntimePluginContext:
         reference_backend (ReferenceBackend | None): reference provider.
         sticky_notes (StickyNotesService | None): sticky note 的受控服务层.
         computer_runtime (ComputerRuntime | None): computer 基础设施入口.
-        skill_registry (SkillRegistry | None): 显式 skill 注册表.
+        skill_catalog (SkillCatalog | None): 统一 skill catalog.
         control_plane (RuntimeControlPlane | None): 本地 control plane 入口.
         subagent_delegator (SubagentDelegationBroker | None): subagent delegation 编排入口.
     """
@@ -215,7 +215,7 @@ class RuntimePluginContext:
     reference_backend: ReferenceBackend | None = None
     sticky_notes: StickyNotesService | None = None
     computer_runtime: ComputerRuntime | None = None
-    skill_registry: SkillRegistry | None = None
+    skill_catalog: SkillCatalog | None = None
     control_plane: RuntimeControlPlane | None = None
     subagent_delegator: SubagentDelegationBroker | None = None
 
@@ -295,15 +295,6 @@ class RuntimePlugin(ABC):
 
         return []
 
-    def skills(self) -> list[SkillSpec]:
-        """返回插件声明的显式 skills.
-
-        Returns:
-            SkillSpec 列表. 默认空列表.
-        """
-
-        return []
-
     def subagent_executors(self) -> list[SubagentExecutorRegistration]:
         """返回插件声明的 subagent executors.
 
@@ -335,7 +326,7 @@ class RuntimePluginManager:
         tool_broker (ToolBroker): runtime 工具入口.
         reference_backend (ReferenceBackend | None): reference provider.
         sticky_notes (StickyNotesService | None): sticky note 服务.
-        skill_registry (SkillRegistry | None): 显式 skill 注册表.
+        skill_catalog (SkillCatalog | None): 统一 skill catalog.
         control_plane (RuntimeControlPlane | None): 本地 control plane 入口.
         subagent_delegator (SubagentDelegationBroker | None): subagent delegation 编排入口.
         hooks (RuntimeHookRegistry): runtime hook 注册表.
@@ -355,7 +346,7 @@ class RuntimePluginManager:
         reference_backend: ReferenceBackend | None = None,
         sticky_notes: StickyNotesService | None = None,
         computer_runtime: ComputerRuntime | None = None,
-        skill_registry: SkillRegistry | None = None,
+        skill_catalog: SkillCatalog | None = None,
         control_plane: RuntimeControlPlane | None = None,
         subagent_delegator: SubagentDelegationBroker | None = None,
         plugins: list[RuntimePlugin] | None = None,
@@ -371,7 +362,7 @@ class RuntimePluginManager:
             reference_backend: 可选的 reference provider.
             sticky_notes: 可选的 sticky note 服务.
             computer_runtime: 可选的 computer 基础设施入口.
-            skill_registry: 可选的显式 skill 注册表.
+            skill_catalog: 可选的统一 skill catalog.
             control_plane: 可选的本地 control plane 入口.
             subagent_delegator: 可选的 subagent delegation 编排入口.
             plugins: 启动时需要加载的插件实例列表.
@@ -384,7 +375,7 @@ class RuntimePluginManager:
         self.reference_backend = reference_backend
         self.sticky_notes = sticky_notes
         self.computer_runtime = computer_runtime
-        self.skill_registry = skill_registry
+        self.skill_catalog = skill_catalog
         self.control_plane = control_plane
         self.subagent_delegator = subagent_delegator
         # 创建空的 hook 注册表
@@ -455,7 +446,7 @@ class RuntimePluginManager:
                 reference_backend=self.reference_backend,
                 sticky_notes=self.sticky_notes,
                 computer_runtime=self.computer_runtime,
-                skill_registry=self.skill_registry,
+                skill_catalog=self.skill_catalog,
                 control_plane=self.control_plane,
                 subagent_delegator=self.subagent_delegator,
             )
@@ -504,7 +495,7 @@ class RuntimePluginManager:
             reference_backend=self.reference_backend,
             sticky_notes=self.sticky_notes,
             computer_runtime=self.computer_runtime,
-            skill_registry=self.skill_registry,
+            skill_catalog=self.skill_catalog,
             control_plane=self.control_plane,
             subagent_delegator=self.subagent_delegator,
         )
@@ -520,14 +511,6 @@ class RuntimePluginManager:
         for point, hook in plugin_hooks:
             self.hooks.register(point, hook)
         self._plugin_hooks[plugin.name] = plugin_hooks
-        plugin_skills = list(plugin.skills())
-        if self.skill_registry is not None:
-            for skill in plugin_skills:
-                self.skill_registry.register_skill(
-                    skill,
-                    source=f"plugin:{plugin.name}",
-                    metadata={"plugin_name": plugin.name},
-                )
         plugin_executors = list(plugin.subagent_executors())
         if self.subagent_delegator is not None:
             for registration in plugin_executors:
@@ -564,11 +547,10 @@ class RuntimePluginManager:
         self.loaded.append(plugin)
         self._names.add(plugin.name)
         logger.info(
-            "Runtime plugin loaded: %s (%s hooks, %s tools, %s skills, %s executors)",
+            "Runtime plugin loaded: %s (%s hooks, %s tools, %s executors)",
             plugin.name,
             len(plugin_hooks),
             len(runtime_tools) + len(legacy_tools),
-            len(plugin_skills),
             len(plugin_executors),
         )
 
@@ -624,14 +606,6 @@ class RuntimePluginManager:
         for plugin in reversed(self.loaded):
             if plugin.name not in unload_set:
                 continue
-            if self.skill_registry is not None:
-                removed_skills = self.skill_registry.unregister_source(f"plugin:{plugin.name}")
-                if removed_skills:
-                    logger.info(
-                        "Runtime plugin skills removed: plugin=%s skills=%s",
-                        plugin.name,
-                        ",".join(removed_skills),
-                    )
             if self.subagent_delegator is not None:
                 removed_executors = self.subagent_delegator.executor_registry.unregister_source(
                     f"plugin:{plugin.name}"
@@ -695,14 +669,6 @@ class RuntimePluginManager:
         # 这是依赖关系处理的关键: 如果插件A依赖插件B, 应该先加载B再加载A
         # 清理时则相反, 先清理A再清理B, 避免依赖悬空
         for plugin in reversed(self.loaded):
-            if self.skill_registry is not None:
-                removed_skills = self.skill_registry.unregister_source(f"plugin:{plugin.name}")
-                if removed_skills:
-                    logger.info(
-                        "Runtime plugin skills removed: plugin=%s skills=%s",
-                        plugin.name,
-                        ",".join(removed_skills),
-                    )
             if self.subagent_delegator is not None:
                 removed_executors = self.subagent_delegator.executor_registry.unregister_source(
                     f"plugin:{plugin.name}"
@@ -790,7 +756,8 @@ class RuntimePluginManager:
             tool_broker=self.tool_broker,
             reference_backend=self.reference_backend,
             sticky_notes=self.sticky_notes,
-            skill_registry=self.skill_registry,
+            computer_runtime=self.computer_runtime,
+            skill_catalog=self.skill_catalog,
             control_plane=self.control_plane,
             subagent_delegator=self.subagent_delegator,
         )

@@ -106,8 +106,6 @@ def test_filesystem_profile_loader_loads_yaml_profiles(tmp_path: Path) -> None:
                 "default_model: fs-model",
                 "enabled_tools:",
                 "  - reference_search",
-                "enabled_skills:",
-                "  - reference_lookup",
                 "skill_assignments:",
                 "  - skill_name: reference_lookup",
                 "    delegation_mode: prefer_delegate",
@@ -127,7 +125,6 @@ def test_filesystem_profile_loader_loads_yaml_profiles(tmp_path: Path) -> None:
     assert profiles["aca"].name == "Aca FS"
     assert profiles["aca"].default_model == "fs-model"
     assert profiles["aca"].enabled_tools == ["reference_search"]
-    assert profiles["aca"].enabled_skills == ["reference_lookup"]
     assert len(profiles["aca"].skill_assignments) == 1
     assert profiles["aca"].skill_assignments[0].delegation_mode == "prefer_delegate"
     assert profiles["aca"].skill_assignments[0].delegate_agent_id == "research_worker"

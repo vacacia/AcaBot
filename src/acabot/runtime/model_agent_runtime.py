@@ -140,8 +140,11 @@ class ModelAgentRuntime(AgentRuntime):
             一份符合 runtime 契约的 AgentRuntimeResult.
         """
 
-        ctx.system_prompt = self.prompt_loader.load(ctx.profile.prompt_ref)
         tool_runtime = await self._resolve_tool_runtime(ctx)
+        ctx.system_prompt = self._build_system_prompt(
+            base_prompt=self.prompt_loader.load(ctx.profile.prompt_ref),
+            tool_runtime=tool_runtime,
+        )
         capability_error = self._validate_model_capabilities(ctx, tool_runtime)
         if capability_error is not None:
             return capability_error
@@ -170,6 +173,32 @@ class ModelAgentRuntime(AgentRuntime):
         if isawaitable(resolved):
             resolved = await resolved
         return resolved
+
+    @staticmethod
+    def _build_system_prompt(
+        *,
+        base_prompt: str,
+        tool_runtime: ToolRuntime,
+    ) -> str:
+        skill_summaries = list(tool_runtime.metadata.get("visible_skill_summaries", []))
+        if not skill_summaries:
+            return base_prompt
+
+        lines = ["Available Skills:"]
+        for item in skill_summaries:
+            delegation = str(item.get("delegation_mode", "inline") or "inline")
+            delegate_agent = str(item.get("delegate_agent_id", "") or "")
+            suffix = ""
+            if delegation != "inline":
+                suffix = (
+                    f" delegation={delegation}"
+                    f" delegate_agent={delegate_agent or '-'}"
+                )
+            lines.append(
+                f"- {str(item.get('skill_name', '') or '')}: "
+                f"{str(item.get('description', '') or '')}{suffix}"
+            )
+        return f"{base_prompt.rstrip()}\n\n" + "\n".join(lines)
 
     async def _call_agent(self, ctx: RunContext, tool_runtime: ToolRuntime):
         """调用底层 BaseAgent.

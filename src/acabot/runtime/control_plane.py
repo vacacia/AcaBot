@@ -43,7 +43,8 @@ from .models import MemoryItem, PendingApprovalRecord
 from .plugin_manager import RuntimePluginManager
 from .profile_loader import AgentProfileRegistry
 from .runs import RunManager
-from .skills import RegisteredSkill, ResolvedSkillAssignment, SkillRegistry
+from .skill_package import SkillPackageManifest
+from .skills import ResolvedSkillAssignment, SkillCatalog
 from .stores import MemoryStore
 from .subagent_delegation import RegisteredSubagentExecutor, SubagentExecutorRegistry
 from .threads import ThreadManager
@@ -169,19 +170,19 @@ class SkillSnapshot:
 
     Attributes:
         skill_name (str): skill 标识.
-        skill_type (str): skill 类型.
-        title (str): 展示标题.
-        tool_names (list[str]): skill 暴露的工具列表.
-        source (str): 注册来源.
-        workflow_guide (str): 可选的工作流说明.
+        display_name (str): 展示标题.
+        description (str): 简短说明.
+        has_references (bool): 是否带 references 目录.
+        has_scripts (bool): 是否带 scripts 目录.
+        has_assets (bool): 是否带 assets 目录.
     """
 
     skill_name: str
-    skill_type: str
-    title: str
-    tool_names: list[str] = field(default_factory=list)
-    source: str = ""
-    workflow_guide: str = ""
+    display_name: str
+    description: str
+    has_references: bool = False
+    has_scripts: bool = False
+    has_assets: bool = False
 
 
 @dataclass(slots=True)
@@ -191,22 +192,26 @@ class AgentSkillSnapshot:
     Attributes:
         agent_id (str): 当前 agent 标识.
         skill_name (str): 目标 skill 标识.
-        skill_type (str): skill 类型.
-        title (str): 展示标题.
-        tool_names (list[str]): 这个 skill 暴露的工具列表.
+        display_name (str): 展示标题.
+        description (str): 简短说明.
         delegation_mode (str): 当前 assignment 的 delegation policy.
         delegate_agent_id (str): 目标 subagent 标识.
         notes (str): operator 附加说明.
+        has_references (bool): 是否带 references 目录.
+        has_scripts (bool): 是否带 scripts 目录.
+        has_assets (bool): 是否带 assets 目录.
     """
 
     agent_id: str
     skill_name: str
-    skill_type: str
-    title: str
-    tool_names: list[str] = field(default_factory=list)
+    display_name: str
+    description: str
     delegation_mode: str = "inline"
     delegate_agent_id: str = ""
     notes: str = ""
+    has_references: bool = False
+    has_scripts: bool = False
+    has_assets: bool = False
 
 
 @dataclass(slots=True)
@@ -250,7 +255,7 @@ class RuntimeControlPlane:
         memory_store: MemoryStore | None = None,
         profile_registry: AgentProfileRegistry | None = None,
         plugin_manager: RuntimePluginManager | None = None,
-        skill_registry: SkillRegistry | None = None,
+        skill_catalog: SkillCatalog | None = None,
         subagent_executor_registry: SubagentExecutorRegistry | None = None,
         model_registry_manager: FileSystemModelRegistryManager | None = None,
         computer_runtime: ComputerRuntime | None = None,
@@ -264,7 +269,7 @@ class RuntimeControlPlane:
             memory_store: 可选的长期记忆存储.
             profile_registry: 可选的 profile registry, 用于校验 agent 是否存在.
             plugin_manager: 可选的 runtime plugin manager.
-            skill_registry: 可选的显式 skill 注册表.
+            skill_catalog: 可选的统一 skill catalog.
             subagent_executor_registry: 可选的 subagent executor 注册表.
             model_registry_manager: 可选的模型注册表管理器.
             computer_runtime: 可选的 computer 基础设施入口.
@@ -276,7 +281,7 @@ class RuntimeControlPlane:
         self.memory_store = memory_store
         self.profile_registry = profile_registry
         self.plugin_manager = plugin_manager
-        self.skill_registry = skill_registry
+        self.skill_catalog = skill_catalog
         self.subagent_executor_registry = subagent_executor_registry
         self.model_registry_manager = model_registry_manager
         self.computer_runtime = computer_runtime
@@ -455,9 +460,9 @@ class RuntimeControlPlane:
             SkillSnapshot 列表.
         """
 
-        if self.skill_registry is None:
+        if self.skill_catalog is None:
             return []
-        return [self._to_skill_snapshot(item) for item in self.skill_registry.list_all()]
+        return [self._to_skill_snapshot(item) for item in self.skill_catalog.list_all()]
 
     async def list_agent_skills(self, agent_id: str) -> list[AgentSkillSnapshot]:
         """列出某个 agent 当前绑定的 skill assignment.
@@ -469,14 +474,14 @@ class RuntimeControlPlane:
             AgentSkillSnapshot 列表.
         """
 
-        if self.profile_registry is None or self.skill_registry is None:
+        if self.profile_registry is None or self.skill_catalog is None:
             return []
         if not self.profile_registry.has_agent(agent_id):
             return []
         profile = self.profile_registry.profiles[agent_id]
         return [
             self._to_agent_skill_snapshot(agent_id, item)
-            for item in self.skill_registry.resolve_assignments(profile)
+            for item in self.skill_catalog.resolve_assignments(profile)
         ]
 
     async def list_subagent_executors(self) -> list[SubagentExecutorSnapshot]:
@@ -876,9 +881,9 @@ class RuntimeControlPlane:
             skill_name 列表.
         """
 
-        if self.skill_registry is None:
+        if self.skill_catalog is None:
             return []
-        return [item.spec.skill_name for item in self.skill_registry.list_all()]
+        return [item.skill_name for item in self.skill_catalog.list_all()]
 
     @staticmethod
     def _control_plane_step(
@@ -902,8 +907,8 @@ class RuntimeControlPlane:
         )
 
     @staticmethod
-    def _to_skill_snapshot(item: RegisteredSkill) -> SkillSnapshot:
-        """把 RegisteredSkill 转成 SkillSnapshot.
+    def _to_skill_snapshot(item: SkillPackageManifest) -> SkillSnapshot:
+        """把 SkillPackageManifest 转成 SkillSnapshot.
 
         Args:
             item: 当前注册的 skill.
@@ -913,12 +918,12 @@ class RuntimeControlPlane:
         """
 
         return SkillSnapshot(
-            skill_name=item.spec.skill_name,
-            skill_type=item.spec.skill_type,
-            title=item.spec.title,
-            tool_names=list(item.spec.tool_names),
-            source=item.source,
-            workflow_guide=item.spec.workflow_guide,
+            skill_name=item.skill_name,
+            display_name=item.display_name,
+            description=item.description,
+            has_references=item.has_references,
+            has_scripts=item.has_scripts,
+            has_assets=item.has_assets,
         )
 
     @staticmethod
@@ -938,13 +943,15 @@ class RuntimeControlPlane:
 
         return AgentSkillSnapshot(
             agent_id=agent_id,
-            skill_name=item.registered.spec.skill_name,
-            skill_type=item.registered.spec.skill_type,
-            title=item.registered.spec.title,
-            tool_names=list(item.registered.spec.tool_names),
+            skill_name=item.skill.skill_name,
+            display_name=item.skill.display_name,
+            description=item.skill.description,
             delegation_mode=item.assignment.delegation_mode,
             delegate_agent_id=item.assignment.delegate_agent_id,
             notes=item.assignment.notes,
+            has_references=item.skill.has_references,
+            has_scripts=item.skill.has_scripts,
+            has_assets=item.skill.has_assets,
         )
 
     @staticmethod

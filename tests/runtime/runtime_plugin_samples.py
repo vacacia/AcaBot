@@ -10,7 +10,6 @@ from acabot.agent import ToolDef
 from acabot.runtime import (
     RuntimePlugin,
     RuntimePluginContext,
-    SkillSpec,
     SubagentDelegationRequest,
     SubagentDelegationResult,
     SubagentExecutorRegistration,
@@ -66,19 +65,6 @@ class SampleConfiguredRuntimePlugin(RuntimePlugin):
             )
         ]
 
-    def skills(self) -> list[SkillSpec]:
-        """返回一条样例 skill."""
-
-        return [
-            SkillSpec(
-                skill_name="sample_configured_skill",
-                skill_type="capability",
-                title="Sample Configured Skill",
-                description="用于测试按配置加载的显式 skill.",
-                tool_names=["sample_configured_tool"],
-            )
-        ]
-
     async def teardown(self) -> None:
         """记录一次 teardown 调用."""
 
@@ -113,19 +99,6 @@ class AnotherConfiguredRuntimePlugin(RuntimePlugin):
         """记录一次 teardown 调用."""
 
         type(self).teardown_calls += 1
-
-    def skills(self) -> list[SkillSpec]:
-        """返回第二条样例 skill."""
-
-        return [
-            SkillSpec(
-                skill_name="another_configured_skill",
-                skill_type="capability",
-                title="Another Configured Skill",
-                description="用于测试精确 reload 的第二条 skill.",
-                tool_names=[],
-            )
-        ]
 
 
 class SampleDelegationWorkerPlugin(RuntimePlugin):

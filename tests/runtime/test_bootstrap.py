@@ -269,7 +269,8 @@ async def test_build_runtime_components_loads_runtime_plugins_from_config() -> N
     assert SampleConfiguredRuntimePlugin.setup_calls == 1
 
 
-async def test_build_runtime_components_expands_enabled_skills_into_visible_tools() -> None:
+async def test_build_runtime_components_exposes_skill_and_delegate_tools_for_assigned_skills() -> None:
+    skills_dir = Path(__file__).resolve().parent.parent / "fixtures" / "skills"
     config = Config(
         {
             "agent": {
@@ -278,12 +279,15 @@ async def test_build_runtime_components_expands_enabled_skills_into_visible_tool
             },
             "runtime": {
                 "default_agent_id": "aca",
+                "filesystem": {
+                    "enabled": True,
+                    "skill_catalog_dir": str(skills_dir),
+                },
                 "profiles": {
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
                         "default_model": "runtime-model",
-                        "enabled_skills": ["sample_configured_skill"],
                         "skill_assignments": [
                             {
                                 "skill_name": "sample_configured_skill",
@@ -320,26 +324,15 @@ async def test_build_runtime_components_expands_enabled_skills_into_visible_tool
     )
     visible_tools = components.tool_broker.visible_tools(profile)
 
-    assert profile.enabled_skills == ["sample_configured_skill"]
     assert len(profile.skill_assignments) == 1
     assert profile.skill_assignments[0].delegation_mode == "prefer_delegate"
     assert profile.skill_assignments[0].delegate_agent_id == "sample_worker"
-    assert [tool.name for tool in visible_tools] == ["sample_configured_tool", "delegate_skill"]
+    assert [tool.name for tool in visible_tools] == ["skill", "delegate_skill"]
+    assert "sample_configured_skill" in visible_tools[0].description
     registered_executors = components.subagent_delegator.executor_registry.list_all()
     assert [item.agent_id for item in registered_executors] == ["aca"]
     assert registered_executors[0].source == "runtime:local_profile"
-    assert any(
-        tool.name == "sample_configured_tool"
-        for tool in components.tool_broker.visible_tools(
-            AgentProfile(
-                agent_id="aca",
-                name="Aca",
-                prompt_ref="prompt/default",
-                default_model="test-model",
-                enabled_tools=["sample_configured_tool"],
-            )
-        )
-    )
+    assert any(tool.name == "skill" for tool in visible_tools)
 
 
 async def test_build_runtime_components_loads_profiles_and_prompts_from_filesystem(
@@ -1383,9 +1376,6 @@ def test_build_runtime_components_applies_prompt_assembly_config() -> None:
                 "default_prompt_ref": "prompt/default",
                 "prompt_assembly": {
                     "sticky_intro": "稳定规则如下",
-                    "skill_intro": "技能说明如下",
-                    "skill_slot_position": "history_prefix",
-                    "skill_message_role": "user",
                     "summary_slot_position": "history_prefix",
                     "summary_message_role": "system",
                 },
@@ -1400,12 +1390,8 @@ def test_build_runtime_components_applies_prompt_assembly_config() -> None:
     )
 
     assert components.retrieval_planner.config.sticky_intro == "稳定规则如下"
-    assert components.retrieval_planner.config.skill_intro == "技能说明如下"
-    assert components.retrieval_planner.config.skill_slot_position == "history_prefix"
-    assert components.retrieval_planner.config.skill_message_role == "user"
     assert components.retrieval_planner.config.summary_slot_position == "history_prefix"
     assert components.retrieval_planner.config.summary_message_role == "system"
-    assert components.retrieval_planner.skill_registry is components.skill_registry
 
 
 def test_build_runtime_components_applies_context_compaction_config() -> None:

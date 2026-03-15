@@ -14,6 +14,7 @@ from acabot.agent import ToolSpec
 
 from ..computer import ComputerPolicy, ComputerRuntime
 from ..plugin_manager import RuntimePlugin, RuntimePluginContext, RuntimeToolRegistration
+from ..skills import SkillCatalog
 from ..tool_broker import ToolExecutionContext, ToolResult
 
 
@@ -30,9 +31,11 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
 
     def __init__(self) -> None:
         self._computer_runtime: ComputerRuntime | None = None
+        self._skill_catalog: SkillCatalog | None = None
 
     async def setup(self, runtime: RuntimePluginContext) -> None:
         self._computer_runtime = runtime.computer_runtime
+        self._skill_catalog = runtime.skill_catalog
 
     def runtime_tools(self) -> list[RuntimeToolRegistration]:
         return [
@@ -162,6 +165,7 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
 
     async def _read(self, arguments: dict[str, Any], ctx: ToolExecutionContext) -> ToolResult:
         service = self._require_runtime()
+        await self._ensure_loaded_skill_mirrors(ctx)
         content = await service.read_workspace_file(
             thread_id=ctx.thread_id,
             relative_path=str(arguments.get("path", "") or "/"),
@@ -173,6 +177,7 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
 
     async def _write(self, arguments: dict[str, Any], ctx: ToolExecutionContext) -> ToolResult:
         service = self._require_runtime()
+        await self._ensure_loaded_skill_mirrors(ctx)
         path = str(arguments.get("path", "") or "")
         content = str(arguments.get("content", "") or "")
         policy = self._policy_from_ctx(ctx)
@@ -189,6 +194,7 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
 
     async def _ls(self, arguments: dict[str, Any], ctx: ToolExecutionContext) -> ToolResult:
         service = self._require_runtime()
+        await self._ensure_loaded_skill_mirrors(ctx)
         items = await service.list_workspace_entries(
             thread_id=ctx.thread_id,
             relative_path=str(arguments.get("path", "/") or "/"),
@@ -201,6 +207,7 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
 
     async def _grep(self, arguments: dict[str, Any], ctx: ToolExecutionContext) -> ToolResult:
         service = self._require_runtime()
+        await self._ensure_loaded_skill_mirrors(ctx)
         matches = await service.grep_workspace(
             thread_id=ctx.thread_id,
             relative_path=str(arguments.get("path", "/") or "/"),
@@ -214,6 +221,7 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
 
     async def _exec(self, arguments: dict[str, Any], ctx: ToolExecutionContext) -> ToolResult:
         service = self._require_runtime()
+        await self._ensure_loaded_skill_mirrors(ctx)
         result = await service.exec_once(
             thread_id=ctx.thread_id,
             run_id=ctx.run_id,
@@ -228,6 +236,7 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
     async def _bash_open(self, arguments: dict[str, Any], ctx: ToolExecutionContext) -> ToolResult:
         _ = arguments
         service = self._require_runtime()
+        await self._ensure_loaded_skill_mirrors(ctx)
         session = await service.open_session(
             thread_id=ctx.thread_id,
             run_id=ctx.run_id,
@@ -285,6 +294,14 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
         if self._computer_runtime is None:
             raise RuntimeError("computer runtime unavailable")
         return self._computer_runtime
+
+    async def _ensure_loaded_skill_mirrors(self, ctx: ToolExecutionContext) -> None:
+        if self._computer_runtime is None or self._skill_catalog is None:
+            return
+        await self._computer_runtime.ensure_loaded_skills_mirrored(
+            ctx.thread_id,
+            self._skill_catalog,
+        )
 
     @staticmethod
     def _policy_from_ctx(ctx: ToolExecutionContext) -> ComputerPolicy:

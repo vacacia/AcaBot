@@ -148,11 +148,15 @@ class OpsControlPlugin(RuntimePlugin):
                     return f"skills: no assignments for {arguments[0]}"
                 lines = [f"skills for {arguments[0]}:"]
                 for item in items:
-                    tools = ",".join(item.tool_names) or "-"
+                    resources = self._format_skill_resources(
+                        item.has_references,
+                        item.has_scripts,
+                        item.has_assets,
+                    )
                     lines.append(
-                        f"- {item.skill_name} [{item.skill_type}] "
+                        f"- {item.skill_name} ({item.display_name}) "
                         f"mode={item.delegation_mode} delegate={item.delegate_agent_id or '-'} "
-                        f"tools={tools}"
+                        f"resources={resources}"
                     )
                 return "\n".join(lines)
 
@@ -161,10 +165,12 @@ class OpsControlPlugin(RuntimePlugin):
                 return "skills: no registered skills"
             lines = ["skills:"]
             for item in items:
-                tools = ",".join(item.tool_names) or "-"
-                lines.append(
-                    f"- {item.skill_name} [{item.skill_type}] tools={tools}"
+                resources = self._format_skill_resources(
+                    item.has_references,
+                    item.has_scripts,
+                    item.has_assets,
                 )
+                lines.append(f"- {item.skill_name} ({item.display_name}) resources={resources}")
             return "\n".join(lines)
 
         if command == "subagents":
@@ -285,3 +291,16 @@ class OpsControlPlugin(RuntimePlugin):
         if result.missing_plugins:
             lines.append(f"missing_plugins={','.join(result.missing_plugins)}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _format_skill_resources(
+        has_references: bool,
+        has_scripts: bool,
+        has_assets: bool,
+    ) -> str:
+        parts = [
+            "refs" if has_references else "-",
+            "scripts" if has_scripts else "-",
+            "assets" if has_assets else "-",
+        ]
+        return "/".join(parts)

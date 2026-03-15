@@ -2,7 +2,7 @@
 
 组件关系:
 
-    SkillRegistry + AgentProfile
+    SkillCatalog + AgentProfile
              |
              v
     SubagentDelegationBroker
@@ -27,7 +27,7 @@ from inspect import isawaitable
 from typing import Any, Protocol
 
 from .models import AgentProfile
-from .skills import SkillRegistry, SubagentDelegationRequest, SubagentDelegationResult
+from .skills import SkillCatalog, SubagentDelegationRequest, SubagentDelegationResult
 
 
 # region executor
@@ -167,24 +167,24 @@ class SubagentDelegationBroker:
     """subagent delegation 的最小编排入口.
 
     Attributes:
-        skill_registry (SkillRegistry): 显式 skill 注册表.
+        skill_catalog (SkillCatalog): 统一 skill catalog.
         executor_registry (SubagentExecutorRegistry): subagent executor 注册表.
     """
 
     def __init__(
         self,
         *,
-        skill_registry: SkillRegistry,
+        skill_catalog: SkillCatalog,
         executor_registry: SubagentExecutorRegistry,
     ) -> None:
         """初始化 delegation broker.
 
         Args:
-            skill_registry: 显式 skill 注册表.
+            skill_catalog: 统一 skill catalog.
             executor_registry: subagent executor 注册表.
         """
 
-        self.skill_registry = skill_registry
+        self.skill_catalog = skill_catalog
         self.executor_registry = executor_registry
 
     async def delegate(
@@ -274,8 +274,8 @@ class SubagentDelegationBroker:
             命中的 SkillAssignment. 不存在时返回 None.
         """
 
-        for item in self.skill_registry.resolve_assignments(profile):
-            if item.registered.spec.skill_name == skill_name:
+        for item in self.skill_catalog.resolve_assignments(profile):
+            if item.skill.skill_name == skill_name:
                 return item.assignment
         return None
 

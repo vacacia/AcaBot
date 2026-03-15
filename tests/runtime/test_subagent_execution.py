@@ -7,6 +7,12 @@ from .test_bootstrap import FakeAgent, FakeAgentResponse
 from .test_outbox import FakeGateway
 
 
+def _skills_dir() -> str:
+    from pathlib import Path
+
+    return str(Path(__file__).resolve().parent.parent / "fixtures" / "skills")
+
+
 def _event(*, event_id: str = "evt:parent") -> StandardEvent:
     return StandardEvent(
         event_id=event_id,
@@ -59,6 +65,10 @@ async def test_delegate_skill_uses_real_local_child_run() -> None:
             },
             "runtime": {
                 "default_agent_id": "aca",
+                "filesystem": {
+                    "enabled": True,
+                    "skill_catalog_dir": _skills_dir(),
+                },
                 "profiles": {
                     "aca": {
                         "name": "Aca",

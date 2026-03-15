@@ -9,6 +9,7 @@ from .napcat_tools import NapCatToolsPlugin
 from .ops_control import OpsControlPlugin
 from .reference_tools import ReferenceToolsPlugin
 from .skill_delegation import SkillDelegationPlugin
+from .skill_tool import SkillToolPlugin
 from .sticky_notes import StickyNotesPlugin
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "OpsControlPlugin",
     "ReferenceToolsPlugin",
     "SkillDelegationPlugin",
+    "SkillToolPlugin",
     "StickyNotesPlugin",
 ]

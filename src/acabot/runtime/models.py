@@ -195,7 +195,6 @@ class AgentProfile:
         prompt_ref (str): prompt 文件引用.
         default_model (str): 默认模型名.
         enabled_tools (list[str]): 直接暴露给模型的工具白名单.
-        enabled_skills (list[str]): 以 inline 策略启用的 skill 简写列表.
         skill_assignments (list[SkillAssignment]): 显式 skill assignment 和 delegation policy.
         config (dict[str, Any]): 原始 profile 配置快照.
     """
@@ -205,7 +204,6 @@ class AgentProfile:
     prompt_ref: str # prompt 文件引用
     default_model: str
     enabled_tools: list[str] = field(default_factory=list)
-    enabled_skills: list[str] = field(default_factory=list)
     skill_assignments: list[SkillAssignment] = field(default_factory=list)
     computer_policy: "ComputerPolicy | None" = None
     config: dict[str, Any] = field(default_factory=dict)
