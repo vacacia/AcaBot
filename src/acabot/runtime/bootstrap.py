@@ -58,7 +58,7 @@ from .plugin_manager import (
     RuntimePluginManager,
     load_runtime_plugins_from_config,
 )
-from .plugins import ComputerToolAdapterPlugin, SkillDelegationPlugin, SkillToolPlugin
+from .plugins import ComputerToolAdapterPlugin, SkillToolPlugin, SubagentDelegationPlugin
 from .profile_loader import (
     AgentProfileRegistry,
     ChainedPromptLoader,
@@ -110,7 +110,7 @@ def _build_builtin_runtime_plugins(
         SkillToolPlugin(),
     ]
     if _profiles_have_delegated_skills(profiles) or len(profiles) > 1:
-        builtin_plugins.append(SkillDelegationPlugin())
+        builtin_plugins.append(SubagentDelegationPlugin())
     return builtin_plugins
 
 # region RuntimeComponents

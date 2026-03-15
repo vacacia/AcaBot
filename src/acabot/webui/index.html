@@ -122,7 +122,6 @@
         <section class="view" data-view="agents">
           <article class="panel bot-panel">
             <div class="panel-header">
-              <h2>Main Bot</h2>
               <div class="inline-actions">
                 <button id="reset-bot-btn" class="button" type="button">重置表单</button>
                 <button id="save-profile-btn" class="button button-primary" type="button">保存</button>
@@ -148,10 +147,6 @@
                       <div>
                         <h3>Bot AI 核心配置</h3>
                         <p>这里定义主 Bot 的默认 Prompt、主模型和 Summary 模型。Sessions 默认继承这里的 AI 设置。</p>
-                      </div>
-                      <div class="pill-row">
-                        <span class="pill">Global Bot</span>
-                        <span class="pill">Session 可覆盖</span>
                       </div>
                     </div>
                     <div class="form-grid profile-quick-grid">
@@ -188,7 +183,7 @@
                     <div class="profile-block-heading">
                       <div>
                         <h3>Tool Access</h3>
-                        <p>先决定这个 Bot 能看到哪些工具。Computer 工具的真实权限在下面的 Sandbox 配置里继续限制。</p>
+                        <p>这里只放普通工具。Computer 工具已经挪到 Sandbox 分栏里统一配置。</p>
                       </div>
                     </div>
                     <div id="profile-enabled-tools-list" class="tool-groups-grid"></div>
@@ -218,6 +213,16 @@
                 </section>
 
                 <section class="bot-config-section" data-bot-section-panel="sandbox">
+                  <section class="profile-block wide">
+                    <div class="profile-block-heading">
+                      <div>
+                        <h3>Computer 工具</h3>
+                        <p>这里选择主 Bot 能看到哪些 computer 工具；下面的 Sandbox 权限决定这些工具真正能做什么。</p>
+                      </div>
+                    </div>
+                    <div id="profile-computer-tools-list" class="tool-groups-grid"></div>
+                  </section>
+
                   <section class="profile-block wide">
                     <div class="profile-block-heading">
                       <div>

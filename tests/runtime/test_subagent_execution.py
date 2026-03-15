@@ -99,7 +99,7 @@ async def _model_registry_manager(tmp_path) -> FileSystemModelRegistryManager:
     return manager
 
 
-async def test_delegate_skill_uses_real_local_child_run() -> None:
+async def test_delegate_subagent_uses_real_local_child_run() -> None:
     gateway = FakeGateway()
     config = Config(
         {
@@ -162,7 +162,7 @@ async def test_delegate_skill_uses_real_local_child_run() -> None:
     profile = components.profile_loader.profiles["aca"]
 
     result = await components.tool_broker.execute(
-        tool_name="delegate_skill",
+        tool_name="delegate_subagent",
         arguments={
             "skill_name": "sample_configured_skill",
             "task": "整理 Excel 文件并总结",
@@ -242,7 +242,7 @@ async def test_bootstrap_registers_local_profile_subagent_executors() -> None:
     assert registered[1].metadata["kind"] == "local_profile"
 
 
-async def test_delegate_skill_child_run_uses_delegate_agent_model_binding(
+async def test_delegate_subagent_child_run_uses_delegate_agent_model_binding(
     tmp_path,
 ) -> None:
     gateway = FakeGateway()
@@ -309,7 +309,7 @@ async def test_delegate_skill_child_run_uses_delegate_agent_model_binding(
     profile = components.profile_loader.profiles["aca"]
 
     result = await components.tool_broker.execute(
-        tool_name="delegate_skill",
+        tool_name="delegate_subagent",
         arguments={
             "skill_name": "sample_configured_skill",
             "task": "整理 Excel 文件并总结",

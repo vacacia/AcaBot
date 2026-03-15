@@ -353,6 +353,9 @@ async function ensureCatalog(force = false) {
     return state.catalog
   }
   state.catalog = await api("/api/ui/catalog")
+  state.modelEntities.bindings = Array.isArray(state.catalog?.model_bindings)
+    ? deepClone(state.catalog.model_bindings)
+    : []
   return state.catalog
 }
 
@@ -404,7 +407,9 @@ function generatedProfileId(name, prefix) {
 }
 
 function findAgentModelBinding(agentId) {
-  const bindings = state.modelEntities.bindings || state.catalog?.model_bindings || []
+  const bindings = state.modelEntities.bindings?.length
+    ? state.modelEntities.bindings
+    : (state.catalog?.model_bindings || [])
   return bindings.find((item) => item.target_type === "agent" && item.target_id === agentId) || null
 }
 
@@ -810,7 +815,13 @@ function renderSelectOptions(selectId, items, selectedValue, mapper, blankLabel 
   select.innerHTML = options.join("")
 }
 
-function renderToolOptions(containerId, selectedTools) {
+const COMPUTER_TOOL_NAMES = ["read", "write", "ls", "grep", "exec", "bash_open", "bash_write", "bash_read", "bash_close"]
+
+function renderToolOptions(
+  containerId,
+  selectedTools,
+  { includeGeneral = true, includeComputer = true } = {},
+) {
   const container = $(`#${containerId}`)
   const tools = state.catalog?.tools || []
   if (!container) return
@@ -819,19 +830,23 @@ function renderToolOptions(containerId, selectedTools) {
     container.innerHTML = emptyState("当前没有可选 tool")
     return
   }
-  const computerNames = new Set(["read", "write", "ls", "grep", "exec", "bash_open", "bash_write", "bash_read", "bash_close"])
-  const groups = [
-    {
+  const computerNames = new Set(COMPUTER_TOOL_NAMES)
+  const groups = []
+  if (includeGeneral) {
+    groups.push({
       title: "通用工具",
       items: tools.filter((tool) => !computerNames.has(tool.name)),
-    },
-    {
+    })
+  }
+  if (includeComputer) {
+    groups.push({
       title: "Computer 工具",
       items: tools.filter((tool) => computerNames.has(tool.name)),
-    },
-  ].filter((group) => group.items.length)
+    })
+  }
+  const visibleGroups = groups.filter((group) => group.items.length)
 
-  container.innerHTML = groups
+  container.innerHTML = visibleGroups
     .map(
       (group) => `
         <div class="option-group">
@@ -864,19 +879,28 @@ function selectedToolNames(containerId) {
   return Array.from(document.querySelectorAll(`#${containerId} [data-tool-name]:checked`)).map((node) => node.dataset.toolName)
 }
 
+function selectedProfileToolNames(prefix) {
+  const general = selectedToolNames(`${prefix}-enabled-tools-list`)
+  const computer = selectedToolNames(`${prefix}-computer-tools-list`)
+  return [...general, ...computer]
+}
+
 function syncComputerPolicyUi(prefix) {
   const note = $(`#${prefix}-computer-policy-note`)
   const policyRoot = $(`#${prefix}-computer-policy`)
   if (!note || !policyRoot) return
-  const selected = new Set(selectedToolNames(`${prefix}-enabled-tools-list`))
-  const computerTools = ["read", "write", "ls", "grep", "exec", "bash_open", "bash_write", "bash_read", "bash_close"].filter((name) => selected.has(name))
+  const selected = new Set(
+    $(`#${prefix}-computer-tools-list`)
+      ? selectedProfileToolNames(prefix)
+      : selectedToolNames(`${prefix}-enabled-tools-list`),
+  )
+  const computerTools = COMPUTER_TOOL_NAMES.filter((name) => selected.has(name))
   const active = computerTools.length > 0
   note.textContent = active
     ? `当前启用了 ${computerTools.join(", ")}。下面这些开关会限制这些 computer 工具的真实权限。`
     : "当前没有启用 computer 工具。下面这些权限设置会保留，但暂时不会影响普通工具。"
-  policyRoot.querySelectorAll("select, input").forEach((node) => {
-    node.disabled = !active
-    node.closest(".checkbox-row")?.classList.toggle("is-muted", !active)
+  policyRoot.querySelectorAll(".checkbox-row").forEach((node) => {
+    node.classList.toggle("is-muted", !active)
   })
 }
 
@@ -975,7 +999,18 @@ function renderProfileForm(prefix, draft, { withComputer }) {
     descriptionInput.value = draft.description || ""
   }
 
-  renderToolOptions(`${prefix}-enabled-tools-list`, draft.enabled_tools || [])
+  if (prefix === "profile" && $(`#${prefix}-computer-tools-list`)) {
+    renderToolOptions(`${prefix}-enabled-tools-list`, draft.enabled_tools || [], {
+      includeGeneral: true,
+      includeComputer: false,
+    })
+    renderToolOptions(`${prefix}-computer-tools-list`, draft.enabled_tools || [], {
+      includeGeneral: false,
+      includeComputer: true,
+    })
+  } else {
+    renderToolOptions(`${prefix}-enabled-tools-list`, draft.enabled_tools || [])
+  }
   renderSkillAssignments(`${prefix}-skill-assignments-list`, draft.skill_assignments || [])
   if (prefix === "profile") {
     renderBotEventDefaults(state.botEventDefaults)
@@ -1013,11 +1048,13 @@ function renderProfileForm(prefix, draft, { withComputer }) {
     syncComputerPolicyUi(prefix)
   }
 
-  document.querySelectorAll(`#${prefix}-enabled-tools-list [data-tool-name]`).forEach((node) => {
-    node.addEventListener("change", () => {
-      if (withComputer) {
-        syncComputerPolicyUi(prefix)
-      }
+  ;[`${prefix}-enabled-tools-list`, `${prefix}-computer-tools-list`].forEach((containerId) => {
+    document.querySelectorAll(`#${containerId} [data-tool-name]`).forEach((node) => {
+      node.addEventListener("change", () => {
+        if (withComputer) {
+          syncComputerPolicyUi(prefix)
+        }
+      })
     })
   })
 
@@ -1035,7 +1072,9 @@ function renderProfileForm(prefix, draft, { withComputer }) {
 function readProfileForm(prefix, { withComputer }) {
   const currentAgentId = $(`#${prefix}-agent-id`).value.trim()
   const existing = state.profiles.find((item) => item.agent_id === currentAgentId) || {}
-  const enabledTools = Array.from(document.querySelectorAll(`#${prefix}-enabled-tools-list [data-tool-name]:checked`)).map((node) => node.dataset.toolName)
+  const enabledTools = prefix === "profile" && $(`#${prefix}-computer-tools-list`)
+    ? selectedProfileToolNames(prefix)
+    : selectedToolNames(`${prefix}-enabled-tools-list`)
   const nameInput = $(`#${prefix}-name`)
   const resolvedAgentId = (() => {
     if (currentAgentId) return currentAgentId

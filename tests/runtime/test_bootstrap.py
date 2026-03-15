@@ -331,7 +331,7 @@ async def test_build_runtime_components_exposes_skill_and_delegate_tools_for_ass
     assert len(profile.skill_assignments) == 1
     assert profile.skill_assignments[0].delegation_mode == "prefer_delegate"
     assert profile.skill_assignments[0].delegate_agent_id == "sample_worker"
-    assert [tool.name for tool in visible_tools] == ["skill", "delegate_skill"]
+    assert [tool.name for tool in visible_tools] == ["skill", "delegate_subagent"]
     assert "sample_configured_skill" in visible_tools[0].description
     registered_executors = components.subagent_delegator.executor_registry.list_all()
     assert [item.agent_id for item in registered_executors] == ["aca"]
@@ -1347,7 +1347,7 @@ async def test_build_runtime_components_full_plugin_reload_keeps_builtin_plugins
     assert [tool.name for tool in visible] == ["read", "skill"]
 
 
-async def test_build_runtime_components_reload_keeps_conditional_skill_delegation_builtin() -> None:
+async def test_build_runtime_components_reload_keeps_conditional_subagent_delegation_builtin() -> None:
     config = Config(
         {
             "agent": {
@@ -1400,8 +1400,8 @@ async def test_build_runtime_components_reload_keeps_conditional_skill_delegatio
     visible = components.tool_broker.visible_tools(profile)
 
     assert missing == []
-    assert "skill_delegation" in loaded_names
-    assert "delegate_skill" in [tool.name for tool in visible]
+    assert "subagent_delegation" in loaded_names
+    assert "delegate_subagent" in [tool.name for tool in visible]
 
 
 async def test_build_runtime_components_default_approval_resume_replays_tool_call() -> None:

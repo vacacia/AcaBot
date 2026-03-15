@@ -751,8 +751,8 @@ class ToolBroker:
             tool_names.append(tool_name)
         if self._should_expose_skill_tool(profile) and "skill" not in tool_names:
             tool_names.append("skill")
-        if self._should_expose_delegate_tool(profile) and "delegate_skill" not in tool_names:
-            tool_names.append("delegate_skill")
+        if self._should_expose_delegate_tool(profile) and "delegate_subagent" not in tool_names:
+            tool_names.append("delegate_subagent")
         return tool_names
 
     def _should_expose_skill_tool(self, profile: AgentProfile) -> bool:
@@ -812,7 +812,7 @@ class ToolBroker:
         return summaries
 
     def _should_expose_delegate_tool(self, profile: AgentProfile) -> bool:
-        """判断当前 profile 是否应看到 `delegate_skill`.
+        """判断当前 profile 是否应看到 `delegate_subagent`.
 
         Args:
             profile: 当前 run 命中的 AgentProfile.
@@ -821,7 +821,7 @@ class ToolBroker:
             当前 profile 是否存在可自动委派的 skill assignment.
         """
 
-        if "delegate_skill" not in self._tools:
+        if "delegate_subagent" not in self._tools:
             return False
         if self.subagent_executor_registry is not None and (
             not self.default_agent_id or profile.agent_id == self.default_agent_id

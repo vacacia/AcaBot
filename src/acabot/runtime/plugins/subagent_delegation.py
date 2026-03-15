@@ -1,17 +1,17 @@
-"""runtime.plugins.skill_delegation 提供 subagent delegation 工具插件.
+"""runtime.plugins.subagent_delegation 提供 subagent delegation 工具插件.
 
 组件关系:
 
     RuntimePluginManager
             |
             v
-    SkillDelegationPlugin
+    SubagentDelegationPlugin
             |
             v
     SubagentDelegationBroker
 
 目标:
-- 给主 agent 一个显式的 `delegate_skill` 工具
+- 给主 agent 一个显式的 `delegate_subagent` 工具
 - 让 `prefer_delegate / must_delegate` 不只是 prompt 提示
 - 保持 skill 定义和 subagent executor 解耦
 """
@@ -28,7 +28,7 @@ from ..tool_broker import ToolExecutionContext, ToolResult
 
 
 # region plugin
-class SkillDelegationPlugin(RuntimePlugin):
+class SubagentDelegationPlugin(RuntimePlugin):
     """subagent delegation 工具插件.
 
     Attributes:
@@ -36,7 +36,7 @@ class SkillDelegationPlugin(RuntimePlugin):
         _delegator (SubagentDelegationBroker | None): subagent delegation 编排入口.
     """
 
-    name = "skill_delegation"
+    name = "subagent_delegation"
 
     def __init__(self) -> None:
         """初始化插件状态."""
@@ -53,7 +53,7 @@ class SkillDelegationPlugin(RuntimePlugin):
         self._delegator = runtime.subagent_delegator
 
     def runtime_tools(self) -> list[RuntimeToolRegistration]:
-        """返回 `delegate_skill` 工具定义.
+        """返回 `delegate_subagent` 工具定义.
 
         Returns:
             一条 runtime-native 工具注册项.
@@ -62,17 +62,18 @@ class SkillDelegationPlugin(RuntimePlugin):
         return [
             RuntimeToolRegistration(
                 spec=ToolSpec(
-                    name="delegate_skill",
+                    name="delegate_subagent",
                     description=(
                         "Delegate work to a subagent. "
-                        "You can either delegate a configured skill_name or directly choose a delegate_agent_id."
+                        "Prefer delegate_agent_id for a visible subagent. "
+                        "skill_name is kept only for compatibility with configured skill-based routing."
                     ),
                     parameters={
                         "type": "object",
                         "properties": {
                             "skill_name": {
                                 "type": "string",
-                                "description": "Optional assigned skill name to delegate.",
+                                "description": "Optional compatibility path for configured skill-based delegation.",
                             },
                             "delegate_agent_id": {
                                 "type": "string",
@@ -90,16 +91,16 @@ class SkillDelegationPlugin(RuntimePlugin):
                         "required": ["task"],
                     },
                 ),
-                handler=self._delegate_skill,
+                handler=self._delegate_subagent,
             )
         ]
 
-    async def _delegate_skill(
+    async def _delegate_subagent(
         self,
         arguments: dict[str, Any],
         ctx: ToolExecutionContext,
     ) -> ToolResult:
-        """执行一次 subagent skill delegation.
+        """执行一次 subagent delegation.
 
         Args:
             arguments: 工具参数.
@@ -138,7 +139,7 @@ class SkillDelegationPlugin(RuntimePlugin):
             delegate_agent_id=delegate_agent_id,
             payload=payload,
             metadata={
-                "requested_by": "delegate_skill",
+                "requested_by": "delegate_subagent",
                 "platform": str(ctx.metadata.get("platform", "") or ""),
             },
         )

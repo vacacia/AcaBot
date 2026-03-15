@@ -36,7 +36,7 @@ def _execution_ctx(profile) -> ToolExecutionContext:
     )
 
 
-async def test_delegate_skill_is_auto_loaded_for_delegated_profiles() -> None:
+async def test_delegate_subagent_is_auto_loaded_for_delegated_profiles() -> None:
     config = Config(
         {
             "agent": {
@@ -84,10 +84,10 @@ async def test_delegate_skill_is_auto_loaded_for_delegated_profiles() -> None:
     profile = components.profile_loader.profiles["aca"]
     visible = components.tool_broker.visible_tools(profile)
 
-    assert "delegate_skill" in [tool.name for tool in visible]
+    assert "delegate_subagent" in [tool.name for tool in visible]
 
 
-async def test_delegate_skill_tool_calls_subagent_executor() -> None:
+async def test_delegate_subagent_tool_calls_subagent_executor() -> None:
     config = Config(
         {
             "agent": {
@@ -134,7 +134,7 @@ async def test_delegate_skill_tool_calls_subagent_executor() -> None:
 
     profile = components.profile_loader.profiles["aca"]
     result = await components.tool_broker.execute(
-        tool_name="delegate_skill",
+        tool_name="delegate_subagent",
         arguments={
             "skill_name": "sample_configured_skill",
             "task": "整理这份样例任务",
@@ -149,7 +149,7 @@ async def test_delegate_skill_tool_calls_subagent_executor() -> None:
     assert result.metadata["delegate_agent_id"] == "sample_worker"
 
 
-async def test_delegate_skill_is_available_when_subagent_exists_without_skill_assignment() -> None:
+async def test_delegate_subagent_is_available_when_subagent_exists_without_skill_assignment() -> None:
     config = Config(
         {
             "agent": {
@@ -193,10 +193,10 @@ async def test_delegate_skill_is_available_when_subagent_exists_without_skill_as
     profile = components.profile_loader.profiles["aca"]
     visible = components.tool_broker.visible_tools(profile)
 
-    assert "delegate_skill" in [tool.name for tool in visible]
+    assert "delegate_subagent" in [tool.name for tool in visible]
 
 
-async def test_delegate_skill_tool_can_delegate_directly_to_subagent_id() -> None:
+async def test_delegate_subagent_tool_can_delegate_directly_to_subagent_id() -> None:
     config = Config(
         {
             "agent": {
@@ -242,7 +242,7 @@ async def test_delegate_skill_tool_can_delegate_directly_to_subagent_id() -> Non
 
     profile = components.profile_loader.profiles["aca"]
     result = await components.tool_broker.execute(
-        tool_name="delegate_skill",
+        tool_name="delegate_subagent",
         arguments={
             "delegate_agent_id": "sample_worker",
             "task": "直接处理这个任务",

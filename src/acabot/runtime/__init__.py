@@ -156,9 +156,9 @@ from .plugins import (
     NapCatToolsPlugin,
     OpsControlPlugin,
     ReferenceToolsPlugin,
-    SkillDelegationPlugin,
     SkillToolPlugin,
     StickyNotesPlugin,
+    SubagentDelegationPlugin,
 )
 from .profile_loader import (
     AgentProfileRegistry,
@@ -373,9 +373,9 @@ __all__ = [
     "NapCatToolsPlugin",
     "OpsControlPlugin",
     "ReferenceToolsPlugin",
-    "SkillDelegationPlugin",
     "SkillToolPlugin",
     "StickyNotesPlugin",
+    "SubagentDelegationPlugin",
     "RunContext",
     "RunManager",
     "RunRecord",
