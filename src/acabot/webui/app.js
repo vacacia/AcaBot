@@ -27,6 +27,18 @@ const pageMeta = {
     title: "Plugins",
     subtitle: "查看已加载插件、skills 与 subagent executors，并执行 reload。",
   },
+  approvals: {
+    title: "Approvals",
+    subtitle: "查看与处理 Pending Approvals。",
+  },
+  workspaces: {
+    title: "Workspaces",
+    subtitle: "管理 Computer / Workspace Sandbox，查看状态、Sessions 与临时文件。",
+  },
+  references: {
+    title: "References",
+    subtitle: "查看和搜索已持久化的 Reference Spaces 及 Documents。",
+  },
 };
 
 const modelConfigs = {
@@ -306,7 +318,11 @@ async function loadDashboard() {
       )
       .join("");
   }
+}
 
+async function loadApprovals() {
+  await loadMetaAndStatus();
+  const status = state.status;
   const approvalBox = $("#pending-approvals");
   if (!status.pending_approvals.length) {
     approvalBox.innerHTML = emptyState("当前没有待审批项");
@@ -342,9 +358,191 @@ async function loadDashboard() {
           });
           showToast(`已拒绝 ${runId}`);
         }
-        await loadDashboard();
+        await loadApprovals();
+        await loadMetaAndStatus();
       });
     });
+  }
+}
+
+async function loadWorkspaces() {
+  const workspacesBox = $("#workspaces-list");
+  workspacesBox.innerHTML = "Loding...";
+  try {
+    const list = await api("/api/workspaces");
+    if (!list.length) {
+      workspacesBox.innerHTML = emptyState("当前没有活跃的工作区");
+      $("#workspace-summary").innerHTML = emptyState("请选择工作区");
+      $("#workspace-tab-content").innerHTML = "";
+      return;
+    }
+    renderSelectableList(
+      workspacesBox,
+      list,
+      "workspace_visible_root",
+      state.selectedWorkspaceId || list[0].thread_id,
+      (ws) => `
+        <div class="list-item-title">${escapeHtml(ws.workspace_visible_root)}</div>
+        <div class="list-item-meta">id: ${escapeHtml(ws.thread_id)}<br/>agent: ${escapeHtml(ws.agent_id || "none")}</div>
+      `,
+      (id) => {
+        state.selectedWorkspaceId = id;
+        loadWorkspaceDetail(id).catch(handleError);
+      },
+      "thread_id",
+    );
+  } catch (err) {
+    workspacesBox.innerHTML = `<div class="error-text">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function loadWorkspaceDetail(threadId) {
+  state.selectedWorkspaceId = threadId;
+  const wsBox = $("#workspace-summary");
+  try {
+    const ws = await api(`/api/workspaces/${encodeURIComponent(threadId)}/status`);
+    wsBox.innerHTML = `
+      <div class="info-card">
+        <div class="list-item-meta">Host path: ${escapeHtml(ws.workspace_host_path || "")}</div>
+        <div class="list-item-meta">Kind: ${escapeHtml(ws.backend_kind || "")} <span class="badge" style="background:${ws.read_only ? '#dc2626' : '#16a34a'}">${ws.read_only ? "Read Only" : "Read/Write"}</span></div>
+        <div class="list-item-meta">Sandbox Status: ${ws.sandbox_status ? (ws.sandbox_status.active ? "Active" : "Inactive") : "N/A"}</div>
+      </div>
+    `;
+    
+    // Switch tabs logic
+    const tabs = document.querySelectorAll("[data-ws-tab]");
+    tabs.forEach(tab => {
+      tab.onclick = () => {
+        tabs.forEach(t => t.classList.remove("active"));
+        tab.classList.add("active");
+        renderWorkspaceTab(threadId, tab.dataset.wsTab).catch(handleError);
+      };
+    });
+    const activeTab = document.querySelector("[data-ws-tab].active").dataset.wsTab;
+    await renderWorkspaceTab(threadId, activeTab);
+  } catch (err) {
+    wsBox.innerHTML = `<div class="error-text">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function renderWorkspaceTab(threadId, tabName) {
+  const content = $("#workspace-tab-content");
+  content.innerHTML = "Loading...";
+  try {
+    if (tabName === "entries") {
+      const result = await api(`/api/workspaces/${encodeURIComponent(threadId)}/entries?relative_path=.`);
+      if (!result.entries || !result.entries.length) {
+        content.innerHTML = emptyState("目录为空");
+      } else {
+        content.innerHTML = result.entries.map(e => `
+          <div class="info-card" style="padding: 8px 12px;">
+            <div style="display:flex; justify-content:space-between;">
+              <span style="font-family:var(--font-mono)">${e.is_dir ? "📁" : "📄"} ${escapeHtml(e.name)}</span>
+              <span class="list-item-meta">${e.size != null ? e.size + " bytes" : ""}</span>
+            </div>
+          </div>
+        `).join("");
+      }
+    } else if (tabName === "sessions") {
+      const ws = await api(`/api/workspaces/${encodeURIComponent(threadId)}/status`);
+      if (!ws.active_session_ids || !ws.active_session_ids.length) {
+        content.innerHTML = emptyState("无活跃 session");
+      } else {
+        content.innerHTML = ws.active_session_ids.map(sid => `
+          <div class="info-card">
+            <div style="font-family:var(--font-mono)">${escapeHtml(sid)}</div>
+          </div>
+        `).join("");
+      }
+    } else if (tabName === "attachments") {
+      const ws = await api(`/api/workspaces/${encodeURIComponent(threadId)}/status`);
+      content.innerHTML = `<div class="info-card">Attachment Count: ${ws.attachment_count}</div>`;
+    }
+  } catch(err) {
+    content.innerHTML = `<div class="error-text">${err.message}</div>`;
+  }
+}
+
+async function loadReferences() {
+  const spacesList = $("#reference-spaces-list");
+  spacesList.innerHTML = "Loading...";
+  try {
+    const list = await api("/api/references/spaces");
+    if (!list.length) {
+      spacesList.innerHTML = emptyState("当前没有 Reference Spaces");
+      $("#reference-detail-content").innerHTML = emptyState("请选择 Space");
+      return;
+    }
+    renderSelectableList(
+      spacesList,
+      list,
+      "space_id",
+      state.selectedReferenceSpaceId || list[0].space_id,
+      (sp) => `
+        <div class="list-item-title">${escapeHtml(sp.space_id)}</div>
+        <div class="list-item-meta">docs: ${sp.document_count} · mode: ${escapeHtml(sp.mode)}</div>
+      `,
+      (id) => {
+        state.selectedReferenceSpaceId = id;
+        loadReferenceDocuments(id).catch(handleError);
+      },
+      "space_id"
+    );
+  } catch (err) {
+    spacesList.innerHTML = `<div class="error-text">${escapeHtml(err.message)}</div>`;
+  }
+  
+  const searchInput = $("#reference-search-input");
+  searchInput.onkeydown = async (e) => {
+    if (e.key === "Enter" && searchInput.value.trim()) {
+      await searchReferences(searchInput.value.trim());
+    }
+  };
+}
+
+async function loadReferenceDocuments(spaceId) {
+  state.selectedReferenceSpaceId = spaceId;
+  const detailBox = $("#reference-detail-content");
+  detailBox.innerHTML = "Loading docs...";
+  try {
+    const docs = await api(`/api/references/spaces/${encodeURIComponent(spaceId)}/documents`);
+    if (!docs.length) {
+      detailBox.innerHTML = emptyState("Space 为空");
+    } else {
+      detailBox.innerHTML = docs.map(doc => `
+        <div class="info-card">
+          <div class="list-item-title">${escapeHtml(doc.title || doc.uri)}</div>
+          <div class="list-item-meta">ref_id: ${escapeHtml(doc.ref_id)}<br/>${escapeHtml(doc.source_path || "")}</div>
+          ${doc.abstract ? `<div style="margin-top:8px; font-size:13px; color:var(--text-secondary)">${escapeHtml(doc.abstract)}</div>` : ""}
+        </div>
+      `).join("");
+    }
+  } catch(err) {
+    detailBox.innerHTML = `<div class="error-text">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function searchReferences(query) {
+  const resultsBox = $("#reference-search-results");
+  resultsBox.innerHTML = "Searching...";
+  try {
+    const qParams = new URLSearchParams({ query: query, max_results: "10" });
+    const hits = await api(`/api/references/search?${qParams.toString()}`);
+    if (!hits.length) {
+      resultsBox.innerHTML = emptyState("无搜索结果");
+    } else {
+      resultsBox.innerHTML = hits.map((hit, i) => `
+        <div class="info-card" style="font-size: 13px;">
+          <div style="font-weight:600; margin-bottom:4px;">[${i+1}] ${escapeHtml(hit.title || hit.uri)}</div>
+          <div style="color:var(--text-secondary); margin-bottom:4px;">Score: ${hit.score.toFixed(3)}</div>
+          <div style="background:var(--bg-secondary); padding:6px; border-radius:4px; max-height:80px; overflow-y:auto;">
+            ${escapeHtml(hit.body).substring(0, 150)}${hit.body.length > 150 ? "..." : ""}
+          </div>
+        </div>
+      `).join("");
+    }
+  } catch(err) {
+    resultsBox.innerHTML = `<div class="error-text">${escapeHtml(err.message)}</div>`;
   }
 }
 
@@ -790,6 +988,9 @@ async function refreshCurrentView(forceHeader = false) {
   if (state.view === "routing") return loadRoutingEntities();
   if (state.view === "runtime") return loadRuntime();
   if (state.view === "plugins") return loadPlugins();
+  if (state.view === "approvals") return loadApprovals();
+  if (state.view === "workspaces") return loadWorkspaces();
+  if (state.view === "references") return loadReferences();
 }
 
 function handleError(error) {
@@ -803,7 +1004,9 @@ function wireEvents() {
   });
   $("#refresh-all-btn").addEventListener("click", () => refreshCurrentView(true).catch(handleError));
   $("#reload-config-btn").addEventListener("click", () => reloadRuntimeConfig().catch(handleError));
-  $("#refresh-approvals-btn").addEventListener("click", () => loadDashboard().catch(handleError));
+  $("#refresh-approvals-btn").addEventListener("click", () => loadApprovals().catch(handleError));
+  $("#refresh-workspaces-btn").addEventListener("click", () => loadWorkspaces().catch(handleError));
+  $("#refresh-references-btn").addEventListener("click", () => loadReferences().catch(handleError));
 
   $("#new-profile-btn").addEventListener("click", () => {
     state.selectedProfileId = "";

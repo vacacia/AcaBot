@@ -15,7 +15,7 @@ agent:
 runtime:
   default_agent_id: "aca"
 
-  # 最小 profile 定义. 后续也可以改成 filesystem layout.
+  # 最小 profile 定义. 这个 example 保持自包含, 方便本地测试和阅读.
   profiles:
     aca:
       name: "Aca"
@@ -28,7 +28,7 @@ runtime:
       you are a helpful assistant.
 
   persistence:
-    sqlite_path: "data/db/acabot-runtime.db"
+    sqlite_path: "runtime-data/db/acabot-runtime.db"
 
   prompt_assembly:
     history_max_messages: 24
@@ -51,7 +51,9 @@ runtime:
     prompt_slot_reserve_tokens: 1200
     tool_schema_reserve_tokens: 800
 
-  # 最小静态 route. 需要更复杂配置时, 推荐改用 filesystem layout.
+  computer:
+    backend: "host"
+
   binding_rules:
     - rule_id: "private-default"
       priority: 10
@@ -93,7 +95,7 @@ runtime:
   # 可选: 从 filesystem layout 读取 profiles / prompts / rules
   # filesystem:
   #   enabled: true
-  #   base_dir: "."
+  #   base_dir: "runtime-config"
   #   profiles_dir: "profiles"
   #   prompts_dir: "prompts"
   #   bindings_dir: "bindings"
@@ -102,13 +104,14 @@ runtime:
   #   model_providers_dir: "models/providers"
   #   model_presets_dir: "models/presets"
   #   model_bindings_dir: "models/bindings"
+  #   computer_root_dir: "../runtime-data/workspaces"
 
   # 可选: reference / notebook backend
   # reference:
   #   enabled: true
   #   provider: "local"
   #   local:
-  #     sqlite_path: "data/reference.sqlite3"
+  #     sqlite_path: "runtime-data/reference.sqlite3"
 
 # --- Runtime plugin config ---
 plugins:

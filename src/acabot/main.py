@@ -34,7 +34,8 @@ from .runtime.stores import MessageStore
 try:
     from dotenv import load_dotenv
 except ImportError:
-    def load_dotenv() -> None:
+    def load_dotenv(*args, **kwargs) -> None:
+        _ = args, kwargs
         return None
 
 logger = logging.getLogger("acabot")
@@ -171,9 +172,12 @@ async def wait_for_shutdown_signal() -> None:
 
 
 async def _run() -> None:
-    load_dotenv()
-
     config = Config.from_file()
+    try:
+        load_dotenv(dotenv_path=config.base_dir() / ".env")
+    except TypeError:
+        load_dotenv()
+    load_dotenv()
     setup_logging(config)
     components = build_runtime_app(config)
     webui_server = RuntimeHttpApiServer(

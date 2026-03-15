@@ -1,4 +1,4 @@
-"""配置加载: 从 config.yaml 读取并提供最小读写接口."""
+"""配置加载: 从 config.yaml 或外部配置路径读取并提供最小读写接口."""
 
 from __future__ import annotations
 
@@ -22,12 +22,20 @@ class Config:
         self.path = path
 
     @classmethod
-    def from_file(cls, path: str = "config.yaml") -> Config:
-        """从 yaml 文件加载配置. 文件不存在则返回空配置."""
-        if os.path.exists(path):
-            with open(path) as f:
-                return cls(yaml.safe_load(f) or {}, path=path)
-        return cls({}, path=path)
+    def from_file(cls, path: str | None = None) -> Config:
+        """从 yaml 文件加载配置.
+
+        路径优先级:
+        1. 显式传入的 `path`
+        2. 环境变量 `ACABOT_CONFIG`
+        3. 默认 `config.yaml`
+        """
+
+        target = str(path or os.getenv("ACABOT_CONFIG", "") or "config.yaml")
+        if os.path.exists(target):
+            with open(target) as f:
+                return cls(yaml.safe_load(f) or {}, path=target)
+        return cls({}, path=target)
 
     def get(self, key: str, default: Any = None) -> Any:
         """获取顶层配置项."""
@@ -83,3 +91,17 @@ class Config:
             self._data = {}
             return
         self._data = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
+
+    def base_dir(self) -> Path:
+        """返回当前配置文件所在目录."""
+
+        target = Path(self.path or os.getenv("ACABOT_CONFIG", "") or "config.yaml")
+        return target.resolve().parent
+
+    def resolve_path(self, raw: str | os.PathLike[str]) -> Path:
+        """把相对路径解析到配置文件目录下."""
+
+        path = Path(raw)
+        if path.is_absolute():
+            return path
+        return (self.base_dir() / path).resolve()

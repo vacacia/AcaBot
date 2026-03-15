@@ -34,16 +34,19 @@ from .subagent_delegation import SubagentExecutorRegistry
 
 
 def _resolve_filesystem_path(
+    config: Config,
     fs_conf: dict[str, object],
     *,
     key: str,
     default: str,
 ) -> Path:
     base_dir = Path(str(fs_conf.get("base_dir", ".") or "."))
+    if not base_dir.is_absolute():
+        base_dir = config.resolve_path(base_dir)
     raw_value = Path(str(fs_conf.get(key, default) or default))
     if raw_value.is_absolute():
         return raw_value
-    return base_dir / raw_value
+    return (base_dir / raw_value).resolve()
 
 
 def _default_computer_policy(config: Config) -> ComputerPolicy:
@@ -108,7 +111,7 @@ def _build_filesystem_profiles(config: Config) -> dict[str, AgentProfile]:
     fs_conf = dict(runtime_conf.get("filesystem", {}))
     if not bool(fs_conf.get("enabled", False)):
         return {}
-    profiles_dir = _resolve_filesystem_path(fs_conf, key="profiles_dir", default="profiles")
+    profiles_dir = _resolve_filesystem_path(config, fs_conf, key="profiles_dir", default="profiles")
     default_model = str(
         runtime_conf.get("filesystem_default_model", "")
         or config.get("agent", {}).get("default_model", "gpt-4o-mini")
@@ -137,7 +140,7 @@ def _build_prompt_loader(config: Config, profiles: dict[str, AgentProfile]) -> P
     static_loader = StaticPromptLoader(_build_prompt_map(config, profiles))
     if not bool(fs_conf.get("enabled", False)):
         return static_loader
-    prompts_dir = _resolve_filesystem_path(fs_conf, key="prompts_dir", default="prompts")
+    prompts_dir = _resolve_filesystem_path(config, fs_conf, key="prompts_dir", default="prompts")
     return ChainedPromptLoader(
         [
             FileSystemPromptLoader(prompts_dir),
@@ -251,7 +254,7 @@ def _build_filesystem_binding_rules(config: Config) -> list[BindingRule]:
     fs_conf = dict(runtime_conf.get("filesystem", {}))
     if not bool(fs_conf.get("enabled", False)):
         return []
-    loader = FileSystemBindingLoader(_resolve_filesystem_path(fs_conf, key="bindings_dir", default="bindings"))
+    loader = FileSystemBindingLoader(_resolve_filesystem_path(config, fs_conf, key="bindings_dir", default="bindings"))
     return [
         _parse_binding_rule_config(dict(rule_conf or {}), default_rule_id=f"fs_rule:{index}")
         for index, rule_conf in enumerate(loader.load_all())
@@ -272,7 +275,7 @@ def _build_filesystem_inbound_rules(config: Config) -> list[InboundRule]:
     if not bool(fs_conf.get("enabled", False)):
         return []
     loader = FileSystemInboundRuleLoader(
-        _resolve_filesystem_path(fs_conf, key="inbound_rules_dir", default="inbound_rules")
+        _resolve_filesystem_path(config, fs_conf, key="inbound_rules_dir", default="inbound_rules")
     )
     return [
         _parse_inbound_rule_config(dict(rule_conf or {}), default_rule_id=f"fs_inbound:{index}")
@@ -296,7 +299,7 @@ def _build_filesystem_event_policies(config: Config) -> list[EventPolicy]:
     if not bool(fs_conf.get("enabled", False)):
         return []
     loader = FileSystemEventPolicyLoader(
-        _resolve_filesystem_path(fs_conf, key="event_policies_dir", default="event_policies")
+        _resolve_filesystem_path(config, fs_conf, key="event_policies_dir", default="event_policies")
     )
     return [
         _parse_event_policy_config(dict(policy_conf or {}), default_policy_id=f"fs_event_policy:{index}")
@@ -835,19 +838,19 @@ class RuntimeConfigControlPlane:
         return dict(runtime_conf.get("filesystem", {}) or {})
 
     def _profiles_dir(self) -> Path:
-        return _resolve_filesystem_path(self._filesystem_conf(), key="profiles_dir", default="profiles")
+        return _resolve_filesystem_path(self.config, self._filesystem_conf(), key="profiles_dir", default="profiles")
 
     def _prompts_dir(self) -> Path:
-        return _resolve_filesystem_path(self._filesystem_conf(), key="prompts_dir", default="prompts")
+        return _resolve_filesystem_path(self.config, self._filesystem_conf(), key="prompts_dir", default="prompts")
 
     def _bindings_dir(self) -> Path:
-        return _resolve_filesystem_path(self._filesystem_conf(), key="bindings_dir", default="bindings")
+        return _resolve_filesystem_path(self.config, self._filesystem_conf(), key="bindings_dir", default="bindings")
 
     def _inbound_rules_dir(self) -> Path:
-        return _resolve_filesystem_path(self._filesystem_conf(), key="inbound_rules_dir", default="inbound_rules")
+        return _resolve_filesystem_path(self.config, self._filesystem_conf(), key="inbound_rules_dir", default="inbound_rules")
 
     def _event_policies_dir(self) -> Path:
-        return _resolve_filesystem_path(self._filesystem_conf(), key="event_policies_dir", default="event_policies")
+        return _resolve_filesystem_path(self.config, self._filesystem_conf(), key="event_policies_dir", default="event_policies")
 
     def _path_for_prompt_ref(self, prompt_ref: str) -> Path:
         relative = prompt_ref.removeprefix("prompt/")

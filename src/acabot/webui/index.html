@@ -18,12 +18,15 @@
       </div>
       <nav class="nav">
         <button class="nav-item active" data-section="dashboard">Dashboard</button>
+        <button class="nav-item" data-section="approvals">Approvals</button>
         <button class="nav-item" data-section="agents">Agents</button>
         <button class="nav-item" data-section="prompts">Prompts</button>
         <button class="nav-item" data-section="models">Models</button>
         <button class="nav-item" data-section="routing">Routing</button>
         <button class="nav-item" data-section="runtime">Runtime</button>
         <button class="nav-item" data-section="plugins">Plugins</button>
+        <button class="nav-item" data-section="workspaces">Workspaces</button>
+        <button class="nav-item" data-section="references">References</button>
       </nav>
       <div class="sidebar-note">
         <div id="meta-storage-mode">storage: -</div>
@@ -64,14 +67,19 @@
           </div>
 
           <div class="grid-2">
-            <article class="panel">
+            <article class="panel" style="grid-column: 1 / -1;">
               <div class="panel-header">
                 <h2>Active Runs</h2>
                 <button id="reload-config-btn" class="button">Reload Config</button>
               </div>
               <div id="active-runs" class="stack"></div>
             </article>
-            <article class="panel">
+          </div>
+        </section>
+
+        <section class="view" data-view="approvals">
+          <div class="grid-2">
+            <article class="panel" style="grid-column: 1 / -1;">
               <div class="panel-header">
                 <h2>Pending Approvals</h2>
                 <button id="refresh-approvals-btn" class="button">Refresh</button>
@@ -294,6 +302,62 @@
               <div id="plugins-skills" class="stack mini-stack"></div>
               <h3>Subagent Executors</h3>
               <div id="plugins-executors" class="stack mini-stack"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="view" data-view="workspaces">
+          <div class="editor-layout">
+            <article class="panel">
+              <div class="panel-header">
+                <h2>Workspaces</h2>
+                <button id="refresh-workspaces-btn" class="button">Refresh</button>
+              </div>
+              <div id="workspaces-list" class="stack selectable-list"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-header">
+                <h2>Workspace Detail</h2>
+                <div class="inline-actions">
+                  <button id="stop-sandbox-btn" class="button button-danger">Stop Sandbox</button>
+                  <button id="prune-workspace-btn" class="button button-danger">Prune</button>
+                </div>
+              </div>
+              <div id="workspace-summary" class="stack"></div>
+              <div class="panel-divider"></div>
+              <div class="tabbar">
+                <button class="tab-item active" data-ws-tab="entries">Entries</button>
+                <button class="tab-item" data-ws-tab="sessions">Sessions</button>
+                <button class="tab-item" data-ws-tab="attachments">Attachments</button>
+              </div>
+              <div id="workspace-tab-content" class="stack" style="margin-top: 16px;">
+                <!-- dynamic -->
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="view" data-view="references">
+          <div class="editor-layout">
+            <article class="panel">
+              <div class="panel-header">
+                <h2>Spaces</h2>
+                <button id="refresh-references-btn" class="button">Refresh</button>
+              </div>
+              <div id="reference-spaces-list" class="stack selectable-list"></div>
+              <div class="panel-divider"></div>
+              <h3>Search</h3>
+              <label class="form-block">
+                <input id="reference-search-input" placeholder="Query keyword (press Enter)">
+              </label>
+              <div id="reference-search-results" class="stack mini-stack" style="margin-top: 12px;"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-header">
+                <h2>Documents / Action</h2>
+                <button id="add-reference-btn" class="button button-primary">Add Document</button>
+              </div>
+              <div id="reference-detail-content" class="stack"></div>
             </article>
           </div>
         </section>

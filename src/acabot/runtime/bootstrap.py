@@ -531,6 +531,7 @@ def _build_filesystem_profiles(config: Config) -> dict[str, AgentProfile]:
         return {}
     
     profiles_dir = _resolve_filesystem_path(
+        config,
         fs_conf,
         key="profiles_dir",
         default="profiles",
@@ -591,6 +592,7 @@ def _build_prompt_loader(
         return static_loader
 
     prompts_dir = _resolve_filesystem_path(
+        config,
         fs_conf,
         key="prompts_dir",
         default="prompts",
@@ -604,6 +606,7 @@ def _build_prompt_loader(
 
 
 def _resolve_filesystem_path(
+    config: Config,
     fs_conf: dict[str, object],
     *,
     key: str,
@@ -621,10 +624,12 @@ def _resolve_filesystem_path(
     """
 
     base_dir = Path(str(fs_conf.get("base_dir", ".") or "."))
+    if not base_dir.is_absolute():
+        base_dir = config.resolve_path(base_dir)
     raw_value = Path(str(fs_conf.get(key, default) or default))
     if raw_value.is_absolute():
         return raw_value
-    return base_dir / raw_value
+    return (base_dir / raw_value).resolve()
 
 
 def _build_model_registry_manager(config: Config) -> FileSystemModelRegistryManager:
@@ -634,16 +639,19 @@ def _build_model_registry_manager(config: Config) -> FileSystemModelRegistryMana
     fs_conf = dict(runtime_conf.get("filesystem", {}))
     manager = FileSystemModelRegistryManager(
         providers_dir=_resolve_filesystem_path(
+            config,
             fs_conf,
             key="model_providers_dir",
             default="models/providers",
         ),
         presets_dir=_resolve_filesystem_path(
+            config,
             fs_conf,
             key="model_presets_dir",
             default="models/presets",
         ),
         bindings_dir=_resolve_filesystem_path(
+            config,
             fs_conf,
             key="model_bindings_dir",
             default="models/bindings",
@@ -684,11 +692,13 @@ def _build_computer_runtime(
     fs_conf = dict(runtime_conf.get("filesystem", {}))
     computer_conf = dict(runtime_conf.get("computer", {}))
     root_dir = _resolve_filesystem_path(
+        config,
         fs_conf,
         key="computer_root_dir",
         default=str(Path.home() / ".acabot" / "workspaces"),
     )
     skill_catalog_dir = _resolve_filesystem_path(
+        config,
         fs_conf,
         key="skill_catalog_dir",
         default=str(root_dir / "catalog" / "skills"),
@@ -770,6 +780,7 @@ def _build_filesystem_binding_rules(config: Config) -> list[BindingRule]:
         return []
 
     bindings_dir = _resolve_filesystem_path(
+        config,
         fs_conf,
         key="bindings_dir",
         default="bindings",
@@ -827,6 +838,7 @@ def _build_filesystem_inbound_rules(config: Config) -> list[InboundRule]:
         return []
 
     inbound_dir = _resolve_filesystem_path(
+        config,
         fs_conf,
         key="inbound_rules_dir",
         default="inbound_rules",
@@ -884,6 +896,7 @@ def _build_filesystem_event_policies(config: Config) -> list[EventPolicy]:
         return []
 
     policies_dir = _resolve_filesystem_path(
+        config,
         fs_conf,
         key="event_policies_dir",
         default="event_policies",
@@ -1015,7 +1028,7 @@ def _build_reference_backend(config: Config) -> ReferenceBackend:
             or _get_persistence_sqlite_path(config)
             or "data/reference.sqlite3"
         )
-        return LocalReferenceBackend(str(sqlite_path))
+        return LocalReferenceBackend(str(_resolve_runtime_path(config, sqlite_path)))
 
     if provider == "openviking":
         openviking_conf = dict(reference_conf.get("openviking", {}))
@@ -1100,11 +1113,13 @@ def _build_skill_catalog(config: Config) -> SkillCatalog:
     runtime_conf = config.get("runtime", {})
     fs_conf = dict(runtime_conf.get("filesystem", {}))
     computer_root_dir = _resolve_filesystem_path(
+        config,
         fs_conf,
         key="computer_root_dir",
         default=str(Path.home() / ".acabot" / "workspaces"),
     )
     skill_catalog_dir = _resolve_filesystem_path(
+        config,
         fs_conf,
         key="skill_catalog_dir",
         default=str(computer_root_dir / "catalog" / "skills"),
@@ -1190,7 +1205,13 @@ def _get_persistence_sqlite_path(config: Config) -> str | None:
     sqlite_path = persistence_conf.get("sqlite_path")
     if sqlite_path in (None, ""):
         return None
-    return str(sqlite_path)
+    return str(_resolve_runtime_path(config, sqlite_path))
+
+
+def _resolve_runtime_path(config: Config, raw_path: object) -> Path:
+    """把 runtime 配置中的路径解析到配置文件目录下."""
+
+    return config.resolve_path(str(raw_path))
 # endregion
 
 
