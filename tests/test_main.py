@@ -347,6 +347,7 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
         reference_backend=NullReferenceBackend(),
         plugin_manager=None,  # type: ignore[arg-type]
         control_plane=None,  # type: ignore[arg-type]
+        config_control_plane=None,  # type: ignore[arg-type]
         prompt_loader=None,  # type: ignore[arg-type]
         profile_loader=None,  # type: ignore[arg-type]
         tool_broker=None,  # type: ignore[arg-type]

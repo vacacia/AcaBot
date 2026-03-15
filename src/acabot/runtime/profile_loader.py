@@ -116,6 +116,11 @@ class StaticPromptLoader(PromptLoader):
 
         return self.prompts[prompt_ref]
 
+    def replace_prompts(self, prompts: dict[str, str]) -> None:
+        """原地替换 prompt 映射, 供热刷新使用."""
+
+        self.prompts = dict(prompts)
+
 
 class ChainedPromptLoader(PromptLoader):
     """加载器回退.
@@ -154,6 +159,21 @@ class ChainedPromptLoader(PromptLoader):
             except KeyError:
                 continue
         raise KeyError(f"Unknown prompt_ref: {prompt_ref}")
+
+
+class ReloadablePromptLoader(PromptLoader):
+    """可在运行时切换底层 loader 的 prompt loader 代理."""
+
+    def __init__(self, loader: PromptLoader) -> None:
+        self._loader = loader
+
+    def replace_loader(self, loader: PromptLoader) -> None:
+        """替换当前使用的底层 prompt loader."""
+
+        self._loader = loader
+
+    def load(self, prompt_ref: str) -> str:
+        return self._loader.load(prompt_ref)
 
 
 class FileSystemPromptLoader(PromptLoader):
@@ -586,6 +606,45 @@ class AgentProfileRegistry(ProfileLoader):
         self._validate_no_conflict(rule)
         self.rules.append(rule)
         self._rule_ids.add(rule.rule_id)
+
+    def reload(
+        self,
+        *,
+        profiles: dict[str, AgentProfile],
+        default_agent_id: str,
+        rules: list[BindingRule] | None = None,
+    ) -> None:
+        """用一组新的 profiles 和 rules 原子替换当前 registry."""
+
+        if not profiles:
+            raise ValueError("profiles must not be empty")
+        if default_agent_id not in profiles:
+            raise KeyError(f"Unknown default_agent_id: {default_agent_id}")
+
+        self.profiles = dict(profiles)
+        self.default_agent_id = default_agent_id
+        self.rules = []
+        self._rule_ids = set()
+        for rule in rules or []:
+            self.add_rule(rule)
+
+    def get_rule(self, rule_id: str) -> BindingRule | None:
+        """按 rule_id 读取一条 binding rule."""
+
+        for rule in self.rules:
+            if rule.rule_id == rule_id:
+                return rule
+        return None
+
+    def list_profiles(self) -> list[AgentProfile]:
+        """按 agent_id 排序返回全部 profiles."""
+
+        return [self.profiles[agent_id] for agent_id in sorted(self.profiles)]
+
+    def list_rules(self) -> list[BindingRule]:
+        """返回当前全部 binding rules."""
+
+        return list(self.rules)
 
     def resolve_agent(
         self,

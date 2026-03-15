@@ -28,6 +28,7 @@ from .agent import BaseAgent
 from .config import Config
 from .runtime import RuntimeComponents, build_runtime_components
 from .runtime.gateway_protocol import GatewayProtocol
+from .runtime.http_api import RuntimeHttpApiServer
 from .runtime.stores import MessageStore
 
 try:
@@ -175,12 +176,18 @@ async def _run() -> None:
     config = Config.from_file()
     setup_logging(config)
     components = build_runtime_app(config)
+    webui_server = RuntimeHttpApiServer(
+        config=config,
+        control_plane=components.control_plane,
+    )
 
     await components.app.start()
+    await webui_server.start()
     logger.info("AcaBot runtime running. Press Ctrl+C to stop.")
     try:
         await wait_for_shutdown_signal()
     finally:
+        await webui_server.stop()
         await components.app.stop()
         logger.info("AcaBot stopped.")
 

@@ -81,6 +81,15 @@ runtime:
   plugins:
     - "acabot.runtime.plugins.ops_control:OpsControlPlugin"
 
+  webui:
+    enabled: false
+    host: "127.0.0.1"
+    port: 8765
+    cors_origins:
+      - "http://127.0.0.1:5173"
+      - "http://localhost:5173"
+    # static_dir: "src/acabot/webui"
+
   # 可选: 从 filesystem layout 读取 profiles / prompts / rules
   # filesystem:
   #   enabled: true

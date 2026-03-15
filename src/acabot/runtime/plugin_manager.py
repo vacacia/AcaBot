@@ -424,6 +424,59 @@ class RuntimePluginManager:
             fresh.append(plugin_type())
         return fresh
 
+    async def replace_builtin_plugins(self, builtin_plugins: list[RuntimePlugin]) -> list[str]:
+        """替换当前系统内建插件集合.
+
+        Returns:
+            当前已加载 builtin plugin 名列表.
+        """
+
+        desired_by_name = {plugin.name: plugin for plugin in builtin_plugins}
+        current_by_name = {
+            plugin_type().name: plugin_type
+            for plugin_type in self._builtin_plugin_types
+        }
+        removed_names = [
+            name
+            for name, plugin_type in current_by_name.items()
+            if name not in desired_by_name or desired_by_name[name].__class__ is not plugin_type
+        ]
+        added_plugins = [
+            plugin
+            for name, plugin in desired_by_name.items()
+            if name not in current_by_name or current_by_name[name] is not plugin.__class__
+        ]
+
+        self._builtin_plugins = list(builtin_plugins)
+        self._builtin_plugin_names = {plugin.name for plugin in builtin_plugins}
+        self._builtin_plugin_types = [plugin.__class__ for plugin in builtin_plugins]
+
+        if self._started:
+            if removed_names:
+                await self.unload_plugins(removed_names)
+            context = RuntimePluginContext(
+                config=self.config,
+                gateway=self.gateway,
+                tool_broker=self.tool_broker,
+                reference_backend=self.reference_backend,
+                sticky_notes=self.sticky_notes,
+                computer_runtime=self.computer_runtime,
+                skill_catalog=self.skill_catalog,
+                control_plane=self.control_plane,
+                subagent_delegator=self.subagent_delegator,
+            )
+            for plugin in added_plugins:
+                await self.load_plugin(plugin, context)
+            return [plugin.name for plugin in self.loaded if plugin.name in self._builtin_plugin_names]
+
+        non_builtin_pending = [
+            plugin
+            for plugin in self._pending
+            if plugin.name not in set(current_by_name) and plugin.name not in set(removed_names)
+        ]
+        self._pending = [*self._fresh_builtin_plugins(), *non_builtin_pending]
+        return [plugin.name for plugin in self._pending if plugin.name in self._builtin_plugin_names]
+
     def attach_control_plane(self, control_plane: RuntimeControlPlane) -> None:
         """把本地 control plane 接到 plugin manager.
 

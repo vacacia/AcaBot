@@ -67,6 +67,27 @@ class EventPolicyRegistry:
         self.policies.append(policy)
         self._policy_ids.add(policy.policy_id)
 
+    def reload(self, policies: list[EventPolicy] | None = None) -> None:
+        """用一组新的 event policies 原子替换当前注册表."""
+
+        self.policies = []
+        self._policy_ids = set()
+        for policy in policies or []:
+            self.add_policy(policy)
+
+    def get(self, policy_id: str) -> EventPolicy | None:
+        """按 policy_id 读取一条 event policy."""
+
+        for policy in self.policies:
+            if policy.policy_id == policy_id:
+                return policy
+        return None
+
+    def list_all(self) -> list[EventPolicy]:
+        """返回当前全部 event policies."""
+
+        return list(self.policies)
+
     def resolve(
         self,
         *,

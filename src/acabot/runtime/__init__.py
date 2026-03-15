@@ -43,6 +43,7 @@ from .computer import (
     parse_computer_override,
     parse_computer_policy,
 )
+from .config_control_plane import RuntimeConfigControlPlane
 from .context_compactor import (
     ContextCompactionConfig,
     ContextCompactionResult,
@@ -76,6 +77,7 @@ from .memory_broker import (
 )
 from .memory_item_store import InMemoryMemoryStore
 from .memory_store import InMemoryMessageStore
+from .http_api import RuntimeHttpApiServer
 from .model_agent_runtime import (
     ModelAgentRuntime,
     ToolRuntime,
@@ -168,6 +170,7 @@ from .profile_loader import (
     FileSystemPromptLoader,
     ProfileLoader,
     PromptLoader,
+    ReloadablePromptLoader,
     StaticProfileLoader,
     StaticPromptLoader,
 )
@@ -251,6 +254,8 @@ __all__ = [
     "ComputerPolicy",
     "ComputerRuntimeOverride",
     "ComputerRuntime",
+    "RuntimeConfigControlPlane",
+    "RuntimeHttpApiServer",
     "ContextCompactionConfig",
     "ContextCompactionResult",
     "ContextCompactor",
@@ -328,6 +333,7 @@ __all__ = [
     "ProfileLoader",
     "PromptAssemblyConfig",
     "PromptLoader",
+    "ReloadablePromptLoader",
     "PromptSlot",
     "parse_computer_override",
     "parse_computer_policy",

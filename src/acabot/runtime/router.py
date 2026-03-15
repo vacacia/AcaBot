@@ -53,6 +53,27 @@ class InboundRuleRegistry:
         self.rules.append(rule)
         self._rule_ids.add(rule.rule_id)
 
+    def reload(self, rules: list[InboundRule] | None = None) -> None:
+        """用一组新的 inbound rules 原子替换当前注册表."""
+
+        self.rules = []
+        self._rule_ids = set()
+        for rule in rules or []:
+            self.add_rule(rule)
+
+    def get(self, rule_id: str) -> InboundRule | None:
+        """按 rule_id 读取一条 inbound rule."""
+
+        for rule in self.rules:
+            if rule.rule_id == rule_id:
+                return rule
+        return None
+
+    def list_all(self) -> list[InboundRule]:
+        """返回当前全部 inbound rules."""
+
+        return list(self.rules)
+
     def resolve(
         self,
         *,

@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AcaBot Control Room</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">AC</div>
+        <div>
+          <div class="brand-title">AcaBot</div>
+          <div class="brand-subtitle">Control Room</div>
+        </div>
+      </div>
+      <nav class="nav">
+        <button class="nav-item active" data-section="dashboard">Dashboard</button>
+        <button class="nav-item" data-section="agents">Agents</button>
+        <button class="nav-item" data-section="prompts">Prompts</button>
+        <button class="nav-item" data-section="models">Models</button>
+        <button class="nav-item" data-section="routing">Routing</button>
+        <button class="nav-item" data-section="runtime">Runtime</button>
+        <button class="nav-item" data-section="plugins">Plugins</button>
+      </nav>
+      <div class="sidebar-note">
+        <div id="meta-storage-mode">storage: -</div>
+        <div id="meta-config-path">config: -</div>
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <div>
+          <h1 id="page-title">Dashboard</h1>
+          <p id="page-subtitle">运行态总览、审批入口和快速操作。</p>
+        </div>
+        <div class="topbar-actions">
+          <div class="status-strip" id="status-strip"></div>
+          <button id="refresh-all-btn" class="button button-primary">Refresh</button>
+        </div>
+      </header>
+
+      <main class="views">
+        <section class="view active" data-view="dashboard">
+          <div class="grid-3">
+            <article class="panel stat-panel">
+              <div class="panel-label">Runtime</div>
+              <div class="stat-value" id="stat-active-runs">0</div>
+              <div class="stat-help">活跃 run</div>
+            </article>
+            <article class="panel stat-panel">
+              <div class="panel-label">Approvals</div>
+              <div class="stat-value" id="stat-pending-approvals">0</div>
+              <div class="stat-help">待审批</div>
+            </article>
+            <article class="panel stat-panel">
+              <div class="panel-label">Skills</div>
+              <div class="stat-value" id="stat-loaded-skills">0</div>
+              <div class="stat-help">已加载 skills</div>
+            </article>
+          </div>
+
+          <div class="grid-2">
+            <article class="panel">
+              <div class="panel-header">
+                <h2>Active Runs</h2>
+                <button id="reload-config-btn" class="button">Reload Config</button>
+              </div>
+              <div id="active-runs" class="stack"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-header">
+                <h2>Pending Approvals</h2>
+                <button id="refresh-approvals-btn" class="button">Refresh</button>
+              </div>
+              <div id="pending-approvals" class="stack"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="view" data-view="agents">
+          <div class="editor-layout">
+            <article class="panel">
+              <div class="panel-header">
+                <h2>Profiles</h2>
+                <button id="new-profile-btn" class="button button-primary">New</button>
+              </div>
+              <div id="profiles-list" class="stack selectable-list"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-header">
+                <h2>Profile Editor</h2>
+                <div class="inline-actions">
+                  <button id="save-profile-btn" class="button button-primary">Save</button>
+                  <button id="delete-profile-btn" class="button button-danger">Delete</button>
+                </div>
+              </div>
+              <form id="profile-form" class="form-grid">
+                <label><span>Agent ID</span><input id="profile-agent-id" required></label>
+                <label><span>Name</span><input id="profile-name"></label>
+                <label><span>Prompt Ref</span><input id="profile-prompt-ref" placeholder="prompt/default"></label>
+                <label><span>Default Model</span><input id="profile-default-model"></label>
+                <label class="wide"><span>Enabled Tools</span><input id="profile-enabled-tools" placeholder="以逗号分隔"></label>
+                <label class="wide">
+                  <span>Skill Assignments JSON</span>
+                  <textarea id="profile-skill-assignments" rows="10"></textarea>
+                </label>
+                <label class="wide">
+                  <span>Computer Policy JSON</span>
+                  <textarea id="profile-computer" rows="8"></textarea>
+                </label>
+              </form>
+            </article>
+          </div>
+        </section>
+
+        <section class="view" data-view="prompts">
+          <div class="editor-layout">
+            <article class="panel">
+              <div class="panel-header">
+                <h2>Prompt Catalog</h2>
+                <button id="new-prompt-btn" class="button button-primary">New</button>
+              </div>
+              <div id="prompts-list" class="stack selectable-list"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-header">
+                <h2>Prompt Editor</h2>
+                <div class="inline-actions">
+                  <button id="save-prompt-btn" class="button button-primary">Save</button>
+                  <button id="delete-prompt-btn" class="button button-danger">Delete</button>
+                </div>
+              </div>
+              <label class="form-block">
+                <span>Prompt Ref</span>
+                <input id="prompt-ref-input" placeholder="prompt/default">
+              </label>
+              <label class="form-block">
+                <span>Content</span>
+                <textarea id="prompt-content-input" rows="24"></textarea>
+              </label>
+            </article>
+          </div>
+        </section>
+
+        <section class="view" data-view="models">
+          <div class="tabbar">
+            <button class="tab-item active" data-model-kind="providers">Providers</button>
+            <button class="tab-item" data-model-kind="presets">Presets</button>
+            <button class="tab-item" data-model-kind="bindings">Bindings</button>
+          </div>
+          <div class="editor-layout">
+            <article class="panel">
+              <div class="panel-header">
+                <h2 id="models-list-title">Providers</h2>
+                <button id="new-model-entity-btn" class="button button-primary">New</button>
+              </div>
+              <div id="models-entity-list" class="stack selectable-list"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-header">
+                <h2 id="models-editor-title">Provider Editor</h2>
+                <div class="inline-actions">
+                  <button id="save-model-entity-btn" class="button button-primary">Save</button>
+                  <button id="delete-model-entity-btn" class="button button-danger">Delete</button>
+                </div>
+              </div>
+              <label class="form-block">
+                <span>ID</span>
+                <input id="model-entity-id">
+              </label>
+              <label class="form-block">
+                <span>JSON</span>
+                <textarea id="model-entity-json" rows="22"></textarea>
+              </label>
+              <div class="inline-actions">
+                <button id="preview-model-impact-btn" class="button">Impact</button>
+                <button id="health-check-preset-btn" class="button">Health Check</button>
+                <button id="reload-model-registry-btn" class="button">Reload Registry</button>
+              </div>
+              <pre id="model-entity-sidecar" class="code-block"></pre>
+            </article>
+          </div>
+        </section>
+
+        <section class="view" data-view="routing">
+          <div class="tabbar">
+            <button class="tab-item active" data-routing-kind="bindings">Binding Rules</button>
+            <button class="tab-item" data-routing-kind="inbound">Inbound Rules</button>
+            <button class="tab-item" data-routing-kind="event-policies">Event Policies</button>
+          </div>
+          <div class="editor-layout">
+            <article class="panel">
+              <div class="panel-header">
+                <h2 id="routing-list-title">Binding Rules</h2>
+                <button id="new-routing-entity-btn" class="button button-primary">New</button>
+              </div>
+              <div id="routing-entity-list" class="stack selectable-list"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-header">
+                <h2 id="routing-editor-title">Rule Editor</h2>
+                <div class="inline-actions">
+                  <button id="save-routing-entity-btn" class="button button-primary">Save</button>
+                  <button id="delete-routing-entity-btn" class="button button-danger">Delete</button>
+                </div>
+              </div>
+              <label class="form-block">
+                <span>ID</span>
+                <input id="routing-entity-id">
+              </label>
+              <label class="form-block">
+                <span>JSON</span>
+                <textarea id="routing-entity-json" rows="24"></textarea>
+              </label>
+            </article>
+          </div>
+        </section>
+
+        <section class="view" data-view="runtime">
+          <div class="runtime-grid">
+            <article class="panel">
+              <div class="panel-header">
+                <h2>Threads</h2>
+                <button id="refresh-runtime-btn" class="button">Refresh</button>
+              </div>
+              <div id="runtime-threads-list" class="stack selectable-list"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-header">
+                <h2>Thread Detail</h2>
+                <div class="inline-actions">
+                  <button id="save-thread-agent-override-btn" class="button">Set Agent Override</button>
+                  <button id="clear-thread-agent-override-btn" class="button">Clear Override</button>
+                </div>
+              </div>
+              <label class="form-block">
+                <span>Thread Agent Override</span>
+                <input id="thread-agent-override-input" placeholder="agent_id">
+              </label>
+              <div id="runtime-thread-summary" class="stack"></div>
+              <div class="subpanel-grid">
+                <div>
+                  <h3>Steps</h3>
+                  <div id="runtime-thread-steps" class="stack mini-stack"></div>
+                </div>
+                <div>
+                  <h3>Events</h3>
+                  <div id="runtime-thread-events" class="stack mini-stack"></div>
+                </div>
+                <div>
+                  <h3>Messages</h3>
+                  <div id="runtime-thread-messages" class="stack mini-stack"></div>
+                </div>
+              </div>
+            </article>
+            <article class="panel">
+              <div class="panel-header">
+                <h2>Runs</h2>
+              </div>
+              <div id="runtime-runs-list" class="stack selectable-list"></div>
+              <div class="panel-divider"></div>
+              <h3>Run Detail</h3>
+              <div id="runtime-run-detail" class="stack"></div>
+              <h3>Run Steps</h3>
+              <div id="runtime-run-steps" class="stack mini-stack"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="view" data-view="plugins">
+          <div class="grid-2">
+            <article class="panel">
+              <div class="panel-header">
+                <h2>Loaded Plugins</h2>
+                <button id="refresh-plugins-btn" class="button">Refresh</button>
+              </div>
+              <div id="plugins-list" class="stack selectable-list"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-header">
+                <h2>Plugin Control</h2>
+                <button id="reload-plugins-btn" class="button button-primary">Reload</button>
+              </div>
+              <label class="form-block">
+                <span>Plugin Names</span>
+                <input id="reload-plugins-input" placeholder="留空表示只看当前已加载; 输入时用逗号分隔">
+              </label>
+              <div class="panel-divider"></div>
+              <h3>Loaded Skills</h3>
+              <div id="plugins-skills" class="stack mini-stack"></div>
+              <h3>Subagent Executors</h3>
+              <div id="plugins-executors" class="stack mini-stack"></div>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

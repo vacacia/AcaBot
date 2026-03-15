@@ -35,6 +35,7 @@ from .agent_runtime import AgentRuntime
 from .approval_resumer import ApprovalResumer, NoopApprovalResumer, ToolApprovalResumer
 from .app import RuntimeApp
 from .computer import ComputerPolicy, ComputerRuntime, ComputerRuntimeConfig, parse_computer_policy
+from .config_control_plane import RuntimeConfigControlPlane
 from .context_compactor import (
     ContextCompactionConfig,
     ContextCompactor,
@@ -68,6 +69,7 @@ from .profile_loader import (
     FileSystemPromptLoader,
     ProfileLoader,
     PromptLoader,
+    ReloadablePromptLoader,
     StaticPromptLoader,
     parse_skill_assignments,
 )
@@ -167,6 +169,7 @@ class RuntimeComponents:
     reference_backend: ReferenceBackend
     plugin_manager: RuntimePluginManager
     control_plane: RuntimeControlPlane
+    config_control_plane: RuntimeConfigControlPlane
     prompt_loader: PromptLoader
     profile_loader: ProfileLoader
     tool_broker: ToolBroker
@@ -234,7 +237,7 @@ def build_runtime_components(
     profiles = _build_profiles(config)
     filesystem_profiles = _build_filesystem_profiles(config)
     profiles.update(filesystem_profiles)
-    prompt_loader = _build_prompt_loader(config, profiles)
+    prompt_loader = ReloadablePromptLoader(_build_prompt_loader(config, profiles))
     default_agent_id = runtime_conf.get("default_agent_id", next(iter(profiles)))
     rules = _build_binding_rules(config) + _build_filesystem_binding_rules(config)
     inbound_rules = _build_inbound_rules(config) + _build_filesystem_inbound_rules(config)
@@ -334,6 +337,19 @@ def build_runtime_components(
         profiles=profiles,
         service=runtime_subagent_execution_service,
     )
+    config_control_plane = RuntimeConfigControlPlane(
+        config=config,
+        router=runtime_router,
+        profile_registry=profile_registry,
+        inbound_registry=inbound_registry,
+        event_policy_registry=event_policy_registry,
+        prompt_loader=prompt_loader,
+        skill_catalog=runtime_skill_catalog,
+        plugin_manager=runtime_plugin_manager,
+        subagent_executor_registry=runtime_subagent_executor_registry,
+        local_subagent_executor=runtime_subagent_execution_service.execute,
+        builtin_plugin_factory=_build_builtin_runtime_plugins,
+    )
     app = RuntimeApp(
         gateway=gateway,
         router=runtime_router,
@@ -353,12 +369,16 @@ def build_runtime_components(
         run_manager=runtime_run_manager,
         thread_manager=runtime_thread_manager,
         memory_store=runtime_memory_store,
+        message_store=runtime_message_store,
+        channel_event_store=runtime_channel_event_store,
         profile_registry=profile_registry,
         plugin_manager=runtime_plugin_manager,
         skill_catalog=runtime_skill_catalog,
         subagent_executor_registry=runtime_subagent_executor_registry,
         model_registry_manager=runtime_model_registry_manager,
         computer_runtime=runtime_computer_runtime,
+        reference_backend=runtime_reference_backend,
+        config_control_plane=config_control_plane,
     )
     runtime_plugin_manager.attach_control_plane(control_plane)
     runtime_plugin_manager.attach_subagent_delegator(runtime_subagent_delegator)
@@ -385,6 +405,7 @@ def build_runtime_components(
         reference_backend=runtime_reference_backend,
         plugin_manager=runtime_plugin_manager,
         control_plane=control_plane,
+        config_control_plane=config_control_plane,
         prompt_loader=prompt_loader,
         profile_loader=profile_registry,
         tool_broker=runtime_tool_broker,

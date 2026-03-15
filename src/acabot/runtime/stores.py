@@ -158,6 +158,12 @@ class ThreadStore(ABC):
 
         ...
 
+    @abstractmethod
+    async def list_threads(self, *, limit: int | None = None) -> list[ThreadRecord]:
+        """按最近活跃时间列出 threads."""
+
+        ...
+
 # region RunStore
 class RunStore(ABC):
     """run 持久化接口."""
@@ -188,6 +194,18 @@ class RunStore(ABC):
             statuses: 需要被视为活跃状态的 status 集合.
             _ACTIVE_STATUSES: set[RunStatus] = {"queued", "running", "waiting_approval"}
         """
+
+        ...
+
+    @abstractmethod
+    async def list_runs(
+        self,
+        *,
+        limit: int | None = None,
+        statuses: set[str] | None = None,
+        thread_id: str | None = None,
+    ) -> list[RunRecord]:
+        """按条件列出 runs."""
 
         ...
 

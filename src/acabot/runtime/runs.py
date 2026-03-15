@@ -132,6 +132,18 @@ class RunManager(ABC):
         ...
 
     @abstractmethod
+    async def list_runs(
+        self,
+        *,
+        limit: int | None = None,
+        statuses: set[str] | None = None,
+        thread_id: str | None = None,
+    ) -> list[RunRecord]:
+        """按条件列出 runs."""
+
+        ...
+
+    @abstractmethod
     async def cancel(self, run_id: str) -> bool:
         """请求取消一个 run.
 
@@ -284,6 +296,25 @@ class InMemoryRunManager(RunManager):
         """返回仍然处于活跃状态的 runs."""
 
         return [run for run in self._runs.values() if run.status in _ACTIVE_STATUSES]
+
+    async def list_runs(
+        self,
+        *,
+        limit: int | None = None,
+        statuses: set[str] | None = None,
+        thread_id: str | None = None,
+    ) -> list[RunRecord]:
+        """按条件列出内存中的 runs."""
+
+        runs = list(self._runs.values())
+        if statuses:
+            runs = [run for run in runs if run.status in statuses]
+        if thread_id:
+            runs = [run for run in runs if run.thread_id == thread_id]
+        runs.sort(key=lambda item: (item.started_at, item.run_id), reverse=True)
+        if limit is not None:
+            runs = runs[:int(limit)]
+        return runs
 
     async def list_steps(
         self,
@@ -566,6 +597,24 @@ class StoreBackedRunManager(RunManager):
         """
 
         runs = await self.store.list_active_runs(_ACTIVE_STATUSES)
+        for run in runs:
+            self._runs[run.run_id] = run
+        return runs
+
+    async def list_runs(
+        self,
+        *,
+        limit: int | None = None,
+        statuses: set[str] | None = None,
+        thread_id: str | None = None,
+    ) -> list[RunRecord]:
+        """按条件列出 store 中的 runs."""
+
+        runs = await self.store.list_runs(
+            limit=limit,
+            statuses=statuses,
+            thread_id=thread_id,
+        )
         for run in runs:
             self._runs[run.run_id] = run
         return runs

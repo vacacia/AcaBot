@@ -27,6 +27,7 @@ from .computer import (
     WorkspaceSandboxStatus,
     WorkspaceState,
 )
+from .config_control_plane import RuntimeConfigControlPlane
 from .model_registry import (
     EffectiveModelSnapshot,
     FileSystemModelRegistryManager,
@@ -39,13 +40,23 @@ from .model_registry import (
     ModelRegistryStatusSnapshot,
     ModelReloadSnapshot,
 )
-from .models import MemoryItem, PendingApprovalRecord
+from .models import ChannelEventRecord, MemoryItem, MessageRecord, PendingApprovalRecord, RunRecord
 from .plugin_manager import RuntimePluginManager
 from .profile_loader import AgentProfileRegistry
+from .reference_backend import (
+    ReferenceBackend,
+    ReferenceBodyLevel,
+    ReferenceDocument,
+    ReferenceDocumentInput,
+    ReferenceDocumentRef,
+    ReferenceHit,
+    ReferenceMode,
+    ReferenceSpace,
+)
 from .runs import RunManager
 from .skill_package import SkillPackageManifest
 from .skills import ResolvedSkillAssignment, SkillCatalog
-from .stores import MemoryStore
+from .stores import ChannelEventStore, MemoryStore, MessageStore
 from .subagent_delegation import RegisteredSubagentExecutor, SubagentExecutorRegistry
 from .threads import ThreadManager
 
@@ -253,12 +264,16 @@ class RuntimeControlPlane:
         run_manager: RunManager,
         thread_manager: ThreadManager | None = None,
         memory_store: MemoryStore | None = None,
+        message_store: MessageStore | None = None,
+        channel_event_store: ChannelEventStore | None = None,
         profile_registry: AgentProfileRegistry | None = None,
         plugin_manager: RuntimePluginManager | None = None,
         skill_catalog: SkillCatalog | None = None,
         subagent_executor_registry: SubagentExecutorRegistry | None = None,
         model_registry_manager: FileSystemModelRegistryManager | None = None,
         computer_runtime: ComputerRuntime | None = None,
+        reference_backend: ReferenceBackend | None = None,
+        config_control_plane: RuntimeConfigControlPlane | None = None,
     ) -> None:
         """初始化 RuntimeControlPlane.
 
@@ -267,24 +282,32 @@ class RuntimeControlPlane:
             run_manager: run 生命周期管理器.
             thread_manager: 可选的 thread 状态管理器.
             memory_store: 可选的长期记忆存储.
+            message_store: 可选的 delivered message store.
+            channel_event_store: 可选的 inbound event store.
             profile_registry: 可选的 profile registry, 用于校验 agent 是否存在.
             plugin_manager: 可选的 runtime plugin manager.
             skill_catalog: 可选的统一 skill catalog.
             subagent_executor_registry: 可选的 subagent executor 注册表.
             model_registry_manager: 可选的模型注册表管理器.
             computer_runtime: 可选的 computer 基础设施入口.
+            reference_backend: 可选的 reference backend.
+            config_control_plane: 可选的 runtime 配置控制面.
         """
 
         self.app = app
         self.run_manager = run_manager
         self.thread_manager = thread_manager
         self.memory_store = memory_store
+        self.message_store = message_store
+        self.channel_event_store = channel_event_store
         self.profile_registry = profile_registry
         self.plugin_manager = plugin_manager
         self.skill_catalog = skill_catalog
         self.subagent_executor_registry = subagent_executor_registry
         self.model_registry_manager = model_registry_manager
         self.computer_runtime = computer_runtime
+        self.reference_backend = reference_backend
+        self.config_control_plane = config_control_plane
 
     async def get_status(self) -> RuntimeStatusSnapshot:
         """读取当前 runtime 的最小状态快照.
@@ -453,6 +476,132 @@ class RuntimeControlPlane:
             items=items,
         )
 
+    async def approve_pending_approval(
+        self,
+        *,
+        run_id: str,
+        metadata: dict[str, object] | None = None,
+    ):
+        return await self.app.approve_pending_approval(run_id, metadata=metadata)
+
+    async def reject_pending_approval(
+        self,
+        *,
+        run_id: str,
+        reason: str = "approval rejected",
+        metadata: dict[str, object] | None = None,
+    ):
+        return await self.app.reject_pending_approval(
+            run_id,
+            reason=reason,
+            metadata=metadata,
+        )
+
+    async def list_profiles(self) -> list[dict[str, object]]:
+        if self.config_control_plane is None:
+            return []
+        return self.config_control_plane.list_profiles()
+
+    async def get_profile(self, agent_id: str) -> dict[str, object] | None:
+        if self.config_control_plane is None:
+            return None
+        return self.config_control_plane.get_profile(agent_id)
+
+    async def upsert_profile(self, payload: dict[str, object]) -> dict[str, object]:
+        if self.config_control_plane is None:
+            raise RuntimeError("config control plane unavailable")
+        return await self.config_control_plane.upsert_profile(payload)
+
+    async def delete_profile(self, agent_id: str) -> bool:
+        if self.config_control_plane is None:
+            return False
+        return await self.config_control_plane.delete_profile(agent_id)
+
+    async def list_prompts(self) -> list[dict[str, object]]:
+        if self.config_control_plane is None:
+            return []
+        return self.config_control_plane.list_prompts()
+
+    async def get_prompt(self, prompt_ref: str) -> dict[str, object] | None:
+        if self.config_control_plane is None:
+            return None
+        return self.config_control_plane.get_prompt(prompt_ref)
+
+    async def upsert_prompt(self, *, prompt_ref: str, content: str) -> dict[str, object]:
+        if self.config_control_plane is None:
+            raise RuntimeError("config control plane unavailable")
+        return await self.config_control_plane.upsert_prompt(prompt_ref, content)
+
+    async def delete_prompt(self, prompt_ref: str) -> bool:
+        if self.config_control_plane is None:
+            return False
+        return await self.config_control_plane.delete_prompt(prompt_ref)
+
+    async def list_binding_rules(self) -> list[dict[str, object]]:
+        if self.config_control_plane is None:
+            return []
+        return self.config_control_plane.list_binding_rules()
+
+    async def get_binding_rule(self, rule_id: str) -> dict[str, object] | None:
+        if self.config_control_plane is None:
+            return None
+        return self.config_control_plane.get_binding_rule(rule_id)
+
+    async def upsert_binding_rule(self, payload: dict[str, object]) -> dict[str, object]:
+        if self.config_control_plane is None:
+            raise RuntimeError("config control plane unavailable")
+        return await self.config_control_plane.upsert_binding_rule(payload)
+
+    async def delete_binding_rule(self, rule_id: str) -> bool:
+        if self.config_control_plane is None:
+            return False
+        return await self.config_control_plane.delete_binding_rule(rule_id)
+
+    async def list_inbound_rules(self) -> list[dict[str, object]]:
+        if self.config_control_plane is None:
+            return []
+        return self.config_control_plane.list_inbound_rules()
+
+    async def get_inbound_rule(self, rule_id: str) -> dict[str, object] | None:
+        if self.config_control_plane is None:
+            return None
+        return self.config_control_plane.get_inbound_rule(rule_id)
+
+    async def upsert_inbound_rule(self, payload: dict[str, object]) -> dict[str, object]:
+        if self.config_control_plane is None:
+            raise RuntimeError("config control plane unavailable")
+        return await self.config_control_plane.upsert_inbound_rule(payload)
+
+    async def delete_inbound_rule(self, rule_id: str) -> bool:
+        if self.config_control_plane is None:
+            return False
+        return await self.config_control_plane.delete_inbound_rule(rule_id)
+
+    async def list_event_policies(self) -> list[dict[str, object]]:
+        if self.config_control_plane is None:
+            return []
+        return self.config_control_plane.list_event_policies()
+
+    async def get_event_policy(self, policy_id: str) -> dict[str, object] | None:
+        if self.config_control_plane is None:
+            return None
+        return self.config_control_plane.get_event_policy(policy_id)
+
+    async def upsert_event_policy(self, payload: dict[str, object]) -> dict[str, object]:
+        if self.config_control_plane is None:
+            raise RuntimeError("config control plane unavailable")
+        return await self.config_control_plane.upsert_event_policy(payload)
+
+    async def delete_event_policy(self, policy_id: str) -> bool:
+        if self.config_control_plane is None:
+            return False
+        return await self.config_control_plane.delete_event_policy(policy_id)
+
+    async def reload_runtime_configuration(self) -> dict[str, object]:
+        if self.config_control_plane is None:
+            raise RuntimeError("config control plane unavailable")
+        return await self.config_control_plane.reload_runtime_configuration()
+
     async def list_skills(self) -> list[SkillSnapshot]:
         """列出当前已注册的显式 skills.
 
@@ -497,6 +646,78 @@ class RuntimeControlPlane:
             self._to_subagent_executor_snapshot(item)
             for item in self.subagent_executor_registry.list_all()
         ]
+
+    async def list_threads(self, *, limit: int = 100):
+        if self.thread_manager is None:
+            return []
+        return await self.thread_manager.list_threads(limit=limit)
+
+    async def get_thread(self, thread_id: str):
+        if self.thread_manager is None:
+            return None
+        return await self.thread_manager.get(thread_id)
+
+    async def list_runs(
+        self,
+        *,
+        limit: int = 100,
+        statuses: list[str] | None = None,
+        thread_id: str | None = None,
+    ) -> list[RunRecord]:
+        status_set = {str(item) for item in list(statuses or []) if str(item).strip()}
+        return await self.run_manager.list_runs(
+            limit=limit,
+            statuses=status_set or None,
+            thread_id=thread_id,
+        )
+
+    async def get_run(self, run_id: str) -> RunRecord | None:
+        return await self.run_manager.get(run_id)
+
+    async def list_run_steps(
+        self,
+        *,
+        run_id: str,
+        limit: int = 100,
+        step_types: list[str] | None = None,
+    ):
+        return await self.run_manager.list_steps(
+            run_id,
+            limit=limit,
+            step_types=step_types,
+        )
+
+    async def list_thread_events(
+        self,
+        *,
+        thread_id: str,
+        limit: int = 100,
+        since: int | None = None,
+        event_types: list[str] | None = None,
+    ) -> list[ChannelEventRecord]:
+        if self.channel_event_store is None:
+            return []
+        return await self.channel_event_store.get_thread_events(
+            thread_id,
+            limit=limit,
+            since=since,
+            event_types=event_types,
+        )
+
+    async def list_thread_messages(
+        self,
+        *,
+        thread_id: str,
+        limit: int = 100,
+        since: int | None = None,
+    ) -> list[MessageRecord]:
+        if self.message_store is None:
+            return []
+        return await self.message_store.get_thread_messages(
+            thread_id,
+            limit=limit,
+            since=since,
+        )
 
     async def list_model_providers(self) -> list[ModelProvider]:
         if self.model_registry_manager is None:
@@ -725,6 +946,71 @@ class RuntimeControlPlane:
         if self.computer_runtime is None:
             return []
         return self.computer_runtime.list_mirrored_skills(thread_id)
+
+    async def list_reference_spaces(
+        self,
+        *,
+        tenant_id: str | None = None,
+        mode: ReferenceMode | None = None,
+    ) -> list[ReferenceSpace]:
+        if self.reference_backend is None:
+            return []
+        return await self.reference_backend.list_spaces(tenant_id=tenant_id, mode=mode)
+
+    async def search_reference(
+        self,
+        *,
+        query: str,
+        tenant_id: str,
+        space_id: str | None = None,
+        mode: ReferenceMode | None = None,
+        limit: int = 10,
+        body: ReferenceBodyLevel = "none",
+        min_score: float = 0.0,
+    ) -> list[ReferenceHit]:
+        if self.reference_backend is None:
+            return []
+        return await self.reference_backend.search(
+            query,
+            tenant_id=tenant_id,
+            space_id=space_id,
+            mode=mode,
+            limit=limit,
+            body=body,
+            min_score=min_score,
+        )
+
+    async def get_reference_document(
+        self,
+        *,
+        ref_id: str,
+        tenant_id: str,
+        body: ReferenceBodyLevel = "full",
+    ) -> ReferenceDocument | None:
+        if self.reference_backend is None:
+            return None
+        return await self.reference_backend.get_document(
+            ref_id,
+            tenant_id=tenant_id,
+            body=body,
+        )
+
+    async def add_reference_documents(
+        self,
+        *,
+        tenant_id: str,
+        space_id: str,
+        mode: ReferenceMode,
+        documents: list[ReferenceDocumentInput],
+    ) -> list[ReferenceDocumentRef]:
+        if self.reference_backend is None:
+            return []
+        return await self.reference_backend.add_documents(
+            documents,
+            tenant_id=tenant_id,
+            space_id=space_id,
+            mode=mode,
+        )
 
     async def list_workspace_activity(
         self,

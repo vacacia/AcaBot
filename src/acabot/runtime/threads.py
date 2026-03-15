@@ -48,6 +48,12 @@ class ThreadManager(ABC):
 
         ...
 
+    @abstractmethod
+    async def list_threads(self, *, limit: int | None = None) -> list[ThreadState]:
+        """按最近活跃时间列出 threads."""
+
+        ...
+
 
 class InMemoryThreadManager(ThreadManager):
     """内存版 ThreadManager.
@@ -101,6 +107,18 @@ class InMemoryThreadManager(ThreadManager):
         """把 thread 状态回写到内存容器."""
 
         self._threads[thread.thread_id] = thread
+
+    async def list_threads(self, *, limit: int | None = None) -> list[ThreadState]:
+        """按最近活跃时间列出当前内存中的 threads."""
+
+        threads = sorted(
+            self._threads.values(),
+            key=lambda item: (item.last_event_at, item.thread_id),
+            reverse=True,
+        )
+        if limit is not None:
+            return list(threads[:limit])
+        return list(threads)
 
 
 class StoreBackedThreadManager(ThreadManager):
@@ -183,6 +201,15 @@ class StoreBackedThreadManager(ThreadManager):
 
         self._threads[thread.thread_id] = thread
         await self.store.upsert(self._record_from_state(thread))
+
+    async def list_threads(self, *, limit: int | None = None) -> list[ThreadState]:
+        """按最近活跃时间列出 threads."""
+
+        records = await self.store.list_threads(limit=limit)
+        states = [self._state_from_record(record) for record in records]
+        for state in states:
+            self._threads[state.thread_id] = state
+        return states
 
     @staticmethod
     def _record_from_state(thread: ThreadState) -> ThreadRecord:

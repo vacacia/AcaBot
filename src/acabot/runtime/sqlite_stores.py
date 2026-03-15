@@ -180,6 +180,40 @@ class SQLiteThreadStore(_SQLiteStoreBase, ThreadStore):
             )
             self._conn.commit()
 
+    async def list_threads(self, *, limit: int | None = None) -> list[ThreadRecord]:
+        """按最近活跃时间倒序列出 threads."""
+
+        sql = """
+            SELECT
+                thread_id,
+                channel_scope,
+                thread_kind,
+                working_messages_json,
+                working_summary,
+                last_event_at,
+                metadata_json
+            FROM threads
+            ORDER BY last_event_at DESC, thread_id ASC
+        """
+        params: list[object] = []
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        async with self._lock:
+            rows = self._conn.execute(sql, tuple(params)).fetchall()
+        return [
+            ThreadRecord(
+                thread_id=str(row["thread_id"]),
+                channel_scope=str(row["channel_scope"]),
+                thread_kind=str(row["thread_kind"]),
+                working_messages=list(self._decode_json(row["working_messages_json"])),
+                working_summary=str(row["working_summary"]),
+                last_event_at=int(row["last_event_at"]),
+                metadata=dict(self._decode_json(row["metadata_json"])),
+            )
+            for row in rows
+        ]
+
     def _ensure_schema(self) -> None:
         """初始化 threads 表结构."""
 
@@ -983,6 +1017,51 @@ class SQLiteRunStore(_SQLiteStoreBase, RunStore):
                 """,
                 tuple(statuses),
             ).fetchall()
+        return [self._row_to_run(row) for row in rows]
+
+    async def list_runs(
+        self,
+        *,
+        limit: int | None = None,
+        statuses: set[str] | None = None,
+        thread_id: str | None = None,
+    ) -> list[RunRecord]:
+        """按条件列出 runs."""
+
+        where = ["1 = 1"]
+        params: list[object] = []
+        if thread_id:
+            where.append("thread_id = ?")
+            params.append(thread_id)
+        if statuses:
+            placeholders = ", ".join("?" for _ in statuses)
+            where.append(f"status IN ({placeholders})")
+            params.extend(sorted(statuses))
+        sql = (
+            """
+            SELECT
+                run_id,
+                thread_id,
+                actor_id,
+                agent_id,
+                trigger_event_id,
+                status,
+                started_at,
+                finished_at,
+                error,
+                approval_context_json,
+                metadata_json
+            FROM runs
+            WHERE
+            """
+            + " AND ".join(where)
+            + " ORDER BY started_at DESC, run_id DESC"
+        )
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        async with self._lock:
+            rows = self._conn.execute(sql, tuple(params)).fetchall()
         return [self._row_to_run(row) for row in rows]
 
     async def append_step(self, step: RunStep) -> None:
