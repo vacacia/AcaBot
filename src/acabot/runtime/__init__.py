@@ -19,6 +19,7 @@ from .approval_resumer import (
     ApprovalResumeResult,
     ApprovalResumer,
     NoopApprovalResumer,
+    ToolApprovalResumer,
 )
 from .app import RuntimeApp
 from .bootstrap import RuntimeComponents, build_runtime_components
@@ -227,6 +228,7 @@ from .tool_broker import (
     ToolPolicy,
     ToolPolicyDecision,
     ToolExecutionContext,
+    ToolReplayResult,
     ToolResult,
 )
 from .threads import InMemoryThreadManager, StoreBackedThreadManager, ThreadManager
@@ -313,6 +315,7 @@ __all__ = [
     "FileSystemModelRegistryManager",
     "InMemoryMemoryStore",
     "NoopApprovalResumer",
+    "ToolApprovalResumer",
     "NullContextSummarizer",
     "NullMemoryExtractor",
     "NullMemoryRetriever",
@@ -425,5 +428,6 @@ __all__ = [
     "ToolPolicy",
     "ToolPolicyDecision",
     "ToolExecutionContext",
+    "ToolReplayResult",
     "ToolResult",
 ]

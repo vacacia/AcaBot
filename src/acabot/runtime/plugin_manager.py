@@ -349,6 +349,7 @@ class RuntimePluginManager:
         skill_catalog: SkillCatalog | None = None,
         control_plane: RuntimeControlPlane | None = None,
         subagent_delegator: SubagentDelegationBroker | None = None,
+        builtin_plugins: list[RuntimePlugin] | None = None,
         plugins: list[RuntimePlugin] | None = None,
     ) -> None:
         """初始化 RuntimePluginManager.
@@ -365,6 +366,7 @@ class RuntimePluginManager:
             skill_catalog: 可选的统一 skill catalog.
             control_plane: 可选的本地 control plane 入口.
             subagent_delegator: 可选的 subagent delegation 编排入口.
+            builtin_plugins: 系统保底内建插件列表, full reload 时始终重建.
             plugins: 启动时需要加载的插件实例列表.
         """
 
@@ -378,6 +380,13 @@ class RuntimePluginManager:
         self.skill_catalog = skill_catalog
         self.control_plane = control_plane
         self.subagent_delegator = subagent_delegator
+        self._builtin_plugins: list[RuntimePlugin] = list(builtin_plugins or [])
+        self._builtin_plugin_names: set[str] = {
+            plugin.name for plugin in self._builtin_plugins
+        }
+        self._builtin_plugin_types: list[type[RuntimePlugin]] = [
+            plugin.__class__ for plugin in self._builtin_plugins
+        ]
         # 创建空的 hook 注册表
         self.hooks = RuntimeHookRegistry()
         # 维护加载顺序的列表, teardown 时逆序清理
@@ -387,7 +396,10 @@ class RuntimePluginManager:
         # 记录每个插件实际注册的 hooks, 便于精确卸载和重建 registry
         self._plugin_hooks: dict[str, list[tuple[RuntimeHookPoint, RuntimeHook]]] = {}
         # 延迟加载队列, 支持动态添加插件
-        self._pending: list[RuntimePlugin] = list(plugins or [])
+        self._pending: list[RuntimePlugin] = [
+            *self._fresh_builtin_plugins(),
+            *list(plugins or []),
+        ]
         self._started = False
         # 防止并发启动的锁
         self._start_lock = asyncio.Lock()
@@ -403,6 +415,14 @@ class RuntimePluginManager:
         """
         # 简单追加到队列, 不检查重复(去重在 load_plugin 时)
         self._pending.append(plugin)
+
+    def _fresh_builtin_plugins(self) -> list[RuntimePlugin]:
+        """返回一组 fresh 的系统内建插件实例."""
+
+        fresh: list[RuntimePlugin] = []
+        for plugin_type in self._builtin_plugin_types:
+            fresh.append(plugin_type())
+        return fresh
 
     def attach_control_plane(self, control_plane: RuntimeControlPlane) -> None:
         """把本地 control plane 接到 plugin manager.
@@ -713,7 +733,7 @@ class RuntimePluginManager:
         plugins = load_runtime_plugins_from_config(self.config)
         if not plugin_names:
             await self.teardown_all()
-            self._pending = plugins
+            self._pending = [*self._fresh_builtin_plugins(), *plugins]
             await self.ensure_started()
             return [plugin.name for plugin in self.loaded], []
 
@@ -730,6 +750,13 @@ class RuntimePluginManager:
             return [], []
 
         # 对象按插件名做映射
+        requested_names = [
+            plugin_name
+            for plugin_name in requested_names
+            if plugin_name not in self._builtin_plugin_names
+        ]
+        if not requested_names:
+            return [], []
         plugin_by_name = {plugin.name: plugin for plugin in plugins}
         # 配置文件里不存在的插件
         missing = [plugin_name for plugin_name in requested_names if plugin_name not in plugin_by_name]

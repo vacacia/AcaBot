@@ -85,4 +85,6 @@ async def test_config_example_builds_runtime_components(tmp_path: Path) -> None:
 
     assert components.router.default_agent_id == "aca"
     assert components.prompt_loader.load("prompt/default").strip() == "you are a helpful assistant."
-    assert components.plugin_manager.loaded[0].name == "ops_control"
+    assert "computer_tool_adapter" in [plugin.name for plugin in components.plugin_manager.loaded]
+    assert "skill_tool" in [plugin.name for plugin in components.plugin_manager.loaded]
+    assert "ops_control" in [plugin.name for plugin in components.plugin_manager.loaded]

@@ -1,5 +1,13 @@
 from acabot.config import Config
-from acabot.runtime import RouteDecision, build_runtime_components
+from acabot.runtime import (
+    FileSystemModelRegistryManager,
+    ModelBinding,
+    ModelPreset,
+    ModelProvider,
+    OpenAICompatibleProviderConfig,
+    RouteDecision,
+    build_runtime_components,
+)
 from acabot.runtime.tool_broker import ToolExecutionContext
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
@@ -53,6 +61,42 @@ def _tool_ctx(*, run_id: str, profile) -> ToolExecutionContext:
             "message_type": "private",
         },
     )
+
+
+async def _model_registry_manager(tmp_path) -> FileSystemModelRegistryManager:
+    manager = FileSystemModelRegistryManager(
+        providers_dir=tmp_path / "providers",
+        presets_dir=tmp_path / "presets",
+        bindings_dir=tmp_path / "bindings",
+    )
+    await manager.upsert_provider(
+        ModelProvider(
+            provider_id="openai-main",
+            kind="openai_compatible",
+            config=OpenAICompatibleProviderConfig(
+                base_url="https://example.invalid/v1",
+                api_key_env="OPENAI_API_KEY",
+            ),
+        )
+    )
+    await manager.upsert_preset(
+        ModelPreset(
+            preset_id="worker-main",
+            provider_id="openai-main",
+            model="gpt-worker",
+            context_window=32000,
+            supports_tools=True,
+        )
+    )
+    await manager.upsert_binding(
+        ModelBinding(
+            binding_id="binding:excel-worker",
+            target_type="agent",
+            target_id="excel_worker",
+            preset_id="worker-main",
+        )
+    )
+    return manager
 
 
 async def test_delegate_skill_uses_real_local_child_run() -> None:
@@ -196,3 +240,89 @@ async def test_bootstrap_registers_local_profile_subagent_executors() -> None:
     assert [item.agent_id for item in registered] == ["aca", "excel_worker"]
     assert all(item.source == "runtime:local_profile" for item in registered)
     assert registered[1].metadata["kind"] == "local_profile"
+
+
+async def test_delegate_skill_child_run_uses_delegate_agent_model_binding(
+    tmp_path,
+) -> None:
+    gateway = FakeGateway()
+    agent = FakeAgent(FakeAgentResponse(text="worker summary", model_used="gpt-worker"))
+    model_registry_manager = await _model_registry_manager(tmp_path)
+    config = Config(
+        {
+            "agent": {
+                "default_model": "runtime-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "filesystem": {
+                    "enabled": True,
+                    "skill_catalog_dir": _skills_dir(),
+                },
+                "profiles": {
+                    "aca": {
+                        "name": "Aca",
+                        "prompt_ref": "prompt/aca",
+                        "default_model": "runtime-model",
+                        "skill_assignments": [
+                            {
+                                "skill_name": "sample_configured_skill",
+                                "delegation_mode": "must_delegate",
+                                "delegate_agent_id": "excel_worker",
+                            }
+                        ],
+                    },
+                    "excel_worker": {
+                        "name": "Excel Worker",
+                        "prompt_ref": "prompt/excel_worker",
+                        "default_model": "runtime-model",
+                    },
+                },
+                "prompts": {
+                    "prompt/aca": "You are Aca.",
+                    "prompt/excel_worker": "You are Excel Worker.",
+                },
+                "plugins": [
+                    "tests.runtime.runtime_plugin_samples:SampleConfiguredRuntimePlugin",
+                ],
+            },
+        }
+    )
+    components = build_runtime_components(
+        config,
+        gateway=gateway,
+        agent=agent,
+        model_registry_manager=model_registry_manager,
+    )
+    await components.plugin_manager.ensure_started()
+
+    parent_run = await components.run_manager.open(
+        event=_event(),
+        decision=RouteDecision(
+            thread_id="qq:user:10001",
+            actor_id="qq:user:10001",
+            agent_id="aca",
+            channel_scope="qq:user:10001",
+        ),
+    )
+    profile = components.profile_loader.profiles["aca"]
+
+    result = await components.tool_broker.execute(
+        tool_name="delegate_skill",
+        arguments={
+            "skill_name": "sample_configured_skill",
+            "task": "整理 Excel 文件并总结",
+        },
+        ctx=_tool_ctx(run_id=parent_run.run_id, profile=profile),
+    )
+
+    child_run = await components.run_manager.get(str(result.raw["delegated_run_id"]))
+
+    assert child_run is not None
+    assert child_run.metadata["model_snapshot"]["binding_id"] == "binding:excel-worker"
+    assert child_run.metadata["model_snapshot"]["provider_id"] == "openai-main"
+    assert child_run.metadata["model_snapshot"]["preset_id"] == "worker-main"
+    assert agent.calls[-1]["model"] == "gpt-worker"
+    assert agent.calls[-1]["request_options"]["api_base"] == "https://example.invalid/v1"
+    assert agent.calls[-1]["request_options"]["provider_kind"] == "openai_compatible"

@@ -5,6 +5,9 @@ from acabot.agent import ToolDef
 from acabot.config import Config
 from acabot.runtime import (
     AgentProfile,
+    ComputerRuntime,
+    ComputerRuntimeConfig,
+    ComputerToolAdapterPlugin,
     FileSystemSkillPackageLoader,
     InMemoryRunManager,
     InMemoryThreadManager,
@@ -38,6 +41,15 @@ def _catalog() -> SkillCatalog:
     catalog = SkillCatalog(FileSystemSkillPackageLoader(_fixtures_root()))
     catalog.reload()
     return catalog
+
+
+def _computer_runtime(tmp_path: Path) -> ComputerRuntime:
+    return ComputerRuntime(
+        config=ComputerRuntimeConfig(
+            root_dir=str(tmp_path / "computer"),
+            skill_catalog_dir=str(_fixtures_root()),
+        )
+    )
 
 
 class ReplyShortcutHook(RuntimeHook):
@@ -337,3 +349,50 @@ async def test_runtime_plugin_manager_can_reload_selected_plugins_only() -> None
     assert SampleConfiguredRuntimePlugin.teardown_calls == 1
     assert AnotherConfiguredRuntimePlugin.setup_calls == 1
     assert AnotherConfiguredRuntimePlugin.teardown_calls == 0
+
+
+async def test_runtime_plugin_manager_selected_reload_keeps_builtin_plugins(
+    tmp_path: Path,
+) -> None:
+    from tests.runtime.runtime_plugin_samples import SampleConfiguredRuntimePlugin
+
+    SampleConfiguredRuntimePlugin.reset()
+    config = Config(
+        {
+            "runtime": {
+                "plugins": [
+                    "tests.runtime.runtime_plugin_samples:SampleConfiguredRuntimePlugin",
+                ],
+            },
+        }
+    )
+    manager = RuntimePluginManager(
+        config=config,
+        gateway=FakeGateway(),
+        tool_broker=ToolBroker(),
+        computer_runtime=_computer_runtime(tmp_path),
+        builtin_plugins=[ComputerToolAdapterPlugin()],
+    )
+
+    loaded_names, missing = await manager.reload_from_config()
+    builtin_profile = AgentProfile(
+        agent_id="aca",
+        name="Aca",
+        prompt_ref="prompt/default",
+        default_model="test-model",
+        enabled_tools=["read"],
+    )
+    visible_before = manager.tool_broker.visible_tools(builtin_profile)
+
+    reloaded_names, missing_after = await manager.reload_from_config(
+        ["sample_configured_runtime"]
+    )
+    visible_after = manager.tool_broker.visible_tools(builtin_profile)
+
+    assert "computer_tool_adapter" in loaded_names
+    assert "sample_configured_runtime" in loaded_names
+    assert missing == []
+    assert reloaded_names == ["sample_configured_runtime"]
+    assert missing_after == []
+    assert [tool.name for tool in visible_before] == ["read"]
+    assert [tool.name for tool in visible_after] == ["read"]

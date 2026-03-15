@@ -199,6 +199,16 @@ class RegisteredTool:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(slots=True)
+class ToolReplayResult:
+    """一次 approval replay 的最小结果."""
+
+    ok: bool
+    result: ToolResult
+    audit_record: ToolAuditRecord | None = None
+    status: Literal["completed", "rejected", "failed"] = "completed"
+
+
 # endregion
 
 
@@ -307,6 +317,11 @@ class ToolAudit(Protocol):
         metadata: dict[str, Any] | None = None,
     ) -> ToolAuditRecord | None:
         """把等待审批中的审计记录收尾为 failed."""
+
+        ...
+
+    async def get(self, *, tool_call_id: str) -> ToolAuditRecord | None:
+        """按 tool_call_id 查询已有审计记录."""
 
         ...
 
@@ -545,6 +560,11 @@ class InMemoryToolAudit:
         record.metadata.update(dict(metadata or {}))
         self.records[tool_call_id] = record
         return record
+
+    async def get(self, *, tool_call_id: str) -> ToolAuditRecord | None:
+        """按 tool_call_id 读取一条已有审计记录."""
+
+        return self.records.get(tool_call_id)
 
 
 # endregion
@@ -946,6 +966,170 @@ class ToolBroker:
         audit_record = await self.audit.complete(audit_record, result=normalized)
         self._append_audit(ctx, audit_record)
         return normalized
+
+    async def replay_approved_tool(
+        self,
+        *,
+        pending: PendingApproval,
+        ctx: ToolExecutionContext,
+    ) -> ToolReplayResult:
+        """重放一次已批准的工具调用.
+
+        这条路径只用于 approval resume，不重新创建 audit 记录。
+        """
+
+        registered = self._tools.get(pending.tool_name)
+        existing_record = await self.audit.get(tool_call_id=str(pending.tool_call_id or ""))
+        if registered is None:
+            result = self._error_result(
+                f"Unknown tool: {pending.tool_name}",
+                tool_name=pending.tool_name,
+                arguments=dict(pending.tool_arguments),
+            )
+            if existing_record is not None:
+                existing_record = await self.audit.fail(
+                    existing_record,
+                    error=f"Unknown tool: {pending.tool_name}",
+                    metadata={
+                        "approval_replay": True,
+                        "approval_id": pending.approval_id,
+                    },
+                )
+            return ToolReplayResult(
+                ok=False,
+                result=result,
+                audit_record=existing_record,
+                status="failed",
+            )
+
+        if pending.tool_name not in self._allowed_tool_names(ctx.profile):
+            result = self._error_result(
+                f"Tool not enabled for profile: {pending.tool_name}",
+                tool_name=pending.tool_name,
+                arguments=dict(pending.tool_arguments),
+            )
+            if existing_record is not None:
+                existing_record = await self.audit.reject(
+                    existing_record,
+                    reason=f"Tool not enabled for profile: {pending.tool_name}",
+                    metadata={
+                        "approval_replay": True,
+                        "approval_id": pending.approval_id,
+                    },
+                )
+            return ToolReplayResult(
+                ok=False,
+                result=result,
+                audit_record=existing_record,
+                status="rejected",
+            )
+
+        decision = await self._allow(
+            spec=registered.spec,
+            arguments=dict(pending.tool_arguments),
+            ctx=ctx,
+        )
+        if not decision.allowed:
+            result = self._error_result(
+                decision.reason or f"Tool rejected by policy: {pending.tool_name}",
+                tool_name=pending.tool_name,
+                arguments=dict(pending.tool_arguments),
+                metadata={
+                    **dict(decision.metadata),
+                    "approval_replay": True,
+                    "approval_id": pending.approval_id,
+                },
+            )
+            if existing_record is not None:
+                existing_record = await self.audit.reject(
+                    existing_record,
+                    reason=decision.reason or f"Tool rejected by policy: {pending.tool_name}",
+                    metadata={
+                        **dict(decision.metadata),
+                        "approval_replay": True,
+                        "approval_id": pending.approval_id,
+                    },
+                )
+            return ToolReplayResult(
+                ok=False,
+                result=result,
+                audit_record=existing_record,
+                status="rejected",
+            )
+
+        try:
+            raw = registered.handler(dict(pending.tool_arguments), ctx)
+            if isawaitable(raw):
+                raw = await raw
+        except ApprovalRequired:
+            result = self._error_result(
+                "minimal approval replay does not support nested approval",
+                tool_name=pending.tool_name,
+                arguments=dict(pending.tool_arguments),
+                metadata={
+                    "approval_replay": True,
+                    "approval_id": pending.approval_id,
+                },
+            )
+            if existing_record is not None:
+                existing_record = await self.audit.fail(
+                    existing_record,
+                    error="minimal approval replay does not support nested approval",
+                    metadata={
+                        "approval_replay": True,
+                        "approval_id": pending.approval_id,
+                    },
+                )
+            return ToolReplayResult(
+                ok=False,
+                result=result,
+                audit_record=existing_record,
+                status="failed",
+            )
+        except Exception as exc:
+            result = self._error_result(
+                f"Tool execution failed: {exc}",
+                tool_name=pending.tool_name,
+                arguments=dict(pending.tool_arguments),
+                metadata={
+                    "approval_replay": True,
+                    "approval_id": pending.approval_id,
+                },
+            )
+            if existing_record is not None:
+                existing_record = await self.audit.fail(
+                    existing_record,
+                    error=f"Tool execution failed: {exc}",
+                    metadata={
+                        "approval_replay": True,
+                        "approval_id": pending.approval_id,
+                    },
+                )
+            return ToolReplayResult(
+                ok=False,
+                result=result,
+                audit_record=existing_record,
+                status="failed",
+            )
+
+        normalized = self._normalize_result(raw)
+        normalized.metadata.setdefault("tool_name", pending.tool_name)
+        normalized.metadata.setdefault("source", registered.source)
+        normalized.metadata.setdefault("approval_replay", True)
+        normalized.metadata.setdefault("approval_id", pending.approval_id)
+        if ctx.state is not None:
+            ctx.state.user_actions.extend(normalized.user_actions)
+            ctx.state.artifacts.extend(normalized.artifacts)
+
+        if existing_record is not None:
+            existing_record = await self.audit.complete(existing_record, result=normalized)
+            self._append_audit(ctx, existing_record)
+        return ToolReplayResult(
+            ok=True,
+            result=normalized,
+            audit_record=existing_record,
+            status="completed",
+        )
 
     def _build_execution_context(
         self,

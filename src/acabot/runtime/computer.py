@@ -933,6 +933,8 @@ class ComputerRuntime:
         self.attachment_resolver: AttachmentResolver = GatewayAttachmentResolver()
         self._sessions: dict[str, dict[str, CommandSession]] = {}
         self._loaded_skills: dict[str, set[str]] = {}
+        self._thread_backend_state: dict[str, str] = {}
+        self._thread_override_backends: dict[str, str] = {}
 
     async def prepare_run_context(self, ctx: "RunContext") -> None:
         policy = self.effective_policy_for_ctx(ctx)
@@ -952,6 +954,7 @@ class ComputerRuntime:
             )
         ctx.computer_policy_effective = policy
         ctx.computer_backend_kind = backend.kind
+        self._set_thread_backend_state(ctx.thread.thread_id, backend.kind)
         ctx.attachment_snapshots = list(staged.snapshots)
         ctx.workspace_state = WorkspaceState(
             thread_id=ctx.thread.thread_id,
@@ -1140,6 +1143,7 @@ class ComputerRuntime:
         workspace = self.workspace_manager.workspace_dir_for_thread(thread_id)
         backend = self.backends[policy.backend]
         result = await backend.exec_once(host_path=workspace, command=command, policy=policy)
+        self._set_thread_backend_state(thread_id, backend.kind)
         await self._append_run_step(
             run_id=run_id,
             thread_id=thread_id,
@@ -1174,6 +1178,7 @@ class ComputerRuntime:
         )
         await self.backends[policy.backend].open_session(session=session, policy=policy)
         self._sessions.setdefault(thread_id, {})[session.session_id] = session
+        self._set_thread_backend_state(thread_id, session.backend_kind)
         await self._append_run_step(
             run_id=run_id,
             thread_id=thread_id,
@@ -1224,6 +1229,8 @@ class ComputerRuntime:
         session = self._require_session(thread_id, session_id)
         await self.backends[session.backend_kind].close_session(session)
         self._sessions.get(thread_id, {}).pop(session_id, None)
+        if not self._sessions.get(thread_id):
+            self._sessions.pop(thread_id, None)
         await self._append_run_step(
             run_id=run_id,
             thread_id=thread_id,
@@ -1249,6 +1256,8 @@ class ComputerRuntime:
             await backend.stop_workspace_sandbox(thread_id=thread_id, host_path=workspace)
         except ComputerBackendNotImplemented:
             return
+        if thread_id not in self._thread_override_backends and not self._sessions.get(thread_id):
+            self._set_thread_backend_state(thread_id, "host")
 
     async def get_sandbox_status(self, thread_id: str) -> WorkspaceSandboxStatus:
         workspace = self.workspace_manager.workspace_dir_for_thread(thread_id)
@@ -1277,6 +1286,7 @@ class ComputerRuntime:
         await self.close_all_sessions(thread_id)
         await self.stop_workspace_sandbox(thread_id)
         self._loaded_skills.pop(thread_id, None)
+        self._thread_backend_state.pop(thread_id, None)
         workspace = self.workspace_manager.workspace_dir_for_thread(thread_id)
         if workspace.exists():
             shutil.rmtree(workspace)
@@ -1315,9 +1325,16 @@ class ComputerRuntime:
             "allow_sessions": override.allow_sessions,
             "network_mode": override.network_mode,
         }
+        if override.backend:
+            self._thread_override_backends[thread.thread_id] = override.backend
+        else:
+            self._thread_override_backends.pop(thread.thread_id, None)
 
     async def clear_thread_override(self, *, thread) -> None:
         thread.metadata.pop("computer_override", None)
+        self._thread_override_backends.pop(thread.thread_id, None)
+        if not self._sessions.get(thread.thread_id) and thread.thread_id not in self._thread_backend_state:
+            self._set_thread_backend_state(thread.thread_id, "host")
 
     @staticmethod
     def _apply_override(policy: ComputerPolicy, override: ComputerRuntimeOverride) -> ComputerPolicy:
@@ -1342,7 +1359,18 @@ class ComputerRuntime:
         sessions = self._sessions.get(thread_id, {})
         if sessions:
             return next(iter(sessions.values())).backend_kind
+        override_backend = self._thread_override_backends.get(thread_id, "")
+        if override_backend:
+            return override_backend
+        backend_kind = self._thread_backend_state.get(thread_id, "")
+        if backend_kind:
+            return backend_kind
         return "host"
+
+    def _set_thread_backend_state(self, thread_id: str, backend_kind: str) -> None:
+        if not thread_id or not backend_kind:
+            return
+        self._thread_backend_state[thread_id] = backend_kind
 
     async def _append_run_step(
         self,

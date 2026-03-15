@@ -16,6 +16,7 @@ from acabot.types import StandardEvent
 from .approval_resumer import ApprovalResumer, ApprovalResumeResult, NoopApprovalResumer
 from .computer import ComputerRuntime
 from .gateway_protocol import GatewayProtocol
+from .model_resolution import resolve_model_requests_for_profile
 from .model_registry import FileSystemModelRegistryManager, PersistedModelSnapshot, RuntimeModelRequest
 from .models import (
     ApprovalDecisionResult,
@@ -260,22 +261,11 @@ class RuntimeApp:
 
         """
 
-        manager = self.model_registry_manager
-        if manager is None:
-            return None, None, None
-        explicit_profile_default_model = str(profile.config.get("default_model", "") or "")
-        # 向 ModelRegistryManager 要当前这次 Run 需要的所有模型物料
-        model_request, model_snapshot = manager.resolve_run_request(
-            run_mode=decision.run_mode,
-            agent_id=profile.agent_id,
-            explicit_profile_default_model=explicit_profile_default_model,
-            effective_profile_default_model=profile.default_model,
+        return resolve_model_requests_for_profile(
+            self.model_registry_manager,
+            decision=decision,
+            profile=profile,
         )
-
-        summary_model_request = manager.resolve_summary_request(
-            primary_request=model_request,
-        )
-        return model_request, model_snapshot, summary_model_request
 
     @staticmethod
     def _build_channel_event_record(
@@ -564,6 +554,7 @@ class RuntimeApp:
                 "message": result.message,
                 "metadata": decision_metadata,
                 "approval_context": dict(result.approval_context),
+                "result_metadata": dict(result.metadata),
             },
         )
 

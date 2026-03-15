@@ -32,7 +32,7 @@ from acabot.agent import BaseAgent
 from acabot.config import Config
 
 from .agent_runtime import AgentRuntime
-from .approval_resumer import ApprovalResumer, NoopApprovalResumer
+from .approval_resumer import ApprovalResumer, NoopApprovalResumer, ToolApprovalResumer
 from .app import RuntimeApp
 from .computer import ComputerPolicy, ComputerRuntime, ComputerRuntimeConfig, parse_computer_policy
 from .context_compactor import (
@@ -96,6 +96,20 @@ from .subagent_delegation import SubagentDelegationBroker, SubagentExecutorRegis
 from .subagent_execution import LocalSubagentExecutionService
 from .tool_broker import ToolBroker
 from .threads import InMemoryThreadManager, StoreBackedThreadManager, ThreadManager
+
+
+def _build_builtin_runtime_plugins(
+    profiles: dict[str, AgentProfile],
+) -> list[RuntimePlugin]:
+    """解析 runtime world 的系统内建插件集合."""
+
+    builtin_plugins: list[RuntimePlugin] = [
+        ComputerToolAdapterPlugin(),
+        SkillToolPlugin(),
+    ]
+    if _profiles_have_delegated_skills(profiles):
+        builtin_plugins.append(SkillDelegationPlugin())
+    return builtin_plugins
 
 # region RuntimeComponents
 @dataclass(slots=True)
@@ -270,16 +284,8 @@ def build_runtime_components(
     runtime_model_registry_manager = model_registry_manager or _build_model_registry_manager(config)
     runtime_tool_broker = tool_broker or ToolBroker(skill_catalog=runtime_skill_catalog)
     runtime_tool_broker.skill_catalog = runtime_skill_catalog
+    builtin_plugins = _build_builtin_runtime_plugins(profiles)
     configured_plugins = plugins if plugins is not None else load_runtime_plugins_from_config(config)
-    if not any(plugin.name == ComputerToolAdapterPlugin.name for plugin in configured_plugins):
-        configured_plugins = [*configured_plugins, ComputerToolAdapterPlugin()]
-    if not any(plugin.name == SkillToolPlugin.name for plugin in configured_plugins):
-        configured_plugins = [*configured_plugins, SkillToolPlugin()]
-    if _profiles_have_delegated_skills(profiles) and not any(
-        plugin.name == SkillDelegationPlugin.name
-        for plugin in configured_plugins
-    ):
-        configured_plugins = [*configured_plugins, SkillDelegationPlugin()]
     runtime_plugin_manager = plugin_manager or RuntimePluginManager(
         config=config,
         gateway=gateway,
@@ -289,9 +295,15 @@ def build_runtime_components(
         computer_runtime=runtime_computer_runtime,
         skill_catalog=runtime_skill_catalog,
         subagent_delegator=runtime_subagent_delegator,
+        builtin_plugins=builtin_plugins,
         plugins=configured_plugins,
     )
-    runtime_approval_resumer = approval_resumer or NoopApprovalResumer()
+    runtime_approval_resumer = approval_resumer or ToolApprovalResumer(
+        thread_manager=runtime_thread_manager,
+        profile_loader=profile_registry.load,
+        tool_broker=runtime_tool_broker,
+        computer_runtime=runtime_computer_runtime,
+    )
     agent_runtime = ModelAgentRuntime(
         agent=agent,
         prompt_loader=prompt_loader,
@@ -315,6 +327,7 @@ def build_runtime_components(
         run_manager=runtime_run_manager,
         pipeline=pipeline,
         profile_loader=profile_registry.load,
+        model_registry_manager=runtime_model_registry_manager,
     )
     _register_local_subagent_executors(
         registry=runtime_subagent_executor_registry,

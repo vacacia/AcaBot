@@ -12,6 +12,7 @@ from typing import Any
 from acabot.agent import ToolDef
 from acabot.config import Config
 from acabot.runtime import (
+    ApprovalRequired,
     AgentProfile,
     InMemoryMemoryStore,
     ContextCompactor,
@@ -28,12 +29,15 @@ from acabot.runtime import (
     SQLiteMessageStore,
     StoreBackedRunManager,
     StoreBackedThreadManager,
+    ToolPolicyDecision,
     ToolBroker,
     build_runtime_components,
 )
+from acabot.runtime.models import PendingApproval
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
 from .test_outbox import FakeGateway
+from .test_pipeline_runtime import ApprovalToolAgent
 
 
 @dataclass
@@ -1287,6 +1291,332 @@ async def test_build_runtime_components_auto_loads_computer_tool_adapter_plugin(
 
     assert "computer_tool_adapter" in [plugin.name for plugin in components.plugin_manager.loaded]
     assert [tool.name for tool in visible] == ["read", "exec"]
+
+
+async def test_build_runtime_components_full_plugin_reload_keeps_builtin_plugins() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "test-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "profiles": {
+                    "aca": {
+                        "name": "Aca",
+                        "prompt_ref": "prompt/aca",
+                        "default_model": "test-model",
+                        "enabled_tools": ["read"],
+                        "skill_assignments": ["sample_configured_skill"],
+                    }
+                },
+                "filesystem": {
+                    "enabled": True,
+                    "skill_catalog_dir": str(
+                        Path(__file__).resolve().parent.parent / "fixtures" / "skills"
+                    ),
+                },
+                "prompts": {
+                    "prompt/aca": "You are Aca.",
+                },
+            },
+        }
+    )
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+
+    await components.plugin_manager.ensure_started()
+    loaded_names, missing = await components.app.reload_plugins()
+    profile = components.profile_loader.load(
+        RouteDecision(
+            thread_id="qq:user:10001",
+            actor_id="qq:user:10001",
+            agent_id="aca",
+            channel_scope="qq:user:10001",
+        )
+    )
+    visible = components.tool_broker.visible_tools(profile)
+
+    assert missing == []
+    assert "computer_tool_adapter" in loaded_names
+    assert "skill_tool" in loaded_names
+    assert [tool.name for tool in visible] == ["read", "skill"]
+
+
+async def test_build_runtime_components_reload_keeps_conditional_skill_delegation_builtin() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "test-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "filesystem": {
+                    "enabled": True,
+                    "skill_catalog_dir": str(
+                        Path(__file__).resolve().parent.parent / "fixtures" / "skills"
+                    ),
+                },
+                "profiles": {
+                    "aca": {
+                        "name": "Aca",
+                        "prompt_ref": "prompt/aca",
+                        "default_model": "test-model",
+                        "skill_assignments": [
+                            {
+                                "skill_name": "sample_configured_skill",
+                                "delegation_mode": "must_delegate",
+                                "delegate_agent_id": "worker",
+                            }
+                        ],
+                    },
+                    "worker": {
+                        "name": "Worker",
+                        "prompt_ref": "prompt/worker",
+                        "default_model": "test-model",
+                    },
+                },
+                "prompts": {
+                    "prompt/aca": "You are Aca.",
+                    "prompt/worker": "You are Worker.",
+                },
+            },
+        }
+    )
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+
+    await components.plugin_manager.ensure_started()
+    loaded_names, missing = await components.app.reload_plugins()
+    profile = components.profile_loader.profiles["aca"]
+    visible = components.tool_broker.visible_tools(profile)
+
+    assert missing == []
+    assert "skill_delegation" in loaded_names
+    assert "delegate_skill" in [tool.name for tool in visible]
+
+
+async def test_build_runtime_components_default_approval_resume_replays_tool_call() -> None:
+    class ApprovalPolicy:
+        async def allow(self, *, spec, arguments, ctx) -> ToolPolicyDecision:
+            _ = spec, arguments, ctx
+            return ToolPolicyDecision(
+                allowed=True,
+                requires_approval=True,
+                reason="needs admin approval",
+            )
+
+    broker = ToolBroker(policy=ApprovalPolicy())
+
+    async def restricted(arguments: dict[str, Any], ctx) -> dict[str, Any]:
+        _ = arguments, ctx
+        return {"ok": True}
+
+    broker.register_tool(
+        ToolDef(
+            name="restricted",
+            description="Restricted tool",
+            parameters={"type": "object", "properties": {}},
+            handler=lambda arguments: arguments,
+        ).to_spec(),
+        restricted,
+    )
+    gateway = FakeGateway()
+    components = build_runtime_components(
+        Config(
+            {
+                "agent": {
+                    "default_model": "test-model",
+                    "system_prompt": "You are Aca.",
+                },
+                "runtime": {
+                    "default_agent_id": "aca",
+                    "profiles": {
+                        "aca": {
+                            "name": "Aca",
+                            "prompt_ref": "prompt/aca",
+                            "default_model": "test-model",
+                            "enabled_tools": ["restricted"],
+                        }
+                    },
+                    "prompts": {
+                        "prompt/aca": "You are Aca.",
+                    },
+                },
+            }
+        ),
+        gateway=gateway,
+        agent=ApprovalToolAgent(),
+        tool_broker=broker,
+    )
+
+    components.app.install()
+    await gateway.handler(_event())
+    active = await components.run_manager.list_active()
+    result = await components.app.approve_pending_approval(active[0].run_id)
+    restored = await components.run_manager.get(active[0].run_id)
+
+    assert result.ok is True
+    assert result.run_status == "completed"
+    assert restored is not None
+    assert restored.status == "completed"
+
+
+async def test_build_runtime_components_approval_resume_marks_completed_with_errors_for_undelivered_outputs() -> None:
+    class ApprovalPolicy:
+        async def allow(self, *, spec, arguments, ctx) -> ToolPolicyDecision:
+            _ = spec, arguments, ctx
+            return ToolPolicyDecision(
+                allowed=True,
+                requires_approval=True,
+                reason="needs admin approval",
+            )
+
+    broker = ToolBroker(policy=ApprovalPolicy())
+
+    async def restricted(arguments: dict[str, Any], ctx) -> dict[str, Any]:
+        _ = arguments, ctx
+        return {
+            "ok": True,
+            "attachments": [
+                {"type": "image", "url": "https://example.com/demo.png"},
+            ],
+        }
+
+    broker.register_tool(
+        ToolDef(
+            name="restricted",
+            description="Restricted tool",
+            parameters={"type": "object", "properties": {}},
+            handler=lambda arguments: arguments,
+        ).to_spec(),
+        restricted,
+    )
+    gateway = FakeGateway()
+    components = build_runtime_components(
+        Config(
+            {
+                "agent": {
+                    "default_model": "test-model",
+                    "system_prompt": "You are Aca.",
+                },
+                "runtime": {
+                    "default_agent_id": "aca",
+                    "profiles": {
+                        "aca": {
+                            "name": "Aca",
+                            "prompt_ref": "prompt/aca",
+                            "default_model": "test-model",
+                            "enabled_tools": ["restricted"],
+                        }
+                    },
+                    "prompts": {
+                        "prompt/aca": "You are Aca.",
+                    },
+                },
+            }
+        ),
+        gateway=gateway,
+        agent=ApprovalToolAgent(),
+        tool_broker=broker,
+    )
+
+    components.app.install()
+    await gateway.handler(_event())
+    active = await components.run_manager.list_active()
+    result = await components.app.approve_pending_approval(active[0].run_id)
+    restored = await components.run_manager.get(active[0].run_id)
+    steps = await components.run_manager.list_steps(active[0].run_id)
+
+    assert result.ok is True
+    assert result.run_status == "completed_with_errors"
+    assert restored is not None
+    assert restored.status == "completed_with_errors"
+    assert steps[-1].step_type == "approval_resume"
+    assert steps[-1].payload["result_metadata"]["undelivered_attachment_count"] == 1
+
+
+async def test_build_runtime_components_approval_resume_fails_closed_on_nested_approval() -> None:
+    class ApprovalPolicy:
+        async def allow(self, *, spec, arguments, ctx) -> ToolPolicyDecision:
+            _ = spec, arguments, ctx
+            return ToolPolicyDecision(
+                allowed=True,
+                requires_approval=True,
+                reason="needs admin approval",
+            )
+
+    broker = ToolBroker(policy=ApprovalPolicy())
+
+    async def restricted(arguments: dict[str, Any], ctx) -> dict[str, Any]:
+        _ = arguments, ctx
+        raise ApprovalRequired(
+            pending_approval=PendingApproval(
+                approval_id="approval:nested",
+                reason="nested approval",
+                tool_name="restricted",
+                tool_call_id="toolcall:nested",
+                tool_arguments={"danger": True},
+            )
+        )
+
+    broker.register_tool(
+        ToolDef(
+            name="restricted",
+            description="Restricted tool",
+            parameters={"type": "object", "properties": {}},
+            handler=lambda arguments: arguments,
+        ).to_spec(),
+        restricted,
+    )
+    gateway = FakeGateway()
+    components = build_runtime_components(
+        Config(
+            {
+                "agent": {
+                    "default_model": "test-model",
+                    "system_prompt": "You are Aca.",
+                },
+                "runtime": {
+                    "default_agent_id": "aca",
+                    "profiles": {
+                        "aca": {
+                            "name": "Aca",
+                            "prompt_ref": "prompt/aca",
+                            "default_model": "test-model",
+                            "enabled_tools": ["restricted"],
+                        }
+                    },
+                    "prompts": {
+                        "prompt/aca": "You are Aca.",
+                    },
+                },
+            }
+        ),
+        gateway=gateway,
+        agent=ApprovalToolAgent(),
+        tool_broker=broker,
+    )
+
+    components.app.install()
+    await gateway.handler(_event())
+    active = await components.run_manager.list_active()
+    result = await components.app.approve_pending_approval(active[0].run_id)
+    restored = await components.run_manager.get(active[0].run_id)
+
+    assert result.ok is False
+    assert result.run_status == "failed"
+    assert "nested approval" in result.message
+    assert restored is not None
+    assert restored.status == "failed"
 
 
 async def test_build_runtime_components_uses_sqlite_persistence_when_configured(

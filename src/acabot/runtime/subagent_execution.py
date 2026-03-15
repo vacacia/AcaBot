@@ -31,6 +31,8 @@ import uuid
 
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
+from .model_resolution import resolve_model_requests_for_profile
+from .model_registry import FileSystemModelRegistryManager
 from .models import RouteDecision, RunContext, RunRecord, RunStep
 from .pipeline import ThreadPipeline
 from .runs import RunManager
@@ -58,6 +60,7 @@ class LocalSubagentExecutionService:
         run_manager: RunManager,
         pipeline: ThreadPipeline,
         profile_loader,
+        model_registry_manager: FileSystemModelRegistryManager | None = None,
     ) -> None:
         """初始化本地 child run delegation 服务.
         """
@@ -66,6 +69,7 @@ class LocalSubagentExecutionService:
         self.run_manager = run_manager
         self.pipeline = pipeline
         self.profile_loader = profile_loader
+        self.model_registry_manager = model_registry_manager
     # region execute
     async def execute(self, request: SubagentDelegationRequest) -> SubagentDelegationResult:
         """执行一次本地 child run delegation.
@@ -91,14 +95,25 @@ class LocalSubagentExecutionService:
         thread.metadata.setdefault("delegated_skill", request.skill_name)
         thread.metadata.setdefault("delegate_agent_id", request.delegate_agent_id)
 
-        run = await self.run_manager.open(event=event, decision=decision)
         profile = self.profile_loader(decision)
+        model_request, model_snapshot, summary_model_request = resolve_model_requests_for_profile(
+            self.model_registry_manager,
+            decision=decision,
+            profile=profile,
+        )
+        run = await self.run_manager.open(
+            event=event,
+            decision=decision,
+            model_snapshot=model_snapshot,
+        )
         ctx = RunContext(
             run=run,
             event=event,
             decision=decision,
             thread=thread,
             profile=profile,
+            model_request=model_request,
+            summary_model_request=summary_model_request,
             metadata={
                 "delivery_mode": "internal",
                 "subagent_child_run": True,

@@ -93,7 +93,7 @@ async def test_ops_control_plugin_handles_status_command() -> None:
     assert agent.calls == []
     assert len(gateway.sent) == 1
     assert "active_runs=1" in gateway.sent[0].payload["text"]
-    assert "loaded_plugins=ops_control" in gateway.sent[0].payload["text"]
+    assert "loaded_plugins=computer_tool_adapter,skill_tool,skill_delegation,ops_control" in gateway.sent[0].payload["text"]
     assert "loaded_skills=excel_processing,sample_configured_skill" in gateway.sent[0].payload["text"]
 
 
