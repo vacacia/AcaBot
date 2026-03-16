@@ -235,7 +235,9 @@ class BindingRule:
     actor_id: str | None = None
     channel_scope: str | None = None
     targets_self: bool | None = None
+    mentions_self: bool | None = None
     mentioned_everyone: bool | None = None
+    reply_targets_self: bool | None = None
     sender_roles: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -275,7 +277,11 @@ class BindingRule:
             return False
         if self.targets_self is not None and self.targets_self != event.targets_self:
             return False
+        if self.mentions_self is not None and self.mentions_self != event.mentions_self:
+            return False
         if self.mentioned_everyone is not None and self.mentioned_everyone != event.mentioned_everyone:
+            return False
+        if self.reply_targets_self is not None and self.reply_targets_self != event.reply_targets_self:
             return False
         if self.sender_roles:
             sender_role = event.sender_role or ""
@@ -307,8 +313,12 @@ class BindingRule:
             keys.append("channel_scope")
         if self.targets_self is not None:
             keys.append("targets_self")
+        if self.mentions_self is not None:
+            keys.append("mentions_self")
         if self.mentioned_everyone is not None:
             keys.append("mentioned_everyone")
+        if self.reply_targets_self is not None:
+            keys.append("reply_targets_self")
         if self.sender_roles:
             keys.append("sender_roles")
         return keys
@@ -350,7 +360,9 @@ class InboundRule:
     actor_id: str | None = None
     channel_scope: str | None = None
     targets_self: bool | None = None
+    mentions_self: bool | None = None
     mentioned_everyone: bool | None = None
+    reply_targets_self: bool | None = None
     sender_roles: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -388,7 +400,11 @@ class InboundRule:
             return False
         if self.targets_self is not None and self.targets_self != event.targets_self:
             return False
+        if self.mentions_self is not None and self.mentions_self != event.mentions_self:
+            return False
         if self.mentioned_everyone is not None and self.mentioned_everyone != event.mentioned_everyone:
+            return False
+        if self.reply_targets_self is not None and self.reply_targets_self != event.reply_targets_self:
             return False
         if self.sender_roles:
             sender_role = event.sender_role or ""
@@ -420,8 +436,12 @@ class InboundRule:
             keys.append("channel_scope")
         if self.targets_self is not None:
             keys.append("targets_self")
+        if self.mentions_self is not None:
+            keys.append("mentions_self")
         if self.mentioned_everyone is not None:
             keys.append("mentioned_everyone")
+        if self.reply_targets_self is not None:
+            keys.append("reply_targets_self")
         if self.sender_roles:
             keys.append("sender_roles")
         return keys
@@ -465,7 +485,9 @@ class EventPolicy:
     actor_id: str | None = None
     channel_scope: str | None = None
     targets_self: bool | None = None
+    mentions_self: bool | None = None
     mentioned_everyone: bool | None = None
+    reply_targets_self: bool | None = None
     sender_roles: list[str] = field(default_factory=list)
     persist_event: bool = True
     extract_to_memory: bool = False
@@ -509,7 +531,11 @@ class EventPolicy:
             return False
         if self.targets_self is not None and self.targets_self != event.targets_self:
             return False
+        if self.mentions_self is not None and self.mentions_self != event.mentions_self:
+            return False
         if self.mentioned_everyone is not None and self.mentioned_everyone != event.mentioned_everyone:
+            return False
+        if self.reply_targets_self is not None and self.reply_targets_self != event.reply_targets_self:
             return False
         if self.sender_roles:
             sender_role = event.sender_role or ""
@@ -541,8 +567,12 @@ class EventPolicy:
             keys.append("channel_scope")
         if self.targets_self is not None:
             keys.append("targets_self")
+        if self.mentions_self is not None:
+            keys.append("mentions_self")
         if self.mentioned_everyone is not None:
             keys.append("mentioned_everyone")
+        if self.reply_targets_self is not None:
+            keys.append("reply_targets_self")
         if self.sender_roles:
             keys.append("sender_roles")
         return keys
@@ -887,6 +917,50 @@ class RunStep:
 
 
 @dataclass(slots=True)
+class ResolvedImageInput:
+    """当前 run 内已解析完成的一张图片输入."""
+
+    origin: str
+    message_id: str
+    attachment_index: int
+    staged_path: str
+    mime_type: str = ""
+    caption: str = ""
+    caption_status: str = "pending"
+
+
+@dataclass(slots=True)
+class ResolvedMessage:
+    """当前 run 里已经补齐好的入站消息材料."""
+
+    base_text: str
+    reply_text: str = ""
+    resolved_images: list[ResolvedImageInput] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class MemoryCandidate:
+    """交给 memory 模块自己决定如何使用的一条候选材料."""
+
+    kind: str
+    text: str
+    origin: str = "event"
+    generated: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class MessageProjection:
+    """同一条消息按不同用途生成的结果."""
+
+    history_text: str
+    model_content: str | list[dict[str, Any]]
+    memory_candidates: list[MemoryCandidate] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class RunContext:
     """ThreadPipeline 执行一次 run 时共享的上下文对象.
 
@@ -902,12 +976,16 @@ class RunContext:
     summary_model_request: "RuntimeModelRequest | None" = None
     workspace_state: "WorkspaceState | None" = None
     attachment_snapshots: list["AttachmentSnapshot"] = field(default_factory=list)
+    resolved_message: ResolvedMessage | None = None
+    resolved_images: list[ResolvedImageInput] = field(default_factory=list)
+    message_projection: MessageProjection | None = None
     computer_backend_kind: str = ""
     computer_policy_effective: "ComputerPolicy | None" = None
     messages: list[dict[str, Any]] = field(default_factory=list)
     retrieval_plan: RetrievalPlan | None = None
     memory_blocks: list["MemoryBlock"] = field(default_factory=list)
     prompt_slots: list[PromptSlot] = field(default_factory=list)
+    memory_user_content: str = ""
     system_prompt: str = ""
     response: Any | None = None
     actions: list[PlannedAction] = field(default_factory=list)

@@ -344,6 +344,8 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
                 skill_catalog_dir="/tmp/acabot-test-computer/catalog/skills",
             )
         ),
+        image_context_service=None,  # type: ignore[arg-type]
+        message_preparation_service=None,  # type: ignore[arg-type]
         reference_backend=NullReferenceBackend(),
         plugin_manager=None,  # type: ignore[arg-type]
         control_plane=None,  # type: ignore[arg-type]

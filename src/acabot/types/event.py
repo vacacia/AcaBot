@@ -102,7 +102,9 @@ class StandardEvent:
         reply_to_message_id (str | None): 当前消息引用的上游消息 ID.
         reply_reference (ReplyReference | None): 当前消息的 reply 引用详情.
         mentioned_user_ids (list[str]): 当前消息里显式提及的用户 ID 列表.
+        mentions_self (bool): 当前消息是否显式 @ 了 bot 自己.
         mentioned_everyone (bool): 当前消息是否显式 @全体.
+        reply_targets_self (bool): 当前消息引用的上游消息是否由 bot 发出.
         targets_self (bool): 当前事件是否明确指向 bot 自身.
         attachments (list[EventAttachment]): 当前消息携带的 canonical 附件列表.
         metadata (dict[str, Any]): canonical 扩展字段.
@@ -127,7 +129,9 @@ class StandardEvent:
     reply_to_message_id: str | None = None
     reply_reference: ReplyReference | None = None
     mentioned_user_ids: list[str] = field(default_factory=list)
+    mentions_self: bool = False
     mentioned_everyone: bool = False
+    reply_targets_self: bool = False
     targets_self: bool = False
     attachments: list[EventAttachment] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -313,6 +317,52 @@ class StandardEvent:
         return self.notice_preview
 
     @property
+    def target_reasons(self) -> list[str]:
+        """返回这条事件为什么会被视为和 bot 有关.
+
+        Returns:
+            一个稳定的原因列表.
+            可能包含 `private` `mention_self` `mention_everyone` `reply_to_self`.
+            如果群消息和 bot 无关, 返回 `["ambient_group"]`.
+            notice 事件返回 `["notice"]`.
+        """
+
+        reasons: list[str] = []
+        if self.is_notice:
+            return ["notice"]
+        if self.is_private:
+            reasons.append("private")
+        if self.mentions_self:
+            reasons.append("mention_self")
+        if self.mentioned_everyone:
+            reasons.append("mention_everyone")
+        if self.reply_targets_self:
+            reasons.append("reply_to_self")
+        if reasons:
+            return reasons
+        if self.is_group:
+            return ["ambient_group"]
+        return ["message"]
+
+    @property
+    def bot_relation(self) -> str:
+        """返回一条更容易阅读的 bot 关系摘要."""
+
+        if self.is_notice:
+            return "notice"
+        if self.is_private:
+            return "private"
+        if self.mentions_self:
+            return "mention_self"
+        if self.reply_targets_self:
+            return "reply_to_self"
+        if self.mentioned_everyone:
+            return "mention_everyone"
+        if self.is_group:
+            return "ambient_group"
+        return "message"
+
+    @property
     def actor_tag(self) -> str:
         """返回用于 working memory 的 actor 标识前缀.
 
@@ -360,7 +410,9 @@ class StandardEvent:
             "reply_to_message_id": self.reply_to_message_id,
             "reply_reference": self._reply_reference_payload(),
             "mentioned_user_ids": list(self.mentioned_user_ids),
+            "mentions_self": self.mentions_self,
             "mentioned_everyone": self.mentioned_everyone,
+            "reply_targets_self": self.reply_targets_self,
             "targets_self": self.targets_self,
             "attachments": [
                 {

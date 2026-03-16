@@ -22,7 +22,9 @@ def _event(
     notice_type: str | None = None,
     notice_subtype: str | None = None,
     targets_self: bool = False,
+    mentions_self: bool = False,
     mentioned_everyone: bool = False,
+    reply_targets_self: bool = False,
 ) -> StandardEvent:
     return StandardEvent(
         event_id="evt-1",
@@ -43,7 +45,9 @@ def _event(
         notice_type=notice_type,
         notice_subtype=notice_subtype,
         targets_self=targets_self,
+        mentions_self=mentions_self,
         mentioned_everyone=mentioned_everyone,
+        reply_targets_self=reply_targets_self,
     )
 
 
@@ -219,6 +223,27 @@ async def test_runtime_router_supports_targets_self_inbound_rules() -> None:
 
     assert decision.run_mode == "record_only"
     assert decision.metadata["inbound_match_keys"] == ["platform", "event_type", "channel_scope", "targets_self"]
+
+
+async def test_runtime_router_keeps_explicit_event_relation_metadata() -> None:
+    router = RuntimeRouter(default_agent_id="aca")
+
+    decision = await router.route(
+        _event(
+            event_type="message",
+            message_type="group",
+            user_id="10001",
+            group_id="20002",
+            targets_self=True,
+            mentions_self=True,
+            reply_targets_self=True,
+        )
+    )
+
+    assert decision.metadata["bot_relation"] == "mention_self"
+    assert decision.metadata["mentions_self"] is True
+    assert decision.metadata["reply_targets_self"] is True
+    assert decision.metadata["target_reasons"] == ["mention_self", "reply_to_self"]
 
 
 async def test_runtime_router_merges_event_policy_metadata() -> None:

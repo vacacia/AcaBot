@@ -344,7 +344,30 @@ class MemoryBroker:
             一条简短的用户内容字符串.
         """
 
-        return ctx.event.working_memory_text
+        if ctx.message_projection is not None and ctx.message_projection.memory_candidates:
+            return MemoryBroker._format_memory_candidates(ctx.message_projection.memory_candidates)
+        return str(ctx.memory_user_content or ctx.event.working_memory_text or "")
+
+    @staticmethod
+    def _format_memory_candidates(candidates: list[object]) -> str:
+        """把消息整理层给出的候选材料变成 memory write-back 使用的文本."""
+
+        parts: list[str] = []
+        for candidate in candidates:
+            text = str(getattr(candidate, "text", "") or "").strip()
+            if not text:
+                continue
+            kind = str(getattr(candidate, "kind", "") or "")
+            metadata = dict(getattr(candidate, "metadata", {}) or {})
+            if kind == "base_text":
+                parts.append(text)
+                continue
+            label = str(metadata.get("label", "") or "").strip()
+            if label:
+                parts.append(f"[系统补充-{label}: {text}]")
+            else:
+                parts.append(text)
+        return " ".join(parts).strip()
 
     @staticmethod
     def _working_summary(ctx: RunContext) -> str:

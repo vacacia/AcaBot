@@ -45,6 +45,10 @@ from .control_plane import RuntimeControlPlane
 from .event_policy import EventPolicyRegistry
 from .event_store import InMemoryChannelEventStore
 from .gateway_protocol import GatewayProtocol
+from .image_context import ImageContextService
+from .message_preparation import MessagePreparationService
+from .message_projection import MessageProjectionService
+from .message_resolution import MessageResolutionService
 from .memory_broker import MemoryBroker
 from .memory_item_store import InMemoryMemoryStore
 from .memory_store import InMemoryMessageStore
@@ -136,6 +140,8 @@ class RuntimeComponents:
         retrieval_planner (RetrievalPlanner): 负责 retrieval planning 和 prompt assembly 的 planner.
         model_registry_manager (FileSystemModelRegistryManager): 模型真源与 active registry 管理器.
         computer_runtime (ComputerRuntime): computer 基础设施入口.
+        image_context_service (ImageContextService): 图片 caption 和多模态输入 helper.
+        message_preparation_service (MessagePreparationService): 负责把消息补齐并生成 history/model 输入.
         reference_backend (ReferenceBackend): on-demand `reference / notebook` provider.
         plugin_manager (RuntimePluginManager): runtime world 的插件管理器.
         control_plane (RuntimeControlPlane): 本地 control plane 入口.
@@ -166,6 +172,8 @@ class RuntimeComponents:
     retrieval_planner: RetrievalPlanner
     model_registry_manager: FileSystemModelRegistryManager
     computer_runtime: ComputerRuntime
+    image_context_service: ImageContextService
+    message_preparation_service: MessagePreparationService
     reference_backend: ReferenceBackend
     plugin_manager: RuntimePluginManager
     control_plane: RuntimeControlPlane
@@ -285,6 +293,21 @@ def build_runtime_components(
     )
     runtime_reference_backend = reference_backend or _build_reference_backend(config)
     runtime_model_registry_manager = model_registry_manager or _build_model_registry_manager(config)
+    runtime_image_context_service = ImageContextService(
+        agent=agent,
+        model_registry_manager=runtime_model_registry_manager,
+    )
+    runtime_message_resolution_service = MessageResolutionService(
+        gateway=gateway,
+        computer_runtime=runtime_computer_runtime,
+    )
+    runtime_message_projection_service = MessageProjectionService(
+        image_context=runtime_image_context_service,
+    )
+    runtime_message_preparation_service = MessagePreparationService(
+        resolution_service=runtime_message_resolution_service,
+        projection_service=runtime_message_projection_service,
+    )
     runtime_tool_broker = tool_broker or ToolBroker(
         skill_catalog=runtime_skill_catalog,
         subagent_executor_registry=runtime_subagent_executor_registry,
@@ -326,6 +349,7 @@ def build_runtime_components(
         retrieval_planner=runtime_retrieval_planner,
         context_compactor=runtime_context_compactor,
         computer_runtime=runtime_computer_runtime,
+        message_preparation_service=runtime_message_preparation_service,
         tool_broker=runtime_tool_broker,
         plugin_manager=runtime_plugin_manager,
     )
@@ -407,6 +431,8 @@ def build_runtime_components(
         retrieval_planner=runtime_retrieval_planner,
         model_registry_manager=runtime_model_registry_manager,
         computer_runtime=runtime_computer_runtime,
+        image_context_service=runtime_image_context_service,
+        message_preparation_service=runtime_message_preparation_service,
         reference_backend=runtime_reference_backend,
         plugin_manager=runtime_plugin_manager,
         control_plane=control_plane,
@@ -1269,7 +1295,9 @@ def _parse_binding_rule_config(
         actor_id=_optional_str(match_conf.get("actor_id")),
         channel_scope=_optional_str(match_conf.get("channel_scope")),
         targets_self=_optional_bool(match_conf.get("targets_self")),
+        mentions_self=_optional_bool(match_conf.get("mentions_self")),
         mentioned_everyone=_optional_bool(match_conf.get("mentioned_everyone")),
+        reply_targets_self=_optional_bool(match_conf.get("reply_targets_self")),
         sender_roles=[str(role) for role in match_conf.get("sender_roles", [])],
         metadata=dict(rule_conf.get("metadata", {})),
     )
@@ -1303,7 +1331,9 @@ def _parse_inbound_rule_config(
         actor_id=_optional_str(match_conf.get("actor_id")),
         channel_scope=_optional_str(match_conf.get("channel_scope")),
         targets_self=_optional_bool(match_conf.get("targets_self")),
+        mentions_self=_optional_bool(match_conf.get("mentions_self")),
         mentioned_everyone=_optional_bool(match_conf.get("mentioned_everyone")),
+        reply_targets_self=_optional_bool(match_conf.get("reply_targets_self")),
         sender_roles=[str(role) for role in match_conf.get("sender_roles", [])],
         metadata=dict(rule_conf.get("metadata", {})),
     )
@@ -1336,7 +1366,9 @@ def _parse_event_policy_config(
         actor_id=_optional_str(match_conf.get("actor_id")),
         channel_scope=_optional_str(match_conf.get("channel_scope")),
         targets_self=_optional_bool(match_conf.get("targets_self")),
+        mentions_self=_optional_bool(match_conf.get("mentions_self")),
         mentioned_everyone=_optional_bool(match_conf.get("mentioned_everyone")),
+        reply_targets_self=_optional_bool(match_conf.get("reply_targets_self")),
         sender_roles=[str(role) for role in match_conf.get("sender_roles", [])],
         persist_event=bool(policy_conf.get("persist_event", True)),
         extract_to_memory=bool(policy_conf.get("extract_to_memory", False)),

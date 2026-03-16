@@ -17,6 +17,10 @@ except ImportError:
     serve = None
 
 from .base import BaseGateway
+from .onebot_message import (
+    extract_onebot_message_features,
+    onebot_segment_to_attachment,
+)
 from acabot.types import (
     StandardEvent,
     EventSource,
@@ -167,8 +171,14 @@ class NapCatGateway(BaseGateway):
             mentioned_user_ids,
             mentioned_everyone,
             attachments,
-        ) = self._extract_message_features(raw_segments)
+        ) = extract_onebot_message_features(raw_segments)
         self_user_id = str(self._self_id or "")
+        mentions_self = bool(self_user_id) and self_user_id in mentioned_user_ids
+        reply_targets_self = (
+            reply_reference is not None
+            and bool(self_user_id)
+            and str(reply_reference.sender_user_id or "") == self_user_id
+        )
         source = EventSource(
             platform="qq",
             message_type=raw.get("message_type", ""),
@@ -198,11 +208,14 @@ class NapCatGateway(BaseGateway):
             reply_to_message_id=reply_reference.message_id if reply_reference is not None else None,
             reply_reference=reply_reference,
             mentioned_user_ids=mentioned_user_ids,
+            mentions_self=mentions_self,
             mentioned_everyone=mentioned_everyone,
+            reply_targets_self=reply_targets_self,
             targets_self=(
                 raw.get("message_type") == "private"
                 or mentioned_everyone
-                or (bool(self_user_id) and self_user_id in mentioned_user_ids)
+                or mentions_self
+                or reply_targets_self
             ),
             attachments=attachments,
             raw_event=dict(raw),
@@ -763,47 +776,7 @@ class NapCatGateway(BaseGateway):
             - attachments: 附件列表(图片/文件/语音/视频), 从对应 segment 转换
         """
 
-        reply_reference: ReplyReference | None = None
-        mentioned_user_ids: list[str] = []
-        mentioned_everyone = False
-        attachments: list[EventAttachment] = []
-
-        for segment in raw_segments:
-            seg_type = str(segment.get("type", "") or "")
-            data = dict(segment.get("data", {}) or {})
-
-            # reply segment: 是一条回复消息, data.id 是被回复的消息 ID
-            if seg_type == "reply":
-                reply_message_id = str(data.get("id", "") or "") or ""
-                if reply_message_id:
-                    reply_reference = ReplyReference(
-                        message_id=reply_message_id,
-                        sender_user_id=str(
-                            data.get("user_id")
-                            or data.get("qq")
-                            or ""
-                        ),
-                        text_preview=str(data.get("text", "") or ""),
-                        metadata=dict(data),
-                    )
-                continue  # reply 不生成 attachment
-
-            # at segment: data.qq 是被 @ 的用户 ID
-            if seg_type == "at":
-                mentioned_user_id = str(data.get("qq", "") or "") or None
-                if mentioned_user_id:
-                    if mentioned_user_id in {"all", "everyone"}:
-                        mentioned_everyone = True
-                    mentioned_user_ids.append(mentioned_user_id)
-                continue  # at 不生成 attachment
-
-            # 其他 segment 类型(image/file/record/video)转换为 attachment
-            # text segment 不在这里处理, 因为文本内容在 message_preview 中提取
-            attachment = self._segment_to_attachment(seg_type, data)
-            if attachment is not None:
-                attachments.append(attachment)
-
-        return reply_reference, mentioned_user_ids, mentioned_everyone, attachments
+        return extract_onebot_message_features(raw_segments)
 
     def _segment_to_attachment(
         self,
@@ -826,41 +799,7 @@ class NapCatGateway(BaseGateway):
             可识别时返回 EventAttachment, 否则返回 None.
         """
 
-        # OneBot 类型 -> AcaBot 内部类型的映射表
-        attachment_type_map = {
-            "image": "image",
-            "file": "file",
-            "record": "audio",
-            "video": "video",
-        }
-        attachment_type = attachment_type_map.get(seg_type)
-        if attachment_type is None:
-            # 未识别的类型不生成 attachment
-            return None
-
-        # source 的优先级
-        # - url: 最直接可访问的 HTTP URL
-        # - file: 本地文件路径或缓存标识
-        # - path: 备用路径字段
-        # - id: 最简标识, 需要二次解析
-        source = str(
-            data.get("url")
-            or data.get("file")
-            or data.get("path")
-            or data.get("id")
-            or ""
-        )
-        name = str(data.get("name", "") or "")  # 文件名, 用于展示
-        mime_type = str(data.get("mime", "") or "")  # MIME 类型, 用于内容识别
-
-        # 保留原始 data 的完整内容, 供后续处理使用
-        return EventAttachment(
-            type=attachment_type,
-            source=source,
-            name=name,
-            mime_type=mime_type,
-            metadata=dict(data),
-        )
+        return onebot_segment_to_attachment(seg_type, data)
 
     # endregion
 

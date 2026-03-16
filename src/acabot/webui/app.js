@@ -444,15 +444,112 @@ function eventTypeLabel(eventType) {
   return SESSION_EVENT_TYPE_LABELS[eventType] || eventType || "未命名事件"
 }
 
+const BOT_DEFAULT_MATCH_FIELDS = [
+  "platform",
+  "event_type",
+  "message_subtype",
+  "notice_type",
+  "notice_subtype",
+  "actor_id",
+  "channel_scope",
+  "targets_self",
+  "mentions_self",
+  "mentioned_everyone",
+  "reply_targets_self",
+  "sender_roles",
+]
+
+function botEventDefaultEntries() {
+  const eventTypes = botEventTypes()
+  const entries = []
+  if (eventTypes.includes("message")) {
+    entries.push(
+      {
+        key: "message_direct",
+        eventType: "message",
+        label: "消息 @bot",
+        meta: "message · mentions_self=true",
+        description: "用户明确 @ 了 bot。通常这类消息应该优先进入正常回复。",
+        badge: "@bot",
+        priority: 30,
+        match: {
+          platform: "qq",
+          event_type: "message",
+          mentions_self: true,
+        },
+      },
+      {
+        key: "message_reply",
+        eventType: "message",
+        label: "消息 引用bot",
+        meta: "message · reply_targets_self=true",
+        description: "用户没有直接 @，但在接 bot 之前的消息继续追问。",
+        badge: "引用",
+        priority: 20,
+        match: {
+          platform: "qq",
+          event_type: "message",
+          mentions_self: false,
+          reply_targets_self: true,
+        },
+      },
+      {
+        key: "message_ambient",
+        eventType: "message",
+        label: "消息 普通群聊",
+        meta: "message · targets_self=false",
+        description: "群里路过聊天，默认不明确和 bot 有关。适合设成只记录或静默丢弃。",
+        badge: "路过",
+        priority: 10,
+        match: {
+          platform: "qq",
+          event_type: "message",
+          targets_self: false,
+        },
+      },
+      {
+        key: "message",
+        eventType: "message",
+        label: "消息 其他",
+        meta: "message",
+        description: "兜底消息规则。当前面几类都没命中时，最后才落到这里。",
+        badge: "兜底",
+        priority: 0,
+        match: {
+          platform: "qq",
+          event_type: "message",
+        },
+      },
+    )
+  }
+  for (const eventType of eventTypes) {
+    if (eventType === "message") continue
+    entries.push({
+      key: eventType,
+      eventType,
+      label: eventTypeLabel(eventType),
+      meta: eventType,
+      description: "非消息事件的默认处理方式。",
+      badge: "事件",
+      priority: 10,
+      match: {
+        platform: "qq",
+        event_type: eventType,
+      },
+    })
+  }
+  return entries
+}
+
 function defaultBotEventDefaults() {
   return Object.fromEntries(
-    botEventTypes().map((eventType) => [
-      eventType,
+    botEventDefaultEntries().map((entry) => [
+      entry.key,
       {
         run_mode: "respond",
         persist_event: true,
         extract_to_memory: false,
-        memory_scopes: eventType === "message" ? ["episodic"] : [],
+        memory_scopes: entry.eventType === "message" ? ["episodic"] : [],
         inbound_rule_id: "",
         event_policy_id: "",
       },
@@ -460,38 +557,53 @@ function defaultBotEventDefaults() {
   )
 }
 
-function isSimpleBotDefaultRule(item) {
+function isBotDefaultEntryMatch(item, entry) {
   const match = item?.match || {}
-  return (
-    !match.channel_scope
-    && !match.actor_id
-    && !match.message_subtype
-    && !match.notice_type
-    && !match.notice_subtype
-    && match.platform === "qq"
-    && !!match.event_type
-    && !match.targets_self
-    && !match.mentioned_everyone
-    && !(Array.isArray(match.sender_roles) && match.sender_roles.length)
-  )
+  return BOT_DEFAULT_MATCH_FIELDS.every((field) => {
+    const expected = entry.match[field]
+    const actual = match[field]
+    if (Array.isArray(expected) || Array.isArray(actual)) {
+      const expectedList = Array.isArray(expected) ? expected : []
+      const actualList = Array.isArray(actual) ? actual : []
+      return JSON.stringify(expectedList) === JSON.stringify(actualList)
+    }
+    return (expected ?? null) === (actual ?? null)
+  })
+}
+
+function inheritMessageFallback(defaults) {
+  const fallback = defaults.message
+  if (!fallback) return
+  for (const key of ["message_direct", "message_reply", "message_ambient"]) {
+    const item = defaults[key]
+    if (!item) continue
+    if (!item.inbound_rule_id) item.run_mode = fallback.run_mode
+    if (!item.event_policy_id) {
+      item.persist_event = fallback.persist_event
+      item.extract_to_memory = fallback.extract_to_memory
+      item.memory_scopes = [...(fallback.memory_scopes || [])]
+    }
+  }
 }
 
 function buildBotEventDefaults(inboundRules, eventPolicies) {
   const defaults = defaultBotEventDefaults()
-  for (const rule of inboundRules.filter(isSimpleBotDefaultRule)) {
-    const eventType = String(rule.match?.event_type || "")
-    if (!eventType || !Object.hasOwn(defaults, eventType)) continue
-    defaults[eventType].run_mode = rule.run_mode || "respond"
-    defaults[eventType].inbound_rule_id = rule.rule_id || ""
+  const entries = botEventDefaultEntries()
+  for (const rule of inboundRules) {
+    const entry = entries.find((item) => isBotDefaultEntryMatch(rule, item))
+    if (!entry || !Object.hasOwn(defaults, entry.key)) continue
+    defaults[entry.key].run_mode = rule.run_mode || "respond"
+    defaults[entry.key].inbound_rule_id = rule.rule_id || ""
   }
-  for (const policy of eventPolicies.filter(isSimpleBotDefaultRule)) {
-    const eventType = String(policy.match?.event_type || "")
-    if (!eventType || !Object.hasOwn(defaults, eventType)) continue
-    defaults[eventType].persist_event = policy.persist_event !== false
-    defaults[eventType].extract_to_memory = Boolean(policy.extract_to_memory)
-    defaults[eventType].memory_scopes = Array.isArray(policy.memory_scopes) ? [...policy.memory_scopes] : []
-    defaults[eventType].event_policy_id = policy.policy_id || ""
+  for (const policy of eventPolicies) {
+    const entry = entries.find((item) => isBotDefaultEntryMatch(policy, item))
+    if (!entry || !Object.hasOwn(defaults, entry.key)) continue
+    defaults[entry.key].persist_event = policy.persist_event !== false
+    defaults[entry.key].extract_to_memory = Boolean(policy.extract_to_memory)
+    defaults[entry.key].memory_scopes = Array.isArray(policy.memory_scopes) ? [...policy.memory_scopes] : []
+    defaults[entry.key].event_policy_id = policy.policy_id || ""
   }
+  inheritMessageFallback(defaults)
   return defaults
 }
 
@@ -763,6 +875,15 @@ function defaultComputerDraft() {
   }
 }
 
+function defaultImageCaptionDraft() {
+  return {
+    enabled: false,
+    caption_preset_id: "",
+    caption_prompt: "",
+    include_reply_images: true,
+  }
+}
+
 function createEmptyProfile() {
   return {
     agent_id: "",
@@ -774,6 +895,7 @@ function createEmptyProfile() {
     enabled_tools: [],
     skill_assignments: [],
     computer: defaultComputerDraft(),
+    image_caption: defaultImageCaptionDraft(),
   }
 }
 
@@ -794,6 +916,10 @@ function profileDraftFromSource(profile) {
     computer: {
       ...defaultComputerDraft(),
       ...(deepClone(profile?.computer || {})),
+    },
+    image_caption: {
+      ...defaultImageCaptionDraft(),
+      ...(deepClone(profile?.config?.image_caption || profile?.image_caption || {})),
     },
     bound_preset_id: guessedPresetId,
   }
@@ -994,6 +1120,21 @@ function renderProfileForm(prefix, draft, { withComputer }) {
       label: item.model || item.preset_id,
     }), prefix === "profile" ? "沿用主模型 / 全局 summary" : "继承主 Bot Summary")
   }
+  if ($(`#${prefix}-image-caption-preset`)) {
+    renderSelectOptions(`${prefix}-image-caption-preset`, state.catalog?.model_presets || [], draft.image_caption?.caption_preset_id || "", (item) => ({
+      value: item.preset_id,
+      label: item.model || item.preset_id,
+    }), prefix === "profile" ? "沿用当前主模型" : "继承主 Bot 图片模型")
+  }
+  if ($(`#${prefix}-image-caption-enabled`)) {
+    $(`#${prefix}-image-caption-enabled`).checked = Boolean(draft.image_caption?.enabled)
+  }
+  if ($(`#${prefix}-image-caption-include-reply`)) {
+    $(`#${prefix}-image-caption-include-reply`).checked = draft.image_caption?.include_reply_images !== false
+  }
+  if ($(`#${prefix}-image-caption-prompt`)) {
+    $(`#${prefix}-image-caption-prompt`).value = draft.image_caption?.caption_prompt || ""
+  }
   const descriptionInput = $(`#${prefix}-description`)
   if (descriptionInput) {
     descriptionInput.value = draft.description || ""
@@ -1091,6 +1232,12 @@ function readProfileForm(prefix, { withComputer }) {
     enabled_tools: enabledTools,
     skill_assignments: readSkillAssignments(`${prefix}-skill-assignments-list`),
     bound_preset_id: $(`#${prefix}-model-preset`).value,
+    image_caption: {
+      enabled: Boolean($(`#${prefix}-image-caption-enabled`)?.checked),
+      caption_preset_id: $(`#${prefix}-image-caption-preset`)?.value || "",
+      caption_prompt: $(`#${prefix}-image-caption-prompt`)?.value.trim() || "",
+      include_reply_images: $(`#${prefix}-image-caption-include-reply`)?.checked !== false,
+    },
   }
   if (withComputer) {
     payload.computer = {
@@ -1215,34 +1362,29 @@ async function saveProfileLike(prefix, { withComputer, setSelected }) {
 
 async function saveBotEventDefaults() {
   const defaults = readBotEventDefaults()
-  for (const eventType of botEventTypes()) {
-    const item = defaults[eventType]
-    const inboundRuleId = item.inbound_rule_id || `bot-default-inbound:${eventType}`
-    const eventPolicyId = item.event_policy_id || `bot-default-policy:${eventType}`
+  for (const entry of botEventDefaultEntries()) {
+    const item = defaults[entry.key]
+    const inboundRuleId = item.inbound_rule_id || `bot-default-inbound:${entry.key}`
+    const eventPolicyId = item.event_policy_id || `bot-default-policy:${entry.key}`
     const metadata = {
       ui_scope: "bot_default",
-      event_type: eventType,
+      event_type: entry.eventType,
+      event_key: entry.key,
     }
     await api(`/api/rules/inbound/${encodeURIComponent(inboundRuleId)}`, {
       method: "PUT",
       body: JSON.stringify({
         run_mode: item.run_mode || "respond",
-        priority: 10,
-        match: {
-          platform: "qq",
-          event_type: eventType,
-        },
+        priority: entry.priority || 10,
+        match: { ...entry.match },
         metadata,
       }),
     })
     await api(`/api/rules/event-policies/${encodeURIComponent(eventPolicyId)}`, {
       method: "PUT",
       body: JSON.stringify({
-        priority: 10,
-        match: {
-          platform: "qq",
-          event_type: eventType,
-        },
+        priority: entry.priority || 10,
+        match: { ...entry.match },
         persist_event: item.persist_event !== false,
         extract_to_memory: Boolean(item.extract_to_memory),
         memory_scopes: item.memory_scopes || [],
@@ -1405,6 +1547,7 @@ function createEmptySessionConfig() {
     prompt_ref: botDraft.prompt_ref || "",
     bound_preset_id: botDraft.bound_preset_id || "",
     summary_model_preset_id: botDraft.summary_model_preset_id || "",
+    image_caption: deepClone(botDraft.image_caption || defaultImageCaptionDraft()),
     enabled_tools: [...(botDraft.enabled_tools || [])],
     skill_assignments: deepClone(botDraft.skill_assignments || []),
     response_modes: Object.fromEntries(sessionEventTypes().map((eventType) => [eventType, botEventDefaults[eventType]?.run_mode || "respond"])),
@@ -1495,20 +1638,26 @@ function renderBotEventDefaults(defaults) {
   if (!container) return
   const normalized = defaults || defaultBotEventDefaults()
   const runModes = catalogOptions("run_modes").length ? catalogOptions("run_modes") : ["respond", "record_only", "silent_drop"]
-  container.innerHTML = botEventTypes()
-    .map((eventType) => {
-      const item = normalized[eventType] || defaultBotEventDefaults()[eventType]
-      const memoryPickerKey = `bot-event-${eventType}`
+  const fallbackDefaults = defaultBotEventDefaults()
+  const renderCard = (entry) => {
+      const item = normalized[entry.key] || fallbackDefaults[entry.key]
+      const memoryPickerKey = `bot-event-${entry.key}`
       return `
-        <div class="info-card event-default-row">
+        <div class="info-card event-default-card ${entry.eventType === "message" ? "event-default-card-message" : ""}">
           <div class="event-default-header">
-            <div class="event-default-title">${escapeHtml(eventTypeLabel(eventType))}</div>
-            <div class="event-default-meta">${escapeHtml(eventType)}</div>
+            <div class="event-default-copy">
+              <div class="event-default-title-row">
+                <div class="event-default-title">${escapeHtml(entry.label)}</div>
+                <div class="pill event-default-pill">${escapeHtml(entry.badge || "规则")}</div>
+              </div>
+              <div class="event-default-description">${escapeHtml(entry.description || "")}</div>
+            </div>
+            <div class="event-default-meta">${escapeHtml(entry.meta)}</div>
           </div>
-          <div class="form-grid compact-grid">
+          <div class="form-grid compact-grid event-default-controls">
             <label>
               <span>默认行为</span>
-              <select data-bot-event-field="run_mode" data-bot-event-type="${escapeHtml(eventType)}">
+              <select data-bot-event-field="run_mode" data-bot-event-key="${escapeHtml(entry.key)}">
                 ${runModes
                   .map((mode) => `
                     <option value="${escapeHtml(mode)}" ${item.run_mode === mode ? "selected" : ""}>${escapeHtml(responseStrategyLabel(mode))}</option>
@@ -1516,17 +1665,43 @@ function renderBotEventDefaults(defaults) {
                   .join("")}
               </select>
             </label>
-            <label class="checkbox-row"><input type="checkbox" data-bot-event-field="persist_event" data-bot-event-type="${escapeHtml(eventType)}" ${item.persist_event !== false ? "checked" : ""}> <span>保存事件</span></label>
-            <label class="checkbox-row"><input type="checkbox" data-bot-event-field="extract_to_memory" data-bot-event-type="${escapeHtml(eventType)}" ${item.extract_to_memory ? "checked" : ""}> <span>提取到 memory</span></label>
+            <label class="checkbox-row"><input type="checkbox" data-bot-event-field="persist_event" data-bot-event-key="${escapeHtml(entry.key)}" ${item.persist_event !== false ? "checked" : ""}> <span>保存事件</span></label>
+            <label class="checkbox-row"><input type="checkbox" data-bot-event-field="extract_to_memory" data-bot-event-key="${escapeHtml(entry.key)}" ${item.extract_to_memory ? "checked" : ""}> <span>提取到 memory</span></label>
             <label class="wide">
               <span>默认 Memory Scopes</span>
-              <div data-bot-memory-scopes data-bot-event-type="${escapeHtml(eventType)}">${renderMemoryScopePickerMarkup(memoryPickerKey, item.memory_scopes || [], BOT_MEMORY_SCOPES)}</div>
+              <div data-bot-memory-scopes data-bot-event-key="${escapeHtml(entry.key)}">${renderMemoryScopePickerMarkup(memoryPickerKey, item.memory_scopes || [], BOT_MEMORY_SCOPES)}</div>
             </label>
           </div>
         </div>
       `
-    })
-    .join("")
+    }
+  const messageEntries = botEventDefaultEntries().filter((entry) => entry.eventType === "message")
+  const otherEntries = botEventDefaultEntries().filter((entry) => entry.eventType !== "message")
+  container.innerHTML = `
+    <section class="event-default-group event-default-group-message">
+      <div class="event-default-group-header">
+        <div>
+          <h4>消息场景</h4>
+          <p>把真正叫 bot 的消息、接 bot 的消息和普通群聊分开。这样默认策略更稳，不会一条规则把所有消息都吞掉。</p>
+        </div>
+        <div class="event-default-group-note">优先级: @bot &gt; 引用bot &gt; 普通群聊 &gt; 其他</div>
+      </div>
+      <div class="event-default-grid event-default-grid-message">
+        ${messageEntries.map(renderCard).join("")}
+      </div>
+    </section>
+    <section class="event-default-group">
+      <div class="event-default-group-header">
+        <div>
+          <h4>其他平台事件</h4>
+          <p>这些规则控制 poke、recall、入群、好友等非消息事件的默认行为。</p>
+        </div>
+      </div>
+      <div class="event-default-grid">
+        ${otherEntries.map(renderCard).join("")}
+      </div>
+    </section>
+  `
   container.querySelectorAll("[data-bot-memory-scopes]").forEach((node) => bindMemoryScopePicker(node))
 }
 
@@ -1558,13 +1733,13 @@ function renderBotSubagents() {
 
 function readBotEventDefaults() {
   const defaults = defaultBotEventDefaults()
-  for (const eventType of botEventTypes()) {
-    defaults[eventType].run_mode = document.querySelector(`[data-bot-event-field="run_mode"][data-bot-event-type="${eventType}"]`)?.value || "respond"
-    defaults[eventType].persist_event = Boolean(document.querySelector(`[data-bot-event-field="persist_event"][data-bot-event-type="${eventType}"]`)?.checked)
-    defaults[eventType].extract_to_memory = Boolean(document.querySelector(`[data-bot-event-field="extract_to_memory"][data-bot-event-type="${eventType}"]`)?.checked)
-    defaults[eventType].memory_scopes = readMemoryScopePicker(`[data-bot-memory-scopes][data-bot-event-type="${eventType}"]`)
-    defaults[eventType].inbound_rule_id = state.botEventDefaults?.[eventType]?.inbound_rule_id || ""
-    defaults[eventType].event_policy_id = state.botEventDefaults?.[eventType]?.event_policy_id || ""
+  for (const entry of botEventDefaultEntries()) {
+    defaults[entry.key].run_mode = document.querySelector(`[data-bot-event-field="run_mode"][data-bot-event-key="${entry.key}"]`)?.value || "respond"
+    defaults[entry.key].persist_event = Boolean(document.querySelector(`[data-bot-event-field="persist_event"][data-bot-event-key="${entry.key}"]`)?.checked)
+    defaults[entry.key].extract_to_memory = Boolean(document.querySelector(`[data-bot-event-field="extract_to_memory"][data-bot-event-key="${entry.key}"]`)?.checked)
+    defaults[entry.key].memory_scopes = readMemoryScopePicker(`[data-bot-memory-scopes][data-bot-event-key="${entry.key}"]`)
+    defaults[entry.key].inbound_rule_id = state.botEventDefaults?.[entry.key]?.inbound_rule_id || ""
+    defaults[entry.key].event_policy_id = state.botEventDefaults?.[entry.key]?.event_policy_id || ""
   }
   return defaults
 }
@@ -1577,6 +1752,10 @@ function setSessionAiOverrideEnabled(enabled) {
     "session-model-preset",
     "session-summary-model-preset",
     "session-prompt-ref",
+    "session-image-caption-enabled",
+    "session-image-caption-preset",
+    "session-image-caption-include-reply",
+    "session-image-caption-prompt",
     "add-session-skill-btn",
   ]
   ids.forEach((id) => {
@@ -1645,6 +1824,7 @@ function renderSessionPreview(session) {
   const scope = uiScopeToChannelScope(session.scope_type, session.scope_value) || "未设置"
   const model = (state.catalog?.model_presets || []).find((item) => item.preset_id === session.bound_preset_id)?.model || "继承主 Bot"
   const summaryModel = (state.catalog?.model_presets || []).find((item) => item.preset_id === session.summary_model_preset_id)?.model || "跟随当前模型"
+  const imageCaptionModel = (state.catalog?.model_presets || []).find((item) => item.preset_id === session.image_caption?.caption_preset_id)?.model || "沿用当前模型"
   const tags = (session.tags || []).length ? session.tags.join(", ") : "无"
   const scopes = (session.memory_scopes || []).length ? session.memory_scopes.join(", ") : "无"
   return `
@@ -1654,7 +1834,7 @@ function renderSessionPreview(session) {
     </div>
     <div class="info-card">
       <div class="list-item-title">AI 配置</div>
-      <div class="list-item-meta">${escapeHtml(session.ai_override_enabled ? "会话级覆盖已启用" : "继承主 Bot")} · Prompt=${escapeHtml(promptNameFromRef(session.prompt_ref || ""))} · 模型=${escapeHtml(model)} · Summary=${escapeHtml(summaryModel)} · tools=${escapeHtml((session.enabled_tools || []).length)} · skills=${escapeHtml((session.skill_assignments || []).length)}</div>
+      <div class="list-item-meta">${escapeHtml(session.ai_override_enabled ? "会话级覆盖已启用" : "继承主 Bot")} · Prompt=${escapeHtml(promptNameFromRef(session.prompt_ref || ""))} · 模型=${escapeHtml(model)} · Summary=${escapeHtml(summaryModel)} · 图片理解=${escapeHtml(session.image_caption?.enabled ? `开启(${imageCaptionModel})` : "关闭")} · tools=${escapeHtml((session.enabled_tools || []).length)} · skills=${escapeHtml((session.skill_assignments || []).length)}</div>
     </div>
     <div class="info-card">
       <div class="list-item-title">响应策略</div>
@@ -1688,6 +1868,13 @@ function fillSessionForm(session) {
     value: item.prompt_ref,
     label: item.prompt_name || promptNameFromRef(item.prompt_ref),
   }), "继承主 Bot Prompt")
+  renderSelectOptions("session-image-caption-preset", state.catalog?.model_presets || [], session.image_caption?.caption_preset_id || "", (item) => ({
+    value: item.preset_id,
+    label: item.model || item.preset_id,
+  }), "继承主 Bot 图片模型")
+  $("#session-image-caption-enabled").checked = Boolean(session.image_caption?.enabled)
+  $("#session-image-caption-include-reply").checked = session.image_caption?.include_reply_images !== false
+  $("#session-image-caption-prompt").value = session.image_caption?.caption_prompt || ""
   renderToolOptions("session-enabled-tools-list", session.enabled_tools || [])
   renderSkillAssignments("session-skill-assignments-list", session.skill_assignments || [])
   renderSessionResponseStrategies(session.response_modes || {})
@@ -1727,6 +1914,12 @@ function readSessionForm() {
     prompt_ref: $("#session-prompt-ref").value || profileDraftFromSource(getBotProfile()).prompt_ref,
     bound_preset_id: $("#session-model-preset").value,
     summary_model_preset_id: $("#session-summary-model-preset").value,
+    image_caption: {
+      enabled: Boolean($("#session-image-caption-enabled").checked),
+      caption_preset_id: $("#session-image-caption-preset").value || "",
+      caption_prompt: $("#session-image-caption-prompt").value.trim(),
+      include_reply_images: $("#session-image-caption-include-reply").checked,
+    },
     enabled_tools: Array.from(document.querySelectorAll("#session-enabled-tools-list [data-tool-name]:checked")).map((node) => node.dataset.toolName),
     skill_assignments: readSkillAssignments("session-skill-assignments-list"),
     response_modes: normalizeSessionResponseModes(
@@ -1813,6 +2006,7 @@ async function saveSessionConfig() {
         name: `${displayName} Session Override`,
         prompt_ref: payload.prompt_ref,
         summary_model_preset_id: payload.summary_model_preset_id,
+        image_caption: payload.image_caption,
         enabled_tools: payload.enabled_tools,
         skill_assignments: payload.skill_assignments,
         computer: deepClone(baseProfile.computer || botProfile?.computer || {}),

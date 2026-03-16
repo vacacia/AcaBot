@@ -800,7 +800,11 @@ class AgentProfileRegistry(ProfileLoader):
             return False
         if not AgentProfileRegistry._scalar_overlap(left.targets_self, right.targets_self):
             return False
+        if not AgentProfileRegistry._scalar_overlap(left.mentions_self, right.mentions_self):
+            return False
         if not AgentProfileRegistry._scalar_overlap(left.mentioned_everyone, right.mentioned_everyone):
+            return False
+        if not AgentProfileRegistry._scalar_overlap(left.reply_targets_self, right.reply_targets_self):
             return False
         if not AgentProfileRegistry._roles_overlap(left.sender_roles, right.sender_roles):
             return False

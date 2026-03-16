@@ -157,9 +157,10 @@ class RuntimeApp:
         run_id: str | None = None
         try:
             logger.info(
-                "Inbound event: event_id=%s type=%s channel=%s user=%s targets_self=%s preview=%s",
+                "Inbound event: event_id=%s type=%s relation=%s channel=%s user=%s targets_self=%s preview=%s",
                 event.event_id,
                 event.event_type,
+                event.bot_relation,
                 event.session_key,
                 event.source.user_id,
                 event.targets_self,
@@ -336,6 +337,10 @@ class RuntimeApp:
             metadata={
                 "run_mode": decision.run_mode,
                 "agent_id": decision.agent_id,
+                "bot_relation": event.bot_relation,
+                "target_reasons": list(event.target_reasons),
+                "mentions_self": event.mentions_self,
+                "reply_targets_self": event.reply_targets_self,
                 **dict(decision.metadata),
             },
             raw_event=dict(event.raw_event),

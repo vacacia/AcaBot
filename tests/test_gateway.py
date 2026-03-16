@@ -38,6 +38,8 @@ class TestNapCatTranslation:
         assert event.source.user_id == "222"
         assert event.message_subtype == "friend"
         assert event.targets_self is True
+        assert event.bot_relation == "private"
+        assert event.target_reasons == ["private"]
         assert event.text == "hello"
 
     def test_translate_group_message(self, gw):
@@ -60,6 +62,8 @@ class TestNapCatTranslation:
         assert len(event.segments) == 2
         assert event.sender_role == "member"
         assert event.targets_self is True
+        assert event.mentions_self is True
+        assert event.bot_relation == "mention_self"
 
     def test_translate_message_extracts_reply_mentions_and_attachments(self, gw):
         gw._self_id = "111"
@@ -68,7 +72,7 @@ class TestNapCatTranslation:
             "time": 1700000000, "self_id": 111, "user_id": 222, "group_id": 444,
             "message_id": 333,
             "message": [
-                {"type": "reply", "data": {"id": "999"}},
+                {"type": "reply", "data": {"id": "999", "user_id": "111"}},
                 {"type": "at", "data": {"qq": "111"}},
                 {"type": "text", "data": {"text": "请看图"}},
                 {"type": "image", "data": {"file": "https://example.com/cat.jpg"}},
@@ -80,6 +84,8 @@ class TestNapCatTranslation:
         assert event.reply_reference is not None
         assert event.reply_reference.message_id == "999"
         assert event.mentioned_user_ids == ["111"]
+        assert event.mentions_self is True
+        assert event.reply_targets_self is True
         assert event.targets_self is True
         assert len(event.attachments) == 1
         assert event.attachments[0].type == "image"
@@ -100,6 +106,25 @@ class TestNapCatTranslation:
         event = gw.translate(raw)
         assert event.mentioned_everyone is True
         assert event.targets_self is True
+        assert event.bot_relation == "mention_everyone"
+
+    def test_translate_group_message_keeps_ambient_group_relation(self, gw):
+        gw._self_id = "111"
+        raw = {
+            "post_type": "message", "message_type": "group", "sub_type": "normal",
+            "time": 1700000000, "self_id": 111, "user_id": 222, "group_id": 444,
+            "message_id": 333,
+            "message": [
+                {"type": "text", "data": {"text": "路过说一句"}},
+            ],
+            "sender": {"user_id": 222, "nickname": "Bob", "role": "member"},
+        }
+        event = gw.translate(raw)
+        assert event.targets_self is False
+        assert event.mentions_self is False
+        assert event.reply_targets_self is False
+        assert event.bot_relation == "ambient_group"
+        assert event.target_reasons == ["ambient_group"]
 
     def test_translate_ignores_non_message(self, gw):
         # 非消息事件(notice/request等)如果未识别到具体 notice, 返回 None

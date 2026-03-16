@@ -191,7 +191,15 @@ class RuntimeRouter:
             agent_id=agent_id, # 用哪个 agent 处理
             channel_scope=channel_scope,
             run_mode=run_mode,
-            metadata={**metadata, **run_mode_metadata, **event_policy_metadata},
+            metadata={
+                "bot_relation": event.bot_relation,
+                "target_reasons": list(event.target_reasons),
+                "mentions_self": event.mentions_self,
+                "reply_targets_self": event.reply_targets_self,
+                **metadata,
+                **run_mode_metadata,
+                **event_policy_metadata,
+            },
         )
 
     @staticmethod

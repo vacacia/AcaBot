@@ -992,8 +992,10 @@ class ComputerRuntime:
         run_id: str = "",
         event_id: str,
         attachments: list[EventAttachment],
+        category: str = "inbound",
     ) -> AttachmentStageResult:
-        target_root = self.workspace_manager.attachments_dir_for_thread(thread_id) / "inbound" / event_id
+        normalized_category = _sanitize_filename(category) or "inbound"
+        target_root = self.workspace_manager.attachments_dir_for_thread(thread_id) / normalized_category / event_id
         result = AttachmentStageResult()
         total = 0
         for index, attachment in enumerate(attachments):
@@ -1020,6 +1022,7 @@ class ComputerRuntime:
             status="completed_with_errors" if result.had_failures else "completed",
             payload={
                 "event_id": event_id,
+                "category": normalized_category,
                 "attachment_count": len(result.snapshots),
                 "total_size_bytes": result.total_size_bytes,
                 "had_failures": result.had_failures,

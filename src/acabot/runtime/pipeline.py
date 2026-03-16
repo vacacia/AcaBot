@@ -16,6 +16,7 @@ from acabot.types import Action, ActionType
 from .agent_runtime import AgentRuntime
 from .computer import ComputerRuntime
 from .context_compactor import ContextCompactor
+from .message_preparation import MessagePreparationService
 from .models import (
     AgentRuntimeResult,
     DeliveryResult,
@@ -55,6 +56,7 @@ class ThreadPipeline:
         retrieval_planner: RetrievalPlanner | None = None,
         context_compactor: ContextCompactor | None = None,
         computer_runtime: ComputerRuntime | None = None,
+        message_preparation_service: MessagePreparationService | None = None,
         tool_broker: ToolBroker | None = None,
         plugin_manager: RuntimePluginManager | None = None,
     ) -> None:
@@ -69,6 +71,7 @@ class ThreadPipeline:
             retrieval_planner: 可选的 RetrievalPlanner. 用于 planning 和 prompt assembly.
             context_compactor: 可选的 ContextCompactor. 用于 working memory compaction.
             computer_runtime: 可选的 ComputerRuntime. 用于 workspace 准备和附件 staging.
+            message_preparation_service: 可选的 MessagePreparationService. 用于把消息补齐并生成 history/model 输入.
             tool_broker: 可选的 ToolBroker. 用于 approval prompt 的 audit 回写.
             plugin_manager: 可选的 RuntimePluginManager. 用于 runtime hooks.
         """
@@ -81,6 +84,7 @@ class ThreadPipeline:
         self.retrieval_planner = retrieval_planner
         self.context_compactor = context_compactor
         self.computer_runtime = computer_runtime
+        self.message_preparation_service = message_preparation_service
         self.tool_broker = tool_broker
         self.plugin_manager = plugin_manager
     # region execute
@@ -95,6 +99,10 @@ class ThreadPipeline:
         await self.run_manager.mark_running(ctx.run.run_id)
         try:
             await self._run_plugin_hooks(RuntimeHookPoint.ON_EVENT, ctx)
+            if self.computer_runtime is not None:
+                await self.computer_runtime.prepare_run_context(ctx)
+            if self.message_preparation_service is not None:
+                await self.message_preparation_service.prepare(ctx)
             # -----------------------------------------------------
             # 准备 compaction
             # -----------------------------------------------------
@@ -107,8 +115,6 @@ class ThreadPipeline:
             # record_only 模式
             # -----------------------------------------------------
             if ctx.decision.run_mode == "record_only":
-                if self.computer_runtime is not None:
-                    await self.computer_runtime.prepare_run_context(ctx)
                 await self.thread_manager.save(ctx.thread)
                 await self.run_manager.mark_completed(ctx.run.run_id)
                 await self._extract_memory_safely(ctx)
@@ -167,9 +173,9 @@ class ThreadPipeline:
             # -----------------------------------------------------
             # 注入记忆, 调用 Agent
             # -----------------------------------------------------
-            if self.computer_runtime is not None:
-                await self.computer_runtime.prepare_run_context(ctx)
             await self._inject_memories(ctx)
+            if self.message_preparation_service is not None:
+                self.message_preparation_service.apply_model_message(ctx)
             pre_agent_result = await self._run_plugin_hooks(RuntimeHookPoint.PRE_AGENT, ctx)
             if pre_agent_result.action == "skip_agent":
                 ctx.response = AgentRuntimeResult(
@@ -439,7 +445,9 @@ class ThreadPipeline:
             一条带 actor 标识的用户文本.
         """
 
-        return ctx.event.working_memory_text
+        if ctx.message_projection is not None and ctx.message_projection.history_text:
+            return str(ctx.message_projection.history_text)
+        return str(ctx.memory_user_content or ctx.event.working_memory_text or "")
 
     @staticmethod
     def _inject_memory_blocks(

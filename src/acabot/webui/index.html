@@ -163,6 +163,24 @@
                         <select id="profile-summary-model-preset"></select>
                       </label>
                     </div>
+                    <div class="form-grid profile-quick-grid" style="margin-top: 12px;">
+                      <label class="wide">
+                        <span>图片理解</span>
+                        <label class="checkbox-row"><input id="profile-image-caption-enabled" type="checkbox"> <span>开启图片转述并写入上下文</span></label>
+                      </label>
+                      <label>
+                        <span>图片转述模型</span>
+                        <select id="profile-image-caption-preset"></select>
+                      </label>
+                      <label>
+                        <span>处理 reply 图片</span>
+                        <label class="checkbox-row"><input id="profile-image-caption-include-reply" type="checkbox"> <span>当前轮重新解析被引用图片</span></label>
+                      </label>
+                      <label class="wide">
+                        <span>图片转述 Prompt</span>
+                        <textarea id="profile-image-caption-prompt" rows="3" placeholder="例如：请简洁描述这张图片里看得见的内容，只描述可见信息。"></textarea>
+                      </label>
+                    </div>
                   </section>
                 </section>
 
@@ -480,6 +498,22 @@
                         <label class="wide">
                           <span>会话 Prompt</span>
                           <select id="session-prompt-ref"></select>
+                        </label>
+                        <label class="wide">
+                          <span>图片理解</span>
+                          <label class="checkbox-row"><input id="session-image-caption-enabled" type="checkbox"> <span>这个会话单独覆盖图片转述配置</span></label>
+                        </label>
+                        <label class="wide">
+                          <span>图片转述模型</span>
+                          <select id="session-image-caption-preset"></select>
+                        </label>
+                        <label class="wide">
+                          <span>处理 reply 图片</span>
+                          <label class="checkbox-row"><input id="session-image-caption-include-reply" type="checkbox"> <span>这个会话重新解析被引用图片</span></label>
+                        </label>
+                        <label class="wide">
+                          <span>图片转述 Prompt</span>
+                          <textarea id="session-image-caption-prompt" rows="3" placeholder="例如：请简洁描述这张图片里看得见的内容，只描述可见信息。"></textarea>
                         </label>
                         <label class="wide">
                           <span>当前生效模型预览</span>

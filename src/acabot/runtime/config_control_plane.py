@@ -192,7 +192,9 @@ def _parse_binding_rule_config(rule_conf: dict[str, object], *, default_rule_id:
         actor_id=_optional_str(match_conf.get("actor_id")),
         channel_scope=_optional_str(match_conf.get("channel_scope")),
         targets_self=_optional_bool(match_conf.get("targets_self")),
+        mentions_self=_optional_bool(match_conf.get("mentions_self")),
         mentioned_everyone=_optional_bool(match_conf.get("mentioned_everyone")),
+        reply_targets_self=_optional_bool(match_conf.get("reply_targets_self")),
         sender_roles=[str(role) for role in list(match_conf.get("sender_roles", []) or [])],
         metadata=dict(rule_conf.get("metadata", {}) or {}),
     )
@@ -212,7 +214,9 @@ def _parse_inbound_rule_config(rule_conf: dict[str, object], *, default_rule_id:
         actor_id=_optional_str(match_conf.get("actor_id")),
         channel_scope=_optional_str(match_conf.get("channel_scope")),
         targets_self=_optional_bool(match_conf.get("targets_self")),
+        mentions_self=_optional_bool(match_conf.get("mentions_self")),
         mentioned_everyone=_optional_bool(match_conf.get("mentioned_everyone")),
+        reply_targets_self=_optional_bool(match_conf.get("reply_targets_self")),
         sender_roles=[str(role) for role in list(match_conf.get("sender_roles", []) or [])],
         metadata=dict(rule_conf.get("metadata", {}) or {}),
     )
@@ -231,7 +235,9 @@ def _parse_event_policy_config(policy_conf: dict[str, object], *, default_policy
         actor_id=_optional_str(match_conf.get("actor_id")),
         channel_scope=_optional_str(match_conf.get("channel_scope")),
         targets_self=_optional_bool(match_conf.get("targets_self")),
+        mentions_self=_optional_bool(match_conf.get("mentions_self")),
         mentioned_everyone=_optional_bool(match_conf.get("mentioned_everyone")),
+        reply_targets_self=_optional_bool(match_conf.get("reply_targets_self")),
         sender_roles=[str(role) for role in list(match_conf.get("sender_roles", []) or [])],
         persist_event=bool(policy_conf.get("persist_event", True)),
         extract_to_memory=bool(policy_conf.get("extract_to_memory", False)),
@@ -355,7 +361,9 @@ def _binding_rule_to_config(rule: BindingRule) -> dict[str, Any]:
                 "actor_id": rule.actor_id,
                 "channel_scope": rule.channel_scope,
                 "targets_self": rule.targets_self,
+                "mentions_self": rule.mentions_self,
                 "mentioned_everyone": rule.mentioned_everyone,
+                "reply_targets_self": rule.reply_targets_self,
                 "sender_roles": list(rule.sender_roles) or None,
             }.items()
             if value not in (None, "", [])
@@ -380,7 +388,9 @@ def _inbound_rule_to_config(rule: InboundRule) -> dict[str, Any]:
                 "actor_id": rule.actor_id,
                 "channel_scope": rule.channel_scope,
                 "targets_self": rule.targets_self,
+                "mentions_self": rule.mentions_self,
                 "mentioned_everyone": rule.mentioned_everyone,
+                "reply_targets_self": rule.reply_targets_self,
                 "sender_roles": list(rule.sender_roles) or None,
             }.items()
             if value not in (None, "", [])
@@ -404,7 +414,9 @@ def _event_policy_to_config(policy: EventPolicy) -> dict[str, Any]:
                 "actor_id": policy.actor_id,
                 "channel_scope": policy.channel_scope,
                 "targets_self": policy.targets_self,
+                "mentions_self": policy.mentions_self,
                 "mentioned_everyone": policy.mentioned_everyone,
+                "reply_targets_self": policy.reply_targets_self,
                 "sender_roles": list(policy.sender_roles) or None,
             }.items()
             if value not in (None, "", [])

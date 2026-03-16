@@ -1,5 +1,13 @@
 from acabot.runtime import MemoryBlock, MemoryBroker, RunContext
-from acabot.runtime.models import AgentProfile, RetrievalPlan, RouteDecision, RunRecord, ThreadState
+from acabot.runtime.models import (
+    AgentProfile,
+    MemoryCandidate,
+    MessageProjection,
+    RetrievalPlan,
+    RouteDecision,
+    RunRecord,
+    ThreadState,
+)
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
 
@@ -123,3 +131,39 @@ async def test_memory_broker_builds_write_request_from_context() -> None:
     assert request.user_content == "[acacia/10001] [notice:poke]"
     assert request.requested_scopes == ["episodic", "relationship"]
     assert request.metadata["extract_to_memory"] is True
+
+
+async def test_memory_broker_prefers_memory_user_content_override() -> None:
+    extractor = RecordingExtractor()
+    broker = MemoryBroker(extractor=extractor)
+    ctx = _ctx()
+    ctx.memory_user_content = "[acacia/10001] [notice:poke] [图片说明: 一张群聊截图]"
+
+    await broker.extract_after_run(ctx)
+
+    request = extractor.calls[0]
+    assert request.user_content == "[acacia/10001] [notice:poke] [图片说明: 一张群聊截图]"
+
+
+async def test_memory_broker_formats_message_projection_candidates() -> None:
+    extractor = RecordingExtractor()
+    broker = MemoryBroker(extractor=extractor)
+    ctx = _ctx()
+    ctx.message_projection = MessageProjection(
+        history_text="[acacia/10001] 请看图 [系统补充-图片说明: 一只橘猫]",
+        model_content="[acacia/10001] 请看图 [系统补充-图片说明: 一只橘猫]",
+        memory_candidates=[
+            MemoryCandidate(kind="base_text", text="[acacia/10001] 请看图"),
+            MemoryCandidate(
+                kind="image_caption",
+                text="一只橘猫",
+                generated=True,
+                metadata={"label": "图片说明"},
+            ),
+        ],
+    )
+
+    await broker.extract_after_run(ctx)
+
+    request = extractor.calls[0]
+    assert request.user_content == "[acacia/10001] 请看图 [系统补充-图片说明: 一只橘猫]"

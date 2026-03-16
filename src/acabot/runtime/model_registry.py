@@ -709,6 +709,11 @@ class FileSystemModelRegistryManager:
     def get_binding(self, binding_id: str) -> ModelBinding | None:
         return self.active_registry.bindings.get(binding_id)
 
+    def resolve_preset_request(self, preset_id: str) -> RuntimeModelRequest | None:
+        """按 preset_id 直接解析一份 RuntimeModelRequest."""
+
+        return self._request_from_preset_id(None, preset_id)
+
     def get_provider_impact(self, provider_id: str) -> ModelImpactSnapshot:
         return self.active_registry.provider_impact(provider_id)
 

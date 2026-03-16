@@ -265,7 +265,9 @@ def test_to_payload_json_returns_canonical_shape():
         message_subtype="normal",
         reply_reference=ReplyReference(message_id="msg_1", sender_user_id="321"),
         mentioned_user_ids=["111"],
+        mentions_self=True,
         mentioned_everyone=False,
+        reply_targets_self=True,
         targets_self=True,
         attachments=[EventAttachment(type="image", source="https://example.com/a.jpg")],
     )
@@ -273,5 +275,7 @@ def test_to_payload_json_returns_canonical_shape():
     assert payload["source"]["group_id"] == "456"
     assert payload["reply_reference"]["message_id"] == "msg_1"
     assert payload["mentioned_user_ids"] == ["111"]
+    assert payload["mentions_self"] is True
+    assert payload["reply_targets_self"] is True
     assert payload["targets_self"] is True
     assert payload["attachments"][0]["type"] == "image"

@@ -249,6 +249,31 @@ async def test_model_agent_runtime_builds_completed_result() -> None:
     assert result.usage["total_tokens"] == 12
 
 
+async def test_model_agent_runtime_passes_multimodal_user_content_through() -> None:
+    agent = FakeAgent(AgentResponse(text="ok", model_used="test-model"))
+    runtime = ModelAgentRuntime(
+        agent=agent,
+        prompt_loader=StaticPromptLoader({"prompt/default": "You are Aca."}),
+    )
+    ctx = _context()
+    ctx.messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "[acacia/10001] [图片说明: 一只猫]"},
+                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,Y2F0"}},
+            ],
+        }
+    ]
+
+    await runtime.execute(ctx)
+
+    content = agent.calls[0]["messages"][0]["content"]
+    assert isinstance(content, list)
+    assert content[0]["type"] == "text"
+    assert content[1]["type"] == "image_url"
+
+
 async def test_model_agent_runtime_builds_failed_result() -> None:
     agent = FakeAgent(AgentResponse(error="boom"))
     runtime = ModelAgentRuntime(

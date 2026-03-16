@@ -78,6 +78,15 @@ from .memory_broker import (
 from .memory_item_store import InMemoryMemoryStore
 from .memory_store import InMemoryMessageStore
 from .http_api import RuntimeHttpApiServer
+from .image_context import (
+    DEFAULT_IMAGE_CAPTION_PROMPT,
+    ImageCaptionSettings,
+    ImageContextService,
+    parse_image_caption_settings,
+)
+from .message_preparation import MessagePreparationService
+from .message_projection import MessageProjectionService
+from .message_resolution import MessageResolutionService
 from .model_agent_runtime import (
     ModelAgentRuntime,
     ToolRuntime,
@@ -116,8 +125,10 @@ from .models import (
     EventPolicy,
     EventPolicyDecision,
     InboundRule,
+    MemoryCandidate,
     MemoryEditMode,
     MemoryItem,
+    MessageProjection,
     MessageRecord,
     OutboxItem,
     PendingApproval,
@@ -125,6 +136,8 @@ from .models import (
     PlannedAction,
     PromptSlot,
     RecoveryReport,
+    ResolvedImageInput,
+    ResolvedMessage,
     RetrievalPlan,
     RouteDecision,
     RunContext,
@@ -284,6 +297,11 @@ __all__ = [
     "InMemoryMessageStore",
     "InMemoryThreadManager",
     "HostComputerBackend",
+    "ImageCaptionSettings",
+    "ImageContextService",
+    "MessagePreparationService",
+    "MessageProjectionService",
+    "MessageResolutionService",
     "FileSystemProfileLoader",
     "FileSystemPromptLoader",
     "FileSystemBindingLoader",
@@ -291,11 +309,13 @@ __all__ = [
     "FileSystemEventPolicyLoader",
     "MemoryBlock",
     "MemoryBroker",
+    "MemoryCandidate",
     "MemoryEditMode",
     "MemoryExtractor",
     "MemoryItem",
     "MemoryStore",
     "MessageRecord",
+    "MessageProjection",
     "MessageStore",
     "MemoryRetrievalRequest",
     "MemoryRetriever",
@@ -335,10 +355,14 @@ __all__ = [
     "PromptLoader",
     "ReloadablePromptLoader",
     "PromptSlot",
+    "DEFAULT_IMAGE_CAPTION_PROMPT",
+    "parse_image_caption_settings",
     "parse_computer_override",
     "parse_computer_policy",
     "RouteDecision",
     "RecoveryReport",
+    "ResolvedImageInput",
+    "ResolvedMessage",
     "RuntimeComponents",
     "RuntimeApp",
     "RuntimeHook",
