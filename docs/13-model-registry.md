@@ -4,10 +4,10 @@
 
 关键文件:
 
-- `src/acabot/runtime/model_registry.py`
-- `src/acabot/runtime/model_resolution.py`
-- `src/acabot/runtime/bootstrap.py`
-- `src/acabot/runtime/control_plane.py`
+- `src/acabot/runtime/model/model_registry.py`
+- `src/acabot/runtime/model/model_resolution.py`
+- `src/acabot/runtime/bootstrap/`
+- `src/acabot/runtime/control/control_plane.py`
 
 ## 先讲结论
 
@@ -205,8 +205,8 @@ context compaction 的行为可能和主对话模型不同。
 
 ## 读源码顺序建议
 
-1. `src/acabot/runtime/model_registry.py`
-2. `src/acabot/runtime/model_resolution.py`
-3. `src/acabot/runtime/bootstrap.py`
-4. `src/acabot/runtime/control_plane.py`
+1. `src/acabot/runtime/model/model_registry.py`
+2. `src/acabot/runtime/model/model_resolution.py`
+3. `src/acabot/runtime/bootstrap/`
+4. `src/acabot/runtime/control/control_plane.py`
 5. `src/acabot/webui/app.js`

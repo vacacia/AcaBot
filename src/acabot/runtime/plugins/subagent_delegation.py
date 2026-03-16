@@ -23,7 +23,7 @@ from typing import Any
 from acabot.agent import ToolSpec
 
 from ..plugin_manager import RuntimePlugin, RuntimePluginContext, RuntimeToolRegistration
-from ..subagent_delegation import SubagentDelegationBroker
+from ..subagents import SubagentDelegationBroker
 from ..tool_broker import ToolExecutionContext, ToolResult
 
 

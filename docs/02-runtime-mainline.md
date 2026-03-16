@@ -32,7 +32,7 @@
 
 它不是业务入口，不要把主线逻辑塞回来。
 
-### `src/acabot/runtime/bootstrap.py`
+### `src/acabot/runtime/bootstrap/`
 
 这是默认装配中心。
 

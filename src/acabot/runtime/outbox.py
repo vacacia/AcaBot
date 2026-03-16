@@ -17,14 +17,14 @@ from typing import Any
 from acabot.types import Action, ActionType
 
 from .gateway_protocol import GatewayProtocol
-from .models import (
+from .contracts import (
     DispatchReport,
     DeliveryResult,
     MessageRecord,
     OutboxItem,
     RunContext,
 )
-from .stores import MessageStore
+from .storage.stores import MessageStore
 
 
 class Outbox:

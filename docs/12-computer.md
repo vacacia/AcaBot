@@ -6,9 +6,9 @@
 
 关键文件:
 
-- `src/acabot/runtime/computer.py`
+- `src/acabot/runtime/computer/`
 - `src/acabot/runtime/plugins/computer_tool_adapter.py`
-- `src/acabot/runtime/bootstrap.py`
+- `src/acabot/runtime/bootstrap/`
 
 ## 这层到底负责什么
 
@@ -263,7 +263,7 @@ thread 级 shell session。也就是 `bash_open / bash_write / bash_read / bash_
 
 ## 读源码顺序建议
 
-1. `src/acabot/runtime/computer.py`
+1. `src/acabot/runtime/computer/`
 2. `src/acabot/runtime/plugins/computer_tool_adapter.py`
-3. `src/acabot/runtime/bootstrap.py`
-4. `src/acabot/runtime/control_plane.py`
+3. `src/acabot/runtime/bootstrap/`
+4. `src/acabot/runtime/control/control_plane.py`

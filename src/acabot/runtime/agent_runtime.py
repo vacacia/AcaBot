@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from .models import AgentRuntimeResult, RunContext
+from .contracts import AgentRuntimeResult, RunContext
 
 
 class AgentRuntime(ABC):

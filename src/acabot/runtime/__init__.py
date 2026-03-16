@@ -43,8 +43,8 @@ from .computer import (
     parse_computer_override,
     parse_computer_policy,
 )
-from .config_control_plane import RuntimeConfigControlPlane
-from .context_compactor import (
+from .control.config_control_plane import RuntimeConfigControlPlane
+from .memory.context_compactor import (
     ContextCompactionConfig,
     ContextCompactionResult,
     ContextCompactor,
@@ -52,7 +52,7 @@ from .context_compactor import (
     ModelContextSummarizer,
     NullContextSummarizer,
 )
-from .control_plane import (
+from .control.control_plane import (
     ActiveRunSnapshot,
     AgentSkillSnapshot,
     AgentSwitchSnapshot,
@@ -63,9 +63,9 @@ from .control_plane import (
     SkillSnapshot,
     SubagentExecutorSnapshot,
 )
-from .event_policy import EventPolicyRegistry
-from .event_store import InMemoryChannelEventStore
-from .memory_broker import (
+from .control.event_policy import EventPolicyRegistry
+from .storage.event_store import InMemoryChannelEventStore
+from .memory.memory_broker import (
     MemoryBlock,
     MemoryBroker,
     MemoryExtractor,
@@ -75,25 +75,25 @@ from .memory_broker import (
     NullMemoryExtractor,
     NullMemoryRetriever,
 )
-from .memory_item_store import InMemoryMemoryStore
-from .memory_store import InMemoryMessageStore
-from .http_api import RuntimeHttpApiServer
-from .image_context import (
+from .storage.memory_item_store import InMemoryMemoryStore
+from .storage.memory_store import InMemoryMessageStore
+from .control.http_api import RuntimeHttpApiServer
+from .inbound.image_context import (
     DEFAULT_IMAGE_CAPTION_PROMPT,
     ImageCaptionSettings,
     ImageContextService,
     parse_image_caption_settings,
 )
-from .message_preparation import MessagePreparationService
-from .message_projection import MessageProjectionService
-from .message_resolution import MessageResolutionService
-from .model_agent_runtime import (
+from .inbound.message_preparation import MessagePreparationService
+from .inbound.message_projection import MessageProjectionService
+from .inbound.message_resolution import MessageResolutionService
+from .model.model_agent_runtime import (
     ModelAgentRuntime,
     ToolRuntime,
     ToolRuntimeResolver,
     ToolRuntimeState,
 )
-from .model_registry import (
+from .model.model_registry import (
     AnthropicProviderConfig,
     EffectiveModelSnapshot,
     FileSystemModelRegistryManager,
@@ -112,7 +112,7 @@ from .model_registry import (
     RuntimeModelRequest,
     snapshot_from_runtime_request,
 )
-from .models import (
+from .contracts import (
     AgentProfile,
     DelegationMode,
     ApprovalRequired,
@@ -173,7 +173,7 @@ from .plugins import (
     StickyNotesPlugin,
     SubagentDelegationPlugin,
 )
-from .profile_loader import (
+from .control.profile_loader import (
     AgentProfileRegistry,
     ChainedPromptLoader,
     FileSystemBindingLoader,
@@ -187,7 +187,7 @@ from .profile_loader import (
     StaticProfileLoader,
     StaticPromptLoader,
 )
-from .reference_backend import (
+from .references import (
     LocalReferenceBackend,
     NullReferenceBackend,
     OpenVikingReferenceBackend,
@@ -201,11 +201,11 @@ from .reference_backend import (
     ReferenceProviderMode,
     ReferenceSpace,
 )
-from .retrieval_planner import PromptAssemblyConfig, RetrievalPlanner
+from .memory.retrieval_planner import PromptAssemblyConfig, RetrievalPlanner
 from .router import InboundRuleRegistry, RuntimeRouter
-from .runs import InMemoryRunManager, RunManager, StoreBackedRunManager
-from .skill_loader import FileSystemSkillPackageLoader
-from .skill_package import (
+from .storage.runs import InMemoryRunManager, RunManager, StoreBackedRunManager
+from .skills import FileSystemSkillPackageLoader
+from .skills import (
     SkillPackageDocument,
     SkillPackageFormatError,
     SkillPackageManifest,
@@ -213,27 +213,27 @@ from .skill_package import (
 from .skills import (
     ResolvedSkillAssignment,
     SkillCatalog,
-    SubagentDelegationRequest,
-    SubagentDelegationResult,
 )
-from .subagent_delegation import (
+from .subagents import (
     RegisteredSubagentExecutor,
     SubagentDelegationBroker,
+    SubagentDelegationRequest,
+    SubagentDelegationResult,
     SubagentExecutor,
     SubagentExecutorRegistration,
     SubagentExecutorRegistry,
 )
-from .subagent_execution import LocalSubagentExecutionService
-from .sqlite_stores import (
+from .subagents.execution import LocalSubagentExecutionService
+from .storage.sqlite_stores import (
     SQLiteChannelEventStore,
     SQLiteMemoryStore,
     SQLiteMessageStore,
     SQLiteRunStore,
     SQLiteThreadStore,
 )
-from .sticky_notes import StickyNotesService
-from .stores import ChannelEventStore, MemoryStore, MessageStore, RunStore, ThreadStore
-from .structured_memory import StoreBackedMemoryRetriever, StructuredMemoryExtractor
+from .memory.sticky_notes import StickyNotesService
+from .storage.stores import ChannelEventStore, MemoryStore, MessageStore, RunStore, ThreadStore
+from .memory.structured_memory import StoreBackedMemoryRetriever, StructuredMemoryExtractor
 from .tool_broker import (
     AllowAllToolPolicy,
     InMemoryToolAudit,
@@ -247,7 +247,7 @@ from .tool_broker import (
     ToolReplayResult,
     ToolResult,
 )
-from .threads import InMemoryThreadManager, StoreBackedThreadManager, ThreadManager
+from .storage.threads import InMemoryThreadManager, StoreBackedThreadManager, ThreadManager
 
 __all__ = [
     "AgentRuntime",

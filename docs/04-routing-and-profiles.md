@@ -42,9 +42,9 @@ agent 绑定不是硬编码在 router 里的，而是通过 profile registry 和
 
 相关文件:
 
-- `runtime/profile_loader.py`
-- `runtime/config_control_plane.py`
-- `runtime/bootstrap.py`
+- `runtime/control/profile_loader.py`
+- `runtime/control/config_control_plane.py`
+- `runtime/bootstrap/`
 
 ### binding rule 解决什么问题
 
@@ -108,9 +108,9 @@ event policy 是第三条线。
 
 相关文件:
 
-- `runtime/event_policy.py`
-- `runtime/models.py`
-- `runtime/config_control_plane.py`
+- `runtime/control/event_policy.py`
+- `runtime/contracts/routing.py`
+- `runtime/control/config_control_plane.py`
 
 ### 这个点很重要
 
@@ -136,8 +136,8 @@ event policy 是第三条线。
 
 这条线主要在:
 
-- `runtime/profile_loader.py`
-- `runtime/config_control_plane.py`
+- `runtime/control/profile_loader.py`
+- `runtime/control/config_control_plane.py`
 
 ## prompt 怎么解析
 
@@ -207,7 +207,7 @@ WebUI 并不是直接改运行中对象。
 ## 读源码时优先看哪些文件
 
 1. `src/acabot/runtime/router.py`
-2. `src/acabot/runtime/profile_loader.py`
-3. `src/acabot/runtime/event_policy.py`
-4. `src/acabot/runtime/config_control_plane.py`
-5. `src/acabot/runtime/bootstrap.py`
+2. `src/acabot/runtime/control/profile_loader.py`
+3. `src/acabot/runtime/control/event_policy.py`
+4. `src/acabot/runtime/control/config_control_plane.py`
+5. `src/acabot/runtime/bootstrap/`

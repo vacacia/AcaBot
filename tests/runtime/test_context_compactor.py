@@ -10,7 +10,7 @@ from acabot.runtime import (
     RouteDecision,
     RunContext,
 )
-from acabot.runtime.models import RunRecord, ThreadState
+from acabot.runtime.contracts import RunRecord, ThreadState
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
 
@@ -157,11 +157,11 @@ class _SummaryAgent:
 def _mock_litellm():
     with (
         patch(
-            "acabot.runtime.context_compactor.token_counter",
+            "acabot.runtime.memory.context_compactor.token_counter",
             side_effect=_mock_token_counter,
         ),
         patch(
-            "acabot.runtime.context_compactor.get_model_info",
+            "acabot.runtime.memory.context_compactor.get_model_info",
             return_value=_MOCK_MODEL_INFO,
         ),
     ):

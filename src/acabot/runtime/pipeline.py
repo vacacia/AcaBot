@@ -15,9 +15,9 @@ from acabot.types import Action, ActionType
 
 from .agent_runtime import AgentRuntime
 from .computer import ComputerRuntime
-from .context_compactor import ContextCompactor
-from .message_preparation import MessagePreparationService
-from .models import (
+from .memory.context_compactor import ContextCompactor
+from .inbound.message_preparation import MessagePreparationService
+from .contracts import (
     AgentRuntimeResult,
     DeliveryResult,
     DispatchReport,
@@ -25,13 +25,13 @@ from .models import (
     PlannedAction,
     RunContext,
 )
-from .memory_broker import MemoryBroker
+from .memory.memory_broker import MemoryBroker
 from .outbox import Outbox
 from .plugin_manager import RuntimeHookPoint, RuntimePluginManager
-from .retrieval_planner import RetrievalPlanner
-from .runs import RunManager
+from .memory.retrieval_planner import RetrievalPlanner
+from .storage.runs import RunManager
 from .tool_broker import ToolBroker
-from .threads import ThreadManager
+from .storage.threads import ThreadManager
 
 logger = logging.getLogger("acabot.runtime.pipeline")
 

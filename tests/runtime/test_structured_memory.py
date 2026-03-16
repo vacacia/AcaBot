@@ -4,7 +4,7 @@ from acabot.runtime import (
     StoreBackedMemoryRetriever,
     StructuredMemoryExtractor,
 )
-from acabot.runtime.memory_broker import MemoryRetrievalRequest, MemoryWriteRequest
+from acabot.runtime.memory.memory_broker import MemoryRetrievalRequest, MemoryWriteRequest
 
 
 def _retrieval_request() -> MemoryRetrievalRequest:

@@ -1,0 +1,958 @@
+"""runtime.control_plane 提供本地 control plane 入口.
+
+组件关系:
+
+    RuntimeApp / RunManager / PluginManager
+                   |
+                   v
+            RuntimeControlPlane
+                   |
+                   v
+          local ops / future WebUI
+
+不处理具体业务执行.
+它只暴露最小的运行时运维接口, 例如 status 和 plugin reload.
+"""
+
+from __future__ import annotations
+
+import os
+import time
+from dataclasses import asdict
+
+from ..app import RuntimeApp
+from ..computer import (
+    ComputerRuntimeOverride,
+    ComputerRuntime,
+    WorkspaceFileEntry,
+    WorkspaceSandboxStatus,
+    WorkspaceState,
+)
+from .config_control_plane import RuntimeConfigControlPlane
+from ..model.model_registry import (
+    EffectiveModelSnapshot,
+    FileSystemModelRegistryManager,
+    ModelBinding,
+    ModelHealthCheckResult,
+    ModelImpactSnapshot,
+    ModelMutationResult,
+    ModelProvider,
+    ModelPreset,
+    ModelRegistryStatusSnapshot,
+    ModelReloadSnapshot,
+)
+from ..contracts import ChannelEventRecord, MessageRecord, RunRecord
+from ..plugin_manager import RuntimePluginManager
+from .profile_loader import AgentProfileRegistry
+from ..references import (
+    ReferenceBackend,
+    ReferenceBodyLevel,
+    ReferenceDocument,
+    ReferenceDocumentInput,
+    ReferenceDocumentRef,
+    ReferenceHit,
+    ReferenceMode,
+    ReferenceSpace,
+)
+from ..storage.runs import RunManager
+from ..skills import SkillPackageManifest
+from ..skills import ResolvedSkillAssignment, SkillCatalog
+from ..storage.stores import ChannelEventStore, MemoryStore, MessageStore
+from ..subagents import RegisteredSubagentExecutor, SubagentExecutorRegistry
+from ..storage.threads import ThreadManager
+from ..tool_broker import ToolBroker
+from .model_ops import RuntimeModelControlOps
+from .reference_ops import RuntimeReferenceControlOps
+from .snapshots import (
+    ActiveRunSnapshot,
+    AgentSkillSnapshot,
+    AgentSwitchSnapshot,
+    GatewayStatusSnapshot,
+    MemoryQuerySnapshot,
+    PluginReloadSnapshot,
+    RuntimeStatusSnapshot,
+    SkillSnapshot,
+    SubagentExecutorSnapshot,
+)
+from .ui_catalog import build_ui_options
+from .workspace_ops import RuntimeWorkspaceControlOps
+
+
+# region control plane
+class RuntimeControlPlane:
+    """runtime 的最小本地 control plane.
+
+    当前暴露:
+    - `get_status`
+    - `reload_plugins`
+    - `switch_thread_agent`
+    - `clear_thread_agent_override`
+    - `show_memory`
+
+    后续 `/status`, `/reload_plugin`, WebUI 都应优先通过这层进入 runtime.
+    """
+
+    def __init__(
+        self,
+        *,
+        app: RuntimeApp,
+        run_manager: RunManager,
+        thread_manager: ThreadManager | None = None,
+        memory_store: MemoryStore | None = None,
+        message_store: MessageStore | None = None,
+        channel_event_store: ChannelEventStore | None = None,
+        profile_registry: AgentProfileRegistry | None = None,
+        plugin_manager: RuntimePluginManager | None = None,
+        skill_catalog: SkillCatalog | None = None,
+        subagent_executor_registry: SubagentExecutorRegistry | None = None,
+        tool_broker: ToolBroker | None = None,
+        model_registry_manager: FileSystemModelRegistryManager | None = None,
+        computer_runtime: ComputerRuntime | None = None,
+        reference_backend: ReferenceBackend | None = None,
+        config_control_plane: RuntimeConfigControlPlane | None = None,
+    ) -> None:
+        """初始化 RuntimeControlPlane.
+
+        Args:
+            app: 当前 runtime app.
+            run_manager: run 生命周期管理器.
+            thread_manager: 可选的 thread 状态管理器.
+            memory_store: 可选的长期记忆存储.
+            message_store: 可选的 delivered message store.
+            channel_event_store: 可选的 inbound event store.
+            profile_registry: 可选的 profile registry, 用于校验 agent 是否存在.
+            plugin_manager: 可选的 runtime plugin manager.
+            skill_catalog: 可选的统一 skill catalog.
+            subagent_executor_registry: 可选的 subagent executor 注册表.
+            tool_broker: 可选的 tool broker, 用于给 WebUI 提供工具目录.
+            model_registry_manager: 可选的模型注册表管理器.
+            computer_runtime: 可选的 computer 基础设施入口.
+            reference_backend: 可选的 reference backend.
+            config_control_plane: 可选的 runtime 配置控制面.
+        """
+
+        self.app = app
+        self.run_manager = run_manager
+        self.thread_manager = thread_manager
+        self.memory_store = memory_store
+        self.message_store = message_store
+        self.channel_event_store = channel_event_store
+        self.profile_registry = profile_registry
+        self.plugin_manager = plugin_manager
+        self.skill_catalog = skill_catalog
+        self.subagent_executor_registry = subagent_executor_registry
+        self.tool_broker = tool_broker
+        self.model_registry_manager = model_registry_manager
+        self.computer_runtime = computer_runtime
+        self.reference_backend = reference_backend
+        self.config_control_plane = config_control_plane
+        self.model_ops = RuntimeModelControlOps(
+            model_registry_manager=model_registry_manager,
+            profile_registry=profile_registry,
+        )
+        self.workspace_ops = RuntimeWorkspaceControlOps(
+            run_manager=run_manager,
+            thread_manager=thread_manager,
+            computer_runtime=computer_runtime,
+        )
+        self.reference_ops = RuntimeReferenceControlOps(reference_backend=reference_backend)
+
+    async def get_status(self) -> RuntimeStatusSnapshot:
+        """读取当前 runtime 的最小状态快照.
+
+        Returns:
+            一份 RuntimeStatusSnapshot.
+        """
+
+        active_runs = await self.run_manager.list_active()
+        return RuntimeStatusSnapshot(
+            active_runs=[
+                ActiveRunSnapshot(
+                    run_id=run.run_id,
+                    thread_id=run.thread_id,
+                    actor_id=run.actor_id,
+                    agent_id=run.agent_id,
+                    status=run.status,
+                    started_at=run.started_at,
+                    run_kind=str(run.metadata.get("run_kind", "user") or "user"),
+                    parent_run_id=str(run.metadata.get("parent_run_id", "") or ""),
+                    delegated_skill=str(run.metadata.get("delegated_skill", "") or ""),
+                )
+                for run in active_runs
+            ],
+            pending_approvals=self.app.list_pending_approvals(),
+            loaded_plugins=self._list_loaded_plugins(),
+            loaded_skills=self._list_loaded_skills(),
+            interrupted_run_ids=list(self.app.last_recovery_report.interrupted_run_ids),
+        )
+
+    async def reload_plugins(self, plugin_names: list[str] | None = None) -> PluginReloadSnapshot:
+        """按当前配置重载 runtime plugins.
+
+        Args:
+            plugin_names: 可选的插件名列表. 为空时执行全量重载.
+
+        Returns:
+            一份 PluginReloadSnapshot.
+        """
+
+        loaded, missing = await self.app.reload_plugins(plugin_names)
+        return PluginReloadSnapshot(
+            requested_plugins=list(plugin_names or []),
+            loaded_plugins=list(loaded),
+            missing_plugins=list(missing),
+        )
+
+    async def get_gateway_status(self) -> GatewayStatusSnapshot:
+        """读取当前 gateway 监听和连接状态."""
+
+        gateway = getattr(self.app, "gateway", None)
+        if gateway is None:
+            return GatewayStatusSnapshot()
+        host = str(getattr(gateway, "host", "") or "")
+        port = int(getattr(gateway, "port", 0) or 0)
+        return GatewayStatusSnapshot(
+            gateway_type=type(gateway).__name__,
+            connection_mode="reverse_ws_server",
+            listen_host=host,
+            listen_port=port,
+            listen_url=f"ws://{host}:{port}" if host and port else "",
+            server_running=bool(getattr(gateway, "_server", None)),
+            connected=bool(getattr(gateway, "_ws", None)),
+            self_id=str(getattr(gateway, "_self_id", "") or ""),
+            supports_call_api=callable(getattr(gateway, "call_api", None)),
+            token_configured=bool(str(getattr(gateway, "token", "") or "")),
+        )
+
+    async def switch_thread_agent(
+        self,
+        *,
+        thread_id: str,
+        agent_id: str,
+    ) -> AgentSwitchSnapshot:
+        """为指定 thread 设置临时 agent override.
+
+        
+        Args:
+            thread_id: 目标 thread 标识.
+            agent_id: 要切换到的 agent 标识.
+
+        Returns:
+            一份 AgentSwitchSnapshot.
+        """
+
+        if self.profile_registry is not None and not self.profile_registry.has_agent(agent_id):
+            return AgentSwitchSnapshot(
+                ok=False,
+                thread_id=thread_id,
+                agent_id=agent_id,
+                message="unknown agent_id",
+            )
+        if self.thread_manager is None:
+            return AgentSwitchSnapshot(
+                ok=False,
+                thread_id=thread_id,
+                agent_id=agent_id,
+                message="thread manager unavailable",
+            )
+
+        thread = await self.thread_manager.get(thread_id)
+        if thread is None:
+            return AgentSwitchSnapshot(
+                ok=False,
+                thread_id=thread_id,
+                agent_id=agent_id,
+                message="thread not found",
+            )
+
+        # Thread Metadata Infection
+        # 实际运行时在 _apply_thread_agent_override 生效
+        thread.metadata["thread_agent_override"] = agent_id
+        thread.metadata["thread_agent_override_set_at"] = int(time.time())
+        await self.thread_manager.save(thread)
+        return AgentSwitchSnapshot(
+            ok=True,
+            thread_id=thread_id,
+            agent_id=agent_id,
+        )
+
+    async def clear_thread_agent_override(self, *, thread_id: str) -> AgentSwitchSnapshot:
+        """清除指定 thread 的临时 agent override.
+
+        Args:
+            thread_id: 目标 thread 标识.
+
+        Returns:
+            一份 AgentSwitchSnapshot.
+        """
+
+        if self.thread_manager is None:
+            return AgentSwitchSnapshot(
+                ok=False,
+                thread_id=thread_id,
+                message="thread manager unavailable",
+            )
+
+        thread = await self.thread_manager.get(thread_id)
+        if thread is None:
+            return AgentSwitchSnapshot(
+                ok=False,
+                thread_id=thread_id,
+                message="thread not found",
+            )
+
+        thread.metadata.pop("thread_agent_override", None)
+        thread.metadata.pop("thread_agent_override_set_at", None)
+        await self.thread_manager.save(thread)
+        return AgentSwitchSnapshot(
+            ok=True,
+            thread_id=thread_id,
+            message="cleared",
+        )
+
+    async def show_memory(
+        self,
+        *,
+        scope: str,
+        scope_key: str,
+        memory_types: list[str] | None = None,
+        limit: int = 20,
+    ) -> MemoryQuerySnapshot:
+        """按 scope 查询长期记忆.
+
+        Args:
+            scope: 当前查询的 scope.
+            scope_key: 当前 scope 对应的 key.
+            memory_types: 可选的 memory_type 过滤列表.
+            limit: 最多返回多少条记忆.
+
+        Returns:
+            一份 MemoryQuerySnapshot.
+        """
+
+        if self.memory_store is None:
+            return MemoryQuerySnapshot(scope=scope, scope_key=scope_key)
+
+        items = await self.memory_store.find(
+            scope=scope,
+            scope_key=scope_key,
+            memory_types=memory_types,
+            limit=limit,
+        )
+        return MemoryQuerySnapshot(
+            scope=scope,
+            scope_key=scope_key,
+            items=items,
+        )
+
+    async def approve_pending_approval(
+        self,
+        *,
+        run_id: str,
+        metadata: dict[str, object] | None = None,
+    ):
+        return await self.app.approve_pending_approval(run_id, metadata=metadata)
+
+    async def reject_pending_approval(
+        self,
+        *,
+        run_id: str,
+        reason: str = "approval rejected",
+        metadata: dict[str, object] | None = None,
+    ):
+        return await self.app.reject_pending_approval(
+            run_id,
+            reason=reason,
+            metadata=metadata,
+        )
+
+    async def list_profiles(self) -> list[dict[str, object]]:
+        if self.config_control_plane is None:
+            return []
+        return self.config_control_plane.list_profiles()
+
+    async def get_profile(self, agent_id: str) -> dict[str, object] | None:
+        if self.config_control_plane is None:
+            return None
+        return self.config_control_plane.get_profile(agent_id)
+
+    async def upsert_profile(self, payload: dict[str, object]) -> dict[str, object]:
+        if self.config_control_plane is None:
+            raise RuntimeError("config control plane unavailable")
+        return await self.config_control_plane.upsert_profile(payload)
+
+    async def get_gateway_config(self) -> dict[str, object]:
+        if self.config_control_plane is None:
+            return {}
+        return self.config_control_plane.get_gateway_config()
+
+    async def upsert_gateway_config(self, payload: dict[str, object]) -> dict[str, object]:
+        if self.config_control_plane is None:
+            raise RuntimeError("config control plane unavailable")
+        return await self.config_control_plane.upsert_gateway_config(payload)
+
+    async def delete_profile(self, agent_id: str) -> bool:
+        if self.config_control_plane is None:
+            return False
+        return await self.config_control_plane.delete_profile(agent_id)
+
+    async def list_prompts(self) -> list[dict[str, object]]:
+        if self.config_control_plane is None:
+            return []
+        return self.config_control_plane.list_prompts()
+
+    async def get_prompt(self, prompt_ref: str) -> dict[str, object] | None:
+        if self.config_control_plane is None:
+            return None
+        return self.config_control_plane.get_prompt(prompt_ref)
+
+    async def upsert_prompt(self, *, prompt_ref: str, content: str) -> dict[str, object]:
+        if self.config_control_plane is None:
+            raise RuntimeError("config control plane unavailable")
+        return await self.config_control_plane.upsert_prompt(prompt_ref, content)
+
+    async def delete_prompt(self, prompt_ref: str) -> bool:
+        if self.config_control_plane is None:
+            return False
+        return await self.config_control_plane.delete_prompt(prompt_ref)
+
+    async def list_binding_rules(self) -> list[dict[str, object]]:
+        if self.config_control_plane is None:
+            return []
+        return self.config_control_plane.list_binding_rules()
+
+    async def get_binding_rule(self, rule_id: str) -> dict[str, object] | None:
+        if self.config_control_plane is None:
+            return None
+        return self.config_control_plane.get_binding_rule(rule_id)
+
+    async def upsert_binding_rule(self, payload: dict[str, object]) -> dict[str, object]:
+        if self.config_control_plane is None:
+            raise RuntimeError("config control plane unavailable")
+        return await self.config_control_plane.upsert_binding_rule(payload)
+
+    async def delete_binding_rule(self, rule_id: str) -> bool:
+        if self.config_control_plane is None:
+            return False
+        return await self.config_control_plane.delete_binding_rule(rule_id)
+
+    async def list_inbound_rules(self) -> list[dict[str, object]]:
+        if self.config_control_plane is None:
+            return []
+        return self.config_control_plane.list_inbound_rules()
+
+    async def get_inbound_rule(self, rule_id: str) -> dict[str, object] | None:
+        if self.config_control_plane is None:
+            return None
+        return self.config_control_plane.get_inbound_rule(rule_id)
+
+    async def upsert_inbound_rule(self, payload: dict[str, object]) -> dict[str, object]:
+        if self.config_control_plane is None:
+            raise RuntimeError("config control plane unavailable")
+        return await self.config_control_plane.upsert_inbound_rule(payload)
+
+    async def delete_inbound_rule(self, rule_id: str) -> bool:
+        if self.config_control_plane is None:
+            return False
+        return await self.config_control_plane.delete_inbound_rule(rule_id)
+
+    async def list_event_policies(self) -> list[dict[str, object]]:
+        if self.config_control_plane is None:
+            return []
+        return self.config_control_plane.list_event_policies()
+
+    async def get_event_policy(self, policy_id: str) -> dict[str, object] | None:
+        if self.config_control_plane is None:
+            return None
+        return self.config_control_plane.get_event_policy(policy_id)
+
+    async def upsert_event_policy(self, payload: dict[str, object]) -> dict[str, object]:
+        if self.config_control_plane is None:
+            raise RuntimeError("config control plane unavailable")
+        return await self.config_control_plane.upsert_event_policy(payload)
+
+    async def delete_event_policy(self, policy_id: str) -> bool:
+        if self.config_control_plane is None:
+            return False
+        return await self.config_control_plane.delete_event_policy(policy_id)
+
+    async def reload_runtime_configuration(self) -> dict[str, object]:
+        if self.config_control_plane is None:
+            raise RuntimeError("config control plane unavailable")
+        return await self.config_control_plane.reload_runtime_configuration()
+
+    async def list_skills(self) -> list[SkillSnapshot]:
+        """列出当前已注册的显式 skills.
+
+        Returns:
+            SkillSnapshot 列表.
+        """
+
+        if self.skill_catalog is None:
+            return []
+        return [self._to_skill_snapshot(item) for item in self.skill_catalog.list_all()]
+
+    async def list_agent_skills(self, agent_id: str) -> list[AgentSkillSnapshot]:
+        """列出某个 agent 当前绑定的 skill assignment.
+
+        Args:
+            agent_id: 目标 agent 标识.
+
+        Returns:
+            AgentSkillSnapshot 列表.
+        """
+
+        if self.profile_registry is None or self.skill_catalog is None:
+            return []
+        if not self.profile_registry.has_agent(agent_id):
+            return []
+        profile = self.profile_registry.profiles[agent_id]
+        return [
+            self._to_agent_skill_snapshot(agent_id, item)
+            for item in self.skill_catalog.resolve_assignments(profile)
+        ]
+
+    async def list_subagent_executors(self) -> list[SubagentExecutorSnapshot]:
+        """列出当前已注册的 subagent executors.
+
+        Returns:
+            SubagentExecutorSnapshot 列表.
+        """
+
+        if self.subagent_executor_registry is None:
+            return []
+        return [
+            self._to_subagent_executor_snapshot(item)
+            for item in self.subagent_executor_registry.list_all()
+        ]
+
+    async def list_available_tools(self) -> list[dict[str, object]]:
+        """列出当前 runtime 已注册工具目录."""
+
+        if self.tool_broker is None:
+            return []
+        return [dict(item) for item in self.tool_broker.list_registered_tools()]
+
+    async def get_ui_catalog(self) -> dict[str, object]:
+        """返回 WebUI 表单所需的选择项元数据."""
+
+        prompts = await self.list_prompts()
+        profiles = await self.list_profiles()
+        default_agent_id = ""
+        if self.profile_registry is not None:
+            default_agent_id = str(getattr(self.profile_registry, "default_agent_id", "") or "")
+        if not default_agent_id and profiles:
+            default_agent_id = str(profiles[0].get("agent_id", "") or "")
+        bot_profile = next((item for item in profiles if item.get("agent_id") == default_agent_id), None)
+        skills = await self.list_skills()
+        executors = await self.list_subagent_executors()
+        providers = await self.list_model_providers()
+        presets = await self.list_model_presets()
+        bindings = await self.list_model_bindings()
+        return {
+            "bot": {
+                "agent_id": default_agent_id,
+                "name": bot_profile.get("name", default_agent_id) if bot_profile is not None else default_agent_id,
+            },
+            "agents": [
+                {
+                    "agent_id": item["agent_id"],
+                    "name": item.get("name", item["agent_id"]),
+                }
+                for item in profiles
+            ],
+            "prompts": [
+                {
+                    "prompt_ref": item.get("prompt_ref", ""),
+                    "prompt_name": str(item.get("prompt_ref", "")).removeprefix("prompt/"),
+                    "source": item.get("source", ""),
+                }
+                for item in prompts
+            ],
+            "tools": await self.list_available_tools(),
+            "skills": [asdict(item) for item in skills],
+            "subagent_executors": [asdict(item) for item in executors],
+            "model_providers": [
+                {
+                    "provider_id": item.provider_id,
+                    "kind": item.kind,
+                }
+                for item in providers
+            ],
+            "model_presets": [
+                {
+                    "preset_id": item.preset_id,
+                    "provider_id": item.provider_id,
+                    "model": item.model,
+                }
+                for item in presets
+            ],
+            "model_bindings": [item.to_dict() for item in bindings],
+            "options": build_ui_options(
+                api_key_env_names=[key for key in os.environ if key.endswith("_API_KEY")]
+            ),
+        }
+
+    async def list_threads(self, *, limit: int = 100):
+        if self.thread_manager is None:
+            return []
+        return await self.thread_manager.list_threads(limit=limit)
+
+    async def get_thread(self, thread_id: str):
+        if self.thread_manager is None:
+            return None
+        return await self.thread_manager.get(thread_id)
+
+    async def list_runs(
+        self,
+        *,
+        limit: int = 100,
+        statuses: list[str] | None = None,
+        thread_id: str | None = None,
+    ) -> list[RunRecord]:
+        status_set = {str(item) for item in list(statuses or []) if str(item).strip()}
+        return await self.run_manager.list_runs(
+            limit=limit,
+            statuses=status_set or None,
+            thread_id=thread_id,
+        )
+
+    async def get_run(self, run_id: str) -> RunRecord | None:
+        return await self.run_manager.get(run_id)
+
+    async def list_run_steps(
+        self,
+        *,
+        run_id: str,
+        limit: int = 100,
+        step_types: list[str] | None = None,
+    ):
+        return await self.run_manager.list_steps(
+            run_id,
+            limit=limit,
+            step_types=step_types,
+        )
+
+    async def list_thread_events(
+        self,
+        *,
+        thread_id: str,
+        limit: int = 100,
+        since: int | None = None,
+        event_types: list[str] | None = None,
+    ) -> list[ChannelEventRecord]:
+        if self.channel_event_store is None:
+            return []
+        return await self.channel_event_store.get_thread_events(
+            thread_id,
+            limit=limit,
+            since=since,
+            event_types=event_types,
+        )
+
+    async def list_thread_messages(
+        self,
+        *,
+        thread_id: str,
+        limit: int = 100,
+        since: int | None = None,
+    ) -> list[MessageRecord]:
+        if self.message_store is None:
+            return []
+        return await self.message_store.get_thread_messages(
+            thread_id,
+            limit=limit,
+            since=since,
+        )
+
+    async def list_model_providers(self) -> list[ModelProvider]:
+        return await self.model_ops.list_model_providers()
+
+    async def list_model_presets(self) -> list[ModelPreset]:
+        return await self.model_ops.list_model_presets()
+
+    async def list_model_bindings(self) -> list[ModelBinding]:
+        return await self.model_ops.list_model_bindings()
+
+    async def get_model_provider(self, provider_id: str) -> ModelProvider | None:
+        return await self.model_ops.get_model_provider(provider_id)
+
+    async def get_model_preset(self, preset_id: str) -> ModelPreset | None:
+        return await self.model_ops.get_model_preset(preset_id)
+
+    async def get_model_binding(self, binding_id: str) -> ModelBinding | None:
+        return await self.model_ops.get_model_binding(binding_id)
+
+    async def get_model_provider_impact(self, provider_id: str) -> ModelImpactSnapshot:
+        return await self.model_ops.get_model_provider_impact(provider_id)
+
+    async def get_model_preset_impact(self, preset_id: str) -> ModelImpactSnapshot:
+        return await self.model_ops.get_model_preset_impact(preset_id)
+
+    async def get_model_binding_impact(self, binding_id: str) -> ModelImpactSnapshot:
+        return await self.model_ops.get_model_binding_impact(binding_id)
+
+    async def preview_effective_agent_model(self, agent_id: str) -> EffectiveModelSnapshot:
+        return await self.model_ops.preview_effective_agent_model(agent_id)
+
+    async def preview_effective_summary_model(self) -> EffectiveModelSnapshot:
+        return await self.model_ops.preview_effective_summary_model()
+
+    async def upsert_model_provider(self, provider: ModelProvider) -> ModelMutationResult:
+        return await self.model_ops.upsert_model_provider(provider)
+
+    async def upsert_model_preset(self, preset: ModelPreset) -> ModelMutationResult:
+        return await self.model_ops.upsert_model_preset(preset)
+
+    async def upsert_model_binding(self, binding: ModelBinding) -> ModelMutationResult:
+        return await self.model_ops.upsert_model_binding(binding)
+
+    async def delete_model_provider(
+        self,
+        provider_id: str,
+        *,
+        force: bool = False,
+    ) -> ModelMutationResult:
+        return await self.model_ops.delete_model_provider(provider_id, force=force)
+
+    async def delete_model_preset(
+        self,
+        preset_id: str,
+        *,
+        force: bool = False,
+    ) -> ModelMutationResult:
+        return await self.model_ops.delete_model_preset(preset_id, force=force)
+
+    async def delete_model_binding(self, binding_id: str) -> ModelMutationResult:
+        return await self.model_ops.delete_model_binding(binding_id)
+
+    async def health_check_model_preset(self, preset_id: str) -> ModelHealthCheckResult:
+        return await self.model_ops.health_check_model_preset(preset_id)
+
+    async def reload_models(self) -> ModelReloadSnapshot:
+        return await self.model_ops.reload_models()
+
+    async def get_model_registry_status(self) -> ModelRegistryStatusSnapshot:
+        return await self.model_ops.get_model_registry_status()
+
+    async def list_workspaces(self) -> list[WorkspaceState]:
+        return await self.workspace_ops.list_workspaces()
+
+    async def list_workspace_entries(
+        self,
+        *,
+        thread_id: str,
+        relative_path: str = "/",
+    ) -> list[WorkspaceFileEntry]:
+        return await self.workspace_ops.list_workspace_entries(
+            thread_id=thread_id,
+            relative_path=relative_path,
+        )
+
+    async def read_workspace_file(
+        self,
+        *,
+        thread_id: str,
+        relative_path: str,
+    ) -> str:
+        return await self.workspace_ops.read_workspace_file(
+            thread_id=thread_id,
+            relative_path=relative_path,
+        )
+
+    async def list_workspace_sessions(self, *, thread_id: str) -> list[str]:
+        return await self.workspace_ops.list_workspace_sessions(thread_id=thread_id)
+
+    async def list_workspace_attachments(self, *, thread_id: str) -> list[WorkspaceFileEntry]:
+        return await self.workspace_ops.list_workspace_attachments(thread_id=thread_id)
+
+    async def get_sandbox_status(self, *, thread_id: str) -> WorkspaceSandboxStatus:
+        return await self.workspace_ops.get_sandbox_status(thread_id=thread_id)
+
+    async def list_mirrored_skills(self, *, thread_id: str) -> list[str]:
+        return await self.workspace_ops.list_mirrored_skills(thread_id=thread_id)
+
+    async def list_reference_spaces(
+        self,
+        *,
+        tenant_id: str | None = None,
+        mode: ReferenceMode | None = None,
+    ) -> list[ReferenceSpace]:
+        return await self.reference_ops.list_reference_spaces(tenant_id=tenant_id, mode=mode)
+
+    async def search_reference(
+        self,
+        *,
+        query: str,
+        tenant_id: str,
+        space_id: str | None = None,
+        mode: ReferenceMode | None = None,
+        limit: int = 10,
+        body: ReferenceBodyLevel = "none",
+        min_score: float = 0.0,
+    ) -> list[ReferenceHit]:
+        return await self.reference_ops.search_reference(
+            query=query,
+            tenant_id=tenant_id,
+            space_id=space_id,
+            mode=mode,
+            limit=limit,
+            body=body,
+            min_score=min_score,
+        )
+
+    async def get_reference_document(
+        self,
+        *,
+        ref_id: str,
+        tenant_id: str,
+        body: ReferenceBodyLevel = "full",
+    ) -> ReferenceDocument | None:
+        return await self.reference_ops.get_reference_document(
+            ref_id=ref_id,
+            tenant_id=tenant_id,
+            body=body,
+        )
+
+    async def add_reference_documents(
+        self,
+        *,
+        tenant_id: str,
+        space_id: str,
+        mode: ReferenceMode,
+        documents: list[ReferenceDocumentInput],
+    ) -> list[ReferenceDocumentRef]:
+        return await self.reference_ops.add_reference_documents(
+            tenant_id=tenant_id,
+            space_id=space_id,
+            mode=mode,
+            documents=documents,
+        )
+
+    async def list_workspace_activity(
+        self,
+        *,
+        thread_id: str,
+        limit: int = 50,
+        step_types: list[str] | None = None,
+    ):
+        return await self.workspace_ops.list_workspace_activity(
+            thread_id=thread_id,
+            limit=limit,
+            step_types=step_types,
+        )
+
+    async def set_thread_computer_override(
+        self,
+        *,
+        thread_id: str,
+        override: ComputerRuntimeOverride,
+        force: bool = False,
+    ) -> AgentSwitchSnapshot:
+        return await self.workspace_ops.set_thread_computer_override(
+            thread_id=thread_id,
+            override=override,
+            force=force,
+        )
+
+    async def clear_thread_computer_override(self, *, thread_id: str, force: bool = False) -> AgentSwitchSnapshot:
+        return await self.workspace_ops.clear_thread_computer_override(
+            thread_id=thread_id,
+            force=force,
+        )
+
+    async def prune_workspace(self, *, thread_id: str, force: bool = False) -> AgentSwitchSnapshot:
+        return await self.workspace_ops.prune_workspace(thread_id=thread_id, force=force)
+
+    async def stop_workspace_sandbox(self, *, thread_id: str, force: bool = False) -> AgentSwitchSnapshot:
+        return await self.workspace_ops.stop_workspace_sandbox(thread_id=thread_id, force=force)
+
+    def _list_loaded_plugins(self) -> list[str]:
+        """返回当前已加载插件名列表.
+
+        Returns:
+            已加载插件名列表.
+        """
+
+        if self.plugin_manager is None:
+            return []
+        return [plugin.name for plugin in self.plugin_manager.loaded]
+
+    def _list_loaded_skills(self) -> list[str]:
+        """列出当前已注册 skill 名列表.
+
+        Returns:
+            skill_name 列表.
+        """
+
+        if self.skill_catalog is None:
+            return []
+        return [item.skill_name for item in self.skill_catalog.list_all()]
+
+    @staticmethod
+    def _to_skill_snapshot(item: SkillPackageManifest) -> SkillSnapshot:
+        """把 SkillPackageManifest 转成 SkillSnapshot.
+
+        Args:
+            item: 当前注册的 skill.
+
+        Returns:
+            对应的 SkillSnapshot.
+        """
+
+        return SkillSnapshot(
+            skill_name=item.skill_name,
+            display_name=item.display_name,
+            description=item.description,
+            has_references=item.has_references,
+            has_scripts=item.has_scripts,
+            has_assets=item.has_assets,
+        )
+
+    @staticmethod
+    def _to_agent_skill_snapshot(
+        agent_id: str,
+        item: ResolvedSkillAssignment,
+    ) -> AgentSkillSnapshot:
+        """把 ResolvedSkillAssignment 转成 AgentSkillSnapshot.
+
+        Args:
+            agent_id: 当前 agent 标识.
+            item: 已展开的 assignment.
+
+        Returns:
+            对应的 AgentSkillSnapshot.
+        """
+
+        return AgentSkillSnapshot(
+            agent_id=agent_id,
+            skill_name=item.skill.skill_name,
+            display_name=item.skill.display_name,
+            description=item.skill.description,
+            delegation_mode=item.assignment.delegation_mode,
+            delegate_agent_id=item.assignment.delegate_agent_id,
+            notes=item.assignment.notes,
+            has_references=item.skill.has_references,
+            has_scripts=item.skill.has_scripts,
+            has_assets=item.skill.has_assets,
+        )
+
+    @staticmethod
+    def _to_subagent_executor_snapshot(item: RegisteredSubagentExecutor) -> SubagentExecutorSnapshot:
+        """把 RegisteredSubagentExecutor 转成 SubagentExecutorSnapshot.
+
+        Args:
+            item: 当前注册的 subagent executor.
+
+        Returns:
+            对应的 SubagentExecutorSnapshot.
+        """
+
+        return SubagentExecutorSnapshot(
+            agent_id=item.agent_id,
+            source=item.source,
+            metadata=dict(item.metadata),
+        )
+
+
+# endregion

@@ -6,10 +6,10 @@
 
 关键文件:
 
-- `src/acabot/runtime/reference_backend.py`
+- `src/acabot/runtime/references/`
 - `src/acabot/runtime/plugins/reference_tools.py`
-- `src/acabot/runtime/bootstrap.py`
-- `src/acabot/runtime/control_plane.py`
+- `src/acabot/runtime/bootstrap/`
+- `src/acabot/runtime/control/control_plane.py`
 
 ## 先讲边界
 
@@ -215,7 +215,10 @@ reference 工具只是入口，真正行为大多在 backend。
 
 ## 读源码顺序建议
 
-1. `src/acabot/runtime/reference_backend.py`
-2. `src/acabot/runtime/plugins/reference_tools.py`
-3. `src/acabot/runtime/bootstrap.py`
-4. `src/acabot/runtime/control_plane.py`
+1. `src/acabot/runtime/references/contracts.py`
+2. `src/acabot/runtime/references/base.py`
+3. `src/acabot/runtime/references/local.py`
+4. `src/acabot/runtime/references/openviking.py`
+5. `src/acabot/runtime/plugins/reference_tools.py`
+6. `src/acabot/runtime/bootstrap/`
+7. `src/acabot/runtime/control/control_plane.py`

@@ -33,7 +33,7 @@ from acabot.runtime import (
     ToolBroker,
     build_runtime_components,
 )
-from acabot.runtime.models import PendingApproval
+from acabot.runtime.contracts import PendingApproval
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
 from .test_outbox import FakeGateway

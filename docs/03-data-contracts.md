@@ -37,7 +37,7 @@
 
 - `gateway/napcat.py`
 - `runtime/router.py`
-- `runtime/event_policy.py`
+- `runtime/control/event_policy.py`
 - `runtime/app.py`
 - `runtime/pipeline.py`
 
@@ -75,7 +75,7 @@
 
 ## `RouteDecision`
 
-定义在 `runtime/models.py`。
+真实定义在 `runtime/contracts/routing.py`。
 
 它是“这条事件接下来怎么跑”的最小决定书。
 
@@ -103,7 +103,7 @@
 
 ## `RunRecord`
 
-也是 `runtime/models.py` 里的对象。
+真实定义在 `runtime/contracts/records.py`。
 
 这是正式的执行生命周期记录，不是临时现场。
 
@@ -150,7 +150,7 @@
 
 ## `ThreadState`
 
-定义在 `runtime/models.py`，由 `ThreadManager` 管。
+真实定义在 `runtime/contracts/records.py`，由 `ThreadManager` 管。
 
 它表达的是当前线程运行时上下文，不是数据库记录。
 
@@ -202,7 +202,7 @@
 
 ## `MemoryItem`
 
-这是长期记忆项，定义在 `runtime/models.py`。
+这是长期记忆项，真实定义在 `runtime/contracts/records.py`。
 
 重点字段:
 

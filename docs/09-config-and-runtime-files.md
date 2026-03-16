@@ -62,8 +62,8 @@
 
 相关代码重点看:
 
-- `runtime/profile_loader.py`
-- `runtime/config_control_plane.py`
+- `runtime/control/profile_loader.py`
+- `runtime/control/config_control_plane.py`
 
 ## 为什么这点重要
 

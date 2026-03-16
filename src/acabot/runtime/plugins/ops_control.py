@@ -22,8 +22,8 @@ import shlex
 
 from acabot.types import Action, ActionType
 
-from ..control_plane import PluginReloadSnapshot
-from ..models import PlannedAction, RunContext
+from ..control.control_plane import PluginReloadSnapshot
+from ..contracts import PlannedAction, RunContext
 from ..plugin_manager import RuntimeHook, RuntimeHookPoint, RuntimeHookResult, RuntimePlugin, RuntimePluginContext
 
 

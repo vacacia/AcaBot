@@ -9,7 +9,7 @@ from typing import Any, Callable
 
 from acabot.types import StandardEvent
 
-from .models import EventPolicyDecision, InboundRule, RouteDecision, RunMode
+from .contracts import EventPolicyDecision, InboundRule, RouteDecision, RunMode
 
 
 # region inbound规则

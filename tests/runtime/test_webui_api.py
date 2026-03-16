@@ -7,7 +7,7 @@ from urllib.request import Request, urlopen
 
 from acabot.config import Config
 from acabot.runtime import RouteDecision, build_runtime_components
-from acabot.runtime.http_api import RuntimeHttpApiServer
+from acabot.runtime.control.http_api import RuntimeHttpApiServer
 
 from .test_outbox import FakeGateway
 

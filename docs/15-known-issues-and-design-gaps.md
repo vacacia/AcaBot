@@ -48,7 +48,7 @@
 ### 相关代码
 
 - `src/acabot/runtime/plugins/subagent_delegation.py`
-- `src/acabot/runtime/subagent_delegation.py`
+- `src/acabot/runtime/subagents/broker.py`
 
 ### 修复时通常要同步
 
@@ -88,11 +88,11 @@
 
 ### 相关代码
 
-- `src/acabot/runtime/skills.py`
-- `src/acabot/runtime/skill_package.py`
-- `src/acabot/runtime/skill_loader.py`
-- `src/acabot/runtime/plugins/skill_tool.py`
-- `src/acabot/runtime/computer.py`
+- `src/acabot/runtime/skills/catalog.py`
+- `src/acabot/runtime/skills/package.py`
+- `src/acabot/runtime/skills/loader.py`
+- `src/acabot/runtime/skills/tool_adapter.py`
+- `src/acabot/runtime/computer/`
 
 ### 修复时通常要同步
 
@@ -124,7 +124,7 @@
 
 ### 相关代码
 
-- `src/acabot/runtime/computer.py`
+- `src/acabot/runtime/computer/`
 - `src/acabot/runtime/plugins/computer_tool_adapter.py`
 
 ### 修复时通常要同步
@@ -155,7 +155,7 @@
 
 ### 相关代码
 
-- `src/acabot/runtime/computer.py`
+- `src/acabot/runtime/computer/`
 
 ### 修复时通常要同步
 

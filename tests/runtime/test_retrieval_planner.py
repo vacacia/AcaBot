@@ -6,7 +6,7 @@ from acabot.runtime import (
     RouteDecision,
     RunContext,
 )
-from acabot.runtime.models import RunRecord, ThreadState
+from acabot.runtime.contracts import RunRecord, ThreadState
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
 

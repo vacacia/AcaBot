@@ -22,9 +22,14 @@
 ### 先看哪些文件
 
 - `src/acabot/webui/app.js`
-- `src/acabot/runtime/http_api.py`
-- `src/acabot/runtime/control_plane.py`
-- `src/acabot/runtime/config_control_plane.py`
+- `src/acabot/runtime/control/http_api.py`
+- `src/acabot/runtime/control/control_plane.py`
+- `src/acabot/runtime/control/snapshots.py`
+- `src/acabot/runtime/control/ui_catalog.py`
+- `src/acabot/runtime/control/model_ops.py`
+- `src/acabot/runtime/control/workspace_ops.py`
+- `src/acabot/runtime/control/reference_ops.py`
+- `src/acabot/runtime/control/config_control_plane.py`
 
 ### 先判断这块面板在改什么
 
@@ -75,15 +80,15 @@
 
 - `src/acabot/types/event.py`
 - `src/acabot/gateway/napcat.py`
-- `src/acabot/runtime/message_resolution.py`
-- `src/acabot/runtime/message_projection.py`
-- `src/acabot/runtime/message_preparation.py`
-- `src/acabot/runtime/image_context.py`
+- `src/acabot/runtime/inbound/message_resolution.py`
+- `src/acabot/runtime/inbound/message_projection.py`
+- `src/acabot/runtime/inbound/message_preparation.py`
+- `src/acabot/runtime/inbound/image_context.py`
 - `src/acabot/runtime/pipeline.py`
-- `src/acabot/runtime/computer.py`
-- `src/acabot/runtime/model_agent_runtime.py`
-- `src/acabot/runtime/model_resolution.py`
-- `src/acabot/runtime/memory_broker.py`
+- `src/acabot/runtime/computer/`
+- `src/acabot/runtime/model/model_agent_runtime.py`
+- `src/acabot/runtime/model/model_resolution.py`
+- `src/acabot/runtime/memory/memory_broker.py`
 - `src/acabot/webui/app.js`
 
 ### 先回答四个设计问题
@@ -162,12 +167,12 @@
 
 ### 先看哪些文件
 
-- `src/acabot/runtime/memory_broker.py`
-- `src/acabot/runtime/structured_memory.py`
-- `src/acabot/runtime/stores.py`
-- `src/acabot/runtime/memory_store.py`
-- `src/acabot/runtime/sqlite_stores.py`
-- `src/acabot/runtime/event_policy.py`
+- `src/acabot/runtime/memory/memory_broker.py`
+- `src/acabot/runtime/memory/structured_memory.py`
+- `src/acabot/runtime/storage/stores.py`
+- `src/acabot/runtime/storage/memory_store.py`
+- `src/acabot/runtime/storage/sqlite_stores.py`
+- `src/acabot/runtime/control/event_policy.py`
 - `src/acabot/runtime/pipeline.py`
 
 ### 先确认重构目标

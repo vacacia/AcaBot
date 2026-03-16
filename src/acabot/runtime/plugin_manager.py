@@ -34,11 +34,11 @@ from acabot.config import Config
 
 from .computer import ComputerRuntime
 from .gateway_protocol import GatewayProtocol
-from .models import RunContext
-from .reference_backend import ReferenceBackend
+from .contracts import RunContext
+from .references import ReferenceBackend
 from .skills import SkillCatalog
-from .sticky_notes import StickyNotesService
-from .subagent_delegation import (
+from .memory.sticky_notes import StickyNotesService
+from .subagents import (
     SubagentDelegationBroker,
     SubagentExecutorRegistration,
 )
@@ -46,7 +46,7 @@ from .tool_broker import ToolBroker
 from .tool_broker import ToolHandler as RuntimeToolHandler
 
 if TYPE_CHECKING:
-    from .control_plane import RuntimeControlPlane
+    from .control.control_plane import RuntimeControlPlane
 
 logger = logging.getLogger("acabot.runtime.plugin")
 

@@ -11,7 +11,7 @@
 AcaBot 真实入口是:
 
 - `src/acabot/main.py`
-- `src/acabot/runtime/bootstrap.py`
+- `src/acabot/runtime/bootstrap/`
 - `src/acabot/runtime/app.py`
 - `src/acabot/runtime/pipeline.py`
 
@@ -41,11 +41,11 @@ AcaBot 真实入口是:
 
 - `src/acabot/main.py`
   现在只负责启动和组装，不负责业务主线。
-- `src/acabot/runtime/bootstrap.py`
+- `src/acabot/runtime/bootstrap/`
   默认 runtime 组件都在这里接起来。
-- `src/acabot/runtime/models.py`
-  核心运行时数据对象都在这里。
-- `src/acabot/runtime/config_control_plane.py`
+- `src/acabot/runtime/contracts/`
+  核心运行时数据对象现在拆在这里。
+- `src/acabot/runtime/control/config_control_plane.py`
   WebUI 能改的配置真源和热刷新逻辑大多在这里。
 
 ## 一张够用的脑图
@@ -172,7 +172,7 @@ AcaBot 真实入口是:
 
 - `runtime/app.py`
 - `runtime/pipeline.py`
-- `runtime/bootstrap.py`
+- `runtime/bootstrap/`
 - `runtime/router.py`
 
 通常要同步:
@@ -186,7 +186,7 @@ AcaBot 真实入口是:
 代码范围:
 
 - `types/`
-- `runtime/models.py`
+- `runtime/contracts/`
 
 通常要同步:
 
@@ -197,11 +197,11 @@ AcaBot 真实入口是:
 
 代码范围:
 
-- `runtime/memory_broker.py`
-- `runtime/structured_memory.py`
-- `runtime/context_compactor.py`
-- `runtime/retrieval_planner.py`
-- `runtime/event_policy.py`
+- `runtime/memory/memory_broker.py`
+- `runtime/memory/structured_memory.py`
+- `runtime/memory/context_compactor.py`
+- `runtime/memory/retrieval_planner.py`
+- `runtime/control/event_policy.py`
 
 通常要同步:
 
@@ -212,10 +212,10 @@ AcaBot 真实入口是:
 
 代码范围:
 
-- `runtime/tool_broker.py`
+- `runtime/tool_broker/`
 - `runtime/plugin_manager.py`
 - `runtime/plugins/`
-- `runtime/skills.py`
+- `runtime/skills/catalog.py`
 - `runtime/subagent_*`
 
 通常要同步:
@@ -241,9 +241,9 @@ AcaBot 真实入口是:
 
 代码范围:
 
-- `runtime/http_api.py`
-- `runtime/control_plane.py`
-- `runtime/config_control_plane.py`
+- `runtime/control/http_api.py`
+- `runtime/control/control_plane.py`
+- `runtime/control/config_control_plane.py`
 - `webui/`
 
 通常要同步:
@@ -256,7 +256,7 @@ AcaBot 真实入口是:
 
 代码范围:
 
-- `runtime/computer.py`
+- `runtime/computer/`
 - `runtime/plugins/computer_tool_adapter.py`
 
 通常要同步:
@@ -268,8 +268,8 @@ AcaBot 真实入口是:
 
 代码范围:
 
-- `runtime/model_registry.py`
-- `runtime/model_resolution.py`
+- `runtime/model/model_registry.py`
+- `runtime/model/model_resolution.py`
 
 通常要同步:
 
@@ -280,7 +280,7 @@ AcaBot 真实入口是:
 
 代码范围:
 
-- `runtime/reference_backend.py`
+- `runtime/references/`
 - `runtime/plugins/reference_tools.py`
 
 通常要同步:
@@ -335,7 +335,7 @@ AcaBot 真实入口是:
 
 如果你不确定某个能力应该放在哪一层，先回到两个文件:
 
-- `src/acabot/runtime/bootstrap.py`
+- `src/acabot/runtime/bootstrap/`
 - `src/acabot/runtime/pipeline.py`
 
 大多数“应该接在哪”的问题，看完这两个文件就不会跑偏。

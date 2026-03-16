@@ -1,5 +1,5 @@
 from acabot.runtime import MemoryBlock, MemoryBroker, RunContext
-from acabot.runtime.models import (
+from acabot.runtime.contracts import (
     AgentProfile,
     MemoryCandidate,
     MessageProjection,

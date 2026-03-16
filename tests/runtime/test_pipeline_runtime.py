@@ -468,11 +468,11 @@ async def test_thread_pipeline_compresses_working_memory_before_model_call() -> 
 
     with (
         patch(
-            "acabot.runtime.context_compactor.token_counter",
+            "acabot.runtime.memory.context_compactor.token_counter",
             side_effect=_mock_token_counter,
         ),
         patch(
-            "acabot.runtime.context_compactor.get_model_info",
+            "acabot.runtime.memory.context_compactor.get_model_info",
             return_value={"max_input_tokens": 1000},
         ),
         ):
@@ -560,11 +560,11 @@ async def test_thread_pipeline_uses_compaction_override_when_thread_apply_is_ski
 
     with (
         patch(
-            "acabot.runtime.context_compactor.token_counter",
+            "acabot.runtime.memory.context_compactor.token_counter",
             side_effect=_mock_token_counter,
         ),
         patch(
-            "acabot.runtime.context_compactor.get_model_info",
+            "acabot.runtime.memory.context_compactor.get_model_info",
             return_value={"max_input_tokens": 1000},
         ),
         patch.object(compactor, "apply_to_thread", return_value=False),

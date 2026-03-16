@@ -23,7 +23,7 @@ from typing import Any, cast
 from acabot.agent import ToolSpec
 
 from ..plugin_manager import RuntimePlugin, RuntimePluginContext, RuntimeToolRegistration
-from ..sticky_notes import StickyNotesService, StickyScope
+from ..memory.sticky_notes import StickyNotesService, StickyScope
 from ..tool_broker import ToolExecutionContext, ToolResult
 
 

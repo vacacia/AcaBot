@@ -23,7 +23,7 @@ from typing import Any, cast
 from acabot.agent import ToolDef
 
 from ..plugin_manager import RuntimePlugin, RuntimePluginContext
-from ..reference_backend import (
+from ..references import (
     ReferenceBackend,
     ReferenceDocumentInput,
     ReferenceMode,

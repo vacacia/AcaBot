@@ -40,10 +40,10 @@
 相关文件:
 
 - `runtime/pipeline.py`
-- `runtime/context_compactor.py`
-- `runtime/retrieval_planner.py`
-- `runtime/memory_broker.py`
-- `runtime/structured_memory.py`
+- `runtime/memory/context_compactor.py`
+- `runtime/memory/retrieval_planner.py`
+- `runtime/memory/memory_broker.py`
+- `runtime/memory/structured_memory.py`
 
 流程是:
 
@@ -323,8 +323,8 @@ WebUI 和 event policy 里会看到 `memory_scopes` 这组配置。
 ## 读源码顺序建议
 
 1. `src/acabot/runtime/pipeline.py`
-2. `src/acabot/runtime/memory_broker.py`
-3. `src/acabot/runtime/structured_memory.py`
-4. `src/acabot/runtime/retrieval_planner.py`
-5. `src/acabot/runtime/context_compactor.py`
-6. `src/acabot/runtime/event_policy.py`
+2. `src/acabot/runtime/memory/memory_broker.py`
+3. `src/acabot/runtime/memory/structured_memory.py`
+4. `src/acabot/runtime/memory/retrieval_planner.py`
+5. `src/acabot/runtime/memory/context_compactor.py`
+6. `src/acabot/runtime/control/event_policy.py`

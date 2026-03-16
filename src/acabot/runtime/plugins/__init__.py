@@ -8,7 +8,7 @@ from .computer_tool_adapter import ComputerToolAdapterPlugin
 from .napcat_tools import NapCatToolsPlugin
 from .ops_control import OpsControlPlugin
 from .reference_tools import ReferenceToolsPlugin
-from .skill_tool import SkillToolPlugin
+from ..skills.tool_adapter import SkillToolPlugin
 from .sticky_notes import StickyNotesPlugin
 from .subagent_delegation import SubagentDelegationPlugin
 

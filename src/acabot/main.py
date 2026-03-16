@@ -29,8 +29,8 @@ from .agent import BaseAgent
 from .config import Config
 from .runtime import RuntimeComponents, build_runtime_components
 from .runtime.gateway_protocol import GatewayProtocol
-from .runtime.http_api import RuntimeHttpApiServer
-from .runtime.stores import MessageStore
+from .runtime.control.http_api import RuntimeHttpApiServer
+from .runtime.storage.stores import MessageStore
 
 try:
     from dotenv import load_dotenv

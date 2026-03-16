@@ -14,9 +14,14 @@
 
 - `src/acabot/webui/index.html`
 - `src/acabot/webui/app.js`
-- `src/acabot/runtime/http_api.py`
-- `src/acabot/runtime/control_plane.py`
-- `src/acabot/runtime/config_control_plane.py`
+- `src/acabot/runtime/control/http_api.py`
+- `src/acabot/runtime/control/control_plane.py`
+- `src/acabot/runtime/control/snapshots.py`
+- `src/acabot/runtime/control/ui_catalog.py`
+- `src/acabot/runtime/control/model_ops.py`
+- `src/acabot/runtime/control/workspace_ops.py`
+- `src/acabot/runtime/control/reference_ops.py`
+- `src/acabot/runtime/control/config_control_plane.py`
 
 ## 前端这边是什么状态
 
@@ -73,6 +78,17 @@
 - runtime / memory / thread / run 可视化
 
 它不直接等于配置真源，也不该把所有 YAML 读写细节都塞自己身上。
+
+现在这一层内部也已经继续拆开了:
+
+- `control_plane.py` 只保留 `RuntimeControlPlane` 本体和少量组装逻辑
+- `snapshots.py` 放 control plane 返回给 WebUI / API 的轻量快照类型
+- `ui_catalog.py` 放 WebUI 表单选项常量和目录选项 helper
+- `model_ops.py` 放模型注册表相关控制面操作
+- `workspace_ops.py` 放 workspace / sandbox / computer override 相关控制面操作
+- `reference_ops.py` 放 reference 检索和写入相关控制面操作
+
+所以如果你只是要改状态返回结构，优先看 `snapshots.py`；如果只是要改 WebUI 下拉框和选项枚举，优先看 `ui_catalog.py`，不要第一反应就去给 `control_plane.py` 继续加体积。
 
 ## `RuntimeConfigControlPlane`
 
@@ -158,8 +174,13 @@
 
 ## 读源码顺序建议
 
-1. `src/acabot/runtime/http_api.py`
-2. `src/acabot/runtime/control_plane.py`
-3. `src/acabot/runtime/config_control_plane.py`
-4. `src/acabot/webui/app.js`
-5. `src/acabot/webui/index.html`
+1. `src/acabot/runtime/control/http_api.py`
+2. `src/acabot/runtime/control/control_plane.py`
+3. `src/acabot/runtime/control/snapshots.py`
+4. `src/acabot/runtime/control/ui_catalog.py`
+5. `src/acabot/runtime/control/model_ops.py`
+6. `src/acabot/runtime/control/workspace_ops.py`
+7. `src/acabot/runtime/control/reference_ops.py`
+8. `src/acabot/runtime/control/config_control_plane.py`
+9. `src/acabot/webui/app.js`
+10. `src/acabot/webui/index.html`

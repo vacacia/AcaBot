@@ -17,9 +17,7 @@
 - `agent/`
   面向模型调用的抽象层。定义 `BaseAgent`、tool 契约、response 契约。
 - `runtime/`
-  现在最重要的目录。主流程、路由、记忆、工具、插件、控制面、模型解析都在这里。
-- `kv/`
-  简单 KV 抽象，目前不是主线核心。没有用
+  现在最重要的目录。主流程、路由、记忆、工具、插件、控制面、模型解析都在这里，而且已经按 `contracts / control / inbound / memory / model / references / skills / storage / subagents` 拆成子目录。
 - `webui/`
   本地 WebUI 静态资源。
 
@@ -42,16 +40,16 @@
 关键文件:
 
 - `src/acabot/main.py`
-- `src/acabot/runtime/bootstrap.py`
+- `src/acabot/runtime/bootstrap/`
 - `src/acabot/runtime/app.py`
 
 分工很清楚:
 
 - `main.py` 负责“从配置出发把东西创建出来”
-- `bootstrap.py` 负责“把默认组件接成一套能跑的 runtime”
+- `bootstrap/` 负责“把默认组件接成一套能跑的 runtime”
 - `app.py` 负责“把 gateway 上来的 event 送进 runtime 主线”
 
-如果你想给系统加一个新基础设施，第一反应应该是看 `bootstrap.py`，不是先去 patch `main.py`。
+如果你想给系统加一个新基础设施，第一反应应该是看 `bootstrap/`，不是先去 patch `main.py`。
 
 ## runtime 里最重要的几类文件
 
@@ -64,35 +62,42 @@
 
 ### 状态与持久化
 
-- `runtime/models.py`
-- `runtime/stores.py`
-- `runtime/threads.py`
-- `runtime/runs.py`
-- `runtime/sqlite_stores.py`
+- `runtime/contracts/`
+- `runtime/storage/stores.py`
+- `runtime/storage/threads.py`
+- `runtime/storage/runs.py`
+- `runtime/storage/sqlite_stores.py`
 
 ### 记忆和上下文
 
-- `runtime/memory_broker.py`
-- `runtime/structured_memory.py`
-- `runtime/context_compactor.py`
-- `runtime/retrieval_planner.py`
+- `runtime/memory/memory_broker.py`
+- `runtime/memory/structured_memory.py`
+- `runtime/memory/context_compactor.py`
+- `runtime/memory/retrieval_planner.py`
 
 ### 工具、插件、子代理
 
-- `runtime/tool_broker.py`
+- `runtime/tool_broker/`
 - `runtime/plugin_manager.py`
-- `runtime/skills.py`
-- `runtime/subagent_delegation.py`
-- `runtime/subagent_execution.py`
+- `runtime/skills/catalog.py`
+- `runtime/subagents/contracts.py`
+- `runtime/subagents/broker.py`
+- `runtime/subagents/execution.py`
 - `runtime/plugins/`
 
 ### 配置与控制面
 
-- `runtime/control_plane.py`
-- `runtime/config_control_plane.py`
-- `runtime/http_api.py`
-- `runtime/profile_loader.py`
-- `runtime/model_registry.py`
+- `runtime/control/control_plane.py`
+- `runtime/control/snapshots.py`
+- `runtime/control/ui_catalog.py`
+- `runtime/control/model_ops.py`
+- `runtime/control/workspace_ops.py`
+- `runtime/control/reference_ops.py`
+- `runtime/control/config_control_plane.py`
+- `runtime/control/http_api.py`
+- `runtime/control/profile_loader.py`
+- `runtime/model/model_registry.py`
+- `runtime/references/`
 
 ## 各层职责边界
 
@@ -191,9 +196,14 @@
 先看:
 
 - `src/acabot/webui/app.js`
-- `src/acabot/runtime/http_api.py`
-- `src/acabot/runtime/control_plane.py`
-- `src/acabot/runtime/config_control_plane.py`
+- `src/acabot/runtime/control/http_api.py`
+- `src/acabot/runtime/control/control_plane.py`
+- `src/acabot/runtime/control/snapshots.py`
+- `src/acabot/runtime/control/ui_catalog.py`
+- `src/acabot/runtime/control/model_ops.py`
+- `src/acabot/runtime/control/workspace_ops.py`
+- `src/acabot/runtime/control/reference_ops.py`
+- `src/acabot/runtime/control/config_control_plane.py`
 
 ### 图片转述 / VLM
 
@@ -201,23 +211,23 @@
 
 - `src/acabot/types/event.py`
 - `src/acabot/gateway/napcat.py`
-- `src/acabot/runtime/message_resolution.py`
-- `src/acabot/runtime/message_projection.py`
-- `src/acabot/runtime/message_preparation.py`
-- `src/acabot/runtime/image_context.py`
+- `src/acabot/runtime/inbound/message_resolution.py`
+- `src/acabot/runtime/inbound/message_projection.py`
+- `src/acabot/runtime/inbound/message_preparation.py`
+- `src/acabot/runtime/inbound/image_context.py`
 - `src/acabot/runtime/pipeline.py`
-- `src/acabot/runtime/computer.py`
-- `src/acabot/runtime/model_agent_runtime.py`
-- `src/acabot/runtime/memory_broker.py`
+- `src/acabot/runtime/computer/`
+- `src/acabot/runtime/model/model_agent_runtime.py`
+- `src/acabot/runtime/memory/memory_broker.py`
 
 ### 长期记忆
 
 先看:
 
-- `src/acabot/runtime/memory_broker.py`
-- `src/acabot/runtime/structured_memory.py`
-- `src/acabot/runtime/stores.py`
-- `src/acabot/runtime/event_policy.py`
+- `src/acabot/runtime/memory/memory_broker.py`
+- `src/acabot/runtime/memory/structured_memory.py`
+- `src/acabot/runtime/storage/stores.py`
+- `src/acabot/runtime/control/event_policy.py`
 - `src/acabot/runtime/pipeline.py`
 
 ## 一句话版本

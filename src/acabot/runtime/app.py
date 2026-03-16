@@ -16,9 +16,9 @@ from acabot.types import StandardEvent
 from .approval_resumer import ApprovalResumer, ApprovalResumeResult, NoopApprovalResumer
 from .computer import ComputerRuntime
 from .gateway_protocol import GatewayProtocol
-from .model_resolution import resolve_model_requests_for_profile
-from .model_registry import FileSystemModelRegistryManager, PersistedModelSnapshot, RuntimeModelRequest
-from .models import (
+from .model.model_resolution import resolve_model_requests_for_profile
+from .model.model_registry import FileSystemModelRegistryManager, PersistedModelSnapshot, RuntimeModelRequest
+from .contracts import (
     ApprovalDecisionResult,
     AgentProfile,
     ChannelEventRecord,
@@ -32,11 +32,11 @@ from .models import (
 )
 from .plugin_manager import RuntimePluginManager
 from .pipeline import ThreadPipeline
-from .reference_backend import ReferenceBackend
+from .references import ReferenceBackend
 from .router import RuntimeRouter
-from .runs import RunManager
-from .stores import ChannelEventStore
-from .threads import ThreadManager
+from .storage.runs import RunManager
+from .storage.stores import ChannelEventStore
+from .storage.threads import ThreadManager
 
 logger = logging.getLogger("acabot.runtime.app")
 

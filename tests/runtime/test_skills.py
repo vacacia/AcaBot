@@ -2,7 +2,7 @@ from pathlib import Path
 
 from acabot.agent import ToolSpec
 from acabot.runtime import AgentProfile, SkillAssignment, SkillCatalog, ToolBroker
-from acabot.runtime.skill_loader import FileSystemSkillPackageLoader
+from acabot.runtime.skills import FileSystemSkillPackageLoader
 
 
 def _fixtures_root() -> Path:
