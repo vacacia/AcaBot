@@ -22,6 +22,18 @@ from .approval_resumer import (
     ToolApprovalResumer,
 )
 from .app import RuntimeApp
+from .backend import (
+    BackendRequest,
+    BackendSourceRef,
+)
+from .backend.bridge import BackendBridge
+from .backend.mode_registry import BackendModeRegistry, BackendModeState
+from .backend.session import (
+    BackendSessionBinding,
+    BackendSessionBindingStore,
+    BackendSessionService,
+    ConfiguredBackendSessionService,
+)
 from .bootstrap import RuntimeComponents, build_runtime_components
 from .computer import (
     AttachmentSnapshot,
@@ -63,6 +75,7 @@ from .control.control_plane import (
     SkillSnapshot,
     SubagentExecutorSnapshot,
 )
+from .control.snapshots import BackendStatusSnapshot
 from .control.event_policy import EventPolicyRegistry
 from .storage.event_store import InMemoryChannelEventStore
 from .memory.memory_broker import (
@@ -165,6 +178,7 @@ from .plugin_manager import (
     parse_runtime_plugin_spec,
 )
 from .plugins import (
+    BackendBridgeToolPlugin,
     ComputerToolAdapterPlugin,
     NapCatToolsPlugin,
     OpsControlPlugin,
@@ -253,6 +267,16 @@ __all__ = [
     "AgentRuntime",
     "AgentRuntimeResult",
     "AgentProfile",
+    "BackendBridge",
+    "BackendModeRegistry",
+    "BackendModeState",
+    "BackendRequest",
+    "BackendSessionBinding",
+    "BackendSessionBindingStore",
+    "BackendSessionService",
+    "ConfiguredBackendSessionService",
+    "BackendSourceRef",
+    "BackendStatusSnapshot",
     "AgentProfileRegistry",
     "ApprovalRequired",
     "ApprovalDecisionResult",
@@ -286,6 +310,7 @@ __all__ = [
     "DeliveryResult",
     "DispatchReport",
     "DockerSandboxBackend",
+    "BackendBridgeToolPlugin",
     "build_runtime_components",
     "EventPolicy",
     "EventPolicyDecision",
@@ -393,6 +418,7 @@ __all__ = [
     "load_runtime_plugin",
     "load_runtime_plugins_from_config",
     "parse_runtime_plugin_spec",
+    "BackendBridgeToolPlugin",
     "ComputerToolAdapterPlugin",
     "NapCatToolsPlugin",
     "OpsControlPlugin",

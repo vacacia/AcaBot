@@ -396,6 +396,131 @@ async def test_build_runtime_components_loads_profiles_and_prompts_from_filesyst
     assert prompt == "You are Aca from filesystem."
 
 
+async def test_build_runtime_components_backend_status_exposes_session_path() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "fallback-model",
+                "system_prompt": "Fallback prompt.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    backend_status = await components.control_plane.get_backend_status()
+
+    assert backend_status.configured is False
+    assert backend_status.session_path.endswith(".acabot-runtime/backend/session.json")
+
+
+async def test_build_runtime_components_constructs_configured_backend_service_when_enabled(
+    tmp_path: Path,
+) -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "fallback-model",
+                "system_prompt": "Fallback prompt.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "runtime_root": str(tmp_path / ".acabot-runtime"),
+                "backend": {
+                    "enabled": True,
+                    "admin_actor_ids": ["qq:user:10001"],
+                    "session_binding_path": "backend/session.json",
+                    "pi_command": ["pi", "--mode", "rpc", "--session-dir", str(tmp_path / "pi-sessions")],
+                },
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    backend_status = await components.control_plane.get_backend_status()
+
+    assert components.backend_bridge.session.is_configured() is True
+    assert backend_status.configured is True
+    assert backend_status.admin_actor_ids == ["qq:user:10001"]
+    assert backend_status.session_path == str((tmp_path / ".acabot-runtime" / "backend" / "session.json").resolve())
+
+    await components.backend_bridge.session.adapter.dispose()
+
+
+async def test_build_runtime_components_resolves_backend_binding_path_under_runtime_root(
+    tmp_path: Path,
+) -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "fallback-model",
+                "system_prompt": "Fallback prompt.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "runtime_root": str(tmp_path / ".acabot-runtime"),
+                "backend": {
+                    "enabled": False,
+                    "session_binding_path": "backend/session.json",
+                },
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    backend_status = await components.control_plane.get_backend_status()
+
+    assert backend_status.session_path == str((tmp_path / ".acabot-runtime" / "backend" / "session.json").resolve())
+
+
+async def test_build_runtime_components_invalid_backend_command_stays_unconfigured(
+    tmp_path: Path,
+) -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "fallback-model",
+                "system_prompt": "Fallback prompt.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "runtime_root": str(tmp_path / ".acabot-runtime"),
+                "backend": {
+                    "enabled": True,
+                    "admin_actor_ids": ["qq:user:10001"],
+                    "session_binding_path": "backend/session.json",
+                    "pi_command": ["definitely-not-a-real-pi-binary"],
+                },
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    backend_status = await components.control_plane.get_backend_status()
+
+    assert components.backend_bridge.session.is_configured() is False
+    assert backend_status.configured is False
+    assert backend_status.session_path == str((tmp_path / ".acabot-runtime" / "backend" / "session.json").resolve())
+
+
 async def test_build_runtime_components_exposes_control_plane() -> None:
     config = Config(
         {
@@ -1290,6 +1415,7 @@ async def test_build_runtime_components_auto_loads_computer_tool_adapter_plugin(
     visible = components.tool_broker.visible_tools(profile)
 
     assert "computer_tool_adapter" in [plugin.name for plugin in components.plugin_manager.loaded]
+    assert "backend_bridge_tool" in [plugin.name for plugin in components.plugin_manager.loaded]
     assert [tool.name for tool in visible] == ["read", "exec"]
 
 
@@ -1344,6 +1470,7 @@ async def test_build_runtime_components_full_plugin_reload_keeps_builtin_plugins
     assert missing == []
     assert "computer_tool_adapter" in loaded_names
     assert "skill_tool" in loaded_names
+    assert "backend_bridge_tool" in loaded_names
     assert [tool.name for tool in visible] == ["read", "skill"]
 
 

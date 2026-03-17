@@ -63,6 +63,7 @@ AcaBot 真实入口是:
 - `ToolBroker` 负责工具可见性、审批和执行
 - `PluginManager` 给主线插 hook / tool / executor
 - `ControlPlane + HTTP API + WebUI` 负责本地运维和配置改写
+- `runtime/backend/` 现在已经是一个真实接线的子域，不只是设计草图：里面已经有 canonical session binding、configured backend session service、真实 `pi --mode rpc` adapter、管理员后台模式和前台 `ask_backend` bridge
 
 ## 这项目最容易看错的地方
 

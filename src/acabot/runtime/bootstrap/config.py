@@ -26,7 +26,22 @@ def resolve_filesystem_path(
 
 
 def resolve_runtime_path(config: Config, raw_path: object) -> Path:
-    return config.resolve_path(str(raw_path))
+    """把 runtime 相关路径解析到 `runtime.runtime_root` 下.
+
+    踩坑记录：
+    - backend/session binding 这类 runtime 产物不能按配置文件目录解析。
+    - 它们应该统一落到 `runtime.runtime_root` 下面, 否则会把运行时垃圾文件写进仓库普通路径,
+      比如误写成 `backend/session.json`。
+    """
+
+    runtime_conf = config.get("runtime", {})
+    runtime_root = Path(str(runtime_conf.get("runtime_root", ".acabot-runtime") or ".acabot-runtime"))
+    if not runtime_root.is_absolute():
+        runtime_root = config.resolve_path(runtime_root)
+    path = Path(str(raw_path))
+    if path.is_absolute():
+        return path
+    return (runtime_root / path).resolve()
 
 
 def get_persistence_sqlite_path(config: Config) -> str | None:
