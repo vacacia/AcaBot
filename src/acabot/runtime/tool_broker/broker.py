@@ -11,6 +11,8 @@ from acabot.agent import ToolDef, ToolExecutionResult, ToolSpec
 from acabot.agent.tool import normalize_tool_result
 from acabot.types import Action, ActionType
 
+from ..backend.bridge import BackendBridge
+from ..backend.contracts import BackendRequest, BackendSourceRef
 from ..contracts import AgentProfile, ApprovalRequired, DispatchReport, PendingApproval, PlannedAction, RunContext
 from ..model.model_agent_runtime import ToolRuntime, ToolRuntimeState
 from ..skills import SkillCatalog
@@ -38,13 +40,26 @@ class ToolBroker:
         skill_catalog: SkillCatalog | None = None,
         subagent_executor_registry: SubagentExecutorRegistry | None = None,
         default_agent_id: str = "",
+        backend_bridge: BackendBridge | None = None,
     ) -> None:
+        """初始化 ToolBroker.
+
+        Args:
+            policy: 可选的工具策略层.
+            audit: 可选的工具审计实现.
+            skill_catalog: 可选的 skill catalog.
+            subagent_executor_registry: 可选的 subagent executor 注册表.
+            default_agent_id: 默认主 agent 标识.
+            backend_bridge: 可选的后台桥接入口, 用于暴露 frontstage backend bridge tool.
+        """
+
         self._tools: dict[str, RegisteredTool] = {}
         self.policy = policy or AllowAllToolPolicy()
         self.audit = audit or InMemoryToolAudit()
         self.skill_catalog = skill_catalog
         self.subagent_executor_registry = subagent_executor_registry
         self.default_agent_id = str(default_agent_id or "")
+        self.backend_bridge = backend_bridge
 
     def register_tool(
         self,
@@ -95,6 +110,8 @@ class ToolBroker:
         return removed
 
     def list_registered_tools(self) -> list[dict[str, Any]]:
+        """列出当前已注册工具的目录视图."""
+
         items: list[dict[str, Any]] = []
         for tool_name in sorted(self._tools):
             registered = self._tools[tool_name]
@@ -110,6 +127,8 @@ class ToolBroker:
         return items
 
     def visible_tools(self, profile: AgentProfile) -> list[ToolSpec]:
+        """按 profile 解析当前模型可见的工具列表."""
+
         tool_names = self._allowed_tool_names(profile)
         if not tool_names:
             return []
@@ -127,15 +146,21 @@ class ToolBroker:
         profile: AgentProfile,
         registered: RegisteredTool,
     ) -> ToolSpec:
-        if registered.spec.name != "skill":
+        if registered.spec.name == "skill":
             return ToolSpec(
                 name=registered.spec.name,
-                description=registered.spec.description,
+                description=self._skill_tool_description(profile),
+                parameters=dict(registered.spec.parameters),
+            )
+        if registered.spec.name == "ask_backend":
+            return ToolSpec(
+                name=registered.spec.name,
+                description=self._backend_bridge_tool_description(),
                 parameters=dict(registered.spec.parameters),
             )
         return ToolSpec(
             name=registered.spec.name,
-            description=self._skill_tool_description(profile),
+            description=registered.spec.description,
             parameters=dict(registered.spec.parameters),
         )
 
@@ -149,6 +174,8 @@ class ToolBroker:
             tool_names.append("skill")
         if self._should_expose_delegate_tool(profile) and "delegate_subagent" not in tool_names:
             tool_names.append("delegate_subagent")
+        if self._should_expose_backend_bridge_tool(profile) and "ask_backend" not in tool_names:
+            tool_names.append("ask_backend")
         return tool_names
 
     def _should_expose_skill_tool(self, profile: AgentProfile) -> bool:
@@ -207,6 +234,37 @@ class ToolBroker:
             )
         return summaries
 
+    def _should_expose_backend_bridge_tool(self, profile: AgentProfile) -> bool:
+        """判断当前 profile 是否应看到 frontstage backend bridge tool."""
+
+        if self.backend_bridge is None:
+            return False
+        session_service = getattr(self.backend_bridge, "session", None)
+        if session_service is None:
+            return False
+        is_configured = getattr(session_service, "is_configured", None)
+        if not callable(is_configured) or not is_configured():
+            return False
+        registered = self._tools.get("ask_backend")
+        if registered is None:
+            return False
+        visible_to_default_only = bool(
+            registered.metadata.get("visible_to_default_agent_only", False)
+        )
+        if visible_to_default_only and self.default_agent_id and profile.agent_id != self.default_agent_id:
+            return False
+        return True
+
+    @staticmethod
+    def _backend_bridge_tool_description() -> str:
+        """返回前台 backend bridge tool 的说明文本."""
+
+        return (
+            "Ask the backend maintainer for a query or a small change. "
+            "Only request_kind=query|change is allowed. "
+            "The tool only forwards a concise summary plus source reference."
+        )
+
     def _should_expose_delegate_tool(self, profile: AgentProfile) -> bool:
         if "delegate_subagent" not in self._tools:
             return False
@@ -224,6 +282,8 @@ class ToolBroker:
         return False
 
     def build_tool_runtime(self, ctx: RunContext) -> ToolRuntime:
+        """按当前 RunContext 解析工具可见性与 tool executor."""
+
         visible_tools = self.visible_tools(ctx.profile)
         state = ToolRuntimeState()
         metadata = {
@@ -526,6 +586,8 @@ class ToolBroker:
         *,
         state: ToolRuntimeState | None = None,
     ) -> ToolExecutionContext:
+        """把 RunContext 投影成工具执行时使用的最小上下文."""
+
         return ToolExecutionContext(
             run_id=ctx.run.run_id,
             thread_id=ctx.thread.thread_id,
@@ -535,6 +597,8 @@ class ToolBroker:
             profile=ctx.profile,
             state=state,
             metadata={
+                "backend_bridge": self.backend_bridge,
+                "default_agent_id": self.default_agent_id,
                 "channel_scope": ctx.decision.channel_scope,
                 "event_id": ctx.event.event_id,
                 "event_timestamp": ctx.event.timestamp,
@@ -609,6 +673,8 @@ class ToolBroker:
         )
 
     def _normalize_result(self, raw: Any) -> ToolResult:
+        """把 handler 返回值归一化成 ToolResult."""
+
         if isinstance(raw, ToolResult):
             return raw
         normalized = normalize_tool_result(raw)

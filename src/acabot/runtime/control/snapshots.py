@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ..backend.mode_registry import BackendModeState
 from ..contracts import MemoryItem, PendingApprovalRecord
 
 
@@ -120,3 +121,14 @@ class SubagentExecutorSnapshot:
     agent_id: str
     source: str = ""
     metadata: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class BackendStatusSnapshot:
+    """后台维护面的最小状态快照."""
+
+    configured: bool = False
+    admin_actor_ids: list[str] = field(default_factory=list)
+    session_binding: dict[str, object] | None = None
+    session_path: str = ""
+    active_modes: list[BackendModeState] = field(default_factory=list)

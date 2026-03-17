@@ -67,6 +67,7 @@ from .snapshots import (
     ActiveRunSnapshot,
     AgentSkillSnapshot,
     AgentSwitchSnapshot,
+    BackendStatusSnapshot,
     GatewayStatusSnapshot,
     MemoryQuerySnapshot,
     PluginReloadSnapshot,
@@ -532,6 +533,49 @@ class RuntimeControlPlane:
         if self.tool_broker is None:
             return []
         return [dict(item) for item in self.tool_broker.list_registered_tools()]
+
+    async def get_backend_status(self) -> BackendStatusSnapshot:
+        """返回后台维护面的最小状态快照."""
+
+        app = self.app
+        session_service = getattr(app.backend_bridge, "session", None) if app.backend_bridge is not None else None
+        binding = None
+        session_path = ""
+        if session_service is not None:
+            load_binding = getattr(session_service, "load_binding", None)
+            if callable(load_binding):
+                loaded = load_binding()
+                if loaded is not None:
+                    binding = asdict(loaded)
+            get_binding_path = getattr(session_service, "get_binding_path", None)
+            if callable(get_binding_path):
+                session_path = str(get_binding_path() or "")
+        active_modes = []
+        if app.backend_mode_registry is not None:
+            active_modes = list(app.backend_mode_registry.list_active_modes())
+        return BackendStatusSnapshot(
+            configured=bool(
+                session_service is not None
+                and callable(getattr(session_service, "is_configured", None))
+                and session_service.is_configured()
+            ),
+            admin_actor_ids=sorted(app.backend_admin_actor_ids),
+            session_binding=binding,
+            session_path=session_path,
+            active_modes=active_modes,
+        )
+
+    async def get_backend_session_binding(self) -> dict[str, object] | None:
+        """返回当前 canonical backend session binding."""
+
+        status = await self.get_backend_status()
+        return status.session_binding
+
+    async def get_backend_session_path(self) -> str:
+        """返回 backend session binding 文件路径."""
+
+        status = await self.get_backend_status()
+        return status.session_path
 
     async def get_ui_catalog(self) -> dict[str, object]:
         """返回 WebUI 表单所需的选择项元数据."""

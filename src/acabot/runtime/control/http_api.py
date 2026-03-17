@@ -247,6 +247,12 @@ class RuntimeHttpApiServer:
             return self._ok(self._await(self.control_plane.get_ui_catalog()))
         if segments == ["status"] and method == "GET":
             return self._ok(self._await(self.control_plane.get_status()))
+        if segments == ["backend", "status"] and method == "GET":
+            return self._ok(self._await(self.control_plane.get_backend_status()))
+        if segments == ["backend", "session-binding"] and method == "GET":
+            return self._ok(self._await(self.control_plane.get_backend_session_binding()))
+        if segments == ["backend", "session-path"] and method == "GET":
+            return self._ok({"path": self._await(self.control_plane.get_backend_session_path())})
         if segments == ["gateway", "config"] and method == "GET":
             return self._ok(self._await(self.control_plane.get_gateway_config()))
         if segments == ["gateway", "status"] and method == "GET":

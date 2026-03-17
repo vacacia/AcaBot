@@ -14,6 +14,9 @@ from typing import Callable
 from acabot.types import StandardEvent
 
 from .approval_resumer import ApprovalResumer, ApprovalResumeResult, NoopApprovalResumer
+from .backend.bridge import BackendBridge
+from .backend.contracts import BackendRequest, BackendSourceRef
+from .backend.mode_registry import BackendModeRegistry
 from .computer import ComputerRuntime
 from .gateway_protocol import GatewayProtocol
 from .model.model_resolution import resolve_model_requests_for_profile
@@ -63,6 +66,9 @@ class RuntimeApp:
         plugin_manager: RuntimePluginManager | None = None,
         model_registry_manager: FileSystemModelRegistryManager | None = None,
         computer_runtime: ComputerRuntime | None = None,
+        backend_bridge: BackendBridge | None = None,
+        backend_mode_registry: BackendModeRegistry | None = None,
+        backend_admin_actor_ids: set[str] | None = None,
     ) -> None:
         """初始化 RuntimeApp.
 
@@ -79,6 +85,9 @@ class RuntimeApp:
             plugin_manager: runtime world 的插件管理器.
             model_registry_manager: 运行时模型注册表管理器.
             computer_runtime: 运行时 computer 基础设施入口.
+            backend_bridge: 可选的后台桥接入口.
+            backend_mode_registry: 可选的管理员后台模式注册表.
+            backend_admin_actor_ids: 可直接进入后台入口的管理员 actor 集合.
         """
 
         self.gateway = gateway
@@ -93,6 +102,9 @@ class RuntimeApp:
         self.plugin_manager = plugin_manager
         self.model_registry_manager = model_registry_manager
         self.computer_runtime = computer_runtime
+        self.backend_bridge = backend_bridge
+        self.backend_mode_registry = backend_mode_registry
+        self.backend_admin_actor_ids = set(backend_admin_actor_ids or set())
         self.last_recovery_report = RecoveryReport()
         self._pending_approvals: dict[str, PendingApprovalRecord] = {}
 
@@ -166,6 +178,8 @@ class RuntimeApp:
                 event.targets_self,
                 self._preview_event(event),
             )
+            if await self._handle_backend_entrypoint(event):
+                return
             if self.plugin_manager is not None:
                 await self.plugin_manager.ensure_started()
             decision = await self.router.route(event)
@@ -248,6 +262,88 @@ class RuntimeApp:
             logger.exception("Failed to handle event: event_id=%s", event.event_id)
             if run_id is not None:
                 await self._mark_failed_safely(run_id, f"runtime app crashed: {exc}")
+
+    async def _handle_backend_entrypoint(self, event: StandardEvent) -> bool:
+        """在进入正常前台主线前处理后台硬入口.
+
+        Returns:
+            True 表示当前事件已由后台入口处理, 不再进入 router/pipeline.
+        """
+
+        if self.backend_bridge is None or self.backend_mode_registry is None:
+            return False
+        session_service = getattr(self.backend_bridge, "session", None)
+        if session_service is None:
+            return False
+        is_configured = getattr(session_service, "is_configured", None)
+        if not callable(is_configured) or not is_configured():
+            return False
+        if event.event_type != "message":
+            return False
+
+        text = event.text.strip()
+        thread_id = self.router.build_thread_id(event)
+        actor_id = self.router.build_actor_id(event)
+        if actor_id not in self.backend_admin_actor_ids:
+            return False
+
+        if event.is_private and text == "/maintain":
+            self.backend_mode_registry.enter_backend_mode(
+                thread_id=thread_id,
+                actor_id=actor_id,
+                entered_at=event.timestamp,
+            )
+            return True
+
+        if event.is_private and text == "/maintain off":
+            self.backend_mode_registry.exit_backend_mode(thread_id)
+            return True
+
+        if event.is_private and self.backend_mode_registry.is_backend_mode(thread_id):
+            await self.backend_bridge.handle_admin_direct(
+                self._build_backend_request(
+                    event=event,
+                    thread_id=thread_id,
+                    summary=text,
+                )
+            )
+            return True
+
+        if text.startswith("!"):
+            summary = text[1:].strip()
+            if summary:
+                await self.backend_bridge.handle_admin_direct(
+                    self._build_backend_request(
+                        event=event,
+                        thread_id=thread_id,
+                        summary=summary,
+                    )
+                )
+                return True
+
+        return False
+
+    def _build_backend_request(
+        self,
+        *,
+        event: StandardEvent,
+        thread_id: str,
+        summary: str,
+    ) -> BackendRequest:
+        """把管理员后台入口事件投影成最小 BackendRequest."""
+
+        return BackendRequest(
+            request_id=f"backend:{event.event_id}",
+            source_kind="admin_direct",
+            request_kind="change",
+            source_ref=BackendSourceRef(
+                thread_id=thread_id,
+                channel_scope=self.router.build_channel_scope(event),
+                event_id=event.event_id,
+            ),
+            summary=summary,
+            created_at=event.timestamp,
+        )
 
     @staticmethod
     def _preview_event(event: StandardEvent, max_len: int = 120) -> str:
