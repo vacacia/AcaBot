@@ -19,7 +19,7 @@ from ..memory.memory_broker import MemoryBroker
 from ..memory.retrieval_planner import PromptAssemblyConfig, RetrievalPlanner
 from ..model.model_registry import FileSystemModelRegistryManager
 from ..plugin_manager import RuntimePlugin
-from ..plugins import ComputerToolAdapterPlugin, SkillToolPlugin, SubagentDelegationPlugin
+from ..plugins import BackendBridgeToolPlugin, ComputerToolAdapterPlugin, SkillToolPlugin, SubagentDelegationPlugin
 from ..references import (
     LocalReferenceBackend,
     NullReferenceBackend,
@@ -47,9 +47,12 @@ from .config import get_persistence_sqlite_path, optional_str, resolve_filesyste
 
 
 def build_builtin_runtime_plugins(profiles: dict[str, AgentProfile]) -> list[RuntimePlugin]:
+    """按当前 profile 集合组装默认内置 runtime plugins."""
+
     builtin_plugins: list[RuntimePlugin] = [
         ComputerToolAdapterPlugin(),
         SkillToolPlugin(),
+        BackendBridgeToolPlugin(),
     ]
     if profiles_have_delegated_skills(profiles) or len(profiles) > 1:
         builtin_plugins.append(SubagentDelegationPlugin())
@@ -57,6 +60,8 @@ def build_builtin_runtime_plugins(profiles: dict[str, AgentProfile]) -> list[Run
 
 
 def profiles_have_delegated_skills(profiles: dict[str, AgentProfile]) -> bool:
+    """判断当前 profile 集合里是否存在需要委派的 skill 赋能."""
+
     for profile in profiles.values():
         for assignment in profile.skill_assignments:
             if assignment.delegation_mode in {"prefer_delegate", "must_delegate"}:
@@ -70,6 +75,8 @@ def register_local_subagent_executors(
     profiles: dict[str, AgentProfile],
     service: LocalSubagentExecutionService,
 ) -> None:
+    """把本地 profile 注册为可用的 subagent executor."""
+
     for profile in profiles.values():
         registry.register(
             profile.agent_id,

@@ -183,11 +183,13 @@ class RuntimeToolRegistration:
         spec (ToolSpec): 模型可见的工具 schema.
         handler (RuntimeToolHandler): 可拿到 ToolExecutionContext 的工具执行逻辑.
         metadata (dict[str, Any]): 附加注册元数据.
+        visible_to_default_agent_only (bool): 是否只对默认主 agent 可见.
     """
 
     spec: ToolSpec
     handler: RuntimeToolHandler
     metadata: dict[str, Any] = field(default_factory=dict)
+    visible_to_default_agent_only: bool = False
 
 
 @dataclass(slots=True)
@@ -604,6 +606,7 @@ class RuntimePluginManager:
                 source=f"plugin:{plugin.name}",
                 metadata={
                     "plugin_name": plugin.name,
+                    "visible_to_default_agent_only": registration.visible_to_default_agent_only,
                     **dict(registration.metadata),
                 },
             )

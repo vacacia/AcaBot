@@ -60,7 +60,7 @@ AcaBot 真实入口是:
 - `ChannelEventStore` 记录外部事件事实
 - `MessageStore` 记录真正送达的消息事实
 - `MemoryStore` 存长期记忆
-- `ToolBroker` 负责工具可见性、审批和执行
+- `ToolBroker` 负责工具可见性、审批、前台到后台 bridge tool 和执行
 - `PluginManager` 给主线插 hook / tool / executor
 - `ControlPlane + HTTP API + WebUI` 负责本地运维和配置改写
 

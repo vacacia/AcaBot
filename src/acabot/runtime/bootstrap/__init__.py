@@ -8,6 +8,9 @@ from acabot.config import Config
 from ..agent_runtime import AgentRuntime
 from ..approval_resumer import ApprovalResumer, ToolApprovalResumer
 from ..app import RuntimeApp
+from ..backend.bridge import BackendBridge
+from ..backend.mode_registry import BackendModeRegistry
+from ..backend.session import BackendSessionBindingStore, BackendSessionService
 from ..control.config_control_plane import RuntimeConfigControlPlane
 from ..control.control_plane import RuntimeControlPlane
 from ..control.event_policy import EventPolicyRegistry
@@ -43,6 +46,7 @@ from .builders import (
     build_thread_manager,
     register_local_subagent_executors,
 )
+from .config import resolve_runtime_path
 from .components import RuntimeComponents
 from .loaders import (
     build_binding_rules,
@@ -140,6 +144,21 @@ def build_runtime_components(
     )
     runtime_reference_backend = reference_backend or build_reference_backend(config)
     runtime_model_registry_manager = model_registry_manager or build_model_registry_manager(config)
+    backend_conf = dict(runtime_conf.get("backend", {}))
+    runtime_backend_mode_registry = BackendModeRegistry()
+    backend_session_path = resolve_runtime_path(
+        config,
+        backend_conf.get("session_binding_path", ".acabot-runtime/backend/session.json"),
+    )
+    runtime_backend_session_service = BackendSessionService(
+        BackendSessionBindingStore(backend_session_path)
+    )
+    runtime_backend_bridge = BackendBridge(session=runtime_backend_session_service)
+    runtime_backend_admin_actor_ids = {
+        str(value)
+        for value in list(backend_conf.get("admin_actor_ids", []) or [])
+        if str(value)
+    }
     runtime_image_context_service = ImageContextService(
         agent=agent,
         model_registry_manager=runtime_model_registry_manager,
@@ -159,8 +178,10 @@ def build_runtime_components(
         skill_catalog=runtime_skill_catalog,
         subagent_executor_registry=runtime_subagent_executor_registry,
         default_agent_id=default_agent_id,
+        backend_bridge=runtime_backend_bridge,
     )
     runtime_tool_broker.skill_catalog = runtime_skill_catalog
+    runtime_tool_broker.backend_bridge = runtime_backend_bridge
     builtin_plugins = build_builtin_runtime_plugins(profiles)
     configured_plugins = plugins if plugins is not None else load_runtime_plugins_from_config(config)
     runtime_plugin_manager = plugin_manager or RuntimePluginManager(
@@ -238,6 +259,9 @@ def build_runtime_components(
         plugin_manager=runtime_plugin_manager,
         model_registry_manager=runtime_model_registry_manager,
         computer_runtime=runtime_computer_runtime,
+        backend_bridge=runtime_backend_bridge,
+        backend_mode_registry=runtime_backend_mode_registry,
+        backend_admin_actor_ids=runtime_backend_admin_actor_ids,
     )
     control_plane = RuntimeControlPlane(
         app=app,
@@ -291,6 +315,8 @@ def build_runtime_components(
         approval_resumer=runtime_approval_resumer,
         outbox=outbox,
         pipeline=pipeline,
+        backend_bridge=runtime_backend_bridge,
+        backend_mode_registry=runtime_backend_mode_registry,
         app=app,
     )
 

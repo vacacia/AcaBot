@@ -396,6 +396,30 @@ async def test_build_runtime_components_loads_profiles_and_prompts_from_filesyst
     assert prompt == "You are Aca from filesystem."
 
 
+async def test_build_runtime_components_backend_status_exposes_session_path() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "fallback-model",
+                "system_prompt": "Fallback prompt.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    backend_status = await components.control_plane.get_backend_status()
+
+    assert backend_status.configured is False
+    assert backend_status.session_path.endswith(".acabot-runtime/backend/session.json")
+
+
 async def test_build_runtime_components_exposes_control_plane() -> None:
     config = Config(
         {
@@ -1290,6 +1314,7 @@ async def test_build_runtime_components_auto_loads_computer_tool_adapter_plugin(
     visible = components.tool_broker.visible_tools(profile)
 
     assert "computer_tool_adapter" in [plugin.name for plugin in components.plugin_manager.loaded]
+    assert "backend_bridge_tool" in [plugin.name for plugin in components.plugin_manager.loaded]
     assert [tool.name for tool in visible] == ["read", "exec"]
 
 
@@ -1344,6 +1369,7 @@ async def test_build_runtime_components_full_plugin_reload_keeps_builtin_plugins
     assert missing == []
     assert "computer_tool_adapter" in loaded_names
     assert "skill_tool" in loaded_names
+    assert "backend_bridge_tool" in loaded_names
     assert [tool.name for tool in visible] == ["read", "skill"]
 
 

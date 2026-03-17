@@ -4,6 +4,10 @@ from acabot.config import Config
 from acabot.runtime import (
     AgentProfile,
     AgentProfileRegistry,
+    BackendBridge,
+    BackendModeRegistry,
+    BackendSessionBindingStore,
+    BackendSessionService,
     ComputerPolicy,
     ComputerRuntime,
     ComputerRuntimeConfig,
@@ -249,6 +253,56 @@ async def test_runtime_control_plane_lists_mirrored_skills(tmp_path: Path) -> No
     mirrored = await control_plane.list_mirrored_skills(thread_id="thread:1")
 
     assert mirrored == ["sample_configured_skill"]
+
+
+async def test_runtime_control_plane_reports_backend_status(tmp_path: Path) -> None:
+    binding_store = BackendSessionBindingStore(tmp_path / ".acabot-runtime" / "backend" / "session.json")
+    binding_store.save(
+        backend_id="main",
+        transport="rpc",
+        pi_session_id="pi-session-1",
+        created_at=1,
+        last_active_at=2,
+        status="ready",
+    )
+    backend_mode_registry = BackendModeRegistry()
+    backend_mode_registry.enter_backend_mode(
+        thread_id="qq:user:10001",
+        actor_id="qq:user:10001",
+        entered_at=123,
+    )
+    app = RuntimeApp(
+        gateway=FakeGateway(),
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=InMemoryThreadManager(),
+        run_manager=InMemoryRunManager(),
+        channel_event_store=InMemoryChannelEventStore(),
+        pipeline=ThreadPipeline(
+            agent_runtime=FakeAgentRuntime(),
+            outbox=Outbox(gateway=FakeGateway(), store=FakeMessageStore()),
+            run_manager=InMemoryRunManager(),
+            thread_manager=InMemoryThreadManager(),
+        ),
+        profile_loader=_profile_loader,
+        backend_bridge=BackendBridge(session=BackendSessionService(binding_store)),
+        backend_mode_registry=backend_mode_registry,
+        backend_admin_actor_ids={"qq:user:10001"},
+    )
+    control_plane = RuntimeControlPlane(
+        app=app,
+        run_manager=InMemoryRunManager(),
+    )
+
+    status = await control_plane.get_backend_status()
+
+    assert status.configured is False
+    assert status.admin_actor_ids == ["qq:user:10001"]
+    assert status.session_binding is not None
+    assert status.session_binding["pi_session_id"] == "pi-session-1"
+    assert status.session_path.endswith(".acabot-runtime/backend/session.json")
+    assert status.active_modes[0].thread_id == "qq:user:10001"
+    assert await control_plane.get_backend_session_path()
+    assert (await control_plane.get_backend_session_binding())["backend_id"] == "main"
 
 
 async def test_runtime_control_plane_show_memory_returns_items() -> None:

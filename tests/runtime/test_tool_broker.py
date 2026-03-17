@@ -15,15 +15,22 @@ from typing import Any
 import pytest
 
 from acabot.agent import ToolDef, ToolExecutionResult, ToolSpec
+from acabot.config import Config
 from acabot.runtime import (
     AgentProfile,
     ApprovalRequired,
+    BackendBridge,
+    BackendSessionService,
     InMemoryToolAudit,
     ToolBroker,
     ToolPolicyDecision,
     ToolResult,
     ToolRuntimeState,
 )
+from acabot.runtime.plugin_manager import RuntimePluginContext
+from acabot.runtime.plugins.backend_bridge_tool import BackendBridgeToolPlugin
+
+from .test_outbox import FakeGateway
 
 from .test_model_agent_runtime import _context
 
@@ -218,6 +225,55 @@ async def test_tool_broker_policy_can_reject_tool() -> None:
     record = next(iter(audit.records.values()))
     assert record.status == "rejected"
     assert record.metadata["policy"] == "deny-all"
+
+
+async def test_tool_broker_only_exposes_backend_bridge_tool_to_default_agent() -> None:
+    from acabot.runtime import BackendBridge, BackendSessionService
+    from acabot.runtime.plugins.backend_bridge_tool import BackendBridgeToolPlugin
+    from acabot.runtime.plugin_manager import RuntimePluginContext
+    from acabot.config import Config
+    from .test_outbox import FakeGateway
+
+    class ConfiguredBackendSessionService(BackendSessionService):
+        def is_configured(self) -> bool:
+            return True
+
+    broker = ToolBroker(
+        default_agent_id="aca",
+        backend_bridge=BackendBridge(session=ConfiguredBackendSessionService()),
+    )
+    plugin = BackendBridgeToolPlugin()
+    await plugin.setup(
+        RuntimePluginContext(
+            config=Config({}),
+            gateway=FakeGateway(),
+            tool_broker=broker,
+        )
+    )
+    registration = plugin.runtime_tools()[0]
+    broker.register_tool(
+        registration.spec,
+        registration.handler,
+        source="plugin:backend_bridge_tool",
+        metadata={
+            "plugin_name": plugin.name,
+            "visible_to_default_agent_only": registration.visible_to_default_agent_only,
+        },
+    )
+
+    default_visible = broker.visible_tools(_profile(enabled_tools=[]))
+    worker_visible = broker.visible_tools(
+        AgentProfile(
+            agent_id="worker",
+            name="Worker",
+            prompt_ref="prompt/default",
+            default_model="test-model",
+            enabled_tools=[],
+        )
+    )
+
+    assert [tool.name for tool in default_visible] == ["ask_backend"]
+    assert worker_visible == []
 
 
 async def test_tool_broker_policy_can_request_approval() -> None:

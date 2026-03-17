@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 from ..agent_runtime import AgentRuntime
 from ..app import RuntimeApp
+from ..backend.bridge import BackendBridge
+from ..backend.mode_registry import BackendModeRegistry
 from ..computer import ComputerRuntime
 from ..control.config_control_plane import RuntimeConfigControlPlane
 from ..control.control_plane import RuntimeControlPlane
@@ -67,6 +69,8 @@ class RuntimeComponents:
     approval_resumer: ApprovalResumer
     outbox: Outbox
     pipeline: ThreadPipeline
+    backend_bridge: BackendBridge
+    backend_mode_registry: BackendModeRegistry
     app: RuntimeApp
 
 

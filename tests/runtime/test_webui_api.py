@@ -176,6 +176,16 @@ async def test_runtime_http_api_server_serves_status_and_profile_crud(tmp_path: 
         assert status["ok"] is True
         assert "loaded_plugins" in status["data"]
 
+        backend_status = await asyncio.to_thread(request_json, base_url, "/api/backend/status")
+        assert backend_status["ok"] is True
+        assert "configured" in backend_status["data"]
+        assert backend_status["data"]["configured"] is False
+        assert backend_status["data"]["session_path"].endswith(".acabot-runtime/backend/session.json")
+
+        backend_path = await asyncio.to_thread(request_json, base_url, "/api/backend/session-path")
+        assert backend_path["ok"] is True
+        assert backend_path["data"]["path"].endswith(".acabot-runtime/backend/session.json")
+
         catalog = await asyncio.to_thread(request_json, base_url, "/api/ui/catalog")
         assert catalog["ok"] is True
         assert "agents" in catalog["data"]

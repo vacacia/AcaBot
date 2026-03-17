@@ -62,6 +62,14 @@
 2. 需要时补 `RuntimeControlPlane` 方法
 3. 如果涉及配置真源，再补 `RuntimeConfigControlPlane`
 
+后台维护面现在也沿这条链路暴露最小只读接口:
+
+- `/api/backend/status`
+- `/api/backend/session-binding`
+- `/api/backend/session-path`
+
+第一阶段这些接口只暴露 backend 是否已接线、canonical session binding、binding 文件路径和当前后台模式状态, 不镜像 backend transcript, 也不引入 operation/artifact 列表。
+
 很多人只在 `http_api.py` 加个分支就完了，结果后面控制面逻辑越来越脏。正常做法还是把业务放回 control plane。
 
 ## `RuntimeControlPlane`

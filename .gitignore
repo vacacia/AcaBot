@@ -3,6 +3,7 @@ tmp
 .codebuddy
 .claude
 .codex
+.worktrees/
 
 
 docs-branch
