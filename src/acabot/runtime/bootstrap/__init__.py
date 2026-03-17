@@ -10,7 +10,12 @@ from ..approval_resumer import ApprovalResumer, ToolApprovalResumer
 from ..app import RuntimeApp
 from ..backend.bridge import BackendBridge
 from ..backend.mode_registry import BackendModeRegistry
-from ..backend.session import BackendSessionBindingStore, BackendSessionService
+from ..backend.pi_adapter import PiBackendAdapter
+from ..backend.session import (
+    BackendSessionBindingStore,
+    BackendSessionService,
+    ConfiguredBackendSessionService,
+)
 from ..control.config_control_plane import RuntimeConfigControlPlane
 from ..control.control_plane import RuntimeControlPlane
 from ..control.event_policy import EventPolicyRegistry
@@ -150,9 +155,19 @@ def build_runtime_components(
         config,
         backend_conf.get("session_binding_path", ".acabot-runtime/backend/session.json"),
     )
-    runtime_backend_session_service = BackendSessionService(
-        BackendSessionBindingStore(backend_session_path)
-    )
+    backend_binding_store = BackendSessionBindingStore(backend_session_path)
+    backend_enabled = bool(backend_conf.get("enabled", False))
+    backend_pi_command = [str(part) for part in list(backend_conf.get("pi_command", []) or []) if str(part)]
+    if backend_enabled and backend_pi_command:
+        runtime_backend_session_service = ConfiguredBackendSessionService(
+            binding_store=backend_binding_store,
+            adapter=PiBackendAdapter(
+                command=backend_pi_command,
+                cwd=config.base_dir(),
+            ),
+        )
+    else:
+        runtime_backend_session_service = BackendSessionService(backend_binding_store)
     runtime_backend_bridge = BackendBridge(session=runtime_backend_session_service)
     runtime_backend_admin_actor_ids = {
         str(value)

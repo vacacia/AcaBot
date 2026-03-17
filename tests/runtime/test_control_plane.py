@@ -261,6 +261,7 @@ async def test_runtime_control_plane_reports_backend_status(tmp_path: Path) -> N
         backend_id="main",
         transport="rpc",
         pi_session_id="pi-session-1",
+        session_file="/tmp/pi-session-1.jsonl",
         created_at=1,
         last_active_at=2,
         status="ready",

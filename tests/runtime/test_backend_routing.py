@@ -1,3 +1,7 @@
+from pathlib import Path
+
+from acabot.config import Config
+from acabot.runtime import build_runtime_components
 from acabot.runtime.app import RuntimeApp
 from acabot.runtime.backend.contracts import BackendRequest
 from acabot.runtime.backend.mode_registry import BackendModeRegistry
@@ -8,6 +12,7 @@ from acabot.runtime.storage.runs import InMemoryRunManager
 from acabot.runtime.storage.threads import InMemoryThreadManager
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
+from .test_bootstrap import FakeAgent, FakeAgentResponse
 from .test_outbox import FakeGateway
 
 
@@ -163,3 +168,90 @@ async def test_non_admin_message_still_goes_to_pipeline() -> None:
 
     assert backend_bridge.admin_requests == []
     assert len(pipeline.execute_calls) == 1
+
+
+async def test_build_runtime_components_enabled_backend_admin_bang_routes_to_real_backend(
+    tmp_path: Path,
+) -> None:
+    gateway = FakeGateway()
+    config = Config(
+        {
+            "agent": {
+                "default_model": "fallback-model",
+                "system_prompt": "Fallback prompt.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "runtime_root": str(tmp_path / ".acabot-runtime"),
+                "backend": {
+                    "enabled": True,
+                    "admin_actor_ids": ["qq:user:10001"],
+                    "session_binding_path": "backend/session.json",
+                    "pi_command": ["pi", "--mode", "rpc", "--session-dir", str(tmp_path / "pi-sessions")],
+                },
+            },
+        }
+    )
+    components = build_runtime_components(
+        config,
+        gateway=gateway,
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    await components.plugin_manager.ensure_started()
+    components.app.install()
+
+    await gateway.handler(_event(user_id="10001", text="!Reply with exactly: ADMIN_BANG_OK"))
+
+    binding = components.backend_bridge.session.load_binding()
+    assert components.backend_bridge.session.is_configured() is True
+    assert binding is not None
+    assert binding.session_file.endswith(".jsonl")
+
+    await components.backend_bridge.session.adapter.dispose()
+
+
+async def test_build_runtime_components_enabled_backend_maintain_followup_routes_to_real_backend(
+    tmp_path: Path,
+) -> None:
+    gateway = FakeGateway()
+    config = Config(
+        {
+            "agent": {
+                "default_model": "fallback-model",
+                "system_prompt": "Fallback prompt.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "runtime_root": str(tmp_path / ".acabot-runtime"),
+                "backend": {
+                    "enabled": True,
+                    "admin_actor_ids": ["qq:user:10001"],
+                    "session_binding_path": "backend/session.json",
+                    "pi_command": ["pi", "--mode", "rpc", "--session-dir", str(tmp_path / "pi-sessions")],
+                },
+            },
+        }
+    )
+    components = build_runtime_components(
+        config,
+        gateway=gateway,
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    await components.plugin_manager.ensure_started()
+    components.app.install()
+
+    await gateway.handler(_event(user_id="10001", text="/maintain"))
+    assert components.backend_mode_registry.is_backend_mode("qq:user:10001") is True
+
+    await gateway.handler(
+        _event(user_id="10001", text="Reply with exactly: MAINTAIN_FOLLOWUP_OK")
+    )
+
+    binding = components.backend_bridge.session.load_binding()
+    assert binding is not None
+    assert binding.session_file.endswith(".jsonl")
+
+    await gateway.handler(_event(user_id="10001", text="/maintain off"))
+    assert components.backend_mode_registry.is_backend_mode("qq:user:10001") is False
+
+    await components.backend_bridge.session.adapter.dispose()

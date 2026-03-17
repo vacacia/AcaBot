@@ -70,7 +70,11 @@
 
 第一阶段这些接口只暴露 backend 是否已接线、canonical session binding、binding 文件路径和当前后台模式状态, 不镜像 backend transcript, 也不引入 operation/artifact 列表。
 
+这里的 `configured` 语义要注意: 现在它表示“真实 runtime 已经构造出 configured backend session service, 并且后台入口 / `ask_backend` / control plane 都会按 enabled backend 行为工作”, 不是“bridge 对象存在”这么弱的条件。
+
 很多人只在 `http_api.py` 加个分支就完了，结果后面控制面逻辑越来越脏。正常做法还是把业务放回 control plane。
+
+backend 这块当前已经这样做了: `http_api.py` 只提供 `/api/backend/*` 适配, 真正的 configured/session path/binding/status 聚合仍在 `RuntimeControlPlane`。
 
 ## `RuntimeControlPlane`
 

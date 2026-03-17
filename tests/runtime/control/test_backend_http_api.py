@@ -19,9 +19,11 @@ from acabot.runtime import (
     RuntimeHttpApiServer,
     RuntimeRouter,
     ThreadPipeline,
+    build_runtime_components,
 )
 from acabot.runtime.control.http_api import _to_jsonable
 
+from tests.runtime.test_bootstrap import FakeAgent, FakeAgentResponse
 from tests.runtime.test_control_plane import _profile_loader
 from tests.runtime.test_outbox import FakeGateway, FakeMessageStore
 from tests.runtime.test_pipeline_runtime import FakeAgentRuntime
@@ -91,3 +93,68 @@ async def test_backend_http_api_payload_shape_matches_backend_endpoints(tmp_path
         "data": _to_jsonable({"path": await control_plane.get_backend_session_path()}),
     }
     assert path_payload["data"]["path"].endswith(".acabot-runtime/backend/session.json")
+
+
+async def test_enabled_backend_control_plane_reports_configured_true(tmp_path: Path) -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "fallback-model",
+                "system_prompt": "Fallback prompt.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "runtime_root": str(tmp_path / ".acabot-runtime"),
+                "backend": {
+                    "enabled": True,
+                    "admin_actor_ids": ["qq:user:10001"],
+                    "session_binding_path": "backend/session.json",
+                    "pi_command": ["pi", "--mode", "rpc", "--session-dir", str(tmp_path / "pi-sessions")],
+                },
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    status = await components.control_plane.get_backend_status()
+
+    assert status.configured is True
+    assert status.admin_actor_ids == ["qq:user:10001"]
+    assert status.session_path == str((tmp_path / ".acabot-runtime" / "backend" / "session.json").resolve())
+
+    await components.backend_bridge.session.adapter.dispose()
+
+
+async def test_invalid_backend_command_control_plane_reports_unconfigured(tmp_path: Path) -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "fallback-model",
+                "system_prompt": "Fallback prompt.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "runtime_root": str(tmp_path / ".acabot-runtime"),
+                "backend": {
+                    "enabled": True,
+                    "admin_actor_ids": ["qq:user:10001"],
+                    "session_binding_path": "backend/session.json",
+                    "pi_command": ["definitely-not-a-real-pi-binary"],
+                },
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    status = await components.control_plane.get_backend_status()
+
+    assert status.configured is False
+    assert status.session_path == str((tmp_path / ".acabot-runtime" / "backend" / "session.json").resolve())

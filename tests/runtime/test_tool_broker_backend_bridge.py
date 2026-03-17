@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
-from acabot.runtime import AgentProfile, BackendBridge, BackendSessionService, ToolBroker
+from acabot.config import Config
+from acabot.runtime import AgentProfile, BackendBridge, BackendSessionService, ToolBroker, build_runtime_components
 from acabot.runtime.backend.contracts import BackendRequest
+
+from tests.runtime.test_bootstrap import FakeAgent, FakeAgentResponse
+from tests.runtime.test_outbox import FakeGateway
 
 
 class FakeBackendSessionService(BackendSessionService):
@@ -147,3 +151,82 @@ async def test_backend_bridge_tool_builds_frontstage_request_from_tool_context()
     assert result.metadata["backend_request_kind"] == "query"
     assert result.metadata["backend_source_kind"] == "frontstage_internal"
     assert result.raw["result"] == {"kind": "query", "summary": "查询当前配置"}
+
+
+async def test_build_runtime_components_enabled_backend_exposes_ask_backend(
+    tmp_path,
+) -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "fallback-model",
+                "system_prompt": "Fallback prompt.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "runtime_root": str(tmp_path / ".acabot-runtime"),
+                "backend": {
+                    "enabled": True,
+                    "session_binding_path": "backend/session.json",
+                    "pi_command": ["pi", "--mode", "rpc", "--session-dir", str(tmp_path / "pi-sessions")],
+                },
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    await components.plugin_manager.ensure_started()
+
+    visible = components.tool_broker.visible_tools(_profile("aca"))
+
+    assert [tool.name for tool in visible] == ["ask_backend"]
+
+    await components.backend_bridge.session.adapter.dispose()
+
+
+async def test_enabled_runtime_ask_backend_executes_against_real_pi(tmp_path) -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "fallback-model",
+                "system_prompt": "Fallback prompt.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "runtime_root": str(tmp_path / ".acabot-runtime"),
+                "backend": {
+                    "enabled": True,
+                    "session_binding_path": "backend/session.json",
+                    "pi_command": ["pi", "--mode", "rpc", "--session-dir", str(tmp_path / "pi-sessions")],
+                },
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    await components.plugin_manager.ensure_started()
+
+    from tests.runtime.test_model_agent_runtime import _context
+
+    ctx = _context()
+    result = await components.tool_broker.execute(
+        tool_name="ask_backend",
+        arguments={
+            "request_kind": "change",
+            "summary": "Reply with exactly: ENABLED_RUNTIME_TOOL_OK",
+        },
+        ctx=components.tool_broker._build_execution_context(ctx),
+    )
+
+    assert result.metadata["backend_request_kind"] == "change"
+    assert "ENABLED_RUNTIME_TOOL_OK" in str(result.raw["result"]["text"])
+
+    await components.backend_bridge.session.adapter.dispose()

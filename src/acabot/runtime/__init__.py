@@ -32,6 +32,7 @@ from .backend.session import (
     BackendSessionBinding,
     BackendSessionBindingStore,
     BackendSessionService,
+    ConfiguredBackendSessionService,
 )
 from .bootstrap import RuntimeComponents, build_runtime_components
 from .computer import (
@@ -273,6 +274,7 @@ __all__ = [
     "BackendSessionBinding",
     "BackendSessionBindingStore",
     "BackendSessionService",
+    "ConfiguredBackendSessionService",
     "BackendSourceRef",
     "BackendStatusSnapshot",
     "AgentProfileRegistry",

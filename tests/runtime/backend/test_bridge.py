@@ -1,5 +1,9 @@
+from pathlib import Path
+
 from acabot.runtime.backend.bridge import BackendBridge
 from acabot.runtime.backend.contracts import BackendRequest, BackendSourceRef
+from acabot.runtime.backend.pi_adapter import PiBackendAdapter
+from acabot.runtime.backend.session import BackendSessionBindingStore, ConfiguredBackendSessionService
 import pytest
 
 
@@ -77,3 +81,28 @@ async def test_backend_bridge_rejects_unknown_request_kind():
         )
 
     assert session.calls == []
+
+
+async def test_backend_bridge_with_real_pi_service_handles_change_and_query(tmp_path: Path):
+    adapter = PiBackendAdapter(
+        command=["pi", "--mode", "rpc", "--session-dir", str(tmp_path / "pi-sessions")],
+        cwd=tmp_path,
+    )
+    session = ConfiguredBackendSessionService(
+        binding_store=BackendSessionBindingStore(tmp_path / "session.json"),
+        adapter=adapter,
+    )
+    bridge = BackendBridge(session=session)
+
+    change_result = await bridge.handle_frontstage_request(
+        _build_request(request_kind="change", summary="Reply with exactly: BRIDGE_CHANGE_OK")
+    )
+    assert "BRIDGE_CHANGE_OK" in change_result["text"]
+
+    query_result = await bridge.handle_frontstage_request(
+        _build_request(request_kind="query", summary="Reply with exactly: BRIDGE_QUERY_OK")
+    )
+    assert query_result["forked"] is True
+    assert "BRIDGE_QUERY_OK" in query_result["text"]
+
+    await adapter.dispose()

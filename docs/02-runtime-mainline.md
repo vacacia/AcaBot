@@ -76,7 +76,7 @@
 它主要做这些事:
 
 - 打日志
-- 先检查后台硬入口: 管理员 `!`、管理员私聊 `/maintain`、已进入 backend mode 的管理员私聊后续消息
+- 先检查后台硬入口: 管理员 `!`、管理员私聊 `/maintain`、管理员私聊 `/maintain off`、已进入 backend mode 的管理员私聊后续消息
 - 调 plugin manager 确保启动
 - 调 router 算路由
 - 按路由创建 / 获取 thread
@@ -87,6 +87,8 @@
 - 调 pipeline
 
 这里很适合放“入口级保护”或“路由失败兜底”，但不适合塞复杂业务。后台入口分流也属于这里, 但只应保留最小硬入口接线, 不应把复杂 backend 语义塞回 `app.py`。
+
+当前实现里, backend 硬入口只有在 `backend_bridge.session.is_configured() == True` 时才会打开。也就是说, 不是只要 backend bridge 对象存在就能进后台, 而是 bootstrap 必须真的构造出 configured backend session service, 管理员 `!` / `/maintain` / `/maintain off` 才会生效。
 
 ## 路由阶段
 
@@ -215,6 +217,12 @@
 - 把 agent response 变成 runtime 认识的结果
 
 这里的 tools 现在还包括一个很特殊但仍走标准 tool 机制的能力: `ask_backend`。它本质上是前台 Aca 通往后台 maintainer 的单一 bridge tool。实现上它仍然是普通 runtime tool, 经过 `ToolBroker` 和 plugin 注册；但可见性上它强绑定默认前台 agent, 不对 subagent / worker profile 暴露。
+
+当前实现里, `ask_backend` 只有在 backend session service 已 configured 时才会被 `ToolBroker` 暴露。它的真实执行链是:
+
+`ToolBroker.execute() -> BackendBridgeToolPlugin -> BackendBridge -> ConfiguredBackendSessionService -> PiBackendAdapter -> pi --mode rpc`
+
+也就是说, 它不是一个假工具占位, 而是已经接到真实 backend canonical session 的标准 runtime tool。
 
 它不负责:
 

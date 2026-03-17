@@ -7,6 +7,7 @@ from .session import (
     BackendSessionBinding,
     BackendSessionBindingStore,
     BackendSessionService,
+    ConfiguredBackendSessionService,
 )
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "BackendSessionBinding",
     "BackendSessionBindingStore",
     "BackendSessionService",
+    "ConfiguredBackendSessionService",
     "BackendSourceRef",
 ]
