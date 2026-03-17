@@ -34,6 +34,7 @@ AcaBot 真实入口是:
    - 模型 provider / preset / binding / 生效模型解析: `13-model-registry.md`
    - reference / notebook 检索后端: `14-reference-backend.md`
    - 已知问题 / 设计缺口 / 修复后该同步哪些文档: `15-known-issues-and-design-gaps.md`
+   - 前后台双 agent / 自我进化方向: `16-front-back-agents-and-self-evolution.md`
    - 配置和部署: `09-config-and-runtime-files.md`、`11-deployment-reference.md`
 5. 真要动手前，再看 `10-change-playbooks.md`
 
