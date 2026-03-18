@@ -142,6 +142,29 @@ async def test_runtime_config_control_plane_upserts_profile_prompt_and_rule(tmp_
     assert "worker" in config_path.read_text(encoding="utf-8")
 
 
+def test_runtime_http_api_server_default_static_dir_points_to_src_acabot_webui() -> None:
+    config = Config(
+        {
+            "runtime": {
+                "webui": {
+                    "enabled": True,
+                }
+            }
+        },
+        path="/tmp/acabot-config.yaml",
+    )
+    server = RuntimeHttpApiServer(
+        config=config,
+        control_plane=build_runtime_components(
+            config,
+            gateway=FakeGateway(),
+            agent=FakeAgent(FakeAgentResponse(text="ok")),
+        ).control_plane,
+    )
+
+    assert server.static_dir == Path("src/acabot/webui").resolve()
+
+
 async def test_runtime_http_api_server_serves_status_and_profile_crud(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     _write_config(config_path, webui_enabled=True, port=0)

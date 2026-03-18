@@ -88,7 +88,7 @@
 
 这里很适合放“入口级保护”或“路由失败兜底”，但不适合塞复杂业务。后台入口分流也属于这里, 但只应保留最小硬入口接线, 不应把复杂 backend 语义塞回 `app.py`。
 
-当前实现里, backend 硬入口只有在 `backend_bridge.session.is_configured() == True` 时才会打开。也就是说, 不是只要 backend bridge 对象存在就能进后台, 而是 bootstrap 必须真的构造出 configured backend session service, 管理员 `!` / `/maintain` / `/maintain off` 才会生效。
+当前实现里, backend 硬入口只有在 `backend_bridge.session.is_configured() == True` 时才会打开。也就是说, 不是只要 backend bridge 对象存在就能进后台, 而是 bootstrap 必须真的构造出 configured backend session service, 管理员 `!` / `/maintain` / `/maintain exit`（兼容 `/maintain off`）才会生效。
 
 ## 路由阶段
 
@@ -297,3 +297,4 @@ memory write-back 不在 agent 前做，而是在 run 收尾后由 `MemoryBroker
 - 可选组件
 
 优先走这些扩展点。否则主线会越来越难看。
+

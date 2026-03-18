@@ -158,12 +158,16 @@ def build_runtime_components(
     backend_binding_store = BackendSessionBindingStore(backend_session_path)
     backend_enabled = bool(backend_conf.get("enabled", False))
     backend_pi_command = [str(part) for part in list(backend_conf.get("pi_command", []) or []) if str(part)]
+    backend_cwd = backend_conf.get("cwd")
+    resolved_backend_cwd = config.base_dir()
+    if backend_cwd not in (None, ""):
+        resolved_backend_cwd = config.resolve_path(str(backend_cwd))
     if backend_enabled and backend_pi_command:
         runtime_backend_session_service = ConfiguredBackendSessionService(
             binding_store=backend_binding_store,
             adapter=PiBackendAdapter(
                 command=backend_pi_command,
-                cwd=config.base_dir(),
+                cwd=resolved_backend_cwd,
             ),
         )
     else:

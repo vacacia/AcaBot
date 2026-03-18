@@ -94,7 +94,11 @@ class RuntimeHttpApiServer:
                 or []
             )
         ]
-        static_default = Path(__file__).resolve().parent.parent / "webui"
+        # 踩坑记录：`http_api.py` 位于 `src/acabot/runtime/control/`，这里如果只写
+        # `parent.parent / "webui"` 会错误指向 `src/acabot/runtime/webui`，导致 WebUI
+        # 明明存在却被判成 `static files unavailable`。真正的默认静态目录是
+        # `src/acabot/webui`。
+        static_default = Path(__file__).resolve().parent.parent.parent / "webui"
         static_dir = Path(str(webui_conf.get("static_dir", static_default) or static_default))
         self.static_dir = static_dir if static_dir.exists() else None
         self.config = config

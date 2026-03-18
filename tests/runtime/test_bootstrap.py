@@ -453,6 +453,43 @@ async def test_build_runtime_components_constructs_configured_backend_service_wh
     assert backend_status.configured is True
     assert backend_status.admin_actor_ids == ["qq:user:10001"]
     assert backend_status.session_path == str((tmp_path / ".acabot-runtime" / "backend" / "session.json").resolve())
+    assert components.backend_bridge.session.adapter.cwd == config.base_dir()
+
+    await components.backend_bridge.session.adapter.dispose()
+
+
+async def test_build_runtime_components_uses_explicit_backend_cwd_when_configured(
+    tmp_path: Path,
+) -> None:
+    backend_cwd = tmp_path / "repo-root"
+    backend_cwd.mkdir()
+    config = Config(
+        {
+            "agent": {
+                "default_model": "fallback-model",
+                "system_prompt": "Fallback prompt.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "runtime_root": str(tmp_path / ".acabot-runtime"),
+                "backend": {
+                    "enabled": True,
+                    "admin_actor_ids": ["qq:user:10001"],
+                    "session_binding_path": "backend/session.json",
+                    "pi_command": ["pi", "--mode", "rpc", "--session-dir", str(tmp_path / "pi-sessions")],
+                    "cwd": str(backend_cwd),
+                },
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+
+    assert components.backend_bridge.session.adapter.cwd == backend_cwd.resolve()
 
     await components.backend_bridge.session.adapter.dispose()
 

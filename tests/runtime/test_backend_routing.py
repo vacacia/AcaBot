@@ -10,7 +10,7 @@ from acabot.runtime.router import RuntimeRouter
 from acabot.runtime.storage.event_store import InMemoryChannelEventStore
 from acabot.runtime.storage.runs import InMemoryRunManager
 from acabot.runtime.storage.threads import InMemoryThreadManager
-from acabot.types import EventSource, MsgSegment, StandardEvent
+from acabot.types import ActionType, EventSource, MsgSegment, StandardEvent
 
 from .test_bootstrap import FakeAgent, FakeAgentResponse
 from .test_outbox import FakeGateway
@@ -30,13 +30,14 @@ class TrackingPipeline:
 
 
 class FakeBackendBridge:
-    def __init__(self) -> None:
+    def __init__(self, result: object | None = None) -> None:
         self.admin_requests: list[BackendRequest] = []
         self.session = _ConfiguredSession()
+        self.result = {"ok": True} if result is None else result
 
     async def handle_admin_direct(self, request: BackendRequest) -> object:
         self.admin_requests.append(request)
-        return {"ok": True}
+        return self.result
 
     async def handle_frontstage_request(self, request: BackendRequest) -> object:
         raise AssertionError("frontstage bridge should not be used in task 6")
@@ -94,7 +95,7 @@ def _build_app(
 
 
 async def test_admin_bang_message_routes_to_backend() -> None:
-    backend_bridge = FakeBackendBridge()
+    backend_bridge = FakeBackendBridge(result={"text": "backend says hi"})
     backend_mode_registry = BackendModeRegistry()
     app, pipeline = _build_app(
         backend_bridge=backend_bridge,
@@ -110,10 +111,14 @@ async def test_admin_bang_message_routes_to_backend() -> None:
     assert request.request_kind == "change"
     assert request.summary == "查询当前配置"
     assert pipeline.execute_calls == []
+    assert len(app.gateway.sent) == 1
+    assert app.gateway.sent[0].action_type == ActionType.SEND_TEXT
+    assert app.gateway.sent[0].payload["text"] == "backend says hi"
+    assert app.gateway.sent[0].target.user_id == "10001"
 
 
 async def test_admin_private_maintain_mode_routes_followup_messages_to_backend() -> None:
-    backend_bridge = FakeBackendBridge()
+    backend_bridge = FakeBackendBridge(result={"text": "maintain reply"})
     backend_mode_registry = BackendModeRegistry()
     app, pipeline = _build_app(
         backend_bridge=backend_bridge,
@@ -134,9 +139,13 @@ async def test_admin_private_maintain_mode_routes_followup_messages_to_backend()
     assert request.summary == "继续检查配置"
     assert request.request_kind == "change"
     assert pipeline.execute_calls == []
+    assert len(app.gateway.sent) == 1
+    assert app.gateway.sent[0].action_type == ActionType.SEND_TEXT
+    assert app.gateway.sent[0].payload["text"] == "maintain reply"
+    assert app.gateway.sent[0].target.user_id == "10001"
 
 
-async def test_admin_private_maintain_off_exits_backend_mode() -> None:
+async def test_admin_private_maintain_exit_exits_backend_mode() -> None:
     backend_bridge = FakeBackendBridge()
     backend_mode_registry = BackendModeRegistry()
     app, pipeline = _build_app(
@@ -148,7 +157,7 @@ async def test_admin_private_maintain_off_exits_backend_mode() -> None:
     await app.handle_event(_event(user_id="10001", text="/maintain"))
     assert backend_mode_registry.is_backend_mode("qq:user:10001") is True
 
-    await app.handle_event(_event(user_id="10001", text="/maintain off"))
+    await app.handle_event(_event(user_id="10001", text="/maintain exit"))
 
     assert backend_mode_registry.is_backend_mode("qq:user:10001") is False
     assert backend_bridge.admin_requests == []
@@ -251,7 +260,7 @@ async def test_build_runtime_components_enabled_backend_maintain_followup_routes
     assert binding is not None
     assert binding.session_file.endswith(".jsonl")
 
-    await gateway.handler(_event(user_id="10001", text="/maintain off"))
+    await gateway.handler(_event(user_id="10001", text="/maintain exit"))
     assert components.backend_mode_registry.is_backend_mode("qq:user:10001") is False
 
     await components.backend_bridge.session.adapter.dispose()

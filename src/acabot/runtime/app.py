@@ -11,7 +11,7 @@ import time
 import uuid
 from typing import Callable
 
-from acabot.types import StandardEvent
+from acabot.types import Action, ActionType, StandardEvent
 
 from .approval_resumer import ApprovalResumer, ApprovalResumeResult, NoopApprovalResumer
 from .backend.bridge import BackendBridge
@@ -295,33 +295,72 @@ class RuntimeApp:
             )
             return True
 
-        if event.is_private and text == "/maintain off":
+        if event.is_private and text in {"/maintain off", "/maintain exit"}:
             self.backend_mode_registry.exit_backend_mode(thread_id)
             return True
 
         if event.is_private and self.backend_mode_registry.is_backend_mode(thread_id):
-            await self.backend_bridge.handle_admin_direct(
+            result = await self.backend_bridge.handle_admin_direct(
                 self._build_backend_request(
                     event=event,
                     thread_id=thread_id,
                     summary=text,
                 )
             )
+            await self._send_backend_admin_reply(event=event, result=result)
             return True
 
         if text.startswith("!"):
             summary = text[1:].strip()
             if summary:
-                await self.backend_bridge.handle_admin_direct(
+                result = await self.backend_bridge.handle_admin_direct(
                     self._build_backend_request(
                         event=event,
                         thread_id=thread_id,
                         summary=summary,
                     )
                 )
+                await self._send_backend_admin_reply(event=event, result=result)
                 return True
 
         return False
+
+    async def _send_backend_admin_reply(self, *, event: StandardEvent, result: object) -> None:
+        """把管理员 backend 直连结果直接回发给当前会话.
+
+        这里故意不走 Outbox:
+        - 管理员 backend 直连不是正常前台 run 的产物
+        - 不应伪装成带 run 语义的 assistant message 持久化记录
+        - 当前只需要一个最小可用的直出回路
+        """
+
+        text = self._extract_backend_reply_text(result)
+        await self.gateway.send(
+            Action(
+                action_type=ActionType.SEND_TEXT,
+                target=event.source,
+                payload={"text": text},
+                reply_to=event.raw_message_id or None,
+            )
+        )
+
+    @staticmethod
+    def _extract_backend_reply_text(result: object) -> str:
+        """从 backend 返回值中提取最适合回发给管理员的文本."""
+
+        if isinstance(result, dict):
+            text = str(result.get("text", "")).strip()
+            if text:
+                return text
+            response = result.get("response")
+            if isinstance(response, dict):
+                nested_text = str(response.get("text", "")).strip()
+                if nested_text:
+                    return nested_text
+        text = str(result).strip()
+        if text:
+            return text
+        return "（backend completed with no text output）"
 
     def _build_backend_request(
         self,
