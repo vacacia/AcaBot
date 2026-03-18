@@ -30,6 +30,7 @@ from .config import Config
 from .runtime import RuntimeComponents, build_runtime_components
 from .runtime.gateway_protocol import GatewayProtocol
 from .runtime.control.http_api import RuntimeHttpApiServer
+from .runtime.control.log_buffer import InMemoryLogBuffer, InMemoryLogHandler
 from .runtime.storage.stores import MessageStore
 
 try:
@@ -40,6 +41,7 @@ except ImportError:
         return None
 
 logger = logging.getLogger("acabot")
+LOG_BUFFER = InMemoryLogBuffer()
 
 GatewayFactory = Callable[[Config], GatewayProtocol]
 AgentFactory = Callable[[Config], BaseAgent]
@@ -139,6 +141,7 @@ def build_runtime_app(
             config,
             gateway=gateway,
             agent=agent,
+            log_buffer=LOG_BUFFER,
         )
 
     return build_runtime_components(
@@ -146,6 +149,7 @@ def build_runtime_app(
         gateway=gateway,
         agent=agent,
         message_store=message_store,
+        log_buffer=LOG_BUFFER,
     )
 
 
@@ -198,7 +202,8 @@ def setup_logging(config: Config) -> None:
             use_color=use_color,
         )
     )
-    logging.basicConfig(level=logging.WARNING, handlers=[handler], force=True)
+    memory_handler = InMemoryLogHandler(LOG_BUFFER)
+    logging.basicConfig(level=logging.WARNING, handlers=[handler, memory_handler], force=True)
     logging.getLogger("acabot").setLevel(level)
     logging.getLogger("websockets.server").addFilter(NoisyWebsocketHandshakeFilter())
 

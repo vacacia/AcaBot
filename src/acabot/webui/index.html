@@ -3,804 +3,387 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AcaBot Control Room</title>
+  <title>AcaBot</title>
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
-  <div class="shell">
+  <div class="app-shell">
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-mark">AC</div>
         <div>
           <div class="brand-title">AcaBot</div>
-          <div class="brand-subtitle">Control Room</div>
+          <div class="brand-subtitle">WebUI v2</div>
         </div>
       </div>
 
-      <nav class="nav">
-        <div class="nav-group">
-          <button class="nav-item active" data-section="dashboard">Dashboard</button>
-          <button class="nav-item" data-section="approvals">Approvals</button>
-          <button class="nav-item" data-section="agents">Bot</button>
-          <button class="nav-item" data-section="subagents">Subagents</button>
-          <button class="nav-item" data-section="prompts">Prompts</button>
-        </div>
+      <nav class="nav-tree">
+        <button class="nav-item active" data-view="home">首页</button>
 
-        <div class="nav-group">
-          <button class="nav-item" data-section="model-providers">Model Providers</button>
-          <button class="nav-item" data-section="model-presets">Model Presets</button>
-        </div>
+        <div class="nav-group-title">配置</div>
+        <button class="nav-item" data-view="bot">Bot</button>
+        <button class="nav-item" data-view="models">模型</button>
+        <button class="nav-item" data-view="prompts">Prompts</button>
+        <button class="nav-item" data-view="plugins">Plugins</button>
+        <button class="nav-item" data-view="skills">Skills</button>
+        <button class="nav-item" data-view="subagents">Subagents</button>
 
-        <div class="nav-group">
-          <button class="nav-item" data-section="sessions">Sessions</button>
-        </div>
-
-        <div class="nav-group">
-          <button class="nav-item" data-section="gateway">Gateway</button>
-          <button class="nav-item" data-section="runtime">Runtime</button>
-          <button class="nav-item" data-section="plugins">Plugins</button>
-          <button class="nav-item" data-section="workspaces">Workspaces</button>
-          <button class="nav-item" data-section="references">References</button>
-        </div>
+        <button class="nav-item" data-view="sessions">会话</button>
+        <button class="nav-item" data-view="system">系统</button>
       </nav>
 
-      <div class="sidebar-note">
-        <button class="button button-ghost" id="toggle-theme-btn" type="button">切换 Theme</button>
+      <div class="sidebar-meta">
         <div id="meta-storage-mode">storage: -</div>
         <div id="meta-config-path">config: -</div>
       </div>
     </aside>
 
-    <div class="main">
-      <header class="topbar">
+    <main class="main">
+      <header class="page-header">
         <div>
-          <h1 id="page-title">Dashboard</h1>
-          <p id="page-subtitle">查看 runtime 当前状态、待处理 approvals 和基础运行健康度。</p>
+          <h1 id="page-title">首页</h1>
+          <p id="page-subtitle">先看系统状态，再看日志。</p>
         </div>
-        <div class="topbar-actions">
-          <div class="status-strip" id="status-strip"></div>
-          <button id="refresh-all-btn" class="button button-primary" type="button">刷新当前页</button>
+        <div class="page-actions">
+          <button class="button" id="refresh-view-btn" type="button">刷新当前页</button>
         </div>
       </header>
 
-      <main class="views">
-        <section class="view active" data-view="dashboard">
-          <div class="grid-4">
-            <article class="panel stat-panel">
-              <div class="panel-label">Runtime</div>
-              <div class="stat-value" id="stat-active-runs">0</div>
-              <div class="stat-help">active runs</div>
-            </article>
-            <article class="panel stat-panel">
-              <div class="panel-label">Approvals</div>
-              <div class="stat-value" id="stat-pending-approvals">0</div>
-              <div class="stat-help">pending approvals</div>
-            </article>
-            <article class="panel stat-panel">
-              <div class="panel-label">Skills</div>
-              <div class="stat-value" id="stat-loaded-skills">0</div>
-              <div class="stat-help">loaded skills</div>
-            </article>
-            <article class="panel stat-panel">
-              <div class="panel-label">Providers</div>
-              <div class="stat-value" id="stat-model-providers">0</div>
-              <div class="stat-help">model providers</div>
-            </article>
+      <section class="view active" data-view-panel="home">
+        <div class="status-grid" id="home-status-grid"></div>
+        <article class="panel log-panel">
+          <div class="panel-header sticky">
+            <div>
+              <h2>实时日志</h2>
+              <p>默认全显示，可按等级和关键词筛选。</p>
+            </div>
+            <div class="toolbar">
+              <select id="home-log-level-filter">
+                <option value="">全部等级</option>
+                <option value="DEBUG">DEBUG</option>
+                <option value="INFO">INFO</option>
+                <option value="WARNING">WARNING</option>
+                <option value="ERROR">ERROR</option>
+                <option value="CRITICAL">CRITICAL</option>
+              </select>
+              <input id="home-log-keyword" class="search" type="text" placeholder="关键词过滤日志">
+              <button class="button" id="home-log-refresh-btn" type="button">刷新日志</button>
+            </div>
+          </div>
+          <div id="home-log-stream" class="log-stream"></div>
+        </article>
+      </section>
+
+      <section class="view" data-view-panel="bot">
+        <article class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Bot</h2>
+              <p>默认 AI、默认输入处理、默认工具和默认 skills。</p>
+            </div>
+            <button class="button button-primary" id="save-bot-btn" type="button">保存 Bot</button>
           </div>
 
-          <div class="grid-2">
-            <article class="panel">
-              <div class="panel-header">
-                <h2>Active Runs</h2>
-                <button id="reload-config-btn" class="button" type="button">Reload Config</button>
-              </div>
-              <div id="dashboard-active-runs" class="stack"></div>
-            </article>
-            <article class="panel">
-              <div class="panel-header">
-                <h2>Approval Queue</h2>
-                <button id="dashboard-open-approvals-btn" class="button" type="button">打开 Approvals</button>
-              </div>
-              <div id="dashboard-approvals" class="stack"></div>
-            </article>
+          <div class="section-block">
+            <h3>AI</h3>
+            <div class="form-grid">
+              <label><span>名称</span><input id="bot-name" type="text"></label>
+              <label><span>Prompt</span><select id="bot-prompt"></select></label>
+              <label><span>主模型</span><select id="bot-model"></select></label>
+              <label><span>摘要模型</span><select id="bot-summary-model"></select></label>
+            </div>
           </div>
-        </section>
 
-        <section class="view" data-view="approvals">
+          <div class="section-block">
+            <h3>工具</h3>
+            <div id="bot-tools" class="checkbox-grid"></div>
+          </div>
+
+          <div class="section-block">
+            <h3>Skills</h3>
+            <div id="bot-skills" class="checkbox-grid"></div>
+          </div>
+
+          <div class="section-block">
+            <h3>默认输入处理</h3>
+            <div id="bot-input-rules" class="rule-stack compact"></div>
+          </div>
+        </article>
+      </section>
+
+      <section class="view" data-view-panel="models">
+        <div class="split-layout">
           <article class="panel">
             <div class="panel-header">
-              <h2>Pending Approvals</h2>
-              <button id="refresh-approvals-btn" class="button" type="button">刷新</button>
+              <div>
+                <h2>Providers</h2>
+                <p>连接配置。</p>
+              </div>
+              <button class="button" id="new-provider-btn" type="button">新建 Provider</button>
             </div>
-            <div class="callout">
-              Approvals 页只处理已经进入 `waiting_approval` 的 run。批准后会最小 replay 那次被拦截的 tool call。
-            </div>
-            <div id="pending-approvals" class="stack"></div>
+            <div id="providers-list" class="list-stack"></div>
           </article>
-        </section>
-
-        <section class="view" data-view="agents">
-          <article class="panel bot-panel">
+          <article class="panel">
             <div class="panel-header">
+              <div>
+                <h2>Provider 编辑</h2>
+                <p>可直接填写连接参数。</p>
+              </div>
               <div class="inline-actions">
-                <button id="reset-bot-btn" class="button" type="button">重置表单</button>
-                <button id="save-profile-btn" class="button button-primary" type="button">保存</button>
+                <button class="button" id="delete-provider-btn" type="button">删除</button>
+                <button class="button button-primary" id="save-provider-btn" type="button">保存</button>
               </div>
             </div>
+            <div class="form-grid">
+              <label><span>ID</span><input id="provider-id" type="text"></label>
+              <label><span>类型</span><select id="provider-kind"></select></label>
+              <label><span>Base URL</span><input id="provider-base-url" type="text"></label>
+              <label><span>API Key</span><input id="provider-api-key" type="text"></label>
+            </div>
+          </article>
+        </div>
 
-            <div class="section-tabs" id="bot-section-tabs">
-              <button class="section-tab active" type="button" data-bot-section-tab="ai">AI 配置</button>
-              <button class="section-tab" type="button" data-bot-section-tab="events">事件响应</button>
-              <button class="section-tab" type="button" data-bot-section-tab="tools">工具</button>
-              <button class="section-tab" type="button" data-bot-section-tab="subagents">Subagents</button>
-              <button class="section-tab" type="button" data-bot-section-tab="sandbox">Sandbox</button>
-              <button class="section-tab" type="button" data-bot-section-tab="summary">预览</button>
+        <div class="split-layout">
+          <article class="panel">
+            <div class="panel-header">
+              <div>
+                <h2>Presets</h2>
+                <p>可复用模型定义。</p>
+              </div>
+              <button class="button" id="new-preset-btn" type="button">新建 Preset</button>
+            </div>
+            <div id="presets-list" class="list-stack"></div>
+          </article>
+          <article class="panel">
+            <div class="panel-header">
+              <div>
+                <h2>Preset 编辑</h2>
+                <p>模型、上下文窗口和能力声明。</p>
+              </div>
+              <div class="inline-actions">
+                <button class="button" id="delete-preset-btn" type="button">删除</button>
+                <button class="button button-primary" id="save-preset-btn" type="button">保存</button>
+              </div>
+            </div>
+            <div class="form-grid">
+              <label><span>ID</span><input id="preset-id" type="text"></label>
+              <label><span>Provider</span><select id="preset-provider-id"></select></label>
+              <label><span>模型</span><input id="preset-model" type="text"></label>
+              <label><span>上下文窗口</span><input id="preset-context-window" type="number"></label>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="view" data-view-panel="prompts">
+        <div class="split-layout prompts-layout">
+          <article class="panel">
+            <div class="panel-header">
+              <div>
+                <h2>Prompts</h2>
+                <p>只有名字和内容，不展示内部前缀解释。</p>
+              </div>
+              <button class="button" id="new-prompt-btn" type="button">新建 Prompt</button>
+            </div>
+            <div id="prompts-list" class="list-stack"></div>
+          </article>
+          <article class="panel">
+            <div class="panel-header">
+              <div>
+                <h2>Prompt 编辑</h2>
+                <p>Prompt 就是名字和内容。</p>
+              </div>
+              <div class="inline-actions">
+                <button class="button" id="delete-prompt-btn" type="button">删除</button>
+                <button class="button button-primary" id="save-prompt-btn" type="button">保存</button>
+              </div>
+            </div>
+            <div class="form-grid single-column">
+              <label><span>名字</span><input id="prompt-name" type="text"></label>
+              <label><span>内容</span><textarea id="prompt-content" rows="18"></textarea></label>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="view" data-view-panel="plugins">
+        <article class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Plugins</h2>
+              <p>可配置插件支持开启/关闭，并可立即 reload。</p>
+            </div>
+            <div class="inline-actions">
+              <button class="button" id="reload-plugins-btn" type="button">Reload</button>
+              <button class="button button-primary" id="save-plugins-btn" type="button">保存 Plugins</button>
+            </div>
+          </div>
+          <div id="plugins-config-list" class="toggle-list"></div>
+        </article>
+      </section>
+
+      <section class="view" data-view-panel="skills">
+        <article class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Skills</h2>
+              <p>已安装 skill 一览。</p>
+            </div>
+          </div>
+          <div id="skills-list" class="list-stack"></div>
+        </article>
+      </section>
+
+      <section class="view" data-view-panel="subagents">
+        <article class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Subagents</h2>
+              <p>当前可委派执行体一览。</p>
+            </div>
+          </div>
+          <div id="subagents-list" class="list-stack"></div>
+        </article>
+      </section>
+
+      <section class="view" data-view-panel="sessions">
+        <div class="session-layout">
+          <aside class="panel session-list-panel">
+            <div class="panel-header">
+              <div>
+                <h2>会话</h2>
+                <p>备注名 + Session ID</p>
+              </div>
+              <input id="session-search" class="search small" type="text" placeholder="搜索会话">
+            </div>
+            <div id="sessions-list" class="list-stack"></div>
+          </aside>
+
+          <section class="session-detail">
+            <article class="panel session-meta-card">
+              <div class="panel-header">
+                <div>
+                  <h2 id="session-title">Session</h2>
+                  <p id="session-id-line">Session ID: -</p>
+                </div>
+                <div class="inline-actions">
+                  <button class="button" id="delete-session-btn" type="button">删除会话配置</button>
+                  <button class="button button-primary" id="save-session-btn" type="button">保存会话</button>
+                </div>
+              </div>
+              <div class="form-grid">
+                <label><span>备注名</span><input id="session-name" type="text"></label>
+                <label><span>Session ID</span><input id="session-key" type="text" readonly></label>
+              </div>
+            </article>
+
+            <div class="tabs" id="session-tabs">
+              <button class="tab active" data-session-tab="ai">AI</button>
+              <button class="tab" data-session-tab="input">输入处理</button>
+              <button class="tab" data-session-tab="other">其他</button>
             </div>
 
-            <form id="profile-form" class="profile-layout">
-              <input id="profile-agent-id" type="hidden">
-              <input id="profile-name" type="hidden">
-              <div class="bot-config-body">
-                <section class="bot-config-section active" data-bot-section-panel="ai">
-                  <section class="profile-block profile-hero-block wide">
-                    <div class="profile-block-heading">
-                      <div>
-                        <h3>Bot AI 核心配置</h3>
-                        <p>这里定义主 Bot 的默认 Prompt、主模型和 Summary 模型。Sessions 默认继承这里的 AI 设置。</p>
-                      </div>
-                    </div>
-                    <div class="form-grid profile-quick-grid">
-                      <label>
-                        <span>Prompt <span class="hint-badge" data-tooltip="主 Bot 的系统 Prompt。Sessions 可以选择继承或覆盖它。">?</span></span>
-                        <select id="profile-prompt-ref"></select>
-                      </label>
-                      <label>
-                        <span>模型 <span class="hint-badge" data-tooltip="主 Bot 默认使用的模型。Sessions 可以针对单个会话覆盖成别的模型。">?</span></span>
-                        <select id="profile-model-preset"></select>
-                      </label>
-                      <label>
-                        <span>Summary 模型 <span class="hint-badge" data-tooltip="用于摘要/压缩上下文的模型。不选时沿用当前主模型或全局 summary 配置。">?</span></span>
-                        <select id="profile-summary-model-preset"></select>
-                      </label>
-                    </div>
-                    <div class="form-grid profile-quick-grid" style="margin-top: 12px;">
-                      <label class="wide">
-                        <span>图片理解</span>
-                        <label class="checkbox-row"><input id="profile-image-caption-enabled" type="checkbox"> <span>开启图片转述并写入上下文</span></label>
-                      </label>
-                      <label>
-                        <span>图片转述模型</span>
-                        <select id="profile-image-caption-preset"></select>
-                      </label>
-                      <label>
-                        <span>处理 reply 图片</span>
-                        <label class="checkbox-row"><input id="profile-image-caption-include-reply" type="checkbox"> <span>当前轮重新解析被引用图片</span></label>
-                      </label>
-                      <label class="wide">
-                        <span>图片转述 Prompt</span>
-                        <textarea id="profile-image-caption-prompt" rows="3" placeholder="例如：请简洁描述这张图片里看得见的内容，只描述可见信息。"></textarea>
-                      </label>
-                    </div>
-                  </section>
-                </section>
+            <section class="tab-panel active" data-session-panel="ai">
+              <article class="panel">
+                <div class="panel-header"><h2>AI</h2></div>
+                <div class="form-grid">
+                  <label><span>Prompt</span><select id="session-prompt"></select></label>
+                  <label><span>主模型</span><select id="session-model"></select></label>
+                  <label><span>摘要模型</span><select id="session-summary-model"></select></label>
+                </div>
+                <div class="section-block">
+                  <h3>工具集</h3>
+                  <div id="session-tools" class="checkbox-grid"></div>
+                </div>
+                <div class="section-block">
+                  <h3>Skill 集合</h3>
+                  <div id="session-skills" class="checkbox-grid"></div>
+                </div>
+              </article>
+            </section>
 
-                <section class="bot-config-section" data-bot-section-panel="events">
-                  <section class="profile-block wide">
-                    <div class="profile-block-heading">
-                      <div>
-                        <h3>Bot 级事件策略</h3>
-                        <p>这里配置主 Bot 对各类平台事件的默认行为。未单独配置的 Session 会继承这里的响应策略；Session 里的设置只作为 override。</p>
-                      </div>
-                    </div>
-                    <div id="profile-event-defaults" class="stack"></div>
-                  </section>
-                </section>
+            <section class="tab-panel" data-session-panel="input">
+              <article class="panel">
+                <div class="panel-header">
+                  <div>
+                    <h2>输入处理规则</h2>
+                    <p>支持项全部列出，每条默认折叠。</p>
+                  </div>
+                </div>
+                <div id="session-input-rules" class="rule-stack"></div>
+              </article>
+            </section>
 
-                <section class="bot-config-section" data-bot-section-panel="tools">
-                  <section class="profile-block wide">
-                    <div class="profile-block-heading">
-                      <div>
-                        <h3>Tool Access</h3>
-                        <p>这里只放普通工具。Computer 工具已经挪到 Sandbox 分栏里统一配置。</p>
-                      </div>
-                    </div>
-                    <div id="profile-enabled-tools-list" class="tool-groups-grid"></div>
-                  </section>
+            <section class="tab-panel" data-session-panel="other">
+              <article class="panel">
+                <div class="panel-header"><h2>其他</h2></div>
+                <div class="form-grid">
+                  <label><span>Tags</span><input id="session-tags" type="text" placeholder="逗号分隔"></label>
+                </div>
+              </article>
+            </section>
+          </section>
+        </div>
+      </section>
 
-                  <section class="profile-block wide" id="profile-skills-section">
-                    <div class="profile-block-heading">
-                      <div>
-                        <h3>Skills</h3>
-                        <p>这里只选择主 Bot 能看见哪些 skills，不再把其他内部结构混进来。</p>
-                      </div>
-                    </div>
-                    <div id="profile-skill-assignments-list" class="stack"></div>
-                  </section>
-                </section>
+      <section class="view" data-view-panel="system">
+        <div class="tabs" id="system-tabs">
+          <button class="tab active" data-system-tab="logs">日志</button>
+          <button class="tab" data-system-tab="backend">Backend</button>
+          <button class="tab" data-system-tab="approvals">审批</button>
+          <button class="tab" data-system-tab="resources">资源</button>
+        </div>
 
-                <section class="bot-config-section" data-bot-section-panel="subagents">
-                  <section class="profile-block wide">
-                    <div class="profile-block-heading">
-                      <div>
-                        <h3>Subagents</h3>
-                        <p>这里集中查看当前可用的 subagents。主 Bot 看到哪些 worker，这里就应该一眼能看出来。</p>
-                      </div>
-                    </div>
-                    <div id="profile-subagents-list" class="stack"></div>
-                  </section>
-                </section>
-
-                <section class="bot-config-section" data-bot-section-panel="sandbox">
-                  <section class="profile-block wide">
-                    <div class="profile-block-heading">
-                      <div>
-                        <h3>Computer 工具</h3>
-                        <p>这里选择主 Bot 能看到哪些 computer 工具；下面的 Sandbox 权限决定这些工具真正能做什么。</p>
-                      </div>
-                    </div>
-                    <div id="profile-computer-tools-list" class="tool-groups-grid"></div>
-                  </section>
-
-                  <section class="profile-block wide">
-                    <div class="profile-block-heading">
-                      <div>
-                        <h3>Computer / Sandbox 权限</h3>
-                        <p>这里控制 computer 工具真正能做什么。没启用 computer 工具时，这些开关只会保留配置，不会实际生效。</p>
-                      </div>
-                    </div>
-                    <div id="profile-computer-policy-note" class="mini-callout"></div>
-                    <div id="profile-computer-policy" class="form-grid compact-grid profile-policy-grid">
-                      <label>
-                        <span>Backend</span>
-                        <select id="profile-computer-backend"></select>
-                      </label>
-                      <label>
-                        <span>Network Mode</span>
-                        <select id="profile-computer-network-mode"></select>
-                      </label>
-                      <label class="checkbox-row"><input id="profile-computer-read-only" type="checkbox"> <span>Read Only</span></label>
-                      <label class="checkbox-row"><input id="profile-computer-allow-write" type="checkbox"> <span>Allow Write</span></label>
-                      <label class="checkbox-row"><input id="profile-computer-allow-exec" type="checkbox"> <span>Allow Exec</span></label>
-                      <label class="checkbox-row"><input id="profile-computer-allow-sessions" type="checkbox"> <span>Allow Sessions</span></label>
-                      <label class="checkbox-row"><input id="profile-computer-auto-stage" type="checkbox"> <span>Auto Stage Attachments</span></label>
-                    </div>
-                  </section>
-                </section>
-
-                <section class="bot-config-section" data-bot-section-panel="summary">
-                  <section class="profile-block">
-                    <div class="profile-block-heading">
-                      <div>
-                        <h3>Effective Model Preview</h3>
-                        <p>这里展示主 Bot 当前最终会命中的模型解析结果，方便确认 Prompt / Binding / Summary 配置是否闭环。</p>
-                      </div>
-                    </div>
-                    <div id="profile-effective-model" class="stack"></div>
-                  </section>
-                </section>
+        <section class="tab-panel active" data-system-panel="logs">
+          <article class="panel">
+            <div class="panel-header">
+              <div>
+                <h2>系统日志</h2>
+                <p>完整日志查看器。</p>
               </div>
-            </form>
+              <div class="toolbar">
+                <select id="system-log-level-filter">
+                  <option value="">全部等级</option>
+                  <option value="DEBUG">DEBUG</option>
+                  <option value="INFO">INFO</option>
+                  <option value="WARNING">WARNING</option>
+                  <option value="ERROR">ERROR</option>
+                  <option value="CRITICAL">CRITICAL</option>
+                </select>
+                <input id="system-log-keyword" class="search" type="text" placeholder="关键词过滤日志">
+                <button class="button" id="system-log-refresh-btn" type="button">刷新</button>
+              </div>
+            </div>
+            <div id="system-log-stream" class="log-stream"></div>
           </article>
         </section>
 
-        <section class="view" data-view="subagents">
-          <div class="editor-layout">
-            <article class="panel">
-              <div class="panel-header">
-                <h2>Subagents</h2>
-                <button id="new-subagent-btn" class="button button-primary" type="button">新建 subagent</button>
-              </div>
-              <div class="callout">
-                当前本地 profile 会自动注册成 local subagent executor。这里重点配置它自己的名称、模型、描述、工具和 skills。
-              </div>
-              <div id="subagents-list" class="stack selectable-list"></div>
-            </article>
-
-            <article class="panel">
-              <div class="panel-header">
-                <h2>Subagent Editor</h2>
-                <div class="inline-actions">
-                  <button id="save-subagent-btn" class="button button-primary" type="button">保存</button>
-                  <button id="delete-subagent-btn" class="button button-danger" type="button">删除</button>
-                </div>
-              </div>
-
-              <form id="subagent-form" class="form-grid">
-                <input id="subagent-agent-id" type="hidden">
-                <input id="subagent-prompt-ref" type="hidden">
-                <label>
-                  <span>名称</span>
-                  <input id="subagent-name">
-                </label>
-                <label>
-                  <span>模型</span>
-                  <select id="subagent-model-preset"></select>
-                </label>
-                <label class="wide">
-                  <span>给 Bot 看的描述</span>
-                  <textarea id="subagent-description" placeholder="告诉 Bot 这个 subagent 适合处理什么任务。"></textarea>
-                </label>
-                <label class="wide">
-                  <span>工具</span>
-                  <div id="subagent-enabled-tools-list" class="option-grid"></div>
-                </label>
-                <label class="wide" id="subagent-skills-section">
-                  <span>Skills</span>
-                  <div id="subagent-skill-assignments-list" class="stack"></div>
-                </label>
-              </form>
-
-              <div class="panel-divider"></div>
-              <div id="subagent-effective-model" class="stack"></div>
-            </article>
-          </div>
+        <section class="tab-panel" data-system-panel="backend">
+          <article class="panel">
+            <div class="panel-header"><h2>Backend</h2></div>
+            <div id="backend-status" class="kv-grid"></div>
+          </article>
         </section>
 
-        <section class="view" data-view="prompts">
-          <div class="editor-layout">
-            <article class="panel">
-              <div class="panel-header">
-                <h2>Prompts</h2>
-                <button id="new-prompt-btn" class="button button-primary" type="button">新建 prompt</button>
-              </div>
-              <div id="prompts-list" class="stack selectable-list"></div>
-            </article>
-
-            <article class="panel">
-              <div class="panel-header">
-                <h2>Prompt Editor</h2>
-                <div class="inline-actions">
-                  <button id="save-prompt-btn" class="button button-primary" type="button">保存</button>
-                  <button id="delete-prompt-btn" class="button button-danger" type="button">删除</button>
-                </div>
-              </div>
-
-              <div class="callout">
-                Prompt 页面管理的是 prompt 本体。内部仍然会保存成 `prompt/...`，但这里不要求你手动写这个前缀。
-              </div>
-
-              <label class="form-block">
-                <span>Prompt 名称</span>
-                <input id="prompt-name-input" placeholder="比如 默认助手 / 工作群 / 写作助手">
-              </label>
-              <label class="form-block">
-                <span>Content</span>
-                <textarea id="prompt-content-input" rows="22"></textarea>
-              </label>
-            </article>
-          </div>
+        <section class="tab-panel" data-system-panel="approvals">
+          <article class="panel">
+            <div class="panel-header"><h2>审批</h2></div>
+            <div id="approvals-list" class="list-stack"></div>
+          </article>
         </section>
 
-        <section class="view" data-view="model-shell">
-          <div class="editor-layout">
-            <article class="panel">
-              <div class="panel-header">
-                <div>
-                  <h2 id="model-page-heading">Model Providers</h2>
-                  <p class="section-note" id="model-page-note"></p>
-                </div>
-                <div class="inline-actions">
-                  <button id="new-model-entity-btn" class="button button-primary" type="button">新建</button>
-                  <button id="reload-model-registry-btn" class="button" type="button">Reload Registry</button>
-                </div>
-              </div>
-              <div id="model-help-card" class="callout"></div>
-              <div id="models-entity-list" class="stack selectable-list"></div>
-            </article>
-
-            <article class="panel">
-              <div class="panel-header">
-                <h2 id="models-editor-title">Editor</h2>
-                <div class="inline-actions">
-                  <button id="save-model-entity-btn" class="button button-primary" type="button">保存</button>
-                  <button id="delete-model-entity-btn" class="button button-danger" type="button">删除</button>
-                </div>
-              </div>
-
-              <label class="form-block">
-                <span id="model-id-label">ID</span>
-                <input id="model-entity-id">
-              </label>
-              <div id="model-dynamic-form" class="form-grid"></div>
-
-              <div class="panel-divider"></div>
-              <div class="inline-actions">
-                <button id="preview-model-impact-btn" class="button" type="button">查看 Impact</button>
-                <button id="health-check-preset-btn" class="button" type="button">Health Check</button>
-              </div>
-
-              <div class="panel-divider"></div>
-              <h3>Preview</h3>
-              <pre id="model-entity-preview" class="code-block"></pre>
-              <h3>Impact / Result</h3>
-              <pre id="model-entity-sidecar" class="code-block"></pre>
-            </article>
-          </div>
+        <section class="tab-panel" data-system-panel="resources">
+          <article class="panel">
+            <div class="panel-header"><h2>资源</h2></div>
+            <div class="resource-links">
+              <button class="button" id="open-workspaces-btn" type="button">加载 Workspaces</button>
+              <button class="button" id="open-references-btn" type="button">加载 References</button>
+            </div>
+            <div id="resources-output" class="list-stack"></div>
+          </article>
         </section>
-
-        <section class="view" data-view="sessions">
-          <div class="editor-layout">
-            <article class="panel">
-              <div class="panel-header">
-                <div>
-                  <h2>Sessions</h2>
-                  <p class="section-note">左边是会话入口，右边是这个会话的完整处理设置。</p>
-                </div>
-                <button id="new-session-btn" class="button button-primary" type="button">新建会话配置</button>
-              </div>
-              <div class="callout">
-                这里不再直接暴露 routing rule / response rule / event policy 这些内部对象。<br>
-                你只需要把它理解成“这个会话怎么接入、怎么响应、怎么记录”。
-              </div>
-              <div id="sessions-list" class="stack selectable-list"></div>
-            </article>
-
-            <article class="panel">
-              <div class="panel-header">
-                <h2>Session Settings</h2>
-                <div class="inline-actions">
-                  <button id="save-session-btn" class="button button-primary" type="button">保存</button>
-                  <button id="delete-session-btn" class="button button-danger" type="button">删除</button>
-                </div>
-              </div>
-
-              <div class="section-tabs" id="session-section-tabs">
-                <button class="section-tab active" type="button" data-session-section-tab="ai">AI 配置</button>
-                <button class="section-tab" type="button" data-session-section-tab="response">响应策略</button>
-                <button class="section-tab" type="button" data-session-section-tab="memory">记忆配置</button>
-                <button class="section-tab" type="button" data-session-section-tab="summary">配置摘要</button>
-              </div>
-
-              <input id="session-binding-rule-id" hidden>
-              <input id="session-inbound-rule-id" hidden>
-              <input id="session-event-policy-id" hidden>
-
-              <div class="session-config-body">
-                <section class="session-config-section active" data-session-section-panel="ai">
-                  <div class="callout">
-                    这里默认继承主 Bot。你也可以给某个会话单独换模型、Prompt、Tools 和 Skills，比如让某个群用更便宜或更蠢一点的模型。
-                  </div>
-                  <form class="form-grid">
-                    <label class="wide">
-                      <span>会话名称</span>
-                      <input id="session-name" placeholder="例如 私聊默认 / 工作群助手 / 运营群记录模式">
-                    </label>
-                    <label>
-                      <span>会话类型</span>
-                      <select id="session-scope-type">
-                        <option value="private">QQ 私聊</option>
-                        <option value="group">QQ 群聊</option>
-                      </select>
-                    </label>
-                    <label>
-                      <span>会话对象 ID</span>
-                      <input id="session-scope-value" placeholder="用户 ID / 群 ID">
-                    </label>
-                    <label class="wide">
-                      <span>启用会话级 AI 覆盖</span>
-                      <label class="checkbox-row"><input id="session-ai-override-enabled" type="checkbox"> <span>这个会话单独覆盖主 Bot 的 AI 配置</span></label>
-                    </label>
-                    <input id="session-managed-agent-id" hidden>
-                    <div id="session-ai-override-panel" class="wide session-override-panel">
-                      <div class="session-override-heading">
-                        <strong>会话级 AI 覆盖设置</strong>
-                        <span>只在上面开关启用后生效</span>
-                      </div>
-                      <div class="form-grid">
-                        <label class="wide">
-                          <span>会话模型</span>
-                          <select id="session-model-preset"></select>
-                        </label>
-                        <label class="wide">
-                          <span>会话 Summary 模型</span>
-                          <select id="session-summary-model-preset"></select>
-                        </label>
-                        <label class="wide">
-                          <span>会话 Prompt</span>
-                          <select id="session-prompt-ref"></select>
-                        </label>
-                        <label class="wide">
-                          <span>图片理解</span>
-                          <label class="checkbox-row"><input id="session-image-caption-enabled" type="checkbox"> <span>这个会话单独覆盖图片转述配置</span></label>
-                        </label>
-                        <label class="wide">
-                          <span>图片转述模型</span>
-                          <select id="session-image-caption-preset"></select>
-                        </label>
-                        <label class="wide">
-                          <span>处理 reply 图片</span>
-                          <label class="checkbox-row"><input id="session-image-caption-include-reply" type="checkbox"> <span>这个会话重新解析被引用图片</span></label>
-                        </label>
-                        <label class="wide">
-                          <span>图片转述 Prompt</span>
-                          <textarea id="session-image-caption-prompt" rows="3" placeholder="例如：请简洁描述这张图片里看得见的内容，只描述可见信息。"></textarea>
-                        </label>
-                        <label class="wide">
-                          <span>当前生效模型预览</span>
-                          <div id="session-model-preview" class="stack"></div>
-                        </label>
-                        <label class="wide">
-                          <span>Enabled Tools</span>
-                          <div id="session-enabled-tools-list" class="option-grid"></div>
-                        </label>
-                        <label class="wide" id="session-skills-section">
-                          <span>Skills</span>
-                          <div id="session-skill-assignments-list" class="stack"></div>
-                          <button id="add-session-skill-btn" class="button" type="button">添加 skill</button>
-                        </label>
-                      </div>
-                    </div>
-                  </form>
-                </section>
-
-                <section class="session-config-section" data-session-section-panel="response">
-                  <div class="callout">
-                    在这里分别定义不同事件类型进入这个会话后怎么处理。主界面不再暴露消息子类型、发送者身份这些底层过滤条件。
-                  </div>
-                  <form class="form-grid">
-                    <label class="wide">
-                      <span>按事件类型设置响应策略</span>
-                      <div id="session-response-strategies" class="stack"></div>
-                    </label>
-                  </form>
-                </section>
-
-                <section class="session-config-section" data-session-section-panel="memory">
-                  <div class="callout">
-                    在这里定义“这个会话的记录与 memory 行为”。你不需要直接维护 event policy。
-                  </div>
-                  <form class="form-grid">
-                    <label class="checkbox-row"><input id="session-persist-event" type="checkbox"> <span>保存这个会话的 event</span></label>
-                    <label class="checkbox-row"><input id="session-extract-memory" type="checkbox"> <span>把这个会话的 event 提取到 memory</span></label>
-                    <label class="wide">
-                      <span>Memory Scopes</span>
-                      <div id="session-memory-scopes"></div>
-                    </label>
-                    <label class="wide">
-                      <span>Tags</span>
-                      <input id="session-tags" placeholder="用逗号分隔，例如 work, private, archive">
-                    </label>
-                  </form>
-                </section>
-
-                <section class="session-config-section" data-session-section-panel="summary">
-                  <div class="callout">
-                    这里给你看这个会话最终会怎么跑，不再展示内部 rule 对象。
-                  </div>
-                  <div id="session-preview" class="stack"></div>
-                </section>
-              </div>
-            </article>
-          </div>
-        </section>
-
-        <section class="view" data-view="runtime">
-          <div class="runtime-grid">
-            <article class="panel">
-              <div class="panel-header">
-                <h2>Threads</h2>
-                <button id="refresh-runtime-btn" class="button" type="button">刷新</button>
-              </div>
-              <div id="runtime-threads-list" class="stack selectable-list"></div>
-            </article>
-
-            <article class="panel">
-              <div class="panel-header">
-                <h2>Thread Detail</h2>
-                <div class="inline-actions">
-                  <button id="save-thread-agent-override-btn" class="button" type="button">设置 agent override</button>
-                  <button id="clear-thread-agent-override-btn" class="button" type="button">清除 override</button>
-                </div>
-              </div>
-              <label class="form-block">
-                <span>Thread Agent Override</span>
-                <input id="thread-agent-override-input" placeholder="agent_id">
-              </label>
-              <div id="runtime-thread-summary" class="stack"></div>
-              <div class="subpanel-grid">
-                <div>
-                  <h3>Thread Steps</h3>
-                  <div id="runtime-thread-steps" class="stack mini-stack"></div>
-                </div>
-                <div>
-                  <h3>Thread Events</h3>
-                  <div id="runtime-thread-events" class="stack mini-stack"></div>
-                </div>
-                <div>
-                  <h3>Thread Messages</h3>
-                  <div id="runtime-thread-messages" class="stack mini-stack"></div>
-                </div>
-              </div>
-            </article>
-
-            <article class="panel">
-              <div class="panel-header">
-                <h2>Runs</h2>
-              </div>
-              <div id="runtime-runs-list" class="stack selectable-list"></div>
-              <div class="panel-divider"></div>
-              <h3>Run Detail</h3>
-              <div id="runtime-run-detail" class="stack"></div>
-              <h3>Run Steps</h3>
-              <div id="runtime-run-steps" class="stack mini-stack"></div>
-            </article>
-          </div>
-        </section>
-
-        <section class="view" data-view="gateway">
-          <div class="grid-2">
-            <article class="panel">
-              <div class="panel-header">
-                <h2>Gateway 配置</h2>
-                <div class="inline-actions">
-                  <button id="refresh-gateway-btn" class="button" type="button">刷新</button>
-                  <button id="save-gateway-btn" class="button button-primary" type="button">保存</button>
-                </div>
-              </div>
-              <div class="callout">
-                这里直接配置 AcaBot 作为反向 WebSocket 服务端时，NapCat 应该怎么连进来。保存后会写回 `gateway` 配置；监听地址和 token 变更通常需要重启 AcaBot 才会完全生效。
-              </div>
-              <form id="gateway-config-form" class="form-grid">
-                <label>
-                  <span>消息平台类别</span>
-                  <input value="NapCat / OneBot v11 反向 WebSocket" disabled>
-                </label>
-                <label>
-                  <span>启用</span>
-                  <label class="checkbox-row"><input id="gateway-enabled" type="checkbox" checked disabled> <span>当前版本默认启用这一个 gateway</span></label>
-                </label>
-                <label>
-                  <span>反向 WebSocket 主机</span>
-                  <input id="gateway-host" placeholder="例如 0.0.0.0">
-                </label>
-                <label>
-                  <span>反向 WebSocket 端口</span>
-                  <input id="gateway-port" type="number" min="1" max="65535" placeholder="8080">
-                </label>
-                <label>
-                  <span>反向 WebSocket Token</span>
-                  <input id="gateway-token" placeholder="不填则不校验 Authorization">
-                </label>
-                <label>
-                  <span>请求超时秒数</span>
-                  <input id="gateway-timeout" type="number" min="1" step="0.5" placeholder="10">
-                </label>
-              </form>
-            </article>
-
-            <article class="panel">
-              <div class="panel-header">
-                <h2>NapCat 连接说明</h2>
-              </div>
-              <div id="gateway-status-cards" class="stack"></div>
-              <div class="panel-divider"></div>
-              <div id="gateway-status-guide" class="stack"></div>
-              <div class="panel-divider"></div>
-              <h3>onebot11.json 参考片段</h3>
-              <pre id="gateway-napcat-snippet" class="code-block"></pre>
-            </article>
-          </div>
-        </section>
-
-        <section class="view" data-view="plugins">
-          <div class="grid-2">
-            <article class="panel">
-              <div class="panel-header">
-                <h2>Loaded Plugins</h2>
-                <button id="refresh-plugins-btn" class="button" type="button">刷新</button>
-              </div>
-              <div id="plugins-list" class="stack selectable-list"></div>
-            </article>
-            <article class="panel">
-              <div class="panel-header">
-                <h2>Plugin Control</h2>
-                <button id="reload-plugins-btn" class="button button-primary" type="button">Reload</button>
-              </div>
-              <label class="form-block">
-                <span>Plugin Names</span>
-                <input id="reload-plugins-input" placeholder="留空表示 reload 当前已加载插件；指定时用逗号分隔">
-              </label>
-              <div class="panel-divider"></div>
-              <h3>Loaded Skills</h3>
-              <div id="plugins-skills" class="stack mini-stack"></div>
-              <h3>Subagent Executors</h3>
-              <div id="plugins-executors" class="stack mini-stack"></div>
-            </article>
-          </div>
-        </section>
-
-        <section class="view" data-view="workspaces">
-          <div class="editor-layout">
-            <article class="panel">
-              <div class="panel-header">
-                <h2>Workspaces</h2>
-                <button id="refresh-workspaces-btn" class="button" type="button">刷新</button>
-              </div>
-              <div id="workspaces-list" class="stack selectable-list"></div>
-            </article>
-
-            <article class="panel">
-              <div class="panel-header">
-                <h2>Workspace Detail</h2>
-                <div class="inline-actions">
-                  <button id="stop-sandbox-btn" class="button button-danger" type="button">Stop Sandbox</button>
-                  <button id="prune-workspace-btn" class="button button-danger" type="button">Prune Workspace</button>
-                </div>
-              </div>
-
-              <div id="workspace-summary" class="stack"></div>
-
-              <div class="panel-divider"></div>
-              <div class="subpanel-grid workspace-subgrid">
-                <div>
-                  <h3>Directory Entries</h3>
-                  <div id="workspace-entries" class="stack mini-stack"></div>
-                </div>
-                <div>
-                  <h3>Sessions</h3>
-                  <div id="workspace-sessions" class="stack mini-stack"></div>
-                </div>
-                <div>
-                  <h3>Attachments</h3>
-                  <div id="workspace-attachments" class="stack mini-stack"></div>
-                </div>
-              </div>
-            </article>
-          </div>
-        </section>
-
-        <section class="view" data-view="references">
-          <div class="editor-layout">
-            <article class="panel">
-              <div class="panel-header">
-                <h2>Reference Spaces</h2>
-                <button id="refresh-references-btn" class="button" type="button">刷新</button>
-              </div>
-              <div id="reference-spaces-list" class="stack selectable-list"></div>
-
-              <div class="panel-divider"></div>
-              <h3>Search</h3>
-              <label class="form-block">
-                <span>Query</span>
-                <input id="reference-search-input" placeholder="输入关键字后按回车或点 Search">
-              </label>
-              <button id="search-references-btn" class="button" type="button">Search</button>
-              <div id="reference-search-results" class="stack mini-stack" style="margin-top: 16px;"></div>
-            </article>
-
-            <article class="panel">
-              <div class="panel-header">
-                <h2>Reference Detail</h2>
-              </div>
-              <div id="reference-detail-content" class="stack"></div>
-
-              <div class="panel-divider"></div>
-              <h3>Add Document</h3>
-              <div class="callout">
-                新文档会写入当前选中的 Reference Space。未选中 space 时无法添加。
-              </div>
-              <label class="form-block">
-                <span>Title</span>
-                <input id="reference-add-title">
-              </label>
-              <label class="form-block">
-                <span>Source URI</span>
-                <input id="reference-add-source-uri" placeholder="https://example.com/doc">
-              </label>
-              <label class="form-block">
-                <span>Tags</span>
-                <input id="reference-add-tags" placeholder="用逗号分隔">
-              </label>
-              <label class="form-block">
-                <span>Body</span>
-                <textarea id="reference-add-body" rows="10"></textarea>
-              </label>
-              <button id="add-reference-btn" class="button button-primary" type="button">Add Document</button>
-            </article>
-          </div>
-        </section>
-      </main>
-    </div>
+      </section>
+    </main>
   </div>
 
   <div id="toast" class="toast" hidden></div>

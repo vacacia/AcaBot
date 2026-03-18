@@ -216,6 +216,33 @@ async def test_runtime_http_api_server_serves_status_and_profile_crud(tmp_path: 
         assert "options" in catalog["data"]
         assert "event_types" in catalog["data"]["options"]
 
+        logs = await asyncio.to_thread(request_json, base_url, "/api/system/logs")
+        assert logs["ok"] is True
+        assert "items" in logs["data"]
+
+        plugins_config = await asyncio.to_thread(request_json, base_url, "/api/system/plugins/config")
+        assert plugins_config["ok"] is True
+        assert "items" in plugins_config["data"]
+
+        if plugins_config["data"]["items"]:
+            first = plugins_config["data"]["items"][0]
+            toggled = await asyncio.to_thread(
+                request_json,
+                base_url,
+                "/api/system/plugins/config",
+                method="PUT",
+                payload={
+                    "items": [
+                        {
+                            "path": first["path"],
+                            "enabled": False,
+                        }
+                    ]
+                },
+            )
+            assert toggled["ok"] is True
+            assert any(item["path"] == first["path"] and item["enabled"] is False for item in toggled["data"]["items"])
+
         put_result = await asyncio.to_thread(
             request_json,
             base_url,
@@ -240,3 +267,19 @@ async def test_runtime_http_api_server_serves_status_and_profile_crud(tmp_path: 
         assert references_result["ok"] is True
     finally:
         await server.stop()
+
+
+def test_webui_v2_shell_matches_redesigned_config_model() -> None:
+    html = Path("src/acabot/webui/index.html").read_text(encoding="utf-8")
+
+    assert "data-view=\"sessions\"" in html
+    assert ">Prompts<" in html
+    assert ">Plugins<" in html
+    assert ">Skills<" in html
+    assert ">Subagents<" in html
+    assert "会话规则" not in html
+    assert ">AI<" in html
+    assert ">输入处理<" in html
+    assert ">其他<" in html
+    assert "输入处理规则" in html
+    assert "Session ID" in html

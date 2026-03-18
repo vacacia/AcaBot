@@ -76,6 +76,7 @@ from .snapshots import (
     SubagentExecutorSnapshot,
 )
 from .ui_catalog import build_ui_options
+from .log_buffer import InMemoryLogBuffer
 from .workspace_ops import RuntimeWorkspaceControlOps
 
 
@@ -111,6 +112,7 @@ class RuntimeControlPlane:
         computer_runtime: ComputerRuntime | None = None,
         reference_backend: ReferenceBackend | None = None,
         config_control_plane: RuntimeConfigControlPlane | None = None,
+        log_buffer: InMemoryLogBuffer | None = None,
     ) -> None:
         """初始化 RuntimeControlPlane.
 
@@ -147,6 +149,7 @@ class RuntimeControlPlane:
         self.computer_runtime = computer_runtime
         self.reference_backend = reference_backend
         self.config_control_plane = config_control_plane
+        self.log_buffer = log_buffer
         self.model_ops = RuntimeModelControlOps(
             model_registry_manager=model_registry_manager,
             profile_registry=profile_registry,
@@ -533,6 +536,40 @@ class RuntimeControlPlane:
         if self.tool_broker is None:
             return []
         return [dict(item) for item in self.tool_broker.list_registered_tools()]
+
+    async def list_recent_logs(
+        self,
+        *,
+        level: str = "",
+        keyword: str = "",
+        limit: int = 500,
+    ) -> dict[str, object]:
+        """返回最近日志, 供 WebUI 首页和系统日志页使用."""
+
+        if self.log_buffer is None:
+            return {"items": []}
+        return {
+            "items": self.log_buffer.list_entries(
+                level=level,
+                keyword=keyword,
+                limit=limit,
+            )
+        }
+
+    async def list_plugin_configs(self) -> dict[str, object]:
+        """返回可供 WebUI 编辑的 plugin 配置列表."""
+
+        if self.config_control_plane is None:
+            return {"items": []}
+        return {"items": self.config_control_plane.list_plugin_configs()}
+
+    async def replace_plugin_configs(self, items: list[dict[str, object]]) -> dict[str, object]:
+        """整批替换 plugin 配置并热刷新."""
+
+        if self.config_control_plane is None:
+            raise RuntimeError("config control plane unavailable")
+        updated = await self.config_control_plane.replace_plugin_configs(list(items))
+        return {"items": updated}
 
     async def get_backend_status(self) -> BackendStatusSnapshot:
         """返回后台维护面的最小状态快照."""

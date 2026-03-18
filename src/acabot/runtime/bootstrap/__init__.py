@@ -89,6 +89,7 @@ def build_runtime_components(
     subagent_delegator=None,
     approval_resumer: ApprovalResumer | None = None,
     plugins: list[RuntimePlugin] | None = None,
+    log_buffer=None,
 ) -> RuntimeComponents:
     """根据配置和注入依赖组装一套最小 runtime 组件."""
 
@@ -298,6 +299,7 @@ def build_runtime_components(
         computer_runtime=runtime_computer_runtime,
         reference_backend=runtime_reference_backend,
         config_control_plane=config_control_plane,
+        log_buffer=log_buffer,
     )
     runtime_plugin_manager.attach_control_plane(control_plane)
     runtime_plugin_manager.attach_subagent_delegator(runtime_subagent_delegator)

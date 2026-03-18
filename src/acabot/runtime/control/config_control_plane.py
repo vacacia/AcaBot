@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+import importlib
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
@@ -697,6 +698,59 @@ class RuntimeConfigControlPlane:
         if existed:
             await self.reload_runtime_configuration()
         return existed
+
+    def list_plugin_configs(self) -> list[dict[str, Any]]:
+        """返回 runtime.plugins 的配置视图, 供 WebUI 开关插件使用."""
+
+        runtime_conf = dict(self.config.get("runtime", {}) or {})
+        raw_plugins = list(runtime_conf.get("plugins", []) or [])
+        items: list[dict[str, Any]] = []
+        for raw in raw_plugins:
+            if isinstance(raw, str):
+                items.append({
+                    "path": raw,
+                    "enabled": True,
+                    "name": self._plugin_name_from_path(raw),
+                })
+                continue
+            if isinstance(raw, dict):
+                import_path = str(raw.get("path", "") or raw.get("import_path", "") or "")
+                if not import_path:
+                    continue
+                items.append({
+                    "path": import_path,
+                    "enabled": bool(raw.get("enabled", True)),
+                    "name": self._plugin_name_from_path(import_path),
+                })
+        return items
+
+    async def replace_plugin_configs(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """整批替换 runtime.plugins 配置并热刷新."""
+
+        normalized: list[dict[str, Any]] = []
+        for item in items:
+            import_path = str(item.get("path", "") or item.get("import_path", "") or "").strip()
+            if not import_path:
+                continue
+            normalized.append({
+                "path": import_path,
+                "enabled": bool(item.get("enabled", True)),
+            })
+        data = self.config.to_dict()
+        runtime_conf = dict(data.get("runtime", {}) or {})
+        runtime_conf["plugins"] = normalized
+        data["runtime"] = runtime_conf
+        self.config.replace(data)
+        self.config.save()
+        await self.reload_runtime_configuration()
+        return self.list_plugin_configs()
+
+    @staticmethod
+    def _plugin_name_from_path(import_path: str) -> str:
+        module_path, _, symbol_name = str(import_path).partition(":")
+        if symbol_name:
+            return symbol_name
+        return module_path.rsplit(".", 1)[-1]
 
     def list_binding_rules(self) -> list[dict[str, Any]]:
         return [_binding_rule_to_config(item) for item in self.profile_registry.list_rules()]

@@ -294,6 +294,26 @@ class RuntimeHttpApiServer:
                     )
                 )
             )
+        if segments == ["system", "logs"] and method == "GET":
+            return self._ok(
+                self._await(
+                    self.control_plane.list_recent_logs(
+                        level=_query_value(query, "level", ""),
+                        keyword=_query_value(query, "keyword", ""),
+                        limit=_query_int(query, "limit", 500),
+                    )
+                )
+            )
+        if segments == ["system", "plugins", "config"] and method == "GET":
+            return self._ok(self._await(self.control_plane.list_plugin_configs()))
+        if segments == ["system", "plugins", "config"] and method == "PUT":
+            return self._ok(
+                self._await(
+                    self.control_plane.replace_plugin_configs(
+                        [dict(item) for item in list(payload.get("items", []) or [])]
+                    )
+                )
+            )
         if segments == ["skills"] and method == "GET":
             return self._ok(self._await(self.control_plane.list_skills()))
         if len(segments) == 3 and segments[0] == "agents" and segments[2] == "skills" and method == "GET":
