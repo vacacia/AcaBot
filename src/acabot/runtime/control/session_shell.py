@@ -28,7 +28,12 @@ from ..model.model_registry import ModelBinding
 from .config_control_plane import RuntimeConfigControlPlane
 from .model_ops import RuntimeModelControlOps
 from .profile_loader import AgentProfileRegistry
-from .ui_catalog import UI_EVENT_TYPE_OPTIONS
+from .session_templates import (
+    SESSION_EVENT_TYPE_OPTIONS,
+    default_session_channel_template_id,
+    get_session_channel_template,
+    public_event_types_for_template,
+)
 
 
 def _string_list(values: object) -> list[str]:
@@ -145,6 +150,7 @@ class SessionShellControlOps:
         await self._save_binding_config(
             channel_scope=normalized_scope,
             display_name=str(normalized["display_name"]),
+            channel_template_id=str(normalized["channel_template_id"]),
             other_payload=dict(normalized["other"]),
             agent_id=agent_id,
             existing=existing,
@@ -169,6 +175,10 @@ class SessionShellControlOps:
 
         context = await self._load_context()
         index: dict[str, dict[str, Any]] = {}
+        specific_message_rule_scopes = self._specific_message_rule_scopes(
+            inbound_rules=context["inbound_rules"],
+            event_policies=context["event_policies"],
+        )
 
         def ensure(scope: str) -> dict[str, Any]:
             """确保某个 Session 索引项存在.
@@ -198,9 +208,12 @@ class SessionShellControlOps:
             agent_id = str(rule.get("agent_id", "") or "").strip()
             item["_binding_rule_id"] = str(rule.get("rule_id", "") or "")
             item["_agent_id"] = agent_id
+            item["channel_template_id"] = str(
+                metadata.get("channel_template_id", "") or item.get("channel_template_id", "")
+            ).strip() or default_session_channel_template_id(scope)
+            self._ensure_template_rules(item)
             if metadata.get("display_name"):
                 item["display_name"] = str(metadata.get("display_name", "") or scope)
-            item["other"]["tags"] = _string_list(metadata.get("tags", []))
             if agent_id:
                 profile = context["profiles_by_id"].get(agent_id)
                 if profile is not None:
@@ -217,18 +230,27 @@ class SessionShellControlOps:
             if not scope or not event_type:
                 continue
             item = ensure(scope)
-            message_rule = item["_message_rules"].get(event_type)
-            if message_rule is None:
-                continue
+            self._ensure_template_rules(item)
             metadata = dict(rule.get("metadata", {}) or {})
             persisted_run_mode = str(rule.get("run_mode", "respond") or "respond")
             preferred_run_mode = str(metadata.get("webui_run_mode", "") or "").strip()
-            message_rule["enabled"] = persisted_run_mode != "silent_drop"
-            if not message_rule["enabled"] and preferred_run_mode in {"respond", "record_only"}:
-                message_rule["run_mode"] = preferred_run_mode
-            else:
-                message_rule["run_mode"] = persisted_run_mode
-            item["_inbound_rule_ids"][event_type] = str(rule.get("rule_id", "") or "")
+            public_event_types = self._public_event_types_for_match(
+                event_type=event_type,
+                channel_scope=scope,
+                channel_template_id=str(item.get("channel_template_id", "") or ""),
+                match=match,
+                metadata=metadata,
+                specific_message_rules_exist=scope in specific_message_rule_scopes,
+            )
+            for public_event_type in public_event_types:
+                message_rule = item["_message_rules"].get(public_event_type)
+                if message_rule is None:
+                    continue
+                message_rule["enabled"] = persisted_run_mode != "silent_drop"
+                if not message_rule["enabled"] and preferred_run_mode in {"respond", "record_only"}:
+                    message_rule["run_mode"] = preferred_run_mode
+                else:
+                    message_rule["run_mode"] = persisted_run_mode
 
         for policy in context["event_policies"]:
             match = dict(policy.get("match", {}) or {})
@@ -237,13 +259,22 @@ class SessionShellControlOps:
             if not scope or not event_type:
                 continue
             item = ensure(scope)
-            message_rule = item["_message_rules"].get(event_type)
-            if message_rule is None:
-                continue
-            message_rule["persist_event"] = bool(policy.get("persist_event", True))
-            message_rule["memory_scopes"] = _string_list(policy.get("memory_scopes", []))
-            message_rule["tags"] = _string_list(policy.get("tags", []))
-            item["_event_policy_ids"][event_type] = str(policy.get("policy_id", "") or "")
+            self._ensure_template_rules(item)
+            metadata = dict(policy.get("metadata", {}) or {})
+            public_event_types = self._public_event_types_for_match(
+                event_type=event_type,
+                channel_scope=scope,
+                channel_template_id=str(item.get("channel_template_id", "") or ""),
+                match=match,
+                metadata=metadata,
+                specific_message_rules_exist=scope in specific_message_rule_scopes,
+            )
+            for public_event_type in public_event_types:
+                message_rule = item["_message_rules"].get(public_event_type)
+                if message_rule is None:
+                    continue
+                message_rule["persist_event"] = bool(policy.get("persist_event", True))
+                message_rule["memory_scopes"] = _string_list(policy.get("memory_scopes", []))
 
         return index
 
@@ -341,19 +372,23 @@ class SessionShellControlOps:
             内部 Session 记录.
         """
 
+        channel_template_id = default_session_channel_template_id(channel_scope)
+        template = get_session_channel_template(channel_template_id, channel_scope=channel_scope)
         return {
             "display_name": channel_scope,
             "thread_id": channel_scope,
             "channel_scope": channel_scope,
+            "channel_template_id": channel_template_id,
             "ai": deepcopy(default_ai),
-            "other": {"tags": []},
+            "other": {},
             "_binding_rule_id": "",
             "_agent_id": "",
-            "_inbound_rule_ids": {},
-            "_event_policy_ids": {},
             "_message_rules": {
-                event_type: self._default_message_rule(event_type=event_type)
-                for event_type in UI_EVENT_TYPE_OPTIONS
+                event_type: self._default_message_rule(
+                    event_type=event_type,
+                    channel_template_id=channel_template_id,
+                )
+                for event_type in template.event_types
             },
         }
 
@@ -406,6 +441,14 @@ class SessionShellControlOps:
             "summary_model_preset_id": str(
                 source.get("summary_model_preset_id", "") or base.get("summary_model_preset_id", "") or ""
             ),
+            "context_management": {
+                "strategy": self._normalize_context_management_strategy(
+                    dict(source.get("context_management", {}) or {}).get(
+                        "strategy",
+                        dict(base.get("context_management", {}) or {}).get("strategy", ""),
+                    )
+                ),
+            },
             "enabled_tools": _string_list(source.get("enabled_tools", base.get("enabled_tools", []))),
             "skills": self._skill_names(source.get("skill_assignments", base.get("skills", []))),
         }
@@ -434,11 +477,70 @@ class SessionShellControlOps:
             seen.add(skill_name)
         return items
 
-    def _default_message_rule(self, *, event_type: str) -> dict[str, Any]:
+    def _normalize_context_management_strategy(self, value: object) -> str:
+        """规范化 Session 的上下文管理策略值."""
+
+        strategy = str(value or "").strip()
+        if strategy not in {"", "truncate", "summarize"}:
+            raise ValueError(f"unsupported context_management.strategy: {strategy}")
+        return strategy
+
+    def _allowed_event_types(
+        self,
+        *,
+        channel_scope: str,
+        channel_template_id: str,
+    ) -> list[str]:
+        """返回某个 Session 模板允许前端展示的事件类型列表."""
+
+        template = get_session_channel_template(channel_template_id, channel_scope=channel_scope)
+        return [str(event_type) for event_type in public_event_types_for_template(template)]
+
+    def _supports_split_message_rules(
+        self,
+        *,
+        channel_scope: str,
+        channel_template_id: str,
+    ) -> bool:
+        """判断当前模板是否需要把消息拆成多条公开规则."""
+
+        template = get_session_channel_template(channel_template_id, channel_scope=channel_scope)
+        return len(public_event_types_for_template(template)) > len(template.event_types)
+
+    def _ensure_template_rules(self, item: dict[str, Any]) -> None:
+        """按当前渠道模板收口内部规则集合."""
+
+        channel_scope = str(item.get("channel_scope", "") or "")
+        channel_template_id = str(
+            item.get("channel_template_id", "") or default_session_channel_template_id(channel_scope)
+        )
+        item["channel_template_id"] = channel_template_id
+        raw_rules = dict(item.get("_message_rules", {}) or {})
+        item["_message_rules"] = {
+            event_type: {
+                **self._default_message_rule(
+                    event_type=event_type,
+                    channel_template_id=channel_template_id,
+                ),
+                **dict(raw_rules.get(event_type, {}) or {}),
+            }
+            for event_type in self._allowed_event_types(
+                channel_scope=channel_scope,
+                channel_template_id=channel_template_id,
+            )
+        }
+
+    def _default_message_rule(
+        self,
+        *,
+        event_type: str,
+        channel_template_id: str,
+    ) -> dict[str, Any]:
         """返回单个事件类型的默认消息响应规则.
 
         Args:
             event_type: 事件类型.
+            channel_template_id: 当前渠道模板 ID.
 
         Returns:
             默认规则对象.
@@ -450,7 +552,6 @@ class SessionShellControlOps:
             "run_mode": "respond",
             "persist_event": True,
             "memory_scopes": [],
-            "tags": [],
         }
 
     def _to_public_record(self, item: dict[str, Any]) -> dict[str, Any]:
@@ -463,21 +564,34 @@ class SessionShellControlOps:
             面向前端的 Session 产品壳对象.
         """
 
+        self._ensure_template_rules(item)
         message_rules = []
         raw_rules = dict(item.get("_message_rules", {}) or {})
-        for event_type in UI_EVENT_TYPE_OPTIONS:
-            rule = dict(raw_rules.get(event_type, self._default_message_rule(event_type=event_type)))
+        channel_scope = str(item.get("channel_scope", "") or "")
+        channel_template_id = str(item.get("channel_template_id", "") or "")
+        for event_type in self._allowed_event_types(
+            channel_scope=channel_scope,
+            channel_template_id=channel_template_id,
+        ):
+            rule = dict(
+                raw_rules.get(
+                    event_type,
+                    self._default_message_rule(
+                        event_type=event_type,
+                        channel_template_id=channel_template_id,
+                    ),
+                )
+            )
             rule["event_type"] = event_type
             message_rules.append(rule)
         return {
             "display_name": str(item.get("display_name", "") or item.get("channel_scope", "") or ""),
             "thread_id": str(item.get("thread_id", "") or item.get("channel_scope", "") or ""),
             "channel_scope": str(item.get("channel_scope", "") or ""),
+            "channel_template_id": channel_template_id,
             "ai": deepcopy(dict(item.get("ai", {}) or {})),
             "message_response": {"rules": message_rules},
-            "other": {
-                "tags": _string_list(dict(item.get("other", {}) or {}).get("tags", [])),
-            },
+            "other": {},
         }
 
     def _normalize_payload(
@@ -499,6 +613,11 @@ class SessionShellControlOps:
         """
 
         display_name = str(payload.get("display_name", "") or fallback.get("display_name", "") or channel_scope).strip()
+        channel_template_id = str(
+            payload.get("channel_template_id", "")
+            or fallback.get("channel_template_id", "")
+            or default_session_channel_template_id(channel_scope)
+        ).strip()
         ai_payload = {
             **dict(fallback.get("ai", {}) or {}),
             **dict(payload.get("ai", {}) or {}),
@@ -507,10 +626,19 @@ class SessionShellControlOps:
             "prompt_ref": str(ai_payload.get("prompt_ref", "") or "").strip(),
             "model_preset_id": str(ai_payload.get("model_preset_id", "") or "").strip(),
             "summary_model_preset_id": str(ai_payload.get("summary_model_preset_id", "") or "").strip(),
+            "context_management": {
+                "strategy": self._normalize_context_management_strategy(
+                    dict(ai_payload.get("context_management", {}) or {}).get("strategy", "")
+                ),
+            },
             "enabled_tools": _string_list(ai_payload.get("enabled_tools", [])),
             "skills": _string_list(ai_payload.get("skills", [])),
         }
 
+        allowed_event_types = self._allowed_event_types(
+            channel_scope=channel_scope,
+            channel_template_id=channel_template_id,
+        )
         rule_map = {
             str(item.get("event_type", "") or ""): {
                 key: value
@@ -518,29 +646,53 @@ class SessionShellControlOps:
                 if key != "event_type"
             }
             for item in list(dict(fallback.get("message_response", {}) or {}).get("rules", []) or [])
-            if str(dict(item).get("event_type", "") or "").strip()
+            if str(dict(item).get("event_type", "") or "").strip() in allowed_event_types
         }
         for raw in list(dict(payload.get("message_response", {}) or {}).get("rules", []) or []):
             raw_map = dict(raw or {})
-            event_type = str(raw_map.get("event_type", "") or "").strip()
-            if not event_type:
+            raw_event_type = str(raw_map.get("event_type", "") or "").strip()
+            if not raw_event_type:
                 continue
-            if event_type not in UI_EVENT_TYPE_OPTIONS:
-                raise ValueError(f"unsupported event_type: {event_type}")
-            base = dict(rule_map.get(event_type, self._default_message_rule(event_type=event_type)))
-            run_mode = str(raw_map.get("run_mode", base.get("run_mode", "respond")) or "respond")
-            if run_mode not in {"respond", "record_only", "silent_drop"}:
-                raise ValueError(f"unsupported run_mode: {run_mode}")
-            rule_map[event_type] = {
-                "enabled": bool(raw_map.get("enabled", base.get("enabled", True))),
-                "run_mode": run_mode,
-                "persist_event": bool(raw_map.get("persist_event", base.get("persist_event", True))),
-                "memory_scopes": _string_list(raw_map.get("memory_scopes", base.get("memory_scopes", []))),
-                "tags": _string_list(raw_map.get("tags", base.get("tags", []))),
-            }
+            normalized_event_types = self._normalize_public_event_types_from_payload(
+                raw_event_type=raw_event_type,
+                raw_rule=raw_map,
+                channel_scope=channel_scope,
+                channel_template_id=channel_template_id,
+            )
+            for event_type in normalized_event_types:
+                if event_type not in SESSION_EVENT_TYPE_OPTIONS:
+                    raise ValueError(f"unsupported event_type: {event_type}")
+                if event_type not in allowed_event_types:
+                    raise ValueError(f"event_type not allowed by template: {event_type}")
+                base = dict(
+                    rule_map.get(
+                        event_type,
+                        self._default_message_rule(
+                            event_type=event_type,
+                            channel_template_id=channel_template_id,
+                        ),
+                    )
+                )
+                run_mode = str(raw_map.get("run_mode", base.get("run_mode", "respond")) or "respond")
+                if run_mode not in {"respond", "record_only", "silent_drop"}:
+                    raise ValueError(f"unsupported run_mode: {run_mode}")
+                rule_map[event_type] = {
+                    "enabled": bool(raw_map.get("enabled", base.get("enabled", True))),
+                    "run_mode": run_mode,
+                    "persist_event": bool(raw_map.get("persist_event", base.get("persist_event", True))),
+                    "memory_scopes": _string_list(raw_map.get("memory_scopes", base.get("memory_scopes", []))),
+                }
         normalized_rules = []
-        for event_type in UI_EVENT_TYPE_OPTIONS:
-            base = dict(rule_map.get(event_type, self._default_message_rule(event_type=event_type)))
+        for event_type in allowed_event_types:
+            base = dict(
+                rule_map.get(
+                    event_type,
+                    self._default_message_rule(
+                        event_type=event_type,
+                        channel_template_id=channel_template_id,
+                    ),
+                )
+            )
             normalized_rules.append(
                 {
                     "event_type": event_type,
@@ -548,21 +700,204 @@ class SessionShellControlOps:
                     "run_mode": str(base.get("run_mode", "respond") or "respond"),
                     "persist_event": bool(base.get("persist_event", True)),
                     "memory_scopes": _string_list(base.get("memory_scopes", [])),
-                    "tags": _string_list(base.get("tags", [])),
                 }
             )
 
-        other_payload = {
-            **dict(fallback.get("other", {}) or {}),
-            **dict(payload.get("other", {}) or {}),
-        }
         return {
             "display_name": display_name or channel_scope,
             "channel_scope": channel_scope,
+            "channel_template_id": channel_template_id,
             "ai": normalized_ai,
             "message_response": {"rules": normalized_rules},
-            "other": {"tags": _string_list(other_payload.get("tags", []))},
+            "other": {},
         }
+
+    def _normalize_public_event_types_from_payload(
+        self,
+        *,
+        raw_event_type: str,
+        raw_rule: dict[str, Any],
+        channel_scope: str,
+        channel_template_id: str,
+    ) -> list[str]:
+        """把前端或旧版 payload 的事件类型转换成公开事件类型列表."""
+
+        if raw_event_type != "message" or not self._supports_split_message_rules(
+            channel_scope=channel_scope,
+            channel_template_id=channel_template_id,
+        ):
+            return [raw_event_type]
+        message_filter = str(raw_rule.get("message_filter", "") or "").strip()
+        if message_filter == "mention_only":
+            return ["message_mention"]
+        if message_filter == "reply_only":
+            return ["message_reply"]
+        if message_filter == "mention_or_reply":
+            return ["message", "message_mention", "message_reply"]
+        return ["message"]
+
+    def _specific_message_rule_scopes(
+        self,
+        *,
+        inbound_rules: list[dict[str, Any]],
+        event_policies: list[dict[str, Any]],
+    ) -> set[str]:
+        """返回已经存在具体艾特/引用规则的 Session scope 集合."""
+
+        scopes: set[str] = set()
+        for entry in [*inbound_rules, *event_policies]:
+            match = dict(entry.get("match", {}) or {})
+            if str(match.get("event_type", "") or "").strip() != "message":
+                continue
+            scope = str(match.get("channel_scope", "") or "").strip()
+            if not scope:
+                continue
+            metadata = dict(entry.get("metadata", {}) or {})
+            public_event_type = str(metadata.get("public_event_type", "") or "").strip()
+            if public_event_type in {"message_mention", "message_reply"}:
+                scopes.add(scope)
+                continue
+            if bool(match.get("mentions_self")) or bool(match.get("reply_targets_self")):
+                scopes.add(scope)
+        return scopes
+
+    def _public_event_types_for_match(
+        self,
+        *,
+        event_type: str,
+        channel_scope: str,
+        channel_template_id: str,
+        match: dict[str, Any],
+        metadata: dict[str, Any],
+        specific_message_rules_exist: bool,
+    ) -> list[str]:
+        """根据底层 match 恢复公开事件类型."""
+
+        stored = str(metadata.get("public_event_type", "") or "").strip()
+        if stored in SESSION_EVENT_TYPE_OPTIONS:
+            return [stored]
+        if event_type != "message" or not self._supports_split_message_rules(
+            channel_scope=channel_scope,
+            channel_template_id=channel_template_id,
+        ):
+            return [event_type]
+        if bool(match.get("mentions_self")):
+            return ["message_mention"]
+        if bool(match.get("reply_targets_self")):
+            return ["message_reply"]
+        if specific_message_rules_exist:
+            return ["message"]
+        return ["message", "message_mention", "message_reply"]
+
+    def _message_rule_variant(
+        self,
+        *,
+        channel_scope: str,
+        public_event_type: str,
+        run_mode: str,
+        persist_event: bool,
+        memory_scopes: list[str],
+    ) -> dict[str, Any]:
+        """把一条公开消息规则转换成一条真实运行时规则."""
+
+        if public_event_type == "message_mention":
+            return {
+                "variant": "mention",
+                "storage_event_type": "message",
+                "priority": 111,
+                "run_mode": run_mode,
+                "match": {
+                    "channel_scope": channel_scope,
+                    "event_type": "message",
+                    "mentions_self": True,
+                },
+                "persist_event": persist_event,
+                "memory_scopes": list(memory_scopes),
+            }
+        if public_event_type == "message_reply":
+            return {
+                "variant": "reply",
+                "storage_event_type": "message",
+                "priority": 110,
+                "run_mode": run_mode,
+                "match": {
+                    "channel_scope": channel_scope,
+                    "event_type": "message",
+                    "reply_targets_self": True,
+                },
+                "persist_event": persist_event,
+                "memory_scopes": list(memory_scopes),
+            }
+        return {
+            "variant": "ambient" if public_event_type == "message" else "direct",
+            "storage_event_type": "message" if public_event_type == "message" else public_event_type,
+            "priority": 100,
+            "run_mode": run_mode,
+            "match": {
+                "channel_scope": channel_scope,
+                "event_type": "message" if public_event_type == "message" else public_event_type,
+            },
+            "persist_event": persist_event,
+            "memory_scopes": list(memory_scopes),
+        }
+
+    def _session_rule_metadata(
+        self,
+        *,
+        channel_scope: str,
+        display_name: str,
+        public_event_type: str,
+    ) -> dict[str, Any]:
+        """构造 Session 壳托管规则的公共元数据."""
+
+        return {
+            "display_name": display_name,
+            "managed_by": "webui_session",
+            "session_key": channel_scope,
+            "public_event_type": public_event_type,
+        }
+
+    def _rule_entry_id(self, entry: dict[str, Any]) -> str:
+        """读取 rule/policy 配置项的稳定 ID."""
+
+        return str(entry.get("rule_id", "") or entry.get("policy_id", "") or "").strip()
+
+    def _is_session_managed_rule_entry(
+        self,
+        *,
+        entry: dict[str, Any],
+        channel_scope: str,
+    ) -> bool:
+        """判断一条 inbound/event policy 是否属于 Session 壳托管范围."""
+
+        match = dict(entry.get("match", {}) or {})
+        if str(match.get("channel_scope", "") or "").strip() != channel_scope:
+            return False
+        metadata = dict(entry.get("metadata", {}) or {})
+        managed_by = str(metadata.get("managed_by", "") or "").strip()
+        session_key = str(metadata.get("session_key", "") or "").strip()
+        if managed_by in {"webui_session", "webui_v2_session"} or session_key == channel_scope:
+            return True
+        entry_id = self._rule_entry_id(entry)
+        return entry_id.startswith("session_") or entry_id.startswith("session-")
+
+    async def _delete_managed_session_message_rules(self, *, channel_scope: str) -> None:
+        """删除一个 Session 已托管的 inbound / event policy 规则."""
+
+        if self.config_control_plane is None:
+            raise RuntimeError("runtime config control plane unavailable")
+        for rule in list(self.config_control_plane.list_inbound_rules()):
+            if not self._is_session_managed_rule_entry(entry=rule, channel_scope=channel_scope):
+                continue
+            rule_id = str(rule.get("rule_id", "") or "").strip()
+            if rule_id:
+                await self.config_control_plane.delete_inbound_rule(rule_id)
+        for policy in list(self.config_control_plane.list_event_policies()):
+            if not self._is_session_managed_rule_entry(entry=policy, channel_scope=channel_scope):
+                continue
+            policy_id = str(policy.get("policy_id", "") or "").strip()
+            if policy_id:
+                await self.config_control_plane.delete_event_policy(policy_id)
 
     def _resolve_session_agent_id(
         self,
@@ -658,7 +993,8 @@ class SessionShellControlOps:
             ai_payload=ai_payload,
             context=context,
         )
-        await self.config_control_plane.upsert_profile(
+        updated_profile = deepcopy(existing_profile)
+        updated_profile.update(
             {
                 "agent_id": agent_id,
                 "name": display_name,
@@ -669,11 +1005,20 @@ class SessionShellControlOps:
                     or existing_profile.get("summary_model_preset_id", "")
                     or ""
                 ),
+                "context_management": {
+                    "strategy": self._normalize_context_management_strategy(
+                        dict(ai_payload.get("context_management", {}) or {}).get(
+                            "strategy",
+                            dict(existing_profile.get("context_management", {}) or {}).get("strategy", ""),
+                        )
+                    ),
+                },
                 "enabled_tools": _string_list(ai_payload.get("enabled_tools", [])),
                 "skill_assignments": skill_assignments,
                 "metadata": metadata,
             }
         )
+        await self.config_control_plane.upsert_profile(updated_profile)
         await self._sync_model_binding(
             channel_scope=channel_scope,
             agent_id=agent_id,
@@ -774,6 +1119,7 @@ class SessionShellControlOps:
         *,
         channel_scope: str,
         display_name: str,
+        channel_template_id: str,
         other_payload: dict[str, Any],
         agent_id: str,
         existing: dict[str, Any] | None,
@@ -783,6 +1129,7 @@ class SessionShellControlOps:
         Args:
             channel_scope: Session 对应的 channel scope.
             display_name: Session 展示名.
+            channel_template_id: 渠道模板 ID.
             other_payload: `Session / 其他` 区块.
             agent_id: 应绑定的 agent id.
             existing: 现有内部索引项.
@@ -790,6 +1137,7 @@ class SessionShellControlOps:
 
         if self.config_control_plane is None:
             raise RuntimeError("runtime config control plane unavailable")
+        _ = other_payload
         binding_rule_id = (
             str(existing.get("_binding_rule_id", "") or "").strip()
             if existing is not None
@@ -805,7 +1153,7 @@ class SessionShellControlOps:
                     "display_name": display_name,
                     "managed_by": "webui_session",
                     "session_key": channel_scope,
-                    "tags": _string_list(other_payload.get("tags", [])),
+                    "channel_template_id": channel_template_id,
                 },
             }
         )
@@ -829,58 +1177,61 @@ class SessionShellControlOps:
 
         if self.config_control_plane is None:
             raise RuntimeError("runtime config control plane unavailable")
-        inbound_rule_ids = dict(existing.get("_inbound_rule_ids", {}) or {}) if existing is not None else {}
-        event_policy_ids = dict(existing.get("_event_policy_ids", {}) or {}) if existing is not None else {}
+        await self._delete_managed_session_message_rules(channel_scope=channel_scope)
         for raw in list(message_response.get("rules", []) or []):
             rule = dict(raw or {})
-            event_type = str(rule.get("event_type", "") or "").strip()
-            if not event_type:
+            public_event_type = str(rule.get("event_type", "") or "").strip()
+            if not public_event_type:
                 continue
-            inbound_rule_id = str(inbound_rule_ids.get(event_type, "") or "") or self._session_inbound_rule_id(
-                channel_scope,
-                event_type,
-            )
-            event_policy_id = str(event_policy_ids.get(event_type, "") or "") or self._session_policy_id(
-                channel_scope,
-                event_type,
-            )
             enabled = bool(rule.get("enabled", True))
             run_mode = str(rule.get("run_mode", "respond") or "respond")
+            normalized_run_mode = run_mode if enabled else "silent_drop"
+            memory_scopes = _string_list(rule.get("memory_scopes", []))
+            variant = self._message_rule_variant(
+                channel_scope=channel_scope,
+                public_event_type=public_event_type,
+                run_mode=normalized_run_mode,
+                persist_event=bool(rule.get("persist_event", True)),
+                memory_scopes=memory_scopes,
+            )
+            variant_name = str(variant["variant"])
+            storage_event_type = str(variant["storage_event_type"])
+            match = dict(variant["match"])
+            metadata = self._session_rule_metadata(
+                channel_scope=channel_scope,
+                display_name=display_name,
+                public_event_type=public_event_type,
+            )
+            if normalized_run_mode == "silent_drop" and run_mode in {"respond", "record_only"}:
+                metadata["webui_run_mode"] = run_mode
             await self.config_control_plane.upsert_inbound_rule(
                 {
-                    "rule_id": inbound_rule_id,
-                    "run_mode": run_mode if enabled else "silent_drop",
-                    "priority": 100,
-                    "match": {
-                        "channel_scope": channel_scope,
-                        "event_type": event_type,
-                    },
-                    "metadata": {
-                        "display_name": display_name,
-                        "managed_by": "webui_session",
-                        "session_key": channel_scope,
-                        "webui_run_mode": run_mode if not enabled else "",
-                    },
+                    "rule_id": self._session_inbound_rule_id(
+                        channel_scope,
+                        storage_event_type,
+                        variant=variant_name,
+                    ),
+                    "run_mode": str(variant["run_mode"]),
+                    "priority": int(variant["priority"]),
+                    "match": match,
+                    "metadata": metadata,
                 }
             )
-            memory_scopes = _string_list(rule.get("memory_scopes", []))
+            variant_memory_scopes = _string_list(variant.get("memory_scopes", []))
             await self.config_control_plane.upsert_event_policy(
                 {
-                    "policy_id": event_policy_id,
-                    "priority": 100,
-                    "match": {
-                        "channel_scope": channel_scope,
-                        "event_type": event_type,
-                    },
-                    "persist_event": bool(rule.get("persist_event", True)),
-                    "extract_to_memory": bool(memory_scopes),
-                    "memory_scopes": memory_scopes,
-                    "tags": _string_list(rule.get("tags", [])),
-                    "metadata": {
-                        "display_name": display_name,
-                        "managed_by": "webui_session",
-                        "session_key": channel_scope,
-                    },
+                    "policy_id": self._session_policy_id(
+                        channel_scope,
+                        storage_event_type,
+                        variant=variant_name,
+                    ),
+                    "priority": int(variant["priority"]),
+                    "match": match,
+                    "persist_event": bool(variant.get("persist_event", True)),
+                    "extract_to_memory": bool(variant_memory_scopes),
+                    "memory_scopes": variant_memory_scopes,
+                    "tags": [],
+                    "metadata": metadata,
                 }
             )
 
@@ -908,31 +1259,51 @@ class SessionShellControlOps:
 
         return f"session_binding_{self._slug(channel_scope)}"
 
-    def _session_inbound_rule_id(self, channel_scope: str, event_type: str) -> str:
+    def _session_inbound_rule_id(
+        self,
+        channel_scope: str,
+        event_type: str,
+        *,
+        variant: str = "direct",
+    ) -> str:
         """根据 channel scope 和事件类型生成稳定的 inbound rule id.
 
         Args:
             channel_scope: Session 对应的 channel scope.
             event_type: 事件类型.
+            variant: 规则展开后的具体变体名.
 
         Returns:
             稳定的 inbound rule id.
         """
 
-        return f"session_inbound_{self._slug(channel_scope)}_{self._slug(event_type)}"
+        return (
+            f"session_inbound_{self._slug(channel_scope)}_"
+            f"{self._slug(event_type)}_{self._slug(variant)}"
+        )
 
-    def _session_policy_id(self, channel_scope: str, event_type: str) -> str:
+    def _session_policy_id(
+        self,
+        channel_scope: str,
+        event_type: str,
+        *,
+        variant: str = "direct",
+    ) -> str:
         """根据 channel scope 和事件类型生成稳定的 event policy id.
 
         Args:
             channel_scope: Session 对应的 channel scope.
             event_type: 事件类型.
+            variant: 规则展开后的具体变体名.
 
         Returns:
             稳定的 event policy id.
         """
 
-        return f"session_policy_{self._slug(channel_scope)}_{self._slug(event_type)}"
+        return (
+            f"session_policy_{self._slug(channel_scope)}_"
+            f"{self._slug(event_type)}_{self._slug(variant)}"
+        )
 
     def _session_model_binding_id(self, channel_scope: str) -> str:
         """根据 channel scope 生成稳定的模型绑定 id.

@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+from .session_templates import (
+    SESSION_EVENT_LABELS,
+    SESSION_EVENT_TYPE_OPTIONS,
+    SESSION_MESSAGE_FILTER_OPTIONS,
+    list_session_channel_templates,
+)
 
 UI_EVENT_TYPE_OPTIONS = [
     "message",
@@ -60,6 +66,12 @@ def build_ui_options(*, api_key_env_names: list[str]) -> dict[str, object]:
         "binding_target_types": ["global", "agent", "system"],
         "run_modes": ["respond", "record_only", "silent_drop"],
         "event_types": list(UI_EVENT_TYPE_OPTIONS),
+        "event_type_labels": dict(SESSION_EVENT_LABELS),
+        "session_channel_templates": list_session_channel_templates(),
+        "session_message_filters": [
+            {"value": value, "label": label}
+            for value, label in SESSION_MESSAGE_FILTER_OPTIONS.items()
+        ],
         "message_subtypes": list(UI_MESSAGE_SUBTYPE_OPTIONS),
         "notice_types": list(UI_NOTICE_TYPE_OPTIONS),
         "notice_subtypes": list(UI_NOTICE_SUBTYPE_OPTIONS),

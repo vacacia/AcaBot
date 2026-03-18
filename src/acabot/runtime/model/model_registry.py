@@ -108,13 +108,16 @@ class ModelProvider:
     provider_id: str
     kind: ModelProviderKind
     config: ProviderConfig
+    name: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "provider_id": self.provider_id,
+            "name": self.name or self.provider_id,
             "kind": self.kind,
             **asdict(self.config),
         }
+        return data
 
 
 # endregion
@@ -1211,6 +1214,7 @@ class FileSystemModelRegistryManager:
         if not isinstance(raw, dict):
             raise ValueError(f"provider file must be a mapping: {path}")
         provider_id = str(raw.get("provider_id", "") or path.stem)
+        name = str(raw.get("name", "") or provider_id)
         kind = str(raw.get("kind", "") or "")
         if kind == "openai_compatible":
             api_key_env, api_key = _normalize_provider_auth_fields(
@@ -1228,7 +1232,7 @@ class FileSystemModelRegistryManager:
                 default_query=dict(raw.get("default_query", {}) or {}),
                 default_body=dict(raw.get("default_body", {}) or {}),
             )
-            return ModelProvider(provider_id=provider_id, kind="openai_compatible", config=config)
+            return ModelProvider(provider_id=provider_id, kind="openai_compatible", config=config, name=name)
         if kind == "anthropic":
             api_key_env, api_key = _normalize_provider_auth_fields(
                 api_key_env=str(raw.get("api_key_env", "") or ""),
@@ -1246,7 +1250,7 @@ class FileSystemModelRegistryManager:
                 default_query=dict(raw.get("default_query", {}) or {}),
                 default_body=dict(raw.get("default_body", {}) or {}),
             )
-            return ModelProvider(provider_id=provider_id, kind="anthropic", config=config)
+            return ModelProvider(provider_id=provider_id, kind="anthropic", config=config, name=name)
         if kind == "google_gemini":
             api_key_env, api_key = _normalize_provider_auth_fields(
                 api_key_env=str(raw.get("api_key_env", "") or ""),
@@ -1267,7 +1271,7 @@ class FileSystemModelRegistryManager:
                 default_query=dict(raw.get("default_query", {}) or {}),
                 default_body=dict(raw.get("default_body", {}) or {}),
             )
-            return ModelProvider(provider_id=provider_id, kind="google_gemini", config=config)
+            return ModelProvider(provider_id=provider_id, kind="google_gemini", config=config, name=name)
         raise ValueError(f"unsupported provider kind in {path}: {kind}")
 
     @staticmethod

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 import importlib
 from pathlib import Path
+import re
 from tempfile import NamedTemporaryFile
 from typing import Any
 
@@ -711,6 +712,7 @@ class RuntimeConfigControlPlane:
                     "path": raw,
                     "enabled": True,
                     "name": self._plugin_name_from_path(raw),
+                    "display_name": self._plugin_display_name_from_path(raw),
                 })
                 continue
             if isinstance(raw, dict):
@@ -721,6 +723,7 @@ class RuntimeConfigControlPlane:
                     "path": import_path,
                     "enabled": bool(raw.get("enabled", True)),
                     "name": self._plugin_name_from_path(import_path),
+                    "display_name": self._plugin_display_name_from_path(import_path),
                 })
         return items
 
@@ -751,6 +754,24 @@ class RuntimeConfigControlPlane:
         if symbol_name:
             return symbol_name
         return module_path.rsplit(".", 1)[-1]
+
+    @classmethod
+    def _plugin_display_name_from_path(cls, import_path: str) -> str:
+        """把插件导入路径整理成更适合人看的名字.
+
+        Args:
+            import_path: 插件导入路径.
+
+        Returns:
+            适合展示的插件名字.
+        """
+
+        raw_name = cls._plugin_name_from_path(import_path)
+        normalized = re.sub(r"Plugin$", "", raw_name)
+        words = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", normalized).strip()
+        if words:
+            return words
+        return raw_name
 
     def list_binding_rules(self) -> list[dict[str, Any]]:
         return [_binding_rule_to_config(item) for item in self.profile_registry.list_rules()]

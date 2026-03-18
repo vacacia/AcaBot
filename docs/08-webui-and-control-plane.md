@@ -8,12 +8,16 @@
 
 现在的链路是:
 
-`webui/app.js -> RuntimeHttpApiServer -> RuntimeControlPlane -> RuntimeConfigControlPlane / runtime state`
+`webui/src/*.vue -> vite build -> src/acabot/webui -> RuntimeHttpApiServer -> RuntimeControlPlane -> RuntimeConfigControlPlane / runtime state`
 
 对应文件:
 
+- `webui/src/`
+- `webui/src/router.ts`
+- `webui/src/views/`
+- `webui/src/components/`
+- `webui/vite.config.ts`
 - `src/acabot/webui/index.html`
-- `src/acabot/webui/app.js`
 - `src/acabot/runtime/control/http_api.py`
 - `src/acabot/runtime/control/control_plane.py`
 - `src/acabot/runtime/control/snapshots.py`
@@ -22,24 +26,24 @@
 - `src/acabot/runtime/control/workspace_ops.py`
 - `src/acabot/runtime/control/reference_ops.py`
 - `src/acabot/runtime/control/config_control_plane.py`
+- `src/acabot/runtime/control/log_buffer.py`
 
 ## 前端这边是什么状态
 
-`app.js` 现在已经不是“只展示一个小页面”的程度了，而是一个相对完整的本地控制台。
+前端已经不是旧的单文件 `app.js` 静态壳，而是一套 Vue + Vite 应用。
 
 从页面目录能看出当前重点页包括:
 
-- Dashboard
-- Approvals
-- Bot / Subagents
-- Prompts
-- Sessions
-- Model Providers / Presets
-- Gateway
-- Runtime
-- Plugins
-- Workspaces
-- References
+- 首页
+- Soul
+- 记忆
+- 管理员
+- 模型供应商 / 模型
+- 提示词
+- 插件 / 技能 / 子代理
+- 会话
+- 系统
+- 日志
 
 这意味着如果你做 WebUI 新功能，最好先判断它应该挂在哪个现有页面体系里，而不是随手再起一套散的入口。
 
@@ -55,6 +59,7 @@
 - 用的是 Python 自带 `ThreadingHTTPServer`
 - API 走 `/api/*`
 - 静态文件默认从 `src/acabot/webui` 提供
+- `src/acabot/webui` 是构建产物，不是手写源码
 
 ### 加 API 时通常要改哪里
 
@@ -75,6 +80,17 @@
 很多人只在 `http_api.py` 加个分支就完了，结果后面控制面逻辑越来越脏。正常做法还是把业务放回 control plane。
 
 backend 这块当前已经这样做了: `http_api.py` 只提供 `/api/backend/*` 适配, 真正的 configured/session path/binding/status 聚合仍在 `RuntimeControlPlane`。
+
+日志现在也沿同一条链路暴露:
+
+- `InMemoryLogBuffer` 缓存最近一段 runtime 日志
+- `GET /api/system/logs` 返回:
+  - `items`
+  - `next_seq`
+  - `reset_required`
+- 前端通过 `after_seq` 做增量轮询
+
+这里的语义是“最近日志窗口”，不是完整历史日志检索。
 
 ## `RuntimeControlPlane`
 
@@ -146,9 +162,15 @@ backend 这块当前已经这样做了: `http_api.py` 只提供 `/api/backend/*`
 
 ## 这块最常见的坑
 
-### 1. 只改 `app.js`
+### 1. 只改 `webui/src` 但忘了重新 build
 
-页面看着能填了，但没有真实落盘或热刷新。
+`RuntimeHttpApiServer` 读的是 `src/acabot/webui` 里的构建产物。
+
+如果你只改了 `webui/src/*.vue`，但没跑:
+
+- `npm --prefix webui run build`
+
+浏览器里看到的还是旧页面。
 
 ### 2. 把“当前状态”和“持久配置”混成一个接口
 
@@ -194,5 +216,7 @@ backend 这块当前已经这样做了: `http_api.py` 只提供 `/api/backend/*`
 6. `src/acabot/runtime/control/workspace_ops.py`
 7. `src/acabot/runtime/control/reference_ops.py`
 8. `src/acabot/runtime/control/config_control_plane.py`
-9. `src/acabot/webui/app.js`
-10. `src/acabot/webui/index.html`
+9. `webui/src/router.ts`
+10. `webui/src/views/`
+11. `webui/src/components/`
+12. `src/acabot/webui/index.html`

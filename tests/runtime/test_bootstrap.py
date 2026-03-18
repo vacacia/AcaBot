@@ -458,6 +458,44 @@ async def test_build_runtime_components_constructs_configured_backend_service_wh
     await components.backend_bridge.session.adapter.dispose()
 
 
+async def test_build_runtime_components_uses_default_bot_admin_actor_ids_for_backend_access(
+    tmp_path: Path,
+) -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "fallback-model",
+                "system_prompt": "Fallback prompt.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "runtime_root": str(tmp_path / ".acabot-runtime"),
+                "profiles": {
+                    "aca": {
+                        "name": "Aca",
+                        "prompt_ref": "prompt/default",
+                        "default_model": "fallback-model",
+                        "admin_actor_ids": ["qq:private:123456"],
+                    }
+                },
+                "backend": {
+                    "enabled": False,
+                    "session_binding_path": "backend/session.json",
+                },
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    backend_status = await components.control_plane.get_backend_status()
+
+    assert backend_status.admin_actor_ids == ["qq:private:123456"]
+
+
 async def test_build_runtime_components_uses_explicit_backend_cwd_when_configured(
     tmp_path: Path,
 ) -> None:

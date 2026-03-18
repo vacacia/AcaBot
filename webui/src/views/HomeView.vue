@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue"
 
+import LogStreamPanel from "../components/LogStreamPanel.vue"
 import StatusCard from "../components/StatusCard.vue"
 import { apiGet } from "../lib/api"
 
@@ -18,19 +19,9 @@ type BackendStatus = {
   active_modes?: string[]
 }
 
-type LogItem = {
-  timestamp: number
-  level: string
-  logger: string
-  message: string
-}
-
 const status = ref<RuntimeStatus>({})
 const gateway = ref<GatewayStatus>({})
 const backend = ref<BackendStatus>({})
-const logs = ref<LogItem[]>([])
-const level = ref("")
-const keyword = ref("")
 const errorText = ref("")
 const loading = ref(false)
 
@@ -61,18 +52,14 @@ async function load(): Promise<void> {
   loading.value = true
   errorText.value = ""
   try {
-    const [nextStatus, nextGateway, nextBackend, logPayload] = await Promise.all([
+    const [nextStatus, nextGateway, nextBackend] = await Promise.all([
       apiGet<RuntimeStatus>("/api/status"),
       apiGet<GatewayStatus>("/api/gateway/status"),
       apiGet<BackendStatus>("/api/backend/status"),
-      apiGet<{ items: LogItem[] }>(
-        `/api/system/logs?level=${encodeURIComponent(level.value)}&keyword=${encodeURIComponent(keyword.value)}&limit=200`,
-      ),
     ])
     status.value = nextStatus
     gateway.value = nextGateway
     backend.value = nextBackend
-    logs.value = logPayload.items ?? []
   } catch (error) {
     errorText.value = error instanceof Error ? error.message : "首页加载失败"
   } finally {
@@ -106,40 +93,14 @@ onMounted(() => {
       />
     </div>
 
-    <section class="panel">
-      <div class="panel-header">
-        <div>
-          <h2>日志流</h2>
-          <p>默认全量显示，可按等级和关键词过滤。</p>
-        </div>
-        <div class="filters">
-          <select v-model="level">
-            <option value="">全部等级</option>
-            <option value="DEBUG">DEBUG</option>
-            <option value="INFO">INFO</option>
-            <option value="WARNING">WARNING</option>
-            <option value="ERROR">ERROR</option>
-            <option value="CRITICAL">CRITICAL</option>
-          </select>
-          <input v-model="keyword" type="text" placeholder="关键词过滤" />
-          <button type="button" @click="void load()">应用</button>
-        </div>
-      </div>
-
-      <div v-if="errorText" class="error">{{ errorText }}</div>
-      <div v-else-if="loading" class="empty">正在加载首页数据…</div>
-      <div v-else-if="logs.length === 0" class="empty">暂无日志</div>
-      <div v-else class="log-list">
-        <article v-for="item in logs" :key="`${item.timestamp}-${item.logger}-${item.message}`" class="log-line">
-          <div class="log-meta">
-            <span>{{ new Date(item.timestamp * 1000).toLocaleTimeString("zh-CN", { hour12: false }) }}</span>
-            <span>{{ item.level }}</span>
-            <span>{{ item.logger }}</span>
-          </div>
-          <div class="log-message">{{ item.message }}</div>
-        </article>
-      </div>
-    </section>
+    <LogStreamPanel
+      title="日志预览"
+      summary="这里只留最近一小段，方便扫一眼。要盯日志，直接去独立日志页。"
+      :limit="80"
+      :poll-interval-ms="1000"
+      :show-controls="false"
+      height="260px"
+    />
   </section>
 </template>
 
@@ -150,8 +111,7 @@ onMounted(() => {
   gap: 18px;
 }
 
-.hero,
-.panel {
+.hero {
   border: 1px solid var(--line);
   border-radius: 24px;
   background: var(--panel);
@@ -192,25 +152,6 @@ h2 {
   gap: 14px;
 }
 
-.panel {
-  padding: 18px 20px;
-}
-
-.panel-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-.filters {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-
-select,
-input,
 button {
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -227,38 +168,5 @@ button {
   background: linear-gradient(135deg, #0f6cb8 0%, #0a4a7b 100%);
   color: #fff;
   border: 0;
-}
-
-.log-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.log-line {
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.68);
-  padding: 12px 14px;
-}
-
-.log-meta {
-  display: flex;
-  gap: 10px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.log-message {
-  margin-top: 6px;
-  line-height: 1.6;
-}
-
-.error,
-.empty {
-  padding: 18px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.64);
-  color: var(--muted);
 }
 </style>

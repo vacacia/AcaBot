@@ -34,7 +34,6 @@ import AppSidebar from "./components/AppSidebar.vue"
 
 body {
   margin: 0;
-  min-width: 1200px;
   background:
     radial-gradient(circle at top left, rgba(15, 108, 184, 0.15), transparent 28%),
     radial-gradient(circle at bottom right, rgba(242, 166, 90, 0.14), transparent 24%),
@@ -44,6 +43,7 @@ body {
 
 #app {
   min-height: 100vh;
+  min-width: 0;
 }
 
 a {
@@ -58,14 +58,26 @@ textarea {
 }
 
 .shell {
-  display: flex;
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
   min-height: 100vh;
+  min-width: 0;
   color: var(--text);
 }
 
 .main {
-  flex: 1;
+  min-width: 0;
   padding: 24px 28px;
   box-sizing: border-box;
+}
+
+@media (max-width: 960px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .main {
+    padding: 16px;
+  }
 }
 </style>

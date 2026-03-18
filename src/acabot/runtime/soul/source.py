@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import textwrap
 from typing import Any
 
 import yaml
@@ -161,16 +162,102 @@ class SoulSource:
         """确保 soul 主文件存在."""
 
         defaults = {
-            "identity.md": "",
-            "soul.md": "",
-            "state.yaml": "{}\n",
-            "task.md": "",
+            "identity.md": self._default_identity_text(),
+            "soul.md": self._default_soul_text(),
+            "state.yaml": self._default_state_text(),
+            "task.md": self._default_task_text(),
         }
         for name in self.CORE_FILES:
             path = self.root_dir / name
             if path.exists():
                 continue
             path.write_text(defaults.get(name, ""), encoding="utf-8")
+
+    @staticmethod
+    def _default_identity_text() -> str:
+        """返回 `identity.md` 的默认内容.
+
+        Returns:
+            用于初始化 `identity.md` 的模板文本.
+        """
+
+        return textwrap.dedent(
+            """
+            # 我是谁
+
+            - 名字:
+            - 身份:
+            - 长期角色:
+            - 对外自称:
+
+            # 我负责什么
+
+            - 长期职责:
+            - 不负责什么:
+            """
+        ).strip() + "\n"
+
+    @staticmethod
+    def _default_soul_text() -> str:
+        """返回 `soul.md` 的默认内容.
+
+        Returns:
+            用于初始化 `soul.md` 的模板文本.
+        """
+
+        return textwrap.dedent(
+            """
+            # 我的气质
+
+            - 说话风格:
+            - 做事风格:
+            - 价值倾向:
+
+            # 我的边界
+
+            - 应该坚持什么:
+            - 应该避免什么:
+            """
+        ).strip() + "\n"
+
+    @staticmethod
+    def _default_state_text() -> str:
+        """返回 `state.yaml` 的默认内容.
+
+        Returns:
+            用于初始化 `state.yaml` 的 YAML 模板.
+        """
+
+        return textwrap.dedent(
+            """
+            mood: ""
+            focus: []
+            commitments: []
+            notes: []
+            """
+        ).lstrip()
+
+    @staticmethod
+    def _default_task_text() -> str:
+        """返回 `task.md` 的默认内容.
+
+        Returns:
+            用于初始化 `task.md` 的模板文本.
+        """
+
+        return textwrap.dedent(
+            """
+            # 正在做
+
+            - 当前任务:
+            - 当前目标:
+
+            # 接下来要做
+
+            - 下一步:
+            - 等待确认:
+            """
+        ).strip() + "\n"
 
     def _resolve_name(self, name: str) -> Path:
         """把文件名解析成受控路径.

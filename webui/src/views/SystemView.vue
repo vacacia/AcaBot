@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue"
-
 import StatusCard from "../components/StatusCard.vue"
 import { apiGet } from "../lib/api"
 
@@ -51,10 +50,10 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.page,
-.grid {
+.page {
   display: flex;
   flex-direction: column;
+  gap: 18px;
 }
 
 .panel {
@@ -83,5 +82,11 @@ onMounted(() => {
 
 h1 {
   margin: 0;
+}
+
+@media (max-width: 900px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

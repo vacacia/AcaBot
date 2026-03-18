@@ -298,6 +298,7 @@ class RuntimeHttpApiServer:
             return self._ok(
                 self._await(
                     self.control_plane.list_recent_logs(
+                        after_seq=_query_int(query, "after_seq", 0),
                         level=_query_value(query, "level", ""),
                         keyword=_query_value(query, "keyword", ""),
                         limit=_query_int(query, "limit", 500),
@@ -435,6 +436,15 @@ class RuntimeHttpApiServer:
             return self._ok(self._await(self.control_plane.list_agent_skills(segments[1])))
         if segments == ["subagents", "executors"] and method == "GET":
             return self._ok(self._await(self.control_plane.list_subagent_executors()))
+
+        if segments == ["bot"] and method == "GET":
+            return self._ok(self._await(self.control_plane.get_bot()))
+        if segments == ["bot"] and method == "PUT":
+            return self._ok(self._await(self.control_plane.put_bot(payload=payload)))
+        if segments == ["admins"] and method == "GET":
+            return self._ok(self._await(self.control_plane.get_admins()))
+        if segments == ["admins"] and method == "PUT":
+            return self._ok(self._await(self.control_plane.put_admins(payload=payload)))
 
         if segments == ["profiles"] and method == "GET":
             return self._ok(self._await(self.control_plane.list_profiles()))
@@ -965,7 +975,12 @@ def _model_provider_from_payload(
         )
     else:
         raise ValueError(f"unsupported provider kind: {kind}")
-    return ModelProvider(provider_id=provider_id, kind=kind, config=config)
+    return ModelProvider(
+        provider_id=provider_id,
+        kind=kind,
+        config=config,
+        name=str(normalized.get("name", "") or provider_id),
+    )
 
 
 def _model_preset_from_payload(payload: dict[str, Any]):

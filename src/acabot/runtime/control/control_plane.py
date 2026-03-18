@@ -64,6 +64,7 @@ from ..memory.file_backed import StickyNotesSource
 from ..storage.threads import ThreadManager
 from ..tool_broker import ToolBroker
 from .model_ops import RuntimeModelControlOps
+from .bot_shell import BotShellControlOps
 from .reference_ops import RuntimeReferenceControlOps
 from .session_shell import SessionShellControlOps
 from .snapshots import (
@@ -169,6 +170,11 @@ class RuntimeControlPlane:
             computer_runtime=computer_runtime,
         )
         self.reference_ops = RuntimeReferenceControlOps(reference_backend=reference_backend)
+        self.bot_shell_ops = BotShellControlOps(
+            config_control_plane=config_control_plane,
+            model_ops=self.model_ops,
+            profile_registry=profile_registry,
+        )
         self.session_shell_ops = SessionShellControlOps(
             config_control_plane=config_control_plane,
             model_ops=self.model_ops,
@@ -432,7 +438,29 @@ class RuntimeControlPlane:
     async def delete_prompt(self, prompt_ref: str) -> bool:
         if self.config_control_plane is None:
             return False
+        references = await self.list_prompt_references(prompt_ref)
+        if references:
+            names = ", ".join(sorted(str(item["agent_id"]) for item in references))
+            raise ValueError(f"prompt 仍被这些 profile 引用: {names}")
         return await self.config_control_plane.delete_prompt(prompt_ref)
+
+    async def list_prompt_references(self, prompt_ref: str) -> list[dict[str, object]]:
+        """列出仍在引用某个 prompt 的 profile 摘要."""
+
+        normalized = str(prompt_ref or "").strip()
+        if not normalized or self.config_control_plane is None:
+            return []
+        items: list[dict[str, object]] = []
+        for profile in self.config_control_plane.list_profiles():
+            if str(profile.get("prompt_ref", "") or "").strip() != normalized:
+                continue
+            items.append(
+                {
+                    "agent_id": str(profile.get("agent_id", "") or ""),
+                    "name": str(profile.get("name", "") or ""),
+                }
+            )
+        return items
 
     async def list_binding_rules(self) -> list[dict[str, object]]:
         if self.config_control_plane is None:
@@ -554,6 +582,7 @@ class RuntimeControlPlane:
     async def list_recent_logs(
         self,
         *,
+        after_seq: int = 0,
         level: str = "",
         keyword: str = "",
         limit: int = 500,
@@ -561,14 +590,13 @@ class RuntimeControlPlane:
         """返回最近日志, 供 WebUI 首页和系统日志页使用."""
 
         if self.log_buffer is None:
-            return {"items": []}
-        return {
-            "items": self.log_buffer.list_entries(
-                level=level,
-                keyword=keyword,
-                limit=limit,
-            )
-        }
+            return {"items": [], "next_seq": 0, "reset_required": False}
+        return self.log_buffer.list_entries(
+            after_seq=after_seq,
+            level=level,
+            keyword=keyword,
+            limit=limit,
+        )
 
     async def list_plugin_configs(self) -> dict[str, object]:
         """返回可供 WebUI 编辑的 plugin 配置列表."""
@@ -766,6 +794,72 @@ class RuntimeControlPlane:
             key=key,
         )
 
+    async def get_bot(self) -> dict[str, object]:
+        """返回默认 Bot 的产品壳对象.
+
+        Returns:
+            默认 Bot 的产品字段对象.
+        """
+
+        return await self.bot_shell_ops.get_bot()
+
+    async def get_admins(self) -> dict[str, object]:
+        """返回共享管理员设置.
+
+        Returns:
+            只包含共享管理员列表的设置对象.
+        """
+
+        bot = await self.bot_shell_ops.get_bot()
+        return {
+            "admin_actor_ids": [
+                str(value)
+                for value in list(bot.get("admin_actor_ids", []) or [])
+                if str(value)
+            ]
+        }
+
+    async def put_bot(self, *, payload: dict[str, object]) -> dict[str, object]:
+        """保存默认 Bot 的产品壳对象.
+
+        Args:
+            payload: 前端提交的 Bot 设置.
+
+        Returns:
+            保存后的默认 Bot 对象.
+        """
+
+        saved = await self.bot_shell_ops.upsert_bot(payload=dict(payload))
+        self.app.backend_admin_actor_ids = {
+            str(value)
+            for value in list(saved.get("admin_actor_ids", []) or [])
+            if str(value)
+        }
+        return saved
+
+    async def put_admins(self, *, payload: dict[str, object]) -> dict[str, object]:
+        """保存共享管理员设置.
+
+        Args:
+            payload: 前端提交的管理员设置.
+
+        Returns:
+            保存后的管理员设置对象.
+        """
+
+        saved = await self.bot_shell_ops.upsert_admins(
+            [
+                str(value)
+                for value in list(payload.get("admin_actor_ids", []) or [])
+                if str(value)
+            ]
+        )
+        admin_actor_ids = {str(value) for value in saved if str(value)}
+        self.app.backend_admin_actor_ids = admin_actor_ids
+        return {
+            "admin_actor_ids": [str(value) for value in saved if str(value)],
+        }
+
     async def list_sessions(self) -> dict[str, object]:
         """返回 Session 产品壳列表.
 
@@ -888,6 +982,7 @@ class RuntimeControlPlane:
             "model_providers": [
                 {
                     "provider_id": item.provider_id,
+                    "name": item.name or item.provider_id,
                     "kind": item.kind,
                 }
                 for item in providers

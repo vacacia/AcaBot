@@ -4,22 +4,24 @@
       <div class="brand-mark">AC</div>
       <div>
         <div class="brand-title">AcaBot</div>
-        <div class="brand-subtitle">Runtime Console</div>
+        <div class="brand-subtitle">控制台</div>
       </div>
     </div>
-    <nav>
+    <nav class="nav">
       <RouterLink class="nav-item" to="/">首页</RouterLink>
       <div class="group-title">配置</div>
       <RouterLink class="nav-item" to="/config/soul">Soul</RouterLink>
-      <RouterLink class="nav-item" to="/config/memory">Memory</RouterLink>
-      <RouterLink class="nav-item" to="/config/bot">Bot</RouterLink>
+      <RouterLink class="nav-item" to="/config/memory">记忆</RouterLink>
+      <RouterLink class="nav-item" to="/config/admins">管理员</RouterLink>
+      <RouterLink class="nav-item" to="/config/providers">模型供应商</RouterLink>
       <RouterLink class="nav-item" to="/config/models">模型</RouterLink>
-      <RouterLink class="nav-item" to="/config/prompts">Prompts</RouterLink>
-      <RouterLink class="nav-item" to="/config/plugins">Plugins</RouterLink>
-      <RouterLink class="nav-item" to="/config/skills">Skills</RouterLink>
-      <RouterLink class="nav-item" to="/config/subagents">Subagents</RouterLink>
+      <RouterLink class="nav-item" to="/config/prompts">提示词</RouterLink>
+      <RouterLink class="nav-item" to="/config/plugins">插件</RouterLink>
+      <RouterLink class="nav-item" to="/config/skills">技能</RouterLink>
+      <RouterLink class="nav-item" to="/config/subagents">子代理</RouterLink>
       <RouterLink class="nav-item" to="/sessions">会话</RouterLink>
       <RouterLink class="nav-item" to="/system">系统</RouterLink>
+      <RouterLink class="nav-item" to="/logs">日志</RouterLink>
     </nav>
   </aside>
 </template>
@@ -36,7 +38,15 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-width: 0;
+  overflow: auto;
   box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.55);
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .brand {
@@ -103,5 +113,37 @@
   color: #0b4f83;
   font-weight: 600;
   box-shadow: inset 0 0 0 1px rgba(15, 108, 184, 0.12);
+}
+
+@media (max-width: 960px) {
+  .sidebar {
+    width: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+    padding: 16px 14px;
+  }
+
+  .brand {
+    margin-bottom: 6px;
+  }
+
+  .nav {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    gap: 8px;
+  }
+
+  .group-title {
+    grid-column: 1 / -1;
+    margin: 4px 0 0;
+  }
+
+  .nav-item {
+    padding: 10px;
+  }
+
+  .nav-item:hover {
+    transform: none;
+  }
 }
 </style>

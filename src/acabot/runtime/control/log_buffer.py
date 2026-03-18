@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import logging
 import threading
 import time
@@ -17,6 +17,7 @@ class LogEntry:
     level: str
     logger: str
     message: str
+    seq: int = 0
 
 
 class InMemoryLogBuffer:
@@ -26,22 +27,30 @@ class InMemoryLogBuffer:
         self.max_entries = max_entries
         self._items: deque[LogEntry] = deque(maxlen=max_entries)
         self._lock = threading.Lock()
+        self._next_seq = 1
 
     def append(self, entry: LogEntry) -> None:
         with self._lock:
-            self._items.append(entry)
+            assigned = entry if int(entry.seq or 0) > 0 else replace(entry, seq=self._next_seq)
+            self._items.append(assigned)
+            self._next_seq = max(self._next_seq, int(assigned.seq or 0) + 1)
 
     def list_entries(
         self,
         *,
+        after_seq: int = 0,
         level: str = "",
         keyword: str = "",
         limit: int = 500,
-    ) -> list[dict[str, object]]:
+    ) -> dict[str, object]:
         normalized_level = str(level or "").strip().upper()
         normalized_keyword = str(keyword or "").strip().lower()
+        normalized_after_seq = max(0, int(after_seq or 0))
         with self._lock:
             items = list(self._items)
+            next_seq = self._next_seq - 1
+        oldest_seq = int(items[0].seq or 0) if items else 0
+        reset_required = bool(items and normalized_after_seq and normalized_after_seq < oldest_seq - 1)
         if normalized_level:
             items = [item for item in items if item.level.upper() == normalized_level]
         if normalized_keyword:
@@ -50,8 +59,14 @@ class InMemoryLogBuffer:
                 for item in items
                 if normalized_keyword in item.message.lower() or normalized_keyword in item.logger.lower()
             ]
+        if normalized_after_seq:
+            items = [item for item in items if int(item.seq or 0) > normalized_after_seq]
         items = items[-max(1, int(limit)) :]
-        return [asdict(item) for item in items]
+        return {
+            "items": [asdict(item) for item in items],
+            "next_seq": next_seq,
+            "reset_required": reset_required,
+        }
 
 
 class InMemoryLogHandler(logging.Handler):

@@ -24,7 +24,7 @@ r"""runtime.context_compactor 提供生产向 context compaction 的第一阶段
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal, Protocol
 
 from acabot.agent import BaseAgent
@@ -431,6 +431,7 @@ class ContextCompactor:
         # -----------------------------------------------------
         # 阶段 1: 计算预算
         # -----------------------------------------------------
+        active_config = self._effective_config(ctx)
         active_snapshot = snapshot or self.snapshot_thread(ctx.thread)
         messages = [dict(message) for message in active_snapshot.working_messages]
         model_request = ctx.model_request
@@ -451,7 +452,7 @@ class ContextCompactor:
         # -----------------------------------------------------
         # 阶段 2: 快速返回 - 无需压缩
         # -----------------------------------------------------
-        if not self.config.enabled or not messages or before_tokens <= budget:
+        if not active_config.enabled or not messages or before_tokens <= budget:
             result = ContextCompactionResult(
                 compressed_messages=messages,
                 dropped_messages=[],
@@ -501,7 +502,7 @@ class ContextCompactor:
         # 阶段 5: summarize
         # -----------------------------------------------------
         strategy_used = "truncate"
-        if self.config.strategy == "summarize":
+        if active_config.strategy == "summarize":
             summary = await self.summarizer(ctx=ctx, dropped_messages=dropped_messages)
             if summary.strip():
                 effective_summary = summary.strip()
@@ -525,6 +526,15 @@ class ContextCompactor:
         )
         self._write_stats(ctx, result)
         return result
+
+    def _effective_config(self, ctx: RunContext) -> ContextCompactionConfig:
+        """返回当前 run 生效的 compaction 配置."""
+
+        context_management = dict(ctx.profile.config.get("context_management", {}) or {})
+        strategy = str(context_management.get("strategy", "") or "").strip()
+        if strategy in {"truncate", "summarize"}:
+            return replace(self.config, strategy=strategy)
+        return self.config
 
     def apply_to_thread(
         self,

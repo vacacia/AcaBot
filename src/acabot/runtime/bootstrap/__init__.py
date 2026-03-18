@@ -68,6 +68,42 @@ from .loaders import (
 )
 
 
+def _resolve_shared_admin_actor_ids(
+    *,
+    profiles: dict[str, object],
+    default_agent_id: str,
+    backend_conf: dict[str, object],
+) -> set[str]:
+    """解析共享管理员列表.
+
+    解析顺序:
+    1. 默认 Bot profile 里的 `admin_actor_ids`
+    2. legacy `runtime.backend.admin_actor_ids`
+
+    Args:
+        profiles: 当前已加载的 profile 映射.
+        default_agent_id: 默认 Bot 的 agent id.
+        backend_conf: `runtime.backend` 配置块.
+
+    Returns:
+        规范化后的管理员 actor 集合.
+    """
+
+    profile = profiles.get(str(default_agent_id or "").strip())
+    profile_config = dict(getattr(profile, "config", {}) or {}) if profile is not None else {}
+    if "admin_actor_ids" in profile_config:
+        return {
+            str(value)
+            for value in list(profile_config.get("admin_actor_ids", []) or [])
+            if str(value)
+        }
+    return {
+        str(value)
+        for value in list(backend_conf.get("admin_actor_ids", []) or [])
+        if str(value)
+    }
+
+
 def build_runtime_components(
     config: Config,
     *,
@@ -189,11 +225,11 @@ def build_runtime_components(
     else:
         runtime_backend_session_service = BackendSessionService(backend_binding_store)
     runtime_backend_bridge = BackendBridge(session=runtime_backend_session_service)
-    runtime_backend_admin_actor_ids = {
-        str(value)
-        for value in list(backend_conf.get("admin_actor_ids", []) or [])
-        if str(value)
-    }
+    runtime_backend_admin_actor_ids = _resolve_shared_admin_actor_ids(
+        profiles=profiles,
+        default_agent_id=str(default_agent_id or ""),
+        backend_conf=backend_conf,
+    )
     runtime_image_context_service = ImageContextService(
         agent=agent,
         model_registry_manager=runtime_model_registry_manager,

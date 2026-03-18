@@ -47,7 +47,7 @@ watch(
 <style scoped>
 .layout {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -59,6 +59,7 @@ section {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
 }
 
 header {
@@ -73,6 +74,8 @@ textarea {
   border-radius: 8px;
   padding: 8px;
   font-family: monospace;
+  box-sizing: border-box;
+  min-height: 320px;
 }
 
 button {
@@ -84,5 +87,15 @@ button {
   padding: 8px 14px;
   cursor: pointer;
 }
-</style>
 
+@media (max-width: 900px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  button {
+    width: 100%;
+    align-self: stretch;
+  }
+}
+</style>

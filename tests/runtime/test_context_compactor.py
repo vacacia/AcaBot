@@ -210,6 +210,28 @@ async def test_context_compactor_truncates_by_token_budget() -> None:
 
 
 @pytest.mark.usefixtures("_mock_litellm")
+async def test_context_compactor_honors_session_strategy_override() -> None:
+    ctx = _ctx(_make_messages(15, content_len=45))
+    ctx.profile.config["context_management"] = {"strategy": "summarize"}
+    summary_agent = _SummaryAgent(text="session summary")
+    config = ContextCompactionConfig(
+        strategy="truncate",
+        max_context_ratio=0.3,
+        preserve_recent_turns=1,
+    )
+    compactor = ContextCompactor(
+        config,
+        summarizer=ModelContextSummarizer(agent=summary_agent, config=config),
+    )
+
+    result = await compactor.compact(ctx)
+
+    assert result.strategy_used == "summarize"
+    assert result.summary_text == "session summary"
+    assert len(summary_agent.calls) == 1
+
+
+@pytest.mark.usefixtures("_mock_litellm")
 async def test_context_compactor_keeps_complete_tool_turns() -> None:
     ctx = _ctx(_make_tool_messages(5))
     compactor = ContextCompactor(
