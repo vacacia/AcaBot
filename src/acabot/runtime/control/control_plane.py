@@ -59,10 +59,13 @@ from ..skills import SkillPackageManifest
 from ..skills import ResolvedSkillAssignment, SkillCatalog
 from ..storage.stores import ChannelEventStore, MemoryStore, MessageStore
 from ..subagents import RegisteredSubagentExecutor, SubagentExecutorRegistry
+from ..soul import SoulSource
+from ..memory.file_backed import StickyNotesSource
 from ..storage.threads import ThreadManager
 from ..tool_broker import ToolBroker
 from .model_ops import RuntimeModelControlOps
 from .reference_ops import RuntimeReferenceControlOps
+from .session_shell import SessionShellControlOps
 from .snapshots import (
     ActiveRunSnapshot,
     AgentSkillSnapshot,
@@ -103,6 +106,8 @@ class RuntimeControlPlane:
         memory_store: MemoryStore | None = None,
         message_store: MessageStore | None = None,
         channel_event_store: ChannelEventStore | None = None,
+        soul_source: SoulSource | None = None,
+        sticky_notes_source: StickyNotesSource | None = None,
         profile_registry: AgentProfileRegistry | None = None,
         plugin_manager: RuntimePluginManager | None = None,
         skill_catalog: SkillCatalog | None = None,
@@ -123,6 +128,8 @@ class RuntimeControlPlane:
             memory_store: 可选的长期记忆存储.
             message_store: 可选的 delivered message store.
             channel_event_store: 可选的 inbound event store.
+            soul_source: 可选的 soul 文件真源服务.
+            sticky_notes_source: 可选的 sticky note 文件真源服务.
             profile_registry: 可选的 profile registry, 用于校验 agent 是否存在.
             plugin_manager: 可选的 runtime plugin manager.
             skill_catalog: 可选的统一 skill catalog.
@@ -140,6 +147,8 @@ class RuntimeControlPlane:
         self.memory_store = memory_store
         self.message_store = message_store
         self.channel_event_store = channel_event_store
+        self.soul_source = soul_source
+        self.sticky_notes_source = sticky_notes_source
         self.profile_registry = profile_registry
         self.plugin_manager = plugin_manager
         self.skill_catalog = skill_catalog
@@ -160,6 +169,11 @@ class RuntimeControlPlane:
             computer_runtime=computer_runtime,
         )
         self.reference_ops = RuntimeReferenceControlOps(reference_backend=reference_backend)
+        self.session_shell_ops = SessionShellControlOps(
+            config_control_plane=config_control_plane,
+            model_ops=self.model_ops,
+            profile_registry=profile_registry,
+        )
 
     async def get_status(self) -> RuntimeStatusSnapshot:
         """读取当前 runtime 的最小状态快照.
@@ -570,6 +584,224 @@ class RuntimeControlPlane:
             raise RuntimeError("config control plane unavailable")
         updated = await self.config_control_plane.replace_plugin_configs(list(items))
         return {"items": updated}
+
+    async def list_soul_files(self) -> dict[str, object]:
+        """返回 soul 文件列表."""
+
+        if self.soul_source is None:
+            raise RuntimeError("soul source unavailable")
+        return {"items": self.soul_source.list_files()}
+
+    async def get_soul_file(self, *, name: str) -> dict[str, object]:
+        """读取一个 soul 文件.
+
+        Args:
+            name: 文件名.
+
+        Returns:
+            文件内容对象.
+        """
+
+        if self.soul_source is None:
+            raise RuntimeError("soul source unavailable")
+        return self.soul_source.read_file(name)
+
+    async def put_soul_file(self, *, name: str, content: str) -> dict[str, object]:
+        """写入一个 soul 文件.
+
+        Args:
+            name: 文件名.
+            content: 新内容.
+
+        Returns:
+            写入后的文件对象.
+        """
+
+        if self.soul_source is None:
+            raise RuntimeError("soul source unavailable")
+        return self.soul_source.write_file(name, content)
+
+    async def post_soul_file(self, *, name: str, content: str = "") -> dict[str, object]:
+        """创建一个 soul 附加文件.
+
+        Args:
+            name: 文件名.
+            content: 初始内容.
+
+        Returns:
+            新文件对象.
+        """
+
+        if self.soul_source is None:
+            raise RuntimeError("soul source unavailable")
+        return self.soul_source.create_file(name, content)
+
+    async def list_self_files(self) -> dict[str, object]:
+        """兼容旧接口: 返回 soul 文件列表."""
+
+        return await self.list_soul_files()
+
+    async def get_self_file(self, *, name: str) -> dict[str, object]:
+        """兼容旧接口: 读取 soul 文件."""
+
+        return await self.get_soul_file(name=name)
+
+    async def put_self_file(self, *, name: str, content: str) -> dict[str, object]:
+        """兼容旧接口: 写入 soul 文件."""
+
+        return await self.put_soul_file(name=name, content=content)
+
+    async def post_self_file(self, *, name: str, content: str = "") -> dict[str, object]:
+        """兼容旧接口: 创建 soul 文件."""
+
+        return await self.post_soul_file(name=name, content=content)
+
+    async def list_sticky_note_scopes(self) -> dict[str, object]:
+        """列出 sticky note 的 scope 列表."""
+
+        if self.sticky_notes_source is None:
+            raise RuntimeError("sticky notes source unavailable")
+        return {"items": self.sticky_notes_source.list_scopes()}
+
+    async def list_sticky_notes(self, *, scope: str, scope_key: str) -> dict[str, object]:
+        """列出 sticky note 列表.
+
+        Args:
+            scope: scope 名称.
+            scope_key: scope 键.
+
+        Returns:
+            note 列表.
+        """
+
+        if self.sticky_notes_source is None:
+            raise RuntimeError("sticky notes source unavailable")
+        return {
+            "scope": scope,
+            "scope_key": scope_key,
+            "items": self.sticky_notes_source.list_notes(scope=scope, scope_key=scope_key),
+        }
+
+    async def get_sticky_note_item(self, *, scope: str, scope_key: str, key: str) -> dict[str, object]:
+        """读取一个 sticky note 双区对象.
+
+        Args:
+            scope: scope 名称.
+            scope_key: scope 键.
+            key: note 键.
+
+        Returns:
+            sticky note 双区对象.
+        """
+
+        if self.sticky_notes_source is None:
+            raise RuntimeError("sticky notes source unavailable")
+        return self.sticky_notes_source.read_pair(
+            scope=scope,
+            scope_key=scope_key,
+            key=key,
+        )
+
+    async def put_sticky_note_editable(
+        self,
+        *,
+        scope: str,
+        scope_key: str,
+        key: str,
+        content: str,
+    ) -> dict[str, object]:
+        """写入 sticky note 可编辑区."""
+
+        if self.sticky_notes_source is None:
+            raise RuntimeError("sticky notes source unavailable")
+        return self.sticky_notes_source.write_editable(
+            scope=scope,
+            scope_key=scope_key,
+            key=key,
+            content=content,
+        )
+
+    async def put_sticky_note_readonly(
+        self,
+        *,
+        scope: str,
+        scope_key: str,
+        key: str,
+        content: str,
+    ) -> dict[str, object]:
+        """写入 sticky note 只读区."""
+
+        if self.sticky_notes_source is None:
+            raise RuntimeError("sticky notes source unavailable")
+        return self.sticky_notes_source.write_readonly(
+            scope=scope,
+            scope_key=scope_key,
+            key=key,
+            content=content,
+        )
+
+    async def create_sticky_note(
+        self,
+        *,
+        scope: str,
+        scope_key: str,
+        key: str,
+    ) -> dict[str, object]:
+        """创建 sticky note.
+
+        Args:
+            scope: scope 名称.
+            scope_key: scope 键.
+            key: note 键.
+
+        Returns:
+            新建后的 sticky note 双区对象.
+        """
+
+        if self.sticky_notes_source is None:
+            raise RuntimeError("sticky notes source unavailable")
+        return self.sticky_notes_source.create_note(
+            scope=scope,
+            scope_key=scope_key,
+            key=key,
+        )
+
+    async def list_sessions(self) -> dict[str, object]:
+        """返回 Session 产品壳列表.
+
+        Returns:
+            只包含 `基础信息 / AI / 消息响应 / 其他` 的 Session 列表.
+        """
+
+        return {"items": await self.session_shell_ops.list_sessions()}
+
+    async def get_session(self, *, channel_scope: str) -> dict[str, object] | None:
+        """读取一个 Session 产品壳对象.
+
+        Args:
+            channel_scope: Session 对应的 channel scope.
+
+        Returns:
+            Session 产品壳对象; 不存在时返回 `None`.
+        """
+
+        return await self.session_shell_ops.get_session(channel_scope=channel_scope)
+
+    async def put_session(self, *, channel_scope: str, payload: dict[str, object]) -> dict[str, object]:
+        """保存一个 Session 产品壳对象.
+
+        Args:
+            channel_scope: Session 对应的 channel scope.
+            payload: 前端提交的 Session 壳数据.
+
+        Returns:
+            保存后的 Session 产品壳对象.
+        """
+
+        return await self.session_shell_ops.upsert_session(
+            channel_scope=channel_scope,
+            payload=dict(payload),
+        )
 
     async def get_backend_status(self) -> BackendStatusSnapshot:
         """返回后台维护面的最小状态快照."""

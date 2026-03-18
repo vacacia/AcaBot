@@ -217,6 +217,7 @@ from .references import (
 )
 from .memory.retrieval_planner import PromptAssemblyConfig, RetrievalPlanner
 from .router import InboundRuleRegistry, RuntimeRouter
+from .soul import SoulSource
 from .storage.runs import InMemoryRunManager, RunManager, StoreBackedRunManager
 from .skills import FileSystemSkillPackageLoader
 from .skills import (
@@ -246,6 +247,7 @@ from .storage.sqlite_stores import (
     SQLiteThreadStore,
 )
 from .memory.sticky_notes import StickyNotesService
+from .memory.file_backed import StickyNotesSource
 from .storage.stores import ChannelEventStore, MemoryStore, MessageStore, RunStore, ThreadStore
 from .memory.structured_memory import StoreBackedMemoryRetriever, StructuredMemoryExtractor
 from .tool_broker import (
@@ -315,6 +317,7 @@ __all__ = [
     "EventPolicy",
     "EventPolicyDecision",
     "EventPolicyRegistry",
+    "SoulSource",
     "InboundRule",
     "InboundRuleRegistry",
     "InMemoryChannelEventStore",
@@ -442,6 +445,7 @@ __all__ = [
     "SQLiteRunStore",
     "SQLiteThreadStore",
     "StickyNotesService",
+    "StickyNotesSource",
     "ReferenceBackend",
     "ReferenceBodyLevel",
     "ReferenceDocument",

@@ -15,6 +15,7 @@ from ..gateway_protocol import GatewayProtocol
 from ..inbound.image_context import ImageContextService
 from ..inbound.message_preparation import MessagePreparationService
 from ..memory.context_compactor import ContextCompactor
+from ..memory.file_backed import StickyNotesSource
 from ..memory.memory_broker import MemoryBroker
 from ..memory.retrieval_planner import RetrievalPlanner
 from ..memory.sticky_notes import StickyNotesService
@@ -26,6 +27,7 @@ from ..control.profile_loader import ProfileLoader, PromptLoader
 from ..references import ReferenceBackend
 from ..router import RuntimeRouter
 from ..skills import SkillCatalog
+from ..soul import SoulSource
 from ..storage.runs import RunManager
 from ..storage.stores import ChannelEventStore, MemoryStore, MessageStore
 from ..storage.threads import ThreadManager
@@ -46,6 +48,8 @@ class RuntimeComponents:
     channel_event_store: ChannelEventStore
     message_store: MessageStore
     memory_store: MemoryStore
+    soul_source: SoulSource
+    sticky_notes_source: StickyNotesSource
     sticky_notes: StickyNotesService
     skill_catalog: SkillCatalog
     subagent_executor_registry: SubagentExecutorRegistry

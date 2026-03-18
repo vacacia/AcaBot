@@ -33,3 +33,7 @@ TODO.md
 backup
 
 docs/explore
+
+.acabot-runtime/
+webui/node_modules/
+webui/.vite/

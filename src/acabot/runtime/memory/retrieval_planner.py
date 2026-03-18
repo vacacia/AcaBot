@@ -41,10 +41,12 @@ class PromptAssemblyConfig:
     """prompt assembly 的运行配置.
 
     Attributes:
+        soul_slot_position (str): soul 上下文默认注入位置.
         sticky_slot_position (str): sticky note 默认注入位置.
         computer_slot_position (str): computer state 默认注入位置.
         summary_slot_position (str): thread summary 默认注入位置.
         retrieval_slot_position (str): retrieval memory 默认注入位置.
+        soul_message_role (str): soul 注入到 messages 时使用的 role.
         sticky_message_role (str): sticky note 注入到 messages 时使用的 role.
         computer_message_role (str): computer state 注入到 messages 时使用的 role.
         summary_message_role (str): thread summary 注入到 messages 时使用的 role.
@@ -57,10 +59,12 @@ class PromptAssemblyConfig:
         default_memory_types (list[str]): 未显式声明时默认读取的 memory types.
     """
 
+    soul_slot_position: str = "system_message"
     sticky_slot_position: str = "system_message"
     computer_slot_position: str = "system_message"
     summary_slot_position: str = "history_prefix"
     retrieval_slot_position: str = "system_message"
+    soul_message_role: str = "system"
     sticky_message_role: str = "system"
     computer_message_role: str = "system"
     summary_message_role: str = "user"
@@ -162,6 +166,20 @@ class RetrievalPlanner:
         plan = ctx.retrieval_plan or self.prepare(ctx)
         sticky_blocks, retrieved_blocks = self._split_memory_blocks(memory_blocks)
         slots: list[PromptSlot] = []
+
+        soul_text = str(ctx.metadata.get("soul_prompt_text", "") or "").strip()
+        if soul_text:
+            slots.append(
+                PromptSlot(
+                    slot_id="slot:soul",
+                    slot_type="soul_context",
+                    title="Soul",
+                    content=soul_text,
+                    position=self.config.soul_slot_position,
+                    message_role=self.config.soul_message_role,
+                    stable=True,
+                )
+            )
 
         if sticky_blocks:
             slots.append(
@@ -295,8 +313,7 @@ class RetrievalPlanner:
         retrieved_blocks: list[MemoryBlock] = []
         for block in blocks:
             memory_type = str(block.metadata.get("memory_type", "") or "")
-            edit_mode = str(block.metadata.get("edit_mode", "") or "")
-            if memory_type == "sticky_note" and edit_mode == "readonly":
+            if memory_type == "sticky_note":
                 sticky_blocks.append(block)
                 continue
             retrieved_blocks.append(block)

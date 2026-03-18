@@ -314,6 +314,121 @@ class RuntimeHttpApiServer:
                     )
                 )
             )
+        if segments == ["soul", "files"] and method == "GET":
+            return self._ok(self._await(self.control_plane.list_soul_files()))
+        if segments == ["soul", "file"] and method == "GET":
+            name = _query_value(query, "name", "") or _query_value(query, "path", "")
+            return self._ok(self._await(self.control_plane.get_soul_file(name=name)))
+        if segments == ["soul", "file"] and method == "PUT":
+            return self._ok(
+                self._await(
+                    self.control_plane.put_soul_file(
+                        name=str(payload.get("name", "") or payload.get("path", "") or ""),
+                        content=str(payload.get("content", "") or ""),
+                    )
+                )
+            )
+        if segments == ["soul", "files"] and method == "POST":
+            return self._ok(
+                self._await(
+                    self.control_plane.post_soul_file(
+                        name=str(payload.get("name", "") or payload.get("path", "") or ""),
+                        content=str(payload.get("content", "") or ""),
+                    )
+                )
+            )
+        if segments == ["self", "files"] and method == "GET":
+            return self._ok(self._await(self.control_plane.list_self_files()))
+        if segments == ["self", "file"] and method == "GET":
+            name = _query_value(query, "name", "") or _query_value(query, "path", "")
+            return self._ok(self._await(self.control_plane.get_self_file(name=name)))
+        if segments == ["self", "file"] and method == "PUT":
+            return self._ok(
+                self._await(
+                    self.control_plane.put_self_file(
+                        name=str(payload.get("name", "") or payload.get("path", "") or ""),
+                        content=str(payload.get("content", "") or ""),
+                    )
+                )
+            )
+        if segments == ["self", "files"] and method == "POST":
+            return self._ok(
+                self._await(
+                    self.control_plane.post_self_file(
+                        name=str(payload.get("name", "") or payload.get("path", "") or ""),
+                        content=str(payload.get("content", "") or ""),
+                    )
+                )
+            )
+        if segments == ["memory", "sticky-notes", "scopes"] and method == "GET":
+            return self._ok(self._await(self.control_plane.list_sticky_note_scopes()))
+        if segments == ["memory", "sticky-notes"] and method == "GET":
+            return self._ok(
+                self._await(
+                    self.control_plane.list_sticky_notes(
+                        scope=_query_value(query, "scope", ""),
+                        scope_key=_query_value(query, "scope_key", ""),
+                    )
+                )
+            )
+        if segments == ["memory", "sticky-notes", "item"] and method == "GET":
+            return self._ok(
+                self._await(
+                    self.control_plane.get_sticky_note_item(
+                        scope=_query_value(query, "scope", ""),
+                        scope_key=_query_value(query, "scope_key", ""),
+                        key=_query_value(query, "key", ""),
+                    )
+                )
+            )
+        if segments == ["memory", "sticky-notes", "item"] and method == "PUT":
+            return self._ok(
+                self._await(
+                    self.control_plane.put_sticky_note_editable(
+                        scope=str(payload.get("scope", "") or ""),
+                        scope_key=str(payload.get("scope_key", "") or ""),
+                        key=str(payload.get("key", "") or ""),
+                        content=str(payload.get("content", "") or ""),
+                    )
+                )
+            )
+        if segments == ["memory", "sticky-notes", "readonly"] and method == "PUT":
+            return self._ok(
+                self._await(
+                    self.control_plane.put_sticky_note_readonly(
+                        scope=str(payload.get("scope", "") or ""),
+                        scope_key=str(payload.get("scope_key", "") or ""),
+                        key=str(payload.get("key", "") or ""),
+                        content=str(payload.get("content", "") or ""),
+                    )
+                )
+            )
+        if segments == ["memory", "sticky-notes", "item"] and method == "POST":
+            return self._ok(
+                self._await(
+                    self.control_plane.create_sticky_note(
+                        scope=str(payload.get("scope", "") or ""),
+                        scope_key=str(payload.get("scope_key", "") or ""),
+                        key=str(payload.get("key", "") or ""),
+                    )
+                )
+            )
+        if segments == ["sessions"] and method == "GET":
+            return self._ok(self._await(self.control_plane.list_sessions()))
+        if len(segments) == 2 and segments[0] == "sessions" and method == "GET":
+            result = self._await(self.control_plane.get_session(channel_scope=segments[1]))
+            if result is None:
+                return 404, {"ok": False, "error": "session not found"}
+            return self._ok(result)
+        if len(segments) == 2 and segments[0] == "sessions" and method == "PUT":
+            return self._ok(
+                self._await(
+                    self.control_plane.put_session(
+                        channel_scope=segments[1],
+                        payload=payload,
+                    )
+                )
+            )
         if segments == ["skills"] and method == "GET":
             return self._ok(self._await(self.control_plane.list_skills()))
         if len(segments) == 3 and segments[0] == "agents" and segments[2] == "skills" and method == "GET":

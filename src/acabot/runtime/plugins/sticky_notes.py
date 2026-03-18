@@ -159,16 +159,22 @@ class StickyNotesPlugin(RuntimePlugin):
         """
 
         service = self._require_service()
-        item = await service.put_note(
-            ctx=ctx,
-            key=str(arguments.get("key", "") or ""),
-            content=str(arguments.get("content", "") or ""),
-            scope=self._scope(arguments),
-            scope_key=str(arguments.get("scope_key", "") or "") or None,
-            edit_mode=self._edit_mode(arguments),
-            tags=[str(value) for value in list(arguments.get("tags", []) or [])],
-            author=str(arguments.get("author", "") or "user"),
-        )
+        try:
+            item = await service.put_note(
+                ctx=ctx,
+                key=str(arguments.get("key", "") or ""),
+                content=str(arguments.get("content", "") or ""),
+                scope=self._scope(arguments),
+                scope_key=str(arguments.get("scope_key", "") or "") or None,
+                edit_mode=self._edit_mode(arguments),
+                tags=[str(value) for value in list(arguments.get("tags", []) or [])],
+                author=str(arguments.get("author", "") or "bot"),
+            )
+        except PermissionError as exc:
+            return ToolResult(
+                llm_content=str(exc),
+                raw={"ok": False, "reason": "readonly_forbidden"},
+            )
         note_key = str(item.metadata.get("note_key", "") or "")
         return ToolResult(
             llm_content=(
@@ -348,10 +354,10 @@ class StickyNotesPlugin(RuntimePlugin):
             arguments: 工具参数.
 
         Returns:
-            合法的 edit_mode. 缺省时返回 `readonly`.
+            合法的 edit_mode. 缺省时返回 `draft`.
         """
 
-        return self._coerce_edit_mode(arguments.get("edit_mode", "readonly")) or "readonly"
+        return self._coerce_edit_mode(arguments.get("edit_mode", "draft")) or "draft"
 
     @staticmethod
     def _to_payload(item: Any) -> dict[str, Any]:

@@ -11,6 +11,19 @@
 
 所以这篇分析不是为了给 Session 页面引入“当前 agent”这种产品概念，而是为了找出哪些底层设置适合先安全暴露给 Session。
 
+## 2026-03-18 补充决议（前端口径）
+
+在产品层，Session 页面口径更新为：
+
+- 前端只展示 `AI`、`消息响应`、`其他` 三块
+- 前端不出现 `binding rule / inbound rule / event policy` 这些术语
+- 前端不出现 `*_rule_id / policy_id` 这类实现字段
+
+同时保留一条实现约束：
+
+- 后端必须把这三块设置映射到真实真源（当前主要仍是 profile + binding/inbound/event-policy）
+- 这类映射属于后端实现责任，不是前端概念
+
 ## 为什么要先写这篇
 
 当前代码并不是按“Session 是一个独立配置对象”来组织的。
@@ -278,36 +291,34 @@
 
 所以它一定要被当作运维动作，而不是普通表单字段。
 
-## 当前最适合先做进 Session 页的范围
+## 当前最适合先做进 Session 页的范围（前端）
 
-如果目标是“第一版先做一个不会把系统解释乱的 Session 页面”，最稳的是只做下面这些：
+如果目标是“第一版先做一个不会把系统解释乱的 Session 页面”，前端只做下面三块：
 
-### 1. Session 基础信息
+### 1. Session / AI
 
-- display name
-- channel_scope / thread_id
+- Prompt
+- 主模型
+- 摘要模型
+- Tools
+- Skills
 
-### 2. 输入处理
+### 2. Session / 消息响应
 
-这块可以安全落到：
+- 是否启用
+- 响应方式
+- 是否保存
+- memory scopes
+- tags
 
-- inbound rule
-- event policy
+### 3. Session / 其他
 
-因为这两条线已经有真源，也已经能通过控制面读写。
+- Session 级补充字段（例如 tags）
 
-### 3. Session 级绑定设置
+对应的实现约束：
 
-这块可以安全落到：
-
-- binding rule
-
-### 4. 临时 override 区
-
-这块如果要做，应该单独分区，并明确标注“运行时临时态”：
-
-- thread agent override
-- computer override
+- 前端不直接操作或展示 `binding/inbound/event-policy` 对象
+- 后端提供 Session 视角 API，把前端三块设置映射到真实真源
 
 ## 当前不建议直接做成 Session 持久配置对象的范围
 
@@ -341,17 +352,22 @@
 
 这部分已经有清楚边界，可以先做。
 
-### 2. Session 页只先做“可安全投影”的部分
+### 2. Session 页按产品口径直接落地三分区
 
 建议只覆盖：
 
-- Session 基础信息
-- 绑定设置
-- 输入处理
+- Session / AI
+- Session / 消息响应
+- Session / 其他
 
-### 3. Session / AI 独立对象化，单独开分析 / 设计任务
+并要求：
 
-不要和 `Self + Sticky Notes` 混在一轮里实现。
+- 前端不出现底层规则概念
+- 后端承担映射职责
+
+### 3. Session 映射契约作为后端实现任务
+
+不要把 mapping 细节泄漏到 UI 结构中。
 
 ### 4. Subagent enable / disable 单独开分析 / 设计任务
 
@@ -359,4 +375,4 @@
 
 ## 一句话版本
 
-当前代码里，真正适合先做成 Session 持久配置页的，是 `binding rule + inbound rule + event policy` 这三条线；`thread_agent_override` 和 `computer override` 更像运行时临时覆盖；而 Session 自己的一套 AI 配置、以及 Subagent 的真实 enable / disable，还没有干净到可以直接当成第一版产品对象。*** End Patch
+前端 Session 只展示 `AI / 消息响应 / 其他` 三块产品概念；`binding/inbound/event-policy` 仍可作为后端真实真源，但必须由后端做映射并对前端隐藏；`thread_agent_override` 和 `computer override` 继续作为运行时临时态，不混入 Session 主表单。

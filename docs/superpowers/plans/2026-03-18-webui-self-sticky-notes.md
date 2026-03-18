@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a Vue-based WebUI that exposes `Self`, `Memory(sticky notes)`, and a safe first-version Session shell built only on `binding rule + inbound rule + event policy`.
+**Goal:** Build a Vue-based WebUI that exposes `Soul`, `Memory(sticky notes)`, and a first-version Session shell with only three front-end sections: `AI / 消息响应 / 其他`.
 
-**Architecture:** Keep the current Python runtime, HTTP API server, and control plane as the backend shell. Add a shared `self` source service for file-backed `self`, add a sticky-note source that can read `readonly` and `editable` content for `user/channel` scopes, then replace the old static frontend with a Vue app built into `src/acabot/webui`. `MemoryBroker` is treated as retrieval-rule orchestration only; each memory type manages its own source. `self` is required to behave as “every run always hits”, regardless of whether it physically passes through `MemoryBroker`. Session work in this plan is limited to safe projections over `binding rule + inbound rule + event policy`, not a new Session config model.
+**Architecture:** Keep the current Python runtime, HTTP API server, and control plane as the backend shell. Add a shared `soul` source service for file-backed `soul`, add a sticky-note source that can read `readonly` and `editable` content for `user/channel` scopes, then replace the old static frontend with a Vue app built into `src/acabot/webui`. `MemoryBroker` is treated as retrieval-rule orchestration only; each memory type manages its own source. `soul` is required to behave as “every run always hits”, regardless of whether it physically passes through `MemoryBroker`. Session front-end stays product-shaped (`AI / 消息响应 / 其他`), and backend maps those fields into current runtime truth sources.
 
-**Tech Stack:** Python runtime/control plane, file-backed self source, sticky-note source with `user/channel` scope support, Vue 3, Vite, TypeScript, pytest
+**Tech Stack:** Python runtime/control plane, file-backed soul source, sticky-note source with `user/channel` scope support, Vue 3, Vite, TypeScript, pytest
 
 ---
 
@@ -14,12 +14,16 @@
 
 **Create:**
 
-- `src/acabot/runtime/self_source.py`
-  - File-backed source for `.acabot-runtime/self/`
+- `src/acabot/runtime/soul/source.py`
+  - File-backed source for `.acabot-runtime/soul/`
   - Owns allowed filenames, path normalization, list/read/write helpers, and `task.md`
-- `src/acabot/runtime/sticky_notes_source.py`
+- `src/acabot/runtime/soul/__init__.py`
+  - Expose `SoulSource`
+- `src/acabot/runtime/memory/file_backed/sticky_notes.py`
   - Sticky-note source for `user/channel` scopes
   - Owns scope selection, note-key enumeration, readonly/editable reads, and write helpers
+- `src/acabot/runtime/memory/file_backed/__init__.py`
+  - Expose `StickyNotesSource`
 - `webui/package.json`
   - Vue/Vite workspace metadata and scripts
 - `webui/tsconfig.json`
@@ -37,7 +41,7 @@
 - `webui/src/lib/api.ts`
   - Shared HTTP client for `/api/*`
 - `webui/src/views/HomeView.vue`
-- `webui/src/views/SelfView.vue`
+- `webui/src/views/SoulView.vue`
 - `webui/src/views/MemoryView.vue`
 - `webui/src/views/BotView.vue`
 - `webui/src/views/ModelsView.vue`
@@ -55,11 +59,11 @@
 **Modify:**
 
 - `src/acabot/runtime/bootstrap/__init__.py`
-  - Construct and pass the new `SelfSource` and `StickyNotesSource`
+  - Construct and pass the new `SoulSource` and `StickyNotesSource`
 - `src/acabot/runtime/bootstrap/components.py`
-  - Add `self_source` and `sticky_notes_source` to `RuntimeComponents`
+  - Add `soul_source` and `sticky_notes_source` to `RuntimeComponents`
 - `src/acabot/runtime/__init__.py`
-  - Export `SelfSource` and `StickyNotesSource` if needed by tests/importers
+  - Export `SoulSource` and `StickyNotesSource` if needed by tests/importers
 - `src/acabot/runtime/control/control_plane.py`
   - Add `self`, sticky-note, and safe Session WebUI methods
 - `src/acabot/runtime/control/http_api.py`
@@ -165,11 +169,11 @@ git add tests/runtime/test_webui_api.py tests/runtime/test_pipeline_runtime.py t
 git commit -m "test: cover self sticky-note and safe-session flows"
 ```
 
-### Task 2: Add File-Backed `Self` Source and Control Plane APIs
+### Task 2: Add File-Backed `Soul` Source and Control Plane APIs
 
 **Files:**
 
-- Create: `src/acabot/runtime/self_source.py`
+- Create: `src/acabot/runtime/soul/source.py`
 - Modify: `src/acabot/runtime/bootstrap/__init__.py`
 - Modify: `src/acabot/runtime/bootstrap/components.py`
 - Modify: `src/acabot/runtime/__init__.py`
@@ -177,10 +181,10 @@ git commit -m "test: cover self sticky-note and safe-session flows"
 - Modify: `src/acabot/runtime/control/http_api.py`
 - Test: `tests/runtime/test_webui_api.py`
 
-- [ ] **Step 1: Implement the `SelfSource` service**
+- [ ] **Step 1: Implement the `SoulSource` service**
 
 ```python
-class SelfSource:
+class SoulSource:
     CORE_FILES = ("identity.md", "soul.md", "state.yaml", "task.md")
 
     def list_files(self) -> list[dict[str, Any]]: ...
@@ -190,7 +194,7 @@ class SelfSource:
     def build_prompt_text(self) -> str: ...
 ```
 
-- [ ] **Step 2: Wire `SelfSource` into runtime bootstrap and components**
+- [ ] **Step 2: Wire `SoulSource` into runtime bootstrap and components**
 
 Run:
 
@@ -200,7 +204,7 @@ rg -n "RuntimeComponents|sticky_notes=|control_plane=" src/acabot/runtime/bootst
 
 Expected:
 
-- one shared `SelfSource` instance created in bootstrap
+- one shared `SoulSource` instance created in bootstrap
 - the same instance passed to control plane and frontstage runtime path users
 
 - [ ] **Step 3: Add control-plane methods for list/read/write/create**
@@ -244,15 +248,15 @@ Expected:
 - [ ] **Step 7: Commit the `self` backend work**
 
 ```bash
-git add src/acabot/runtime/self_source.py src/acabot/runtime/bootstrap/__init__.py src/acabot/runtime/bootstrap/components.py src/acabot/runtime/__init__.py src/acabot/runtime/control/control_plane.py src/acabot/runtime/control/http_api.py tests/runtime/test_webui_api.py
-git commit -m "feat: add file-backed self source and webui api"
+git add src/acabot/runtime/soul/source.py src/acabot/runtime/soul/__init__.py src/acabot/runtime/bootstrap/__init__.py src/acabot/runtime/bootstrap/components.py src/acabot/runtime/__init__.py src/acabot/runtime/control/control_plane.py src/acabot/runtime/control/http_api.py tests/runtime/test_webui_api.py
+git commit -m "feat: add file-backed soul source and webui api"
 ```
 
 ### Task 3: Add Sticky Notes with Readonly + Editable Zones
 
 **Files:**
 
-- Create: `src/acabot/runtime/sticky_notes_source.py`
+- Create: `src/acabot/runtime/memory/file_backed/sticky_notes.py`
 - Modify: `src/acabot/runtime/memory/sticky_notes.py`
 - Modify: `src/acabot/runtime/plugins/sticky_notes.py`
 - Modify: `src/acabot/runtime/bootstrap/__init__.py`
@@ -340,7 +344,7 @@ Expected:
 - [ ] **Step 8: Commit the sticky-note backend layer**
 
 ```bash
-git add src/acabot/runtime/sticky_notes_source.py src/acabot/runtime/memory/sticky_notes.py src/acabot/runtime/plugins/sticky_notes.py src/acabot/runtime/bootstrap/__init__.py src/acabot/runtime/bootstrap/components.py src/acabot/runtime/__init__.py src/acabot/runtime/control/control_plane.py src/acabot/runtime/control/http_api.py tests/runtime/test_sticky_notes_plugin.py tests/runtime/test_webui_api.py
+git add src/acabot/runtime/memory/file_backed/sticky_notes.py src/acabot/runtime/memory/file_backed/__init__.py src/acabot/runtime/memory/sticky_notes.py src/acabot/runtime/plugins/sticky_notes.py src/acabot/runtime/bootstrap/__init__.py src/acabot/runtime/bootstrap/components.py src/acabot/runtime/__init__.py src/acabot/runtime/control/control_plane.py src/acabot/runtime/control/http_api.py tests/runtime/test_sticky_notes_plugin.py tests/runtime/test_webui_api.py
 git commit -m "feat: add file-backed sticky notes for webui"
 ```
 
@@ -364,7 +368,7 @@ Implementation rule:
 - [ ] **Step 2: Load `self` content before prompt assembly**
 
 ```python
-self_text = self.self_source.build_prompt_text()
+self_text = self.soul_source.build_prompt_text()
 ctx.metadata["self_prompt_text"] = self_text
 ```
 
@@ -424,7 +428,7 @@ git commit -m "feat: inject self and sticky notes into frontstage context"
 - Create: `webui/src/router.ts`
 - Create: `webui/src/lib/api.ts`
 - Create: `webui/src/views/HomeView.vue`
-- Create: `webui/src/views/SelfView.vue`
+- Create: `webui/src/views/SoulView.vue`
 - Create: `webui/src/views/MemoryView.vue`
 - Create: `webui/src/views/BotView.vue`
 - Create: `webui/src/views/ModelsView.vue`
@@ -524,7 +528,7 @@ git add webui src/acabot/webui tests/runtime/test_webui_api.py
 git commit -m "feat: replace static webui with vue shell"
 ```
 
-### Task 6: Add Safe Session Shell over Binding / Inbound / Event Policy
+### Task 6: Add Product-Shaped Session Shell (AI / 消息响应 / 其他)
 
 **Files:**
 
@@ -533,31 +537,31 @@ git commit -m "feat: replace static webui with vue shell"
 - Modify: `webui/src/views/SessionsView.vue`
 - Test: `tests/runtime/test_webui_api.py`
 
-- [ ] **Step 1: Add failing tests for safe Session shell behavior**
+- [ ] **Step 1: Add failing tests for Session product shell behavior**
 
 Cover:
 
 - list sessions/threads
 - show current `channel_scope` / `thread_id`
-- show current binding target
-- show inbound rules and event policies for the session scope
-- save binding rule
-- save inbound rule
-- save event policy
+- show Session AI values (prompt/model/tools/skills)
+- show Session 输入处理 values (enabled/run_mode/persist/memory_scopes/tags)
+- save Session AI values
+- save Session 输入处理 values
+- save Session 其他 values
 
-- [ ] **Step 2: Use existing control-plane/config-control-plane seams instead of inventing a new Session object**
+- [ ] **Step 2: Keep frontend model clean; map in backend**
 
 Implementation rule:
 
 - Session 基础信息 comes from thread/runtime state
-- Session / Agent 绑定 maps to `binding rule`
-- Session / 输入处理 maps to `inbound rule + event policy`
+- Session / AI + 消息响应 + 其他 is the only frontend contract
+- backend maps these sections to existing truth sources (profile + rules) without exposing rule concepts in UI
 
-- [ ] **Step 3: Implement the Vue Session view with only those safe sections**
+- [ ] **Step 3: Implement the Vue Session view with only those product sections**
 
 Do not include:
 
-- independent Session prompt/model/tools/skills editor
+- any raw rule identifiers (`binding_rule_id / inbound_rule_id / event_policy_id`)
 - Session-scoped subagent toggles
 - runtime computer override actions in the same form
 
@@ -571,13 +575,14 @@ PYTHONPATH=src pytest tests/runtime/test_webui_api.py -q -k "session or rule"
 
 Expected:
 
-- Session shell works through existing rule/config seams
+- Session shell works with product-shaped fields
+- no backend rule concept leaks into front-end rendering
 
-- [ ] **Step 5: Commit the safe Session shell**
+- [ ] **Step 5: Commit the Session product shell**
 
 ```bash
 git add src/acabot/runtime/control/control_plane.py src/acabot/runtime/control/http_api.py webui/src/views/SessionsView.vue tests/runtime/test_webui_api.py
-git commit -m "feat: add safe session shell over runtime rules"
+git commit -m "feat: add product-shaped session shell with backend mapping"
 ```
 
 ### Task 7: Full Verification and Handoff
@@ -622,7 +627,7 @@ Manual checklist:
 - Refresh and confirm persisted values
 - Edit a sticky note editable zone and confirm it persists
 - Edit a sticky note readonly zone via the explicit human flow and confirm it persists
-- Open `Sessions` and修改一条 binding / inbound / event policy 相关设置
+- Open `Sessions` and modify AI / 消息响应 / 其他任意字段
 - Refresh and confirm persisted values
 - Trigger one normal conversation and confirm `self` content is visible to the bot
 - Trigger a maintenance-chain operation and confirm `self` is not auto-injected

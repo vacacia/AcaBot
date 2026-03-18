@@ -24,7 +24,9 @@ from ..inbound.image_context import ImageContextService
 from ..inbound.message_preparation import MessagePreparationService
 from ..inbound.message_projection import MessageProjectionService
 from ..inbound.message_resolution import MessageResolutionService
+from ..memory.file_backed import StickyNotesSource
 from ..memory.sticky_notes import StickyNotesService
+from ..soul import SoulSource
 from ..model.model_agent_runtime import ModelAgentRuntime
 from ..outbox import Outbox
 from ..pipeline import ThreadPipeline
@@ -127,7 +129,20 @@ def build_runtime_components(
     runtime_channel_event_store = channel_event_store or build_channel_event_store(config)
     runtime_message_store = message_store or build_message_store(config)
     runtime_memory_store = memory_store or build_memory_store(config)
-    runtime_sticky_notes = StickyNotesService(store=runtime_memory_store)
+    runtime_soul_dir = resolve_runtime_path(
+        config,
+        runtime_conf.get("soul_dir", runtime_conf.get("self_dir", "soul")),
+    )
+    runtime_sticky_notes_dir = resolve_runtime_path(
+        config,
+        runtime_conf.get("sticky_notes_dir", "sticky-notes"),
+    )
+    runtime_soul_source = SoulSource(root_dir=runtime_soul_dir)
+    runtime_sticky_notes_source = StickyNotesSource(root_dir=runtime_sticky_notes_dir)
+    runtime_sticky_notes = StickyNotesService(
+        store=runtime_memory_store,
+        source=runtime_sticky_notes_source,
+    )
     runtime_skill_catalog = skill_catalog or build_skill_catalog(config)
     runtime_subagent_executor_registry = subagent_executor_registry or SubagentExecutorRegistry()
     runtime_subagent_delegator = subagent_delegator or SubagentDelegationBroker(
@@ -240,6 +255,8 @@ def build_runtime_components(
         message_preparation_service=runtime_message_preparation_service,
         tool_broker=runtime_tool_broker,
         plugin_manager=runtime_plugin_manager,
+        soul_source=runtime_soul_source,
+        sticky_notes_source=runtime_sticky_notes_source,
     )
     runtime_subagent_execution_service = LocalSubagentExecutionService(
         thread_manager=runtime_thread_manager,
@@ -290,6 +307,8 @@ def build_runtime_components(
         memory_store=runtime_memory_store,
         message_store=runtime_message_store,
         channel_event_store=runtime_channel_event_store,
+        soul_source=runtime_soul_source,
+        sticky_notes_source=runtime_sticky_notes_source,
         profile_registry=profile_registry,
         plugin_manager=runtime_plugin_manager,
         skill_catalog=runtime_skill_catalog,
@@ -313,6 +332,8 @@ def build_runtime_components(
         channel_event_store=runtime_channel_event_store,
         message_store=runtime_message_store,
         memory_store=runtime_memory_store,
+        soul_source=runtime_soul_source,
+        sticky_notes_source=runtime_sticky_notes_source,
         sticky_notes=runtime_sticky_notes,
         skill_catalog=runtime_skill_catalog,
         subagent_executor_registry=runtime_subagent_executor_registry,

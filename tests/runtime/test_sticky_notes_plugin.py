@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from acabot.config import Config
 from acabot.runtime import (
     AgentProfile,
@@ -127,7 +129,7 @@ async def test_sticky_notes_plugin_can_put_get_list_and_delete() -> None:
     assert missing.raw["ok"] is False
 
 
-async def test_sticky_notes_plugin_injects_readonly_notes_into_next_run() -> None:
+async def test_sticky_notes_plugin_injects_readonly_notes_into_next_run(tmp_path: Path) -> None:
     config = Config(
         {
             "agent": {
@@ -137,6 +139,7 @@ async def test_sticky_notes_plugin_injects_readonly_notes_into_next_run() -> Non
             "runtime": {
                 "default_agent_id": "aca",
                 "default_prompt_ref": "prompt/default",
+                "runtime_root": str(tmp_path / ".acabot-runtime"),
                 "plugins": [
                     "acabot.runtime.plugins.sticky_notes:StickyNotesPlugin",
                 ],
@@ -153,7 +156,7 @@ async def test_sticky_notes_plugin_injects_readonly_notes_into_next_run() -> Non
     await components.plugin_manager.ensure_started()
 
     put_ctx = _execution_ctx(["sticky_note_put"])
-    await components.tool_broker.execute(
+    forbidden = await components.tool_broker.execute(
         tool_name="sticky_note_put",
         arguments={
             "key": "internship_rule",
@@ -162,6 +165,14 @@ async def test_sticky_notes_plugin_injects_readonly_notes_into_next_run() -> Non
             "edit_mode": "readonly",
         },
         ctx=put_ctx,
+    )
+    assert forbidden.raw["ok"] is False
+    assert forbidden.raw["reason"] == "readonly_forbidden"
+    components.sticky_notes_source.create_note(
+        scope="channel",
+        scope_key="qq:group:20002",
+        key="internship_rule",
+        readonly_content="十个月的只需要实习成果鉴定, 不用实习证明.",
     )
 
     components.app.install()

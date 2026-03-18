@@ -26,6 +26,7 @@ from dataclasses import dataclass
 import hashlib
 from typing import TYPE_CHECKING, Any, Literal
 
+from .file_backed import StickyNotesSource
 from ..contracts import MemoryEditMode, MemoryItem
 from ..storage.stores import MemoryStore
 
@@ -42,11 +43,13 @@ class StickyNotesService:
     """Sticky note 的受控服务层.
 
     Attributes:
-        store (MemoryStore): 长期记忆项持久化后端.
+        store (MemoryStore | None): 长期记忆项持久化后端.
+        source (StickyNotesSource | None): sticky note 文件真源.
         default_scope (StickyScope): 未显式声明时默认写入的 scope.
     """
 
-    store: MemoryStore
+    store: MemoryStore | None = None
+    source: StickyNotesSource | None = None
     default_scope: StickyScope = "relationship"
 
     async def put_note(
@@ -86,6 +89,32 @@ class StickyNotesService:
             scope=note_scope,
             scope_key=scope_key,
         )
+        normalized_content = self._normalize_content(content)
+        if self._use_file_source(note_scope):
+            if edit_mode == "readonly":
+                raise PermissionError("sticky note readonly 区只允许人工维护")
+            if self.source is None:
+                raise RuntimeError("sticky notes file source is unavailable")
+            pair = self.source.write_editable(
+                scope=note_scope,
+                scope_key=note_scope_key,
+                key=normalized_key,
+                content=normalized_content,
+            )
+            return self._item_from_source_pair(
+                ctx=ctx,
+                scope=note_scope,
+                scope_key=note_scope_key,
+                key=normalized_key,
+                pair=pair,
+                tags=tags,
+                author=author,
+                metadata=metadata,
+            )
+
+        if self.store is None:
+            raise RuntimeError("sticky note store is unavailable")
+
         now = self._timestamp(ctx)
         item = MemoryItem(
             memory_id=self._build_memory_id(
@@ -96,7 +125,7 @@ class StickyNotesService:
             scope=note_scope,
             scope_key=note_scope_key,
             memory_type="sticky_note",
-            content=self._normalize_content(content),
+            content=normalized_content,
             edit_mode=edit_mode,
             author=str(author).strip() or "user",
             confidence=1.0 if edit_mode == "readonly" else 0.7,
@@ -150,6 +179,30 @@ class StickyNotesService:
             scope=note_scope,
             scope_key=scope_key,
         )
+        if self._use_file_source(note_scope):
+            if self.source is None:
+                return None
+            try:
+                pair = self.source.read_pair(
+                    scope=note_scope,
+                    scope_key=note_scope_key,
+                    key=normalized_key,
+                )
+            except FileNotFoundError:
+                return None
+            return self._item_from_source_pair(
+                ctx=ctx,
+                scope=note_scope,
+                scope_key=note_scope_key,
+                key=normalized_key,
+                pair=pair,
+                tags=[],
+                author="source",
+                metadata={},
+            )
+
+        if self.store is None:
+            return None
         items = await self.store.find(
             scope=note_scope,
             scope_key=note_scope_key,
@@ -188,12 +241,33 @@ class StickyNotesService:
             scope=note_scope,
             scope_key=scope_key,
         )
-        items = await self.store.find(
-            scope=note_scope,
-            scope_key=note_scope_key,
-            memory_types=["sticky_note"],
-            limit=max(1, int(limit)),
-        )
+        if self._use_file_source(note_scope):
+            if self.source is None:
+                return []
+            listed = self.source.list_notes(
+                scope=note_scope,
+                scope_key=note_scope_key,
+            )
+            items: list[MemoryItem] = []
+            for item in listed[: max(1, int(limit))]:
+                loaded = await self.get_note(
+                    ctx=ctx,
+                    key=str(item.get("key", "") or ""),
+                    scope=note_scope,
+                    scope_key=note_scope_key,
+                )
+                if loaded is None:
+                    continue
+                items.append(loaded)
+        else:
+            if self.store is None:
+                return []
+            items = await self.store.find(
+                scope=note_scope,
+                scope_key=note_scope_key,
+                memory_types=["sticky_note"],
+                limit=max(1, int(limit)),
+            )
         if not edit_modes:
             return items
         allowed = {str(mode) for mode in edit_modes}
@@ -219,13 +293,28 @@ class StickyNotesService:
             当前 sticky note 是否存在并已删除.
         """
 
-        item = await self.get_note(
+        note_scope = self._resolve_scope(ctx=ctx, scope=scope)
+        note_scope_key = self._resolve_scope_key(
             ctx=ctx,
-            key=key,
-            scope=scope,
+            scope=note_scope,
             scope_key=scope_key,
         )
-        if item is None:
+        normalized_key = self._normalize_key(key)
+        if self._use_file_source(note_scope):
+            if self.source is None:
+                return False
+            return self.source.delete_note(
+                scope=note_scope,
+                scope_key=note_scope_key,
+                key=normalized_key,
+            )
+        item = await self.get_note(
+            ctx=ctx,
+            key=normalized_key,
+            scope=note_scope,
+            scope_key=note_scope_key,
+        )
+        if item is None or self.store is None:
             return False
         return await self.store.delete(item.memory_id)
 
@@ -283,6 +372,80 @@ class StickyNotesService:
         if scope == "channel":
             return channel_scope
         return "global"
+
+    def _use_file_source(self, scope: StickyScope) -> bool:
+        """判断当前 scope 是否走文件真源.
+
+        Args:
+            scope: 当前 sticky scope.
+
+        Returns:
+            是否使用文件真源.
+        """
+
+        return self.source is not None and scope in {"user", "channel"}
+
+    def _item_from_source_pair(
+        self,
+        *,
+        ctx: ToolExecutionContext,
+        scope: StickyScope,
+        scope_key: str,
+        key: str,
+        pair: dict[str, Any],
+        tags: list[str] | None,
+        author: str,
+        metadata: dict[str, Any] | None,
+    ) -> MemoryItem:
+        """把文件真源双区数据转成 MemoryItem.
+
+        Args:
+            ctx: 当前工具执行上下文.
+            scope: sticky scope.
+            scope_key: sticky scope_key.
+            key: note key.
+            pair: 文件真源双区对象.
+            tags: 标签列表.
+            author: 作者标识.
+            metadata: 附加元数据.
+
+        Returns:
+            统一 MemoryItem.
+        """
+
+        readonly_content = str(pair.get("readonly", {}).get("content", "") or "").strip()
+        editable_content = str(pair.get("editable", {}).get("content", "") or "").strip()
+        content = editable_content or readonly_content
+        mode: MemoryEditMode = "draft" if editable_content else "readonly"
+        updated_at = int(pair.get("updated_at", 0) or 0)
+        if updated_at <= 0:
+            updated_at = self._timestamp(ctx)
+        return MemoryItem(
+            memory_id=self._build_memory_id(
+                scope=scope,
+                scope_key=scope_key,
+                key=key,
+            ),
+            scope=scope,
+            scope_key=scope_key,
+            memory_type="sticky_note",
+            content=content,
+            edit_mode=mode,
+            author=str(author).strip() or "source",
+            confidence=1.0 if mode == "readonly" else 0.7,
+            source_run_id=ctx.run_id,
+            source_event_id=str(ctx.metadata.get("event_id", "") or "") or None,
+            tags=self._normalize_tags(tags),
+            metadata={
+                "note_key": key,
+                "readonly_content": readonly_content,
+                "editable_content": editable_content,
+                "source_backend": "file_backed",
+                **dict(metadata or {}),
+            },
+            created_at=updated_at,
+            updated_at=updated_at,
+        )
 
     @staticmethod
     def _normalize_key(key: str) -> str:

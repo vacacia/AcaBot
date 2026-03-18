@@ -17,6 +17,7 @@ from .agent_runtime import AgentRuntime
 from .computer import ComputerRuntime
 from .memory.context_compactor import ContextCompactor
 from .inbound.message_preparation import MessagePreparationService
+from .memory.file_backed import StickyNotesSource
 from .contracts import (
     AgentRuntimeResult,
     DeliveryResult,
@@ -26,9 +27,11 @@ from .contracts import (
     RunContext,
 )
 from .memory.memory_broker import MemoryBroker
+from .memory.memory_broker import MemoryBlock
 from .outbox import Outbox
 from .plugin_manager import RuntimeHookPoint, RuntimePluginManager
 from .memory.retrieval_planner import RetrievalPlanner
+from .soul import SoulSource
 from .storage.runs import RunManager
 from .tool_broker import ToolBroker
 from .storage.threads import ThreadManager
@@ -59,6 +62,8 @@ class ThreadPipeline:
         message_preparation_service: MessagePreparationService | None = None,
         tool_broker: ToolBroker | None = None,
         plugin_manager: RuntimePluginManager | None = None,
+        soul_source: SoulSource | None = None,
+        sticky_notes_source: StickyNotesSource | None = None,
     ) -> None:
         """初始化 ThreadPipeline.
 
@@ -74,6 +79,8 @@ class ThreadPipeline:
             message_preparation_service: 可选的 MessagePreparationService. 用于把消息补齐并生成 history/model 输入.
             tool_broker: 可选的 ToolBroker. 用于 approval prompt 的 audit 回写.
             plugin_manager: 可选的 RuntimePluginManager. 用于 runtime hooks.
+            soul_source: 可选的 soul 文件真源.
+            sticky_notes_source: 可选的 sticky note 文件真源.
         """
 
         self.agent_runtime = agent_runtime
@@ -87,6 +94,8 @@ class ThreadPipeline:
         self.message_preparation_service = message_preparation_service
         self.tool_broker = tool_broker
         self.plugin_manager = plugin_manager
+        self.soul_source = soul_source
+        self.sticky_notes_source = sticky_notes_source
     # region execute
     async def execute(self, ctx: RunContext, *, deliver_actions: bool = True) -> None:
         """执行一条最小 runtime 主线.
@@ -159,6 +168,7 @@ class ThreadPipeline:
                 ctx.metadata["effective_working_summary"] = ctx.thread.working_summary
                 ctx.metadata["effective_compacted_messages"] = list(ctx.thread.working_messages)
                 ctx.metadata["effective_dropped_messages"] = []
+            self._prepare_static_context(ctx)
             # -----------------------------------------------------
             # 准备 Retrieval Plan
             # -----------------------------------------------------
@@ -261,6 +271,9 @@ class ThreadPipeline:
             ctx.memory_blocks = []
         else:
             ctx.memory_blocks = await self.memory_broker.retrieve(ctx)
+        file_backed_blocks = self._collect_sticky_blocks_from_files(ctx)
+        if file_backed_blocks:
+            ctx.memory_blocks = [*file_backed_blocks, *ctx.memory_blocks]
 
         if self.retrieval_planner is not None:
             ctx.messages = self.retrieval_planner.assemble(
@@ -448,6 +461,76 @@ class ThreadPipeline:
         if ctx.message_projection is not None and ctx.message_projection.history_text:
             return str(ctx.message_projection.history_text)
         return str(ctx.memory_user_content or ctx.event.working_memory_text or "")
+
+    def _prepare_static_context(self, ctx: RunContext) -> None:
+        """准备每轮固定上下文材料.
+
+        Args:
+            ctx: 当前 run 的执行上下文.
+        """
+
+        if self.soul_source is not None:
+            ctx.metadata["soul_prompt_text"] = self.soul_source.build_prompt_text()
+
+    def _collect_sticky_blocks_from_files(self, ctx: RunContext) -> list[MemoryBlock]:
+        """从 FS 收集 sticky notes 并转成 memory blocks.
+
+        Args:
+            ctx: 当前 run 的执行上下文.
+
+        Returns:
+            sticky note memory blocks 列表.
+        """
+
+        if self.sticky_notes_source is None:
+            return []
+        pairs: list[tuple[str, str]] = [
+            ("user", str(ctx.decision.actor_id or "")),
+            ("channel", str(ctx.decision.channel_scope or "")),
+        ]
+        blocks: list[MemoryBlock] = []
+        for scope, scope_key in pairs:
+            if not scope_key:
+                continue
+            notes = self.sticky_notes_source.list_notes(
+                scope=scope,
+                scope_key=scope_key,
+            )
+            for note in notes:
+                key = str(note.get("key", "") or "")
+                if not key:
+                    continue
+                try:
+                    pair = self.sticky_notes_source.read_pair(
+                        scope=scope,
+                        scope_key=scope_key,
+                        key=key,
+                    )
+                except FileNotFoundError:
+                    continue
+                readonly = str(pair.get("readonly", {}).get("content", "") or "").strip()
+                editable = str(pair.get("editable", {}).get("content", "") or "").strip()
+                if not readonly and not editable:
+                    continue
+                lines = [f"[{scope}/{scope_key}/{key}]"]
+                if readonly:
+                    lines.append(f"readonly: {readonly}")
+                if editable:
+                    lines.append(f"editable: {editable}")
+                blocks.append(
+                    MemoryBlock(
+                        title=f"sticky_note:{scope}:{key}",
+                        content="\n".join(lines),
+                        scope=scope,
+                        metadata={
+                            "memory_type": "sticky_note",
+                            "edit_mode": "readonly",
+                            "note_key": key,
+                            "source_backend": "file_backed",
+                        },
+                    )
+                )
+        return blocks
 
     @staticmethod
     def _inject_memory_blocks(
