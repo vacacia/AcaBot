@@ -4,7 +4,26 @@
 
 目标很简单: 先把项目的真结构讲清楚，让 AI 在开始改代码之前，知道自己应该去看哪里，哪些地方不能乱动，哪些地方改一处会连着动很多处。
 
+## 开始前先看
+
+如果你要在新对话里快速补齐这个项目最重要的理解前提，先看:
+
+- `17-project-consensus.md`
+
+这篇文档记录的是当前已经达成的项目级共识。它不替代系统地图和主线说明，但会先告诉你：
+
+- `self` 到底是什么
+- 前台和后台为什么要分开看
+- 为什么后台不注入前台 `self`
+- `self`、relationship memory、channel memory、working memory 分别是什么
+
+如果这层理解没对齐，后面看 WebUI、memory、backend、prompt 组装时很容易整条线都看偏。
+
 如果你只打算读一篇，就先读这一篇。读完再按这里给的顺序去看别的文档。
+
+## 指引
+在 docs/HANDOFF.md 里写清楚现在的进展。
+- 解释你试了什么、什么有效、什么没用，让下一个拿到新鲜上下文的 agent 只看这个文件就能继续完成任务。
 
 ## 先讲结论
 
@@ -21,10 +40,11 @@ AcaBot 真实入口是:
 
 建议每次新对话按这个顺序读:
 
-1. `00-ai-entry.md`
-2. `01-system-map.md`
-3. `02-runtime-mainline.md`
-4. 按任务类型再看:
+1. `17-project-consensus.md`
+2. `00-ai-entry.md`
+3. `01-system-map.md`
+4. `02-runtime-mainline.md`
+5. 按任务类型再看:
    - 路由 / agent 绑定 / prompt: `04-routing-and-profiles.md`
    - 记忆 / retrieval / compaction: `05-memory-and-context.md`
    - 工具 / plugin / subagent: `06-tools-plugins-and-subagents.md`
@@ -36,7 +56,7 @@ AcaBot 真实入口是:
    - 已知问题 / 设计缺口 / 修复后该同步哪些文档: `15-known-issues-and-design-gaps.md`
    - 前后台双 agent / 自我进化方向: `16-front-back-agents-and-self-evolution.md`
    - 配置和部署: `09-config-and-runtime-files.md`、`11-deployment-reference.md`
-5. 真要动手前，再看 `10-change-playbooks.md`
+6. 真要动手前，再看 `10-change-playbooks.md`
 
 ## 这套代码里哪些文件最像“总装配图”
 
