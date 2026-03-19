@@ -1,20 +1,10 @@
-"""runtime.skills 定义 skill catalog 和 skill assignment 边界."""
+"""runtime.skills 定义 skill catalog 和 profile 可见 skill 边界."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-from ..contracts import AgentProfile, SkillAssignment
+from ..contracts import AgentProfile
 from .loader import FileSystemSkillPackageLoader
 from .package import SkillPackageDocument, SkillPackageManifest
-
-
-@dataclass(slots=True)
-class ResolvedSkillAssignment:
-    """一条已经展开后的 skill assignment."""
-
-    skill: SkillPackageManifest
-    assignment: SkillAssignment
 
 
 class SkillCatalog:
@@ -47,17 +37,14 @@ class SkillCatalog:
         return self.loader.read_document(skill_name)
 
     def visible_skills(self, profile: AgentProfile) -> list[SkillPackageManifest]:
-        return [item.skill for item in self.resolve_assignments(profile)]
-
-    def resolve_assignments(self, profile: AgentProfile) -> list[ResolvedSkillAssignment]:
-        resolved: list[ResolvedSkillAssignment] = []
+        visible: list[SkillPackageManifest] = []
         seen: set[str] = set()
-        for assignment in profile.skill_assignments:
-            if assignment.skill_name in seen:
+        for skill_name in profile.skills:
+            if skill_name in seen:
                 continue
-            manifest = self._skills.get(assignment.skill_name)
+            manifest = self._skills.get(skill_name)
             if manifest is None:
                 continue
-            resolved.append(ResolvedSkillAssignment(skill=manifest, assignment=assignment))
-            seen.add(assignment.skill_name)
-        return resolved
+            visible.append(manifest)
+            seen.add(skill_name)
+        return visible

@@ -1,5 +1,73 @@
 # 当前进展 Handoff
 
+## 2026-03-19 skill 代码清理第一轮
+
+- 这轮开始真的按 `docs/tmp-skill-notes.md` 的口径动代码了, 不再只是写分析文档.
+- 已经落下去的核心变化是:
+  - `AgentProfile.skill_assignments` 已改成 `AgentProfile.skills`
+  - `SkillAssignment` 已从 runtime contracts/export 链里删掉
+  - `ResolvedSkillAssignment` 已从 skill catalog/export 链里删掉
+  - `SkillCatalog` 现在只按 `profile.skills: list[str]` 解析可见 skill
+  - `SubagentDelegationBroker` 已收成纯 direct delegation, 只接受 `delegate_agent_id`
+  - `delegate_subagent` 工具也只接受 `delegate_agent_id + task + payload`
+  - `AgentSkillSnapshot` 不再暴露 delegation 字段
+  - `ToolBroker` 不再从 skill 上推导 subagent delegation
+  - `build_builtin_runtime_plugins()` 现在直接接入 `SubagentDelegationPlugin`, 真正是否可见交给 tool broker 按 subagent executor 判断
+- 顺手一起收掉了一批外围口径:
+  - `bot_shell` / `session_shell` 写回 profile 时改成写 `skills`
+  - `ops_control` 的 `/skills <agent>` 输出不再显示 `mode=` / `delegate=`
+  - `ui_catalog` 不再提供 `delegation_modes`
+- 这轮为了防止越改越偏, 先把相关测试全部改成新口径再推进实现, 然后在项目虚拟环境里验证:
+  - 先执行: `source /home/acacia/AcaBot/.venv/bin/activate`
+  - 再执行: `PYTHONPATH=src pytest ...`
+- 已确认通过的一大组相关测试是:
+  - `tests/runtime/test_profile_loader.py`
+  - `tests/runtime/test_skill_catalog.py`
+  - `tests/runtime/test_subagent_delegation.py`
+  - `tests/runtime/test_subagent_delegation_plugin.py`
+  - `tests/runtime/test_control_plane.py`
+  - `tests/runtime/test_bootstrap.py`
+  - `tests/runtime/test_skills.py`
+  - `tests/runtime/test_skill_tool_plugin.py`
+  - `tests/runtime/test_ops_control_plugin.py`
+  - `tests/runtime/test_subagent_execution.py`
+  - `tests/runtime/test_webui_api.py`
+  - 合跑结果: `101 passed`
+- 目前还特地查了一遍代码/测试里的旧口径残留:
+  - `skill_assignments`
+  - `SkillAssignment`
+  - `ResolvedSkillAssignment`
+  - `delegation_mode`
+  - 这些在 `src/` 和 `tests/runtime/` 里已经清得只剩 direct delegation 自己的 `delegate_agent_id` 语义
+- 这轮踩到过两个坑:
+  - `pytest` 一开始没带 `PYTHONPATH=src`, 会报 `ModuleNotFoundError: acabot`
+  - `tests/runtime/test_webui_api.py` 末尾曾被重复碎片污染, 后来已经手工修干净
+- 这一轮后面还顺手把旧文档口径也补清了一次:
+  - `docs/03-data-contracts.md` 里 `AgentProfile` 的字段说明已从 `skill_assignments` 改成 `skills`
+  - `docs/06-tools-plugins-and-subagents.md` 里 skill / subagent 的关系说明已经改成新真相:
+    - skill 只负责能力包和可见性
+    - subagent delegation 是独立链路
+    - 不再写 skill assignment / delegation_mode / delegated skills 那套旧语义
+- 这轮还真的拉了外部 reviewer:
+  - `codex review --uncommitted` 能启动, 但它自己的 sandbox 卡在 `bwrap` 上, 没拿到有效 diff
+  - `pi -p` 第一次成功给出 review, 后面两次复审都超时
+- `pi` 第一次 review 提的点里, 这轮已经处理掉的是:
+  - 旧 `skill_assignments` 不再静默丢成空 skills
+    - 现在只做单向迁移: 旧纯 skill 名可以转成 `skills`
+    - 如果旧配置里还带 `delegate_agent_id` / 其他旧委派字段, 现在会直接报错, 不再静默改行为
+  - control plane / WebUI 不再回写或泄露 `skill_assignments`
+  - session managed profile 不再自动注册成 subagent executor
+  - `SubagentDelegationBroker` 现在会自己拦住非默认主 agent 的 direct delegation
+  - active run status 也改成看 `delegate_agent_id`, 不再挂 `delegated_skill`
+- `pi` 第一次 review 里有一条我没有直接照做, 而是核实后选择回退:
+  - 它建议把 subagent visibility 从默认主 agent 放开到非默认 profile
+  - 我试过, 会直接改掉一大批既有 prompt / routing 语义和测试
+  - 目前按项目现状, 还是保留“默认主 agent 可见 subagent”这条规则更稳
+- 现在这一组相关测试已经重新验证过:
+  - `104 passed`
+- 现在如果继续, 优先建议做的只剩一件事:
+  - 再决定是否把 `skill` 工具本身也换成更贴近 `/skills/...` 的 visible path 语义
+
 ## 2026-03-19 skill 临时分析笔记
 
 - 这轮又单独补了一篇临时文档:

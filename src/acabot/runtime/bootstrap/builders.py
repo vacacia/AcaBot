@@ -54,19 +54,8 @@ def build_builtin_runtime_plugins(profiles: dict[str, AgentProfile]) -> list[Run
         SkillToolPlugin(),
         BackendBridgeToolPlugin(),
     ]
-    if profiles_have_delegated_skills(profiles) or len(profiles) > 1:
-        builtin_plugins.append(SubagentDelegationPlugin())
+    builtin_plugins.append(SubagentDelegationPlugin())
     return builtin_plugins
-
-
-def profiles_have_delegated_skills(profiles: dict[str, AgentProfile]) -> bool:
-    """判断当前 profile 集合里是否存在需要委派的 skill 赋能."""
-
-    for profile in profiles.values():
-        for assignment in profile.skill_assignments:
-            if assignment.delegation_mode in {"prefer_delegate", "must_delegate"}:
-                return True
-    return False
 
 
 def register_local_subagent_executors(
@@ -78,6 +67,10 @@ def register_local_subagent_executors(
     """把本地 profile 注册为可用的 subagent executor."""
 
     for profile in profiles.values():
+        metadata = dict(profile.config.get("metadata", {}) or {})
+        managed_by = str(metadata.get("managed_by", "") or "").strip()
+        if managed_by in {"webui_session", "webui_v2_session"} or str(metadata.get("session_key", "") or "").strip():
+            continue
         registry.register(
             profile.agent_id,
             service.execute,
@@ -393,6 +386,5 @@ __all__ = [
     "build_run_manager",
     "build_skill_catalog",
     "build_thread_manager",
-    "profiles_have_delegated_skills",
     "register_local_subagent_executors",
 ]

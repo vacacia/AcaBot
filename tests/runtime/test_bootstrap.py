@@ -292,13 +292,7 @@ async def test_build_runtime_components_exposes_skill_and_delegate_tools_for_ass
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
                         "default_model": "runtime-model",
-                        "skill_assignments": [
-                            {
-                                "skill_name": "sample_configured_skill",
-                                "delegation_mode": "prefer_delegate",
-                                "delegate_agent_id": "sample_worker",
-                            }
-                        ],
+                        "skills": ["sample_configured_skill"],
                     }
                 },
                 "prompts": {
@@ -328,10 +322,8 @@ async def test_build_runtime_components_exposes_skill_and_delegate_tools_for_ass
     )
     visible_tools = components.tool_broker.visible_tools(profile)
 
-    assert len(profile.skill_assignments) == 1
-    assert profile.skill_assignments[0].delegation_mode == "prefer_delegate"
-    assert profile.skill_assignments[0].delegate_agent_id == "sample_worker"
-    assert [tool.name for tool in visible_tools] == ["skill", "delegate_subagent"]
+    assert profile.skills == ["sample_configured_skill"]
+    assert [tool.name for tool in visible_tools] == ["skill"]
     assert "sample_configured_skill" in visible_tools[0].description
     registered_executors = components.subagent_delegator.executor_registry.list_all()
     assert [item.agent_id for item in registered_executors] == ["aca"]
@@ -1509,7 +1501,7 @@ async def test_build_runtime_components_full_plugin_reload_keeps_builtin_plugins
                         "prompt_ref": "prompt/aca",
                         "default_model": "test-model",
                         "enabled_tools": ["read"],
-                        "skill_assignments": ["sample_configured_skill"],
+                        "skills": ["sample_configured_skill"],
                     }
                 },
                 "filesystem": {
@@ -1569,13 +1561,7 @@ async def test_build_runtime_components_reload_keeps_conditional_subagent_delega
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
                         "default_model": "test-model",
-                        "skill_assignments": [
-                            {
-                                "skill_name": "sample_configured_skill",
-                                "delegation_mode": "must_delegate",
-                                "delegate_agent_id": "worker",
-                            }
-                        ],
+                        "skills": ["sample_configured_skill"],
                     },
                     "worker": {
                         "name": "Worker",

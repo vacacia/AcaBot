@@ -450,32 +450,8 @@ class SessionShellControlOps:
                 ),
             },
             "enabled_tools": _string_list(source.get("enabled_tools", base.get("enabled_tools", []))),
-            "skills": self._skill_names(source.get("skill_assignments", base.get("skills", []))),
+            "skills": _string_list(source.get("skills", base.get("skills", []))),
         }
-
-    def _skill_names(self, values: object) -> list[str]:
-        """把 skill assignment 或 skill 名列表整理成 skill 名数组.
-
-        Args:
-            values: 原始 skill 数据.
-
-        Returns:
-            仅包含 `skill_name` 的字符串数组.
-        """
-
-        items: list[str] = []
-        seen: set[str] = set()
-        for raw in list(values or []) if isinstance(values, (list, tuple)) else []:
-            skill_name = ""
-            if isinstance(raw, dict):
-                skill_name = str(raw.get("skill_name", "") or "").strip()
-            else:
-                skill_name = str(raw or "").strip()
-            if not skill_name or skill_name in seen:
-                continue
-            items.append(skill_name)
-            seen.add(skill_name)
-        return items
 
     def _normalize_context_management_strategy(self, value: object) -> str:
         """规范化 Session 的上下文管理策略值."""
@@ -984,10 +960,6 @@ class SessionShellControlOps:
                 "session_key": channel_scope,
             }
         )
-        skill_assignments = self._build_skill_assignments(
-            skill_names=_string_list(ai_payload.get("skills", [])),
-            existing_profile=existing_profile,
-        )
         default_model = self._resolve_profile_default_model(
             agent_id=agent_id,
             ai_payload=ai_payload,
@@ -1014,7 +986,7 @@ class SessionShellControlOps:
                     ),
                 },
                 "enabled_tools": _string_list(ai_payload.get("enabled_tools", [])),
-                "skill_assignments": skill_assignments,
+                "skills": _string_list(ai_payload.get("skills", [])),
                 "metadata": metadata,
             }
         )
@@ -1025,32 +997,6 @@ class SessionShellControlOps:
             model_preset_id=str(ai_payload.get("model_preset_id", "") or ""),
             context=context,
         )
-
-    def _build_skill_assignments(
-        self,
-        *,
-        skill_names: list[str],
-        existing_profile: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        """把 skill 名列表转换成 profile skill assignments.
-
-        Args:
-            skill_names: 前端选择的 skill 名列表.
-            existing_profile: 已有 profile, 用于保留旧的委派信息.
-
-        Returns:
-            可直接写回 profile 的 skill assignments.
-        """
-
-        existing_map = {
-            str(item.get("skill_name", "") or ""): dict(item)
-            for item in list(existing_profile.get("skill_assignments", []) or [])
-            if str(dict(item).get("skill_name", "") or "").strip()
-        }
-        items: list[dict[str, Any]] = []
-        for skill_name in skill_names:
-            items.append(dict(existing_map.get(skill_name, {"skill_name": skill_name})))
-        return items
 
     def _resolve_profile_default_model(
         self,

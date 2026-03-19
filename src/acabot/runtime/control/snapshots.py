@@ -20,7 +20,7 @@ class ActiveRunSnapshot:
     started_at: int
     run_kind: str = "user"
     parent_run_id: str = ""
-    delegated_skill: str = ""
+    delegate_agent_id: str = ""
 
 
 @dataclass(slots=True)
@@ -100,15 +100,12 @@ class SkillSnapshot:
 
 @dataclass(slots=True)
 class AgentSkillSnapshot:
-    """某个 agent 当前绑定的 skill assignment 快照."""
+    """某个 agent 当前可见的 skill 快照."""
 
     agent_id: str
     skill_name: str
     display_name: str
     description: str
-    delegation_mode: str = "inline"
-    delegate_agent_id: str = ""
-    notes: str = ""
     has_references: bool = False
     has_scripts: bool = False
     has_assets: bool = False

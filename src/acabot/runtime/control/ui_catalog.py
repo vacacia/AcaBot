@@ -76,7 +76,6 @@ def build_ui_options(*, api_key_env_names: list[str]) -> dict[str, object]:
         "notice_types": list(UI_NOTICE_TYPE_OPTIONS),
         "notice_subtypes": list(UI_NOTICE_SUBTYPE_OPTIONS),
         "sender_roles": ["owner", "admin", "member"],
-        "delegation_modes": ["inline", "prefer_delegate", "must_delegate", "manual"],
         "computer_backends": ["host", "docker"],
         "computer_network_modes": ["enabled", "disabled"],
         "api_key_env_names": sorted(api_key_env_names),

@@ -44,7 +44,6 @@ from .routing import (
     EventPolicyDecision,
     InboundRule,
     RouteDecision,
-    SkillAssignment,
 )
 
 __all__ = [
@@ -83,7 +82,6 @@ __all__ = [
     "RunRecord",
     "RunStatus",
     "RunStep",
-    "SkillAssignment",
     "ThreadRecord",
     "ThreadState",
 ]

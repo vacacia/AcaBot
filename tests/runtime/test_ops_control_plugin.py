@@ -49,13 +49,7 @@ def _ops_config() -> Config:
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
                         "default_model": "model-a",
-                        "skill_assignments": [
-                            {
-                                "skill_name": "sample_configured_skill",
-                                "delegation_mode": "prefer_delegate",
-                                "delegate_agent_id": "sample_worker",
-                            }
-                        ],
+                        "skills": ["sample_configured_skill"],
                     },
                     "ops": {
                         "name": "Ops",
@@ -93,7 +87,7 @@ async def test_ops_control_plugin_handles_status_command() -> None:
     assert agent.calls == []
     assert len(gateway.sent) == 1
     assert "active_runs=1" in gateway.sent[0].payload["text"]
-    assert "loaded_plugins=computer_tool_adapter,skill_tool,subagent_delegation,ops_control" in gateway.sent[0].payload["text"]
+    assert "loaded_plugins=computer_tool_adapter,skill_tool,backend_bridge_tool,subagent_delegation,ops_control,sample_configured_runtime,sample_delegation_worker" in gateway.sent[0].payload["text"]
     assert "loaded_skills=excel_processing,sample_configured_skill" in gateway.sent[0].payload["text"]
 
 
@@ -122,8 +116,7 @@ async def test_ops_control_plugin_can_list_agent_skills() -> None:
     assert len(gateway.sent) == 1
     assert "skills for aca:" in gateway.sent[0].payload["text"]
     assert "sample_configured_skill" in gateway.sent[0].payload["text"]
-    assert "mode=prefer_delegate" in gateway.sent[0].payload["text"]
-    assert "delegate=sample_worker" in gateway.sent[0].payload["text"]
+    assert "resources=" in gateway.sent[0].payload["text"]
 
 
 async def test_ops_control_plugin_can_list_subagents() -> None:

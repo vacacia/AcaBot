@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from acabot.agent import ToolSpec
-from acabot.runtime import AgentProfile, SkillAssignment, SkillCatalog, ToolBroker
+from acabot.runtime import AgentProfile, SkillCatalog, ToolBroker
 from acabot.runtime.skills import FileSystemSkillPackageLoader
 
 
@@ -15,13 +15,13 @@ def _catalog() -> SkillCatalog:
     return catalog
 
 
-def _profile(*, assignments: list[SkillAssignment]) -> AgentProfile:
+def _profile(*, skills: list[str]) -> AgentProfile:
     return AgentProfile(
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
         default_model="test-model",
-        skill_assignments=list(assignments),
+        skills=list(skills),
     )
 
 
@@ -34,7 +34,7 @@ def test_skill_catalog_lists_fixture_skills() -> None:
     ]
 
 
-async def test_tool_broker_exposes_skill_tool_for_assigned_skills() -> None:
+async def test_tool_broker_exposes_skill_tool_for_visible_skills() -> None:
     catalog = _catalog()
     broker = ToolBroker(skill_catalog=catalog)
     broker.register_tool(
@@ -46,30 +46,16 @@ async def test_tool_broker_exposes_skill_tool_for_assigned_skills() -> None:
         lambda arguments, ctx: {"ok": True},  # type: ignore[arg-type]
     )
 
-    visible = broker.visible_tools(
-        _profile(assignments=[SkillAssignment(skill_name="sample_configured_skill")])
-    )
+    visible = broker.visible_tools(_profile(skills=["sample_configured_skill"]))
 
     assert [tool.name for tool in visible] == ["skill"]
     assert "sample_configured_skill" in visible[0].description
 
 
-def test_skill_catalog_resolves_explicit_assignments() -> None:
+def test_skill_catalog_resolves_visible_skills_from_profile() -> None:
     catalog = _catalog()
 
-    resolved = catalog.resolve_assignments(
-        _profile(
-            assignments=[
-                SkillAssignment(
-                    skill_name="sample_configured_skill",
-                    delegation_mode="prefer_delegate",
-                    delegate_agent_id="excel_worker",
-                )
-            ]
-        )
-    )
+    visible = catalog.visible_skills(_profile(skills=["sample_configured_skill"]))
 
-    assert len(resolved) == 1
-    assert resolved[0].skill.skill_name == "sample_configured_skill"
-    assert resolved[0].assignment.delegation_mode == "prefer_delegate"
-    assert resolved[0].assignment.delegate_agent_id == "excel_worker"
+    assert len(visible) == 1
+    assert visible[0].skill_name == "sample_configured_skill"

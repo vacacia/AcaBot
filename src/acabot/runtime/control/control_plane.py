@@ -56,7 +56,7 @@ from ..references import (
 )
 from ..storage.runs import RunManager
 from ..skills import SkillPackageManifest
-from ..skills import ResolvedSkillAssignment, SkillCatalog
+from ..skills import SkillCatalog
 from ..storage.stores import ChannelEventStore, MemoryStore, MessageStore
 from ..subagents import RegisteredSubagentExecutor, SubagentExecutorRegistry
 from ..soul import SoulSource
@@ -200,7 +200,7 @@ class RuntimeControlPlane:
                     started_at=run.started_at,
                     run_kind=str(run.metadata.get("run_kind", "user") or "user"),
                     parent_run_id=str(run.metadata.get("parent_run_id", "") or ""),
-                    delegated_skill=str(run.metadata.get("delegated_skill", "") or ""),
+                    delegate_agent_id=str(run.metadata.get("delegate_agent_id", "") or ""),
                 )
                 for run in active_runs
             ],
@@ -525,7 +525,14 @@ class RuntimeControlPlane:
     async def reload_runtime_configuration(self) -> dict[str, object]:
         if self.config_control_plane is None:
             raise RuntimeError("config control plane unavailable")
-        return await self.config_control_plane.reload_runtime_configuration()
+        result = await self.config_control_plane.reload_runtime_configuration()
+        admins = await self.get_admins()
+        self.app.backend_admin_actor_ids = {
+            str(value)
+            for value in list(admins.get("admin_actor_ids", []) or [])
+            if str(value)
+        }
+        return result
 
     async def list_skills(self) -> list[SkillSnapshot]:
         """列出当前已注册的显式 skills.
@@ -555,7 +562,7 @@ class RuntimeControlPlane:
         profile = self.profile_registry.profiles[agent_id]
         return [
             self._to_agent_skill_snapshot(agent_id, item)
-            for item in self.skill_catalog.resolve_assignments(profile)
+            for item in self.skill_catalog.visible_skills(profile)
         ]
 
     async def list_subagent_executors(self) -> list[SubagentExecutorSnapshot]:
@@ -1320,13 +1327,13 @@ class RuntimeControlPlane:
     @staticmethod
     def _to_agent_skill_snapshot(
         agent_id: str,
-        item: ResolvedSkillAssignment,
+        item: SkillPackageManifest,
     ) -> AgentSkillSnapshot:
-        """把 ResolvedSkillAssignment 转成 AgentSkillSnapshot.
+        """把 SkillPackageManifest 转成 AgentSkillSnapshot.
 
         Args:
             agent_id: 当前 agent 标识.
-            item: 已展开的 assignment.
+            item: 当前 skill manifest.
 
         Returns:
             对应的 AgentSkillSnapshot.
@@ -1334,15 +1341,12 @@ class RuntimeControlPlane:
 
         return AgentSkillSnapshot(
             agent_id=agent_id,
-            skill_name=item.skill.skill_name,
-            display_name=item.skill.display_name,
-            description=item.skill.description,
-            delegation_mode=item.assignment.delegation_mode,
-            delegate_agent_id=item.assignment.delegate_agent_id,
-            notes=item.assignment.notes,
-            has_references=item.skill.has_references,
-            has_scripts=item.skill.has_scripts,
-            has_assets=item.skill.has_assets,
+            skill_name=item.skill_name,
+            display_name=item.display_name,
+            description=item.description,
+            has_references=item.has_references,
+            has_scripts=item.has_scripts,
+            has_assets=item.has_assets,
         )
 
     @staticmethod

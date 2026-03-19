@@ -1,40 +1,17 @@
-from pathlib import Path
-
-from acabot.runtime import (
-    AgentProfile,
-    FileSystemSkillPackageLoader,
-    SkillAssignment,
-    SkillCatalog,
-    SubagentDelegationBroker,
-    SubagentExecutorRegistry,
-)
+from acabot.runtime import AgentProfile, SubagentDelegationBroker, SubagentExecutorRegistry
 
 
-def _fixtures_root() -> Path:
-    return Path(__file__).resolve().parent.parent / "fixtures" / "skills"
-
-
-def _catalog() -> SkillCatalog:
-    catalog = SkillCatalog(FileSystemSkillPackageLoader(_fixtures_root()))
-    catalog.reload()
-    return catalog
-
-
-def _profile(*, assignments: list[SkillAssignment]) -> AgentProfile:
+def _profile() -> AgentProfile:
     return AgentProfile(
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
         default_model="test-model",
-        skill_assignments=list(assignments),
     )
 
 
-async def test_subagent_delegation_broker_rejects_missing_assignment() -> None:
-    broker = SubagentDelegationBroker(
-        skill_catalog=_catalog(),
-        executor_registry=SubagentExecutorRegistry(),
-    )
+async def test_subagent_delegation_broker_rejects_missing_executor() -> None:
+    broker = SubagentDelegationBroker(executor_registry=SubagentExecutorRegistry())
 
     result = await broker.delegate(
         run_id="run:1",
@@ -42,13 +19,41 @@ async def test_subagent_delegation_broker_rejects_missing_assignment() -> None:
         actor_id="qq:user:10001",
         channel_scope="qq:user:10001",
         parent_agent_id="aca",
-        profile=_profile(assignments=[]),
-        skill_name="excel_processing",
+        profile=_profile(),
+        delegate_agent_id="excel_worker",
         payload={"task": "整理表格"},
     )
 
     assert result.ok is False
-    assert "not assigned" in result.error
+    assert "not found" in result.error
+
+
+async def test_subagent_delegation_broker_rejects_non_default_agent() -> None:
+    executors = SubagentExecutorRegistry()
+    executors.register("excel_worker", lambda request: {"ok": True}, source="test")
+    broker = SubagentDelegationBroker(
+        executor_registry=executors,
+        default_agent_id="aca",
+    )
+
+    result = await broker.delegate(
+        run_id="run:1",
+        thread_id="thread:1",
+        actor_id="qq:user:10001",
+        channel_scope="qq:user:10001",
+        parent_agent_id="manager",
+        profile=AgentProfile(
+            agent_id="manager",
+            name="Manager",
+            prompt_ref="prompt/default",
+            default_model="test-model",
+        ),
+        delegate_agent_id="excel_worker",
+        payload={"task": "整理表格"},
+    )
+
+    assert result.ok is False
+    assert "cannot delegate" in result.error
 
 
 async def test_subagent_delegation_broker_calls_registered_executor() -> None:
@@ -56,7 +61,6 @@ async def test_subagent_delegation_broker_calls_registered_executor() -> None:
 
     async def worker(request):
         return {
-            "skill_name": request.skill_name,
             "ok": True,
             "delegated_run_id": "subrun:1",
             "summary": f"done: {request.payload.get('task', '')}",
@@ -64,10 +68,7 @@ async def test_subagent_delegation_broker_calls_registered_executor() -> None:
         }
 
     executors.register("excel_worker", worker, source="test")
-    broker = SubagentDelegationBroker(
-        skill_catalog=_catalog(),
-        executor_registry=executors,
-    )
+    broker = SubagentDelegationBroker(executor_registry=executors)
 
     result = await broker.delegate(
         run_id="run:1",
@@ -75,16 +76,8 @@ async def test_subagent_delegation_broker_calls_registered_executor() -> None:
         actor_id="qq:user:10001",
         channel_scope="qq:user:10001",
         parent_agent_id="aca",
-        profile=_profile(
-            assignments=[
-                SkillAssignment(
-                    skill_name="excel_processing",
-                    delegation_mode="must_delegate",
-                    delegate_agent_id="excel_worker",
-                )
-            ]
-        ),
-        skill_name="excel_processing",
+        profile=_profile(),
+        delegate_agent_id="excel_worker",
         payload={"task": "整理表格"},
     )
 

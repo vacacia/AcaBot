@@ -12,8 +12,8 @@
 
 目标:
 - 给主 agent 一个显式的 `delegate_subagent` 工具
-- 让 `prefer_delegate / must_delegate` 不只是 prompt 提示
-- 保持 skill 定义和 subagent executor 解耦
+- 让 subagent delegation 成为一条独立能力链
+- 不再让 skill 承担委派语义
 """
 
 from __future__ import annotations
@@ -63,21 +63,13 @@ class SubagentDelegationPlugin(RuntimePlugin):
             RuntimeToolRegistration(
                 spec=ToolSpec(
                     name="delegate_subagent",
-                    description=(
-                        "Delegate work to a subagent. "
-                        "Prefer delegate_agent_id for a visible subagent. "
-                        "skill_name is kept only for compatibility with configured skill-based routing."
-                    ),
+                    description="Delegate work to a visible subagent by delegate_agent_id.",
                     parameters={
                         "type": "object",
                         "properties": {
-                            "skill_name": {
-                                "type": "string",
-                                "description": "Optional compatibility path for configured skill-based delegation.",
-                            },
                             "delegate_agent_id": {
                                 "type": "string",
-                                "description": "Optional direct subagent id. Use this when you want to hand the task to a visible subagent directly.",
+                                "description": "Visible subagent id.",
                             },
                             "task": {
                                 "type": "string",
@@ -88,7 +80,7 @@ class SubagentDelegationPlugin(RuntimePlugin):
                                 "description": "Optional structured payload passed to the subagent.",
                             },
                         },
-                        "required": ["task"],
+                        "required": ["delegate_agent_id", "task"],
                     },
                 ),
                 handler=self._delegate_subagent,
@@ -117,14 +109,13 @@ class SubagentDelegationPlugin(RuntimePlugin):
                 raw={"ok": False, "reason": "delegation_unavailable"},
             )
 
-        skill_name = str(arguments.get("skill_name", "") or "").strip()
         delegate_agent_id = str(arguments.get("delegate_agent_id", "") or "").strip()
         task = str(arguments.get("task", "") or "").strip()
         payload = dict(arguments.get("payload", {}) or {})
         payload.setdefault("task", task)
-        if not skill_name and not delegate_agent_id:
+        if not delegate_agent_id:
             return ToolResult(
-                llm_content="Delegation failed: either skill_name or delegate_agent_id is required.",
+                llm_content="Delegation failed: delegate_agent_id is required.",
                 raw={"ok": False, "reason": "delegation_target_missing"},
             )
 
@@ -135,7 +126,6 @@ class SubagentDelegationPlugin(RuntimePlugin):
             channel_scope=str(ctx.metadata.get("channel_scope", "") or ""),
             parent_agent_id=ctx.agent_id,
             profile=ctx.profile,
-            skill_name=skill_name,
             delegate_agent_id=delegate_agent_id,
             payload=payload,
             metadata={
@@ -145,10 +135,9 @@ class SubagentDelegationPlugin(RuntimePlugin):
         )
         if not result.ok:
             return ToolResult(
-                llm_content=f"Delegation failed for {skill_name or delegate_agent_id}: {result.error or 'unknown error'}",
+                llm_content=f"Delegation failed for {delegate_agent_id}: {result.error or 'unknown error'}",
                 raw={
                     "ok": False,
-                    "skill_name": skill_name,
                     "delegate_agent_id": delegate_agent_id,
                     "error": result.error,
                     "metadata": dict(result.metadata),
@@ -157,14 +146,13 @@ class SubagentDelegationPlugin(RuntimePlugin):
 
         return ToolResult(
             llm_content=(
-                f"Delegation completed for {skill_name or delegate_agent_id}. "
+                f"Delegation completed for {delegate_agent_id}. "
                 f"subagent={result.metadata.get('executor_agent_id', '') or '-'} "
                 f"summary={result.summary or 'done'}"
             ),
             artifacts=list(result.artifacts),
             raw={
                 "ok": True,
-                "skill_name": skill_name,
                 "delegate_agent_id": delegate_agent_id,
                 "delegated_run_id": result.delegated_run_id,
                 "summary": result.summary,

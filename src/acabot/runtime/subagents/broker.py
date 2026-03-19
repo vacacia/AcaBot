@@ -1,23 +1,10 @@
 """runtime.subagents.broker 提供 subagent delegation 承载层.
 
-组件关系:
-
-    SkillCatalog + AgentProfile
-             |
-             v
-    SubagentDelegationBroker
-             |
-             v
-    SubagentExecutorRegistry
-             |
-             v
-      SubagentExecutor
-
 这一层不决定何时委派.
 它只负责:
-- 根据 profile assignment 解析 delegation policy
-- 找到对应的 subagent executor
+- 按 `delegate_agent_id` 找到对应的 subagent executor
 - 组装标准化的 delegation request/result
+- 返回统一的委派结果
 """
 
 from __future__ import annotations
@@ -27,7 +14,6 @@ from inspect import isawaitable
 from typing import Any, Protocol
 
 from ..contracts import AgentProfile
-from ..skills import SkillCatalog
 from .contracts import SubagentDelegationRequest, SubagentDelegationResult
 
 
@@ -168,25 +154,24 @@ class SubagentDelegationBroker:
     """subagent delegation 的最小编排入口.
 
     Attributes:
-        skill_catalog (SkillCatalog): 统一 skill catalog.
         executor_registry (SubagentExecutorRegistry): subagent executor 注册表.
     """
 
     def __init__(
         self,
         *,
-        skill_catalog: SkillCatalog,
         executor_registry: SubagentExecutorRegistry,
+        default_agent_id: str = "",
     ) -> None:
         """初始化 delegation broker.
 
         Args:
-            skill_catalog: 统一 skill catalog.
             executor_registry: subagent executor 注册表.
+            default_agent_id: 默认主 agent 标识.
         """
 
-        self.skill_catalog = skill_catalog
         self.executor_registry = executor_registry
+        self.default_agent_id = str(default_agent_id or "")
 
     async def delegate(
         self,
@@ -197,12 +182,11 @@ class SubagentDelegationBroker:
         channel_scope: str,
         parent_agent_id: str,
         profile: AgentProfile,
-        skill_name: str = "",
         delegate_agent_id: str = "",
         payload: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> SubagentDelegationResult:
-        """按 profile assignment 执行一次 delegation.
+        """按 `delegate_agent_id` 执行一次 delegation.
 
         Args:
             run_id: 父 run 标识.
@@ -211,7 +195,7 @@ class SubagentDelegationBroker:
             channel_scope: 当前 channel scope.
             parent_agent_id: 发起 delegation 的 agent 标识.
             profile: 当前父 agent 的 profile.
-            skill_name: 目标 skill 名.
+            delegate_agent_id: 目标 subagent id.
             payload: 委派载荷.
             metadata: 附加元数据.
 
@@ -219,40 +203,16 @@ class SubagentDelegationBroker:
             一份 SubagentDelegationResult.
         """
 
-        resolved_skill_name = str(skill_name or "").strip()
+        if self.default_agent_id and profile.agent_id != self.default_agent_id:
+            return self._failed("", "current agent cannot delegate subagents")
         resolved_delegate_agent_id = str(delegate_agent_id or "").strip()
-        request_metadata = dict(metadata or {})
-        if resolved_delegate_agent_id:
-            executor_item = self.executor_registry.get(resolved_delegate_agent_id)
-            if executor_item is None:
-                return self._failed(resolved_skill_name or resolved_delegate_agent_id, f"subagent executor not found: {resolved_delegate_agent_id}")
-            resolved_skill_name = resolved_skill_name or f"subagent:{resolved_delegate_agent_id}"
-            request_metadata = {
-                "delegation_mode": "direct_subagent",
-                **request_metadata,
-            }
-        else:
-            assignment = self._resolve_assignment(profile, resolved_skill_name)
-            if assignment is None:
-                return self._failed(resolved_skill_name, "skill is not assigned to current agent")
-            if assignment.delegation_mode == "inline":
-                return self._failed(resolved_skill_name, "skill is configured for inline execution")
-            if assignment.delegation_mode == "manual":
-                return self._failed(resolved_skill_name, "skill requires manual delegation choice")
-            if not assignment.delegate_agent_id:
-                return self._failed(resolved_skill_name, "delegate_agent_id is missing")
-            resolved_delegate_agent_id = assignment.delegate_agent_id
-            executor_item = self.executor_registry.get(resolved_delegate_agent_id)
-            request_metadata = {
-                "delegation_mode": assignment.delegation_mode,
-                "notes": assignment.notes,
-                **request_metadata,
-            }
+        if not resolved_delegate_agent_id:
+            return self._failed("", "delegate_agent_id is required")
+        executor_item = self.executor_registry.get(resolved_delegate_agent_id)
         if executor_item is None:
-            return self._failed(resolved_skill_name, f"subagent executor not found: {resolved_delegate_agent_id}")
+            return self._failed(resolved_delegate_agent_id, f"subagent executor not found: {resolved_delegate_agent_id}")
 
         request = SubagentDelegationRequest(
-            skill_name=resolved_skill_name,
             parent_run_id=run_id,
             parent_thread_id=thread_id,
             parent_agent_id=parent_agent_id,
@@ -260,14 +220,13 @@ class SubagentDelegationBroker:
             channel_scope=channel_scope,
             delegate_agent_id=resolved_delegate_agent_id,
             payload=dict(payload or {}),
-            metadata=request_metadata,
+            metadata={"delegation_kind": "direct_subagent", **dict(metadata or {})},
         )
         result = executor_item.executor(request)
         if isawaitable(result):
             result = await result
         if isinstance(result, dict):
             result = SubagentDelegationResult(
-                skill_name=str(result.get("skill_name", skill_name) or skill_name),
                 ok=bool(result.get("ok", False)),
                 delegated_run_id=str(result.get("delegated_run_id", "") or ""),
                 summary=str(result.get("summary", "") or ""),
@@ -279,28 +238,12 @@ class SubagentDelegationBroker:
         result.metadata.setdefault("executor_source", executor_item.source)
         return result
 
-    def _resolve_assignment(self, profile: AgentProfile, skill_name: str):
-        """解析当前 profile 命中的 skill assignment.
-
-        Args:
-            profile: 当前 agent profile.
-            skill_name: 目标 skill 名.
-
-        Returns:
-            命中的 SkillAssignment. 不存在时返回 None.
-        """
-
-        for item in self.skill_catalog.resolve_assignments(profile):
-            if item.skill.skill_name == skill_name:
-                return item.assignment
-        return None
-
     @staticmethod
-    def _failed(skill_name: str, message: str) -> SubagentDelegationResult:
+    def _failed(delegate_agent_id: str, message: str) -> SubagentDelegationResult:
         """构造一条失败结果.
 
         Args:
-            skill_name: 对应的 skill 名.
+            delegate_agent_id: 目标 subagent id.
             message: 失败原因.
 
         Returns:
@@ -308,9 +251,9 @@ class SubagentDelegationBroker:
         """
 
         return SubagentDelegationResult(
-            skill_name=skill_name,
             ok=False,
             error=message,
+            metadata={"executor_agent_id": delegate_agent_id} if delegate_agent_id else {},
         )
 
 

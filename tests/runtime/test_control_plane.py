@@ -27,7 +27,6 @@ from acabot.runtime import (
     RuntimePluginContext,
     RuntimePluginManager,
     RuntimeRouter,
-    SkillAssignment,
     SkillCatalog,
     ThreadPipeline,
     ToolBroker,
@@ -91,13 +90,7 @@ def _profile_registry() -> AgentProfileRegistry:
                 name="Aca",
                 prompt_ref="prompt/default",
                 default_model="test-model",
-                skill_assignments=[
-                    SkillAssignment(
-                        skill_name="sample_configured_skill",
-                        delegation_mode="prefer_delegate",
-                        delegate_agent_id="sample_worker",
-                    )
-                ],
+                skills=["sample_configured_skill"],
             )
         },
         default_agent_id="aca",
@@ -184,6 +177,7 @@ async def test_runtime_control_plane_reports_status_snapshot(tmp_path: Path) -> 
     assert status.interrupted_run_ids == [running.run_id]
     assert status.active_run_count == 1
     assert status.active_runs[0].run_id == waiting.run_id
+    assert status.active_runs[0].delegate_agent_id == ""
     assert status.pending_approval_count == 1
 
 
@@ -219,8 +213,7 @@ async def test_runtime_control_plane_lists_catalog_skills_and_agent_assignments(
     ]
     assert skills[0].has_references is True
     assert agent_skills[0].skill_name == "sample_configured_skill"
-    assert agent_skills[0].delegation_mode == "prefer_delegate"
-    assert agent_skills[0].delegate_agent_id == "sample_worker"
+    assert agent_skills[0].has_references is True
 
 
 async def test_runtime_control_plane_lists_mirrored_skills(tmp_path: Path) -> None:

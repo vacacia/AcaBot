@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 class SubagentDelegationRequest:
     """一次 subagent delegation 的标准化请求."""
 
-    skill_name: str
     parent_run_id: str
     parent_thread_id: str
     parent_agent_id: str
@@ -24,7 +23,6 @@ class SubagentDelegationRequest:
 class SubagentDelegationResult:
     """一次 subagent delegation 的标准化返回值."""
 
-    skill_name: str
     ok: bool
     delegated_run_id: str = ""
     summary: str = ""

@@ -17,47 +17,103 @@ import yaml
 from acabot.types import StandardEvent
 
 from ..computer import ComputerPolicy, parse_computer_policy
-from ..contracts import AgentProfile, BindingRule, RouteDecision, SkillAssignment
+from ..contracts import AgentProfile, BindingRule, RouteDecision
 
 
-def parse_skill_assignments(raw_items: object) -> list[SkillAssignment]:
-    """把 profile 配置里的 skill assignment 归一化.
+def parse_legacy_skill_assignments(raw_items: object) -> list[str]:
+    """把旧的 `skill_assignments` 配置提取成 skill 名列表.
 
     Args:
         raw_items: 原始 `skill_assignments` 配置.
 
     Returns:
-        归一化后的 SkillAssignment 列表.
+        去重后的 skill 名列表.
 
     Raises:
-        ValueError: 配置项不是合法的 mapping 或字符串时抛出.
+        ValueError: 配置项不是合法 mapping 或字符串时抛出.
     """
 
-    allowed_modes = {"inline", "prefer_delegate", "must_delegate", "manual"}
-    assignments: list[SkillAssignment] = []
+    skills: list[str] = []
+    seen: set[str] = set()
     for item in list(raw_items or []):
         if isinstance(item, str):
-            assignments.append(SkillAssignment(skill_name=str(item)))
+            skill_name = str(item or "").strip()
+        elif isinstance(item, dict):
+            extra_keys = set(dict(item)) - {"skill_name"}
+            if extra_keys:
+                raise ValueError(
+                    "Legacy skill_assignments with delegation fields are no longer supported"
+                )
+            skill_name = str(item.get("skill_name", "") or "").strip()
+        else:
+            raise ValueError("Legacy skill assignment must be a mapping or string")
+        if not skill_name or skill_name in seen:
             continue
-        if not isinstance(item, dict):
-            raise ValueError("Skill assignment must be a mapping or string")
-        delegation_mode = str(item.get("delegation_mode", "inline") or "inline")
-        if delegation_mode not in allowed_modes:
-            raise ValueError(f"Unsupported delegation_mode: {delegation_mode}")
-        assignments.append(
-            SkillAssignment(
-                skill_name=str(item.get("skill_name", "") or ""),
-                delegation_mode=delegation_mode,
-                delegate_agent_id=str(item.get("delegate_agent_id", "") or ""),
-                notes=str(item.get("notes", "") or ""),
-                metadata={
-                    key: value
-                    for key, value in dict(item).items()
-                    if key not in {"skill_name", "delegation_mode", "delegate_agent_id", "notes"}
-                },
-            )
-        )
-    return [item for item in assignments if item.skill_name]
+        skills.append(skill_name)
+        seen.add(skill_name)
+    return skills
+
+
+def resolve_profile_skills(raw_profile: dict[str, Any]) -> list[str]:
+    """从 profile 配置里解析技能列表.
+
+    优先读取新的 `skills` 字段.
+    如果还存在旧的 `skill_assignments`, 就单向提取 skill 名.
+
+    Args:
+        raw_profile: 原始 profile 配置.
+
+    Returns:
+        去重后的 skill 名列表.
+    """
+
+    if "skills" in raw_profile:
+        return parse_skills(raw_profile.get("skills", []))
+    if "skill_assignments" in raw_profile:
+        return parse_legacy_skill_assignments(raw_profile.get("skill_assignments", []))
+    return []
+
+
+def normalize_profile_config(raw_profile: dict[str, Any]) -> dict[str, Any]:
+    """把 profile 配置收口成新的技能字段形状.
+
+    Args:
+        raw_profile: 原始 profile 配置.
+
+    Returns:
+        规范化后的 profile 配置.
+    """
+
+    normalized = dict(raw_profile)
+    normalized["skills"] = resolve_profile_skills(normalized)
+    normalized.pop("skill_assignments", None)
+    return normalized
+
+
+def parse_skills(raw_items: object) -> list[str]:
+    """把 profile 配置里的 skills 归一化成 skill 名列表.
+
+    Args:
+        raw_items: 原始 `skills` 配置.
+
+    Returns:
+        去重后的 skill 名列表.
+
+    Raises:
+        ValueError: 配置项不是字符串时抛出.
+    """
+
+    skills: list[str] = []
+    seen: set[str] = set()
+    for item in list(raw_items or []):
+        if not isinstance(item, str):
+            raise ValueError("Skill must be a string")
+        skill_name = str(item or "").strip()
+        if not skill_name or skill_name in seen:
+            continue
+        skills.append(skill_name)
+        seen.add(skill_name)
+    return skills
 
 
 class PromptLoader(ABC):
@@ -374,21 +430,22 @@ class FileSystemProfileLoader:
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         if not isinstance(raw, dict):
             raise ValueError(f"Profile file must be a mapping: {path}")
-        agent_id = str(raw.get("agent_id", "") or path.stem)
+        normalized = normalize_profile_config(raw)
+        agent_id = str(normalized.get("agent_id", "") or path.stem)
         return AgentProfile(
             agent_id=agent_id,
-            name=str(raw.get("name", "") or agent_id),
+            name=str(normalized.get("name", "") or agent_id),
             prompt_ref=str(
-                raw.get("prompt_ref", "") or f"{self.prompt_prefix}/{agent_id}"
+                normalized.get("prompt_ref", "") or f"{self.prompt_prefix}/{agent_id}"
             ),
-            default_model=str(raw.get("default_model", "") or self.default_model),
-            enabled_tools=[str(item) for item in list(raw.get("enabled_tools", []) or [])],
-            skill_assignments=parse_skill_assignments(raw.get("skill_assignments", [])),
+            default_model=str(normalized.get("default_model", "") or self.default_model),
+            enabled_tools=[str(item) for item in list(normalized.get("enabled_tools", []) or [])],
+            skills=resolve_profile_skills(normalized),
             computer_policy=parse_computer_policy(
-                raw.get("computer"),
+                normalized.get("computer"),
                 defaults=self.default_computer_policy,
             ),
-            config=dict(raw),
+            config=dict(normalized),
         )
 
 

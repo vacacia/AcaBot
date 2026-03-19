@@ -506,16 +506,12 @@ async def test_runtime_config_control_plane_upserts_profile_prompt_and_rule(tmp_
             "prompt_ref": "prompt/worker",
             "default_model": "worker-model",
             "enabled_tools": ["read"],
-            "skill_assignments": [
-                {
-                    "skill_name": "sample_configured_skill",
-                    "delegation_mode": "prefer_delegate",
-                    "delegate_agent_id": "aca",
-                }
-            ],
+            "skill_assignments": [{"skill_name": "sample_configured_skill"}],
         }
     )
     assert profile["agent_id"] == "worker"
+    assert profile["skills"] == ["sample_configured_skill"]
+    assert "skill_assignments" not in profile
     loaded = components.profile_loader.load(
         RouteDecision(
             thread_id="thread:1",
@@ -654,7 +650,7 @@ async def test_runtime_http_api_server_serves_status_and_profile_crud(tmp_path: 
                 "prompt_ref": "prompt/worker",
                 "default_model": "worker-model",
                 "enabled_tools": ["read"],
-                "skill_assignments": [],
+                "skills": [],
             },
         )
         assert put_result["ok"] is True
@@ -970,7 +966,7 @@ async def test_runtime_http_api_server_serves_product_shaped_bot_settings(tmp_pa
             "default_model": "legacy-model",
             "admin_actor_ids": ["qq:private:123456"],
             "enabled_tools": ["read"],
-            "skill_assignments": [{"skill_name": "sample_configured_skill"}],
+            "skills": ["sample_configured_skill"],
         }
     )
     await components.control_plane.upsert_prompt(
@@ -1086,7 +1082,7 @@ async def test_runtime_http_api_server_serves_product_shaped_bot_settings(tmp_pa
         assert profile["default_model"] == "legacy-model"
         assert "summary_model_preset_id" not in profile
         assert profile["enabled_tools"] == ["read"]
-        assert profile["skill_assignments"] == [{"skill_name": "sample_configured_skill"}]
+        assert profile["skills"] == ["sample_configured_skill"]
 
         backend_status = await asyncio.to_thread(request_json, base_url, "/api/backend/status")
         assert backend_status["ok"] is True
@@ -1140,13 +1136,7 @@ async def test_runtime_http_api_server_serves_product_shaped_sessions(tmp_path: 
             },
             "context_management": {"strategy": "summarize"},
             "enabled_tools": ["read", "write"],
-            "skill_assignments": [
-                {
-                    "skill_name": "sample_configured_skill",
-                    "delegation_mode": "prefer_delegate",
-                    "delegate_agent_id": "aca",
-                }
-            ],
+            "skills": ["sample_configured_skill"],
             "metadata": {
                 "managed_by": "webui_session",
                 "session_key": "qq:group:42",
@@ -1221,6 +1211,9 @@ async def test_runtime_http_api_server_serves_product_shaped_sessions(tmp_path: 
         assert session_item["ai"]["context_management"]["strategy"] == "summarize"
         assert session_item["ai"]["enabled_tools"] == ["read", "write"]
         assert session_item["ai"]["skills"] == ["sample_configured_skill"]
+        executors = await asyncio.to_thread(request_json, base_url, "/api/subagents/executors")
+        assert executors["ok"] is True
+        assert all(item["agent_id"] != "session_qq_group_42" for item in executors["data"])
         message_rules = {
             item["event_type"]: item
             for item in session_item["message_response"]["rules"]

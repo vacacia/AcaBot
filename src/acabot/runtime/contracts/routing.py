@@ -7,21 +7,10 @@ from typing import TYPE_CHECKING, Any
 
 from acabot.types import StandardEvent
 
-from .common import DelegationMode, RunMode
+from .common import RunMode
 
 if TYPE_CHECKING:
     from ..computer import ComputerPolicy
-
-
-@dataclass(slots=True)
-class SkillAssignment:
-    """一条 agent 到 skill 的赋能关系."""
-
-    skill_name: str
-    delegation_mode: DelegationMode = "inline"
-    delegate_agent_id: str = ""
-    notes: str = ""
-    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -33,7 +22,7 @@ class AgentProfile:
     prompt_ref: str
     default_model: str
     enabled_tools: list[str] = field(default_factory=list)
-    skill_assignments: list[SkillAssignment] = field(default_factory=list)
+    skills: list[str] = field(default_factory=list)
     computer_policy: "ComputerPolicy | None" = None
     config: dict[str, Any] = field(default_factory=dict)
 
@@ -351,5 +340,4 @@ __all__ = [
     "EventPolicyDecision",
     "InboundRule",
     "RouteDecision",
-    "SkillAssignment",
 ]

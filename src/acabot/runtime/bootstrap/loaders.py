@@ -17,7 +17,8 @@ from ..control.profile_loader import (
     FileSystemPromptLoader,
     PromptLoader,
     StaticPromptLoader,
-    parse_skill_assignments,
+    normalize_profile_config,
+    resolve_profile_skills,
 )
 from .config import (
     parse_binding_rule_config,
@@ -34,21 +35,22 @@ def build_profiles(config: Config, *, default_computer_policy: ComputerPolicy) -
     if profiles_conf:
         profiles: dict[str, AgentProfile] = {}
         for agent_id, profile_conf in profiles_conf.items():
+            normalized = normalize_profile_config(dict(profile_conf or {}))
             profiles[agent_id] = AgentProfile(
                 agent_id=agent_id,
-                name=profile_conf.get("name", agent_id),
-                prompt_ref=profile_conf.get("prompt_ref", f"prompt/{agent_id}"),
-                default_model=profile_conf.get(
+                name=normalized.get("name", agent_id),
+                prompt_ref=normalized.get("prompt_ref", f"prompt/{agent_id}"),
+                default_model=normalized.get(
                     "default_model",
                     agent_conf.get("default_model", "gpt-4o-mini"),
                 ),
-                enabled_tools=list(profile_conf.get("enabled_tools", [])),
-                skill_assignments=parse_skill_assignments(profile_conf.get("skill_assignments", [])),
+                enabled_tools=list(normalized.get("enabled_tools", [])),
+                skills=resolve_profile_skills(normalized),
                 computer_policy=parse_computer_policy(
-                    profile_conf.get("computer"),
+                    normalized.get("computer"),
                     defaults=default_computer_policy,
                 ),
-                config=dict(profile_conf),
+                config=dict(normalized),
             )
         return profiles
 
@@ -60,7 +62,7 @@ def build_profiles(config: Config, *, default_computer_policy: ComputerPolicy) -
             prompt_ref=runtime_conf.get("default_prompt_ref", "prompt/default"),
             default_model=agent_conf.get("default_model", "gpt-4o-mini"),
             enabled_tools=list(runtime_conf.get("enabled_tools", [])),
-            skill_assignments=parse_skill_assignments(runtime_conf.get("skill_assignments", [])),
+            skills=resolve_profile_skills(dict(runtime_conf)),
             computer_policy=default_computer_policy,
             config=dict(agent_conf),
         )

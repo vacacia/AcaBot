@@ -204,14 +204,12 @@ class ToolBroker:
         if self.skill_catalog is None:
             return []
         summaries: list[dict[str, Any]] = []
-        for item in self.skill_catalog.resolve_assignments(profile):
+        for item in self.skill_catalog.visible_skills(profile):
             summaries.append(
                 {
-                    "skill_name": item.skill.skill_name,
-                    "description": item.skill.description,
-                    "display_name": item.skill.display_name,
-                    "delegation_mode": item.assignment.delegation_mode,
-                    "delegate_agent_id": item.assignment.delegate_agent_id,
+                    "skill_name": item.skill_name,
+                    "description": item.description,
+                    "display_name": item.display_name,
                 }
             )
         return summaries
@@ -274,11 +272,6 @@ class ToolBroker:
             for item in self.subagent_executor_registry.list_all():
                 if item.agent_id != profile.agent_id:
                     return True
-        if self.skill_catalog is None:
-            return False
-        for item in self.skill_catalog.resolve_assignments(profile):
-            if item.assignment.delegation_mode in {"prefer_delegate", "must_delegate"}:
-                return True
         return False
 
     def build_tool_runtime(self, ctx: RunContext) -> ToolRuntime:

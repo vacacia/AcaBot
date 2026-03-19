@@ -15,7 +15,7 @@ from acabot.config import Config
 
 from ..computer import ComputerPolicy, parse_computer_policy
 from .event_policy import EventPolicyRegistry
-from ..contracts import AgentProfile, BindingRule, EventPolicy, InboundRule, SkillAssignment
+from ..contracts import AgentProfile, BindingRule, EventPolicy, InboundRule
 from ..plugin_manager import RuntimePluginManager
 from .profile_loader import (
     AgentProfileRegistry,
@@ -28,7 +28,8 @@ from .profile_loader import (
     PromptLoader,
     ReloadablePromptLoader,
     StaticPromptLoader,
-    parse_skill_assignments,
+    normalize_profile_config,
+    resolve_profile_skills,
 )
 from ..router import InboundRuleRegistry, RuntimeRouter
 from ..skills import SkillCatalog
@@ -74,7 +75,7 @@ def _build_profiles(config: Config) -> dict[str, AgentProfile]:
     if profiles_conf:
         profiles: dict[str, AgentProfile] = {}
         for agent_id, profile_conf in dict(profiles_conf).items():
-            profile_map = dict(profile_conf or {})
+            profile_map = normalize_profile_config(dict(profile_conf or {}))
             profiles[agent_id] = AgentProfile(
                 agent_id=agent_id,
                 name=str(profile_map.get("name", agent_id) or agent_id),
@@ -84,7 +85,7 @@ def _build_profiles(config: Config) -> dict[str, AgentProfile]:
                     or agent_conf.get("default_model", "gpt-4o-mini")
                 ),
                 enabled_tools=[str(item) for item in list(profile_map.get("enabled_tools", []) or [])],
-                skill_assignments=parse_skill_assignments(profile_map.get("skill_assignments", [])),
+                skills=resolve_profile_skills(profile_map),
                 computer_policy=parse_computer_policy(
                     profile_map.get("computer"),
                     defaults=default_policy,
@@ -101,7 +102,7 @@ def _build_profiles(config: Config) -> dict[str, AgentProfile]:
             prompt_ref=str(runtime_conf.get("default_prompt_ref", "prompt/default") or "prompt/default"),
             default_model=str(agent_conf.get("default_model", "gpt-4o-mini") or "gpt-4o-mini"),
             enabled_tools=[str(item) for item in list(runtime_conf.get("enabled_tools", []) or [])],
-            skill_assignments=parse_skill_assignments(runtime_conf.get("skill_assignments", [])),
+            skills=resolve_profile_skills(dict(runtime_conf)),
             computer_policy=default_policy,
             config=dict(agent_conf),
         )
@@ -317,12 +318,13 @@ def _build_filesystem_event_policies(config: Config) -> list[EventPolicy]:
 
 def _profile_to_config(profile: AgentProfile) -> dict[str, Any]:
     data = dict(profile.config)
+    data.pop("skill_assignments", None)
     data["agent_id"] = profile.agent_id
     data["name"] = profile.name
     data["prompt_ref"] = profile.prompt_ref
     data["default_model"] = profile.default_model
     data["enabled_tools"] = list(profile.enabled_tools)
-    data["skill_assignments"] = [_skill_assignment_to_config(item) for item in profile.skill_assignments]
+    data["skills"] = list(profile.skills)
     if profile.computer_policy is not None:
         data["computer"] = {
             "backend": profile.computer_policy.backend,
@@ -334,19 +336,6 @@ def _profile_to_config(profile: AgentProfile) -> dict[str, Any]:
             "network_mode": profile.computer_policy.network_mode,
         }
     return data
-
-
-def _skill_assignment_to_config(item: SkillAssignment) -> dict[str, Any]:
-    data: dict[str, Any] = {"skill_name": item.skill_name}
-    if item.delegation_mode != "inline":
-        data["delegation_mode"] = item.delegation_mode
-    if item.delegate_agent_id:
-        data["delegate_agent_id"] = item.delegate_agent_id
-    if item.notes:
-        data["notes"] = item.notes
-    data.update(dict(item.metadata))
-    return data
-
 
 def _binding_rule_to_config(rule: BindingRule) -> dict[str, Any]:
     return {
@@ -446,6 +435,8 @@ class RuntimeConfigControlPlane:
         skill_catalog: SkillCatalog | None = None,
         plugin_manager: RuntimePluginManager | None = None,
         subagent_executor_registry: SubagentExecutorRegistry | None = None,
+        tool_broker = None,
+        subagent_delegator = None,
         local_subagent_executor: Callable[[Any], Awaitable[Any]] | None = None,
         builtin_plugin_factory: Callable[[dict[str, AgentProfile]], list[Any]] | None = None,
     ) -> None:
@@ -458,6 +449,8 @@ class RuntimeConfigControlPlane:
         self.skill_catalog = skill_catalog
         self.plugin_manager = plugin_manager
         self.subagent_executor_registry = subagent_executor_registry
+        self.tool_broker = tool_broker
+        self.subagent_delegator = subagent_delegator
         self.local_subagent_executor = local_subagent_executor
         self.builtin_plugin_factory = builtin_plugin_factory
 
@@ -487,12 +480,20 @@ class RuntimeConfigControlPlane:
         self.event_policy_registry.reload(event_policies)
         self.prompt_loader.replace_loader(_build_prompt_loader(self.config, profiles))
         self.router.default_agent_id = default_agent_id
+        if self.tool_broker is not None:
+            self.tool_broker.default_agent_id = default_agent_id
+        if self.subagent_delegator is not None:
+            self.subagent_delegator.default_agent_id = default_agent_id
         if self.skill_catalog is not None:
             self.skill_catalog.reload()
         if self.subagent_executor_registry is not None:
             self.subagent_executor_registry.unregister_source("runtime:local_profile")
             if self.local_subagent_executor is not None:
                 for profile in profiles.values():
+                    metadata = dict(profile.config.get("metadata", {}) or {})
+                    managed_by = str(metadata.get("managed_by", "") or "").strip()
+                    if managed_by in {"webui_session", "webui_v2_session"} or str(metadata.get("session_key", "") or "").strip():
+                        continue
                     self.subagent_executor_registry.register(
                         profile.agent_id,
                         self.local_subagent_executor,
@@ -554,12 +555,12 @@ class RuntimeConfigControlPlane:
         agent_id = str(payload.get("agent_id", "") or "").strip()
         if not agent_id:
             raise ValueError("agent_id is required")
-        normalized = dict(payload)
+        normalized = normalize_profile_config(dict(payload))
         normalized["agent_id"] = agent_id
         normalized.setdefault("name", agent_id)
         normalized.setdefault("prompt_ref", f"prompt/{agent_id}")
         normalized.setdefault("enabled_tools", [])
-        normalized.setdefault("skill_assignments", [])
+        normalized.setdefault("skills", [])
         if self.storage_mode() == "filesystem":
             path = self._profiles_dir() / f"{agent_id}.yaml"
             self._write_yaml(path, normalized)

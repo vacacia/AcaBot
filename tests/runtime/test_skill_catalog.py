@@ -1,38 +1,28 @@
 from pathlib import Path
 
-from acabot.runtime import (
-    AgentProfile,
-    FileSystemSkillPackageLoader,
-    SkillAssignment,
-    SkillCatalog,
-)
+from acabot.runtime import AgentProfile, FileSystemSkillPackageLoader, SkillCatalog
 
 
 def _fixtures_root() -> Path:
     return Path(__file__).resolve().parent.parent / "fixtures" / "skills"
 
 
-def _profile(assignments: list[SkillAssignment]) -> AgentProfile:
+def _profile(skills: list[str]) -> AgentProfile:
     return AgentProfile(
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
         default_model="test-model",
-        skill_assignments=assignments,
+        skills=skills,
     )
 
 
-def test_skill_catalog_resolves_visible_skills_from_assignments() -> None:
+def test_skill_catalog_resolves_visible_skills_from_profile_skills() -> None:
     catalog = SkillCatalog(FileSystemSkillPackageLoader(_fixtures_root()))
     catalog.reload()
 
     visible = catalog.visible_skills(
-        _profile(
-            [
-                SkillAssignment(skill_name="sample_configured_skill"),
-                SkillAssignment(skill_name="excel_processing"),
-            ]
-        )
+        _profile(["sample_configured_skill", "excel_processing"])
     )
 
     assert [item.skill_name for item in visible] == [
@@ -45,11 +35,9 @@ def test_skill_catalog_ignores_missing_skills() -> None:
     catalog = SkillCatalog(FileSystemSkillPackageLoader(_fixtures_root()))
     catalog.reload()
 
-    resolved = catalog.resolve_assignments(
-        _profile([SkillAssignment(skill_name="missing_skill")])
-    )
+    visible = catalog.visible_skills(_profile(["missing_skill"]))
 
-    assert resolved == []
+    assert visible == []
 
 
 def test_skill_catalog_reads_package_document_on_demand() -> None:

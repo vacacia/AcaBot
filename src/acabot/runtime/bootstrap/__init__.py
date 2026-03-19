@@ -182,8 +182,8 @@ def build_runtime_components(
     runtime_skill_catalog = skill_catalog or build_skill_catalog(config)
     runtime_subagent_executor_registry = subagent_executor_registry or SubagentExecutorRegistry()
     runtime_subagent_delegator = subagent_delegator or SubagentDelegationBroker(
-        skill_catalog=runtime_skill_catalog,
         executor_registry=runtime_subagent_executor_registry,
+        default_agent_id=str(default_agent_id or ""),
     )
     runtime_memory_broker = memory_broker or build_memory_broker(
         config,
@@ -316,6 +316,8 @@ def build_runtime_components(
         skill_catalog=runtime_skill_catalog,
         plugin_manager=runtime_plugin_manager,
         subagent_executor_registry=runtime_subagent_executor_registry,
+        tool_broker=runtime_tool_broker,
+        subagent_delegator=runtime_subagent_delegator,
         local_subagent_executor=runtime_subagent_execution_service.execute,
         builtin_plugin_factory=build_builtin_runtime_plugins,
     )

@@ -7,7 +7,6 @@ from acabot.runtime import (
     ComputerRuntimeConfig,
     FileSystemSkillPackageLoader,
     RuntimePluginManager,
-    SkillAssignment,
     SkillCatalog,
     SkillToolPlugin,
     ToolBroker,
@@ -36,7 +35,7 @@ def _runtime(tmp_path: Path) -> ComputerRuntime:
     )
 
 
-async def test_skill_tool_visible_when_profile_has_assigned_skills(tmp_path: Path) -> None:
+async def test_skill_tool_visible_when_profile_has_visible_skills(tmp_path: Path) -> None:
     catalog = _catalog()
     broker = ToolBroker(skill_catalog=catalog)
     manager = RuntimePluginManager(
@@ -55,7 +54,7 @@ async def test_skill_tool_visible_when_profile_has_assigned_skills(tmp_path: Pat
             name="Aca",
             prompt_ref="prompt/default",
             default_model="test-model",
-            skill_assignments=[],
+            skills=[],
         )
     )
     assert [tool.name for tool in visible] == []
@@ -66,14 +65,14 @@ async def test_skill_tool_visible_when_profile_has_assigned_skills(tmp_path: Pat
             name="Aca",
             prompt_ref="prompt/default",
             default_model="test-model",
-            skill_assignments=[SkillAssignment(skill_name="sample_configured_skill")],
+            skills=["sample_configured_skill"],
         )
     )
     assert [tool.name for tool in visible] == ["skill"]
     assert "sample_configured_skill" in visible[0].description
 
 
-async def test_skill_tool_reads_assigned_skill_and_marks_loaded(tmp_path: Path) -> None:
+async def test_skill_tool_reads_visible_skill_and_marks_loaded(tmp_path: Path) -> None:
     catalog = _catalog()
     computer_runtime = _runtime(tmp_path)
     broker = ToolBroker(skill_catalog=catalog)
@@ -93,7 +92,7 @@ async def test_skill_tool_reads_assigned_skill_and_marks_loaded(tmp_path: Path) 
         name="Aca",
         prompt_ref="prompt/default",
         default_model="test-model",
-        skill_assignments=[SkillAssignment(skill_name="sample_configured_skill")],
+        skills=["sample_configured_skill"],
     )
     execution_ctx = broker._build_execution_context(ctx)
 
@@ -110,7 +109,7 @@ async def test_skill_tool_reads_assigned_skill_and_marks_loaded(tmp_path: Path) 
     ]
 
 
-async def test_skill_tool_rejects_unassigned_skill(tmp_path: Path) -> None:
+async def test_skill_tool_rejects_invisible_skill(tmp_path: Path) -> None:
     catalog = _catalog()
     broker = ToolBroker(skill_catalog=catalog)
     manager = RuntimePluginManager(
@@ -129,7 +128,7 @@ async def test_skill_tool_rejects_unassigned_skill(tmp_path: Path) -> None:
         name="Aca",
         prompt_ref="prompt/default",
         default_model="test-model",
-        skill_assignments=[SkillAssignment(skill_name="excel_processing")],
+        skills=["excel_processing"],
     )
     result = await broker.execute(
         tool_name="skill",

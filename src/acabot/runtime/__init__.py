@@ -157,7 +157,6 @@ from .contracts import (
     RunRecord,
     RunStatus,
     RunStep,
-    SkillAssignment,
     ThreadRecord,
     ThreadState,
 )
@@ -225,10 +224,7 @@ from .skills import (
     SkillPackageFormatError,
     SkillPackageManifest,
 )
-from .skills import (
-    ResolvedSkillAssignment,
-    SkillCatalog,
-)
+from .skills import SkillCatalog
 from .subagents import (
     RegisteredSubagentExecutor,
     SubagentDelegationBroker,
@@ -403,9 +399,7 @@ __all__ = [
     "RuntimePluginSpec",
     "RuntimeToolRegistration",
     "DelegationMode",
-    "SkillAssignment",
     "SkillCatalog",
-    "ResolvedSkillAssignment",
     "FileSystemSkillPackageLoader",
     "SkillPackageDocument",
     "SkillPackageFormatError",

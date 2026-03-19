@@ -54,13 +54,7 @@ async def test_delegate_subagent_is_auto_loaded_for_delegated_profiles() -> None
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
                         "default_model": "runtime-model",
-                        "skill_assignments": [
-                            {
-                                "skill_name": "sample_configured_skill",
-                                "delegation_mode": "prefer_delegate",
-                                "delegate_agent_id": "sample_worker",
-                            }
-                        ],
+                        "skills": ["sample_configured_skill"],
                     }
                 },
                 "prompts": {
@@ -105,13 +99,7 @@ async def test_delegate_subagent_tool_calls_subagent_executor() -> None:
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
                         "default_model": "runtime-model",
-                        "skill_assignments": [
-                            {
-                                "skill_name": "sample_configured_skill",
-                                "delegation_mode": "must_delegate",
-                                "delegate_agent_id": "sample_worker",
-                            }
-                        ],
+                        "skills": ["sample_configured_skill"],
                     }
                 },
                 "prompts": {
@@ -136,7 +124,7 @@ async def test_delegate_subagent_tool_calls_subagent_executor() -> None:
     result = await components.tool_broker.execute(
         tool_name="delegate_subagent",
         arguments={
-            "skill_name": "sample_configured_skill",
+            "delegate_agent_id": "sample_worker",
             "task": "整理这份样例任务",
         },
         ctx=_execution_ctx(profile),
@@ -167,7 +155,7 @@ async def test_delegate_subagent_is_available_when_subagent_exists_without_skill
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
                         "default_model": "runtime-model",
-                        "skill_assignments": [],
+                        "skills": [],
                     },
                     "sample_worker": {
                         "name": "Sample Worker",
@@ -214,7 +202,7 @@ async def test_delegate_subagent_tool_can_delegate_directly_to_subagent_id() -> 
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
                         "default_model": "runtime-model",
-                        "skill_assignments": [],
+                        "skills": [],
                     },
                     "sample_worker": {
                         "name": "Sample Worker",

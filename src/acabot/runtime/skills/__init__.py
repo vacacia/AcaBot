@@ -1,9 +1,6 @@
 """runtime.skills 子包."""
 
-from .catalog import (
-    ResolvedSkillAssignment,
-    SkillCatalog,
-)
+from .catalog import SkillCatalog
 from .loader import FileSystemSkillPackageLoader
 from .package import (
     SkillPackageDocument,
@@ -13,7 +10,6 @@ from .package import (
 
 __all__ = [
     "FileSystemSkillPackageLoader",
-    "ResolvedSkillAssignment",
     "SkillCatalog",
     "SkillPackageDocument",
     "SkillPackageFormatError",

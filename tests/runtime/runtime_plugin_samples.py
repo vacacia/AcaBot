@@ -125,14 +125,13 @@ class SampleDelegationWorkerPlugin(RuntimePlugin):
         async def execute(request: SubagentDelegationRequest) -> SubagentDelegationResult:
             task = str(request.payload.get("task", "") or "")
             return SubagentDelegationResult(
-                skill_name=request.skill_name,
                 ok=True,
                 delegated_run_id=f"subrun:{request.parent_run_id}",
                 summary=f"worker handled: {task}",
                 artifacts=[
                     {
                         "type": "delegation_result",
-                        "skill_name": request.skill_name,
+                        "delegate_agent_id": request.delegate_agent_id,
                         "task": task,
                     }
                 ],

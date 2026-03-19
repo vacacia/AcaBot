@@ -154,9 +154,7 @@ class OpsControlPlugin(RuntimePlugin):
                         item.has_assets,
                     )
                     lines.append(
-                        f"- {item.skill_name} ({item.display_name}) "
-                        f"mode={item.delegation_mode} delegate={item.delegate_agent_id or '-'} "
-                        f"resources={resources}"
+                        f"- {item.skill_name} ({item.display_name}) resources={resources}"
                     )
                 return "\n".join(lines)
 

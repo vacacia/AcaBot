@@ -116,10 +116,7 @@ class BotShellControlOps:
                 "summary_model_preset_id": str(normalized["summary_model_preset_id"]),
                 "admin_actor_ids": _string_list(normalized["admin_actor_ids"]),
                 "enabled_tools": _string_list(normalized["enabled_tools"]),
-                "skill_assignments": self._build_skill_assignments(
-                    skill_names=_string_list(normalized["skills"]),
-                    existing_profile=profile,
-                ),
+                "skills": _string_list(normalized["skills"]),
             }
         )
         await self.config_control_plane.upsert_profile(updated_profile)
@@ -294,11 +291,7 @@ class BotShellControlOps:
             前端可直接消费的 Bot 对象.
         """
 
-        skill_names = [
-            str(item.get("skill_name", "") or "")
-            for item in list(profile.get("skill_assignments", []) or [])
-            if str(dict(item).get("skill_name", "") or "").strip()
-        ]
+        skill_names = _string_list(profile.get("skills", []))
         return {
             "agent_id": str(context["agent_id"] or ""),
             "name": str(profile.get("name", "") or context["agent_id"] or ""),
@@ -483,32 +476,6 @@ class BotShellControlOps:
         if list(match.get("sender_roles", []) or []):
             return False
         return True
-
-    def _build_skill_assignments(
-        self,
-        *,
-        skill_names: list[str],
-        existing_profile: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        """把 skill 名列表转换成 profile skill assignments.
-
-        Args:
-            skill_names: 前端选择的 skill 名列表.
-            existing_profile: 已有 profile, 用于保留旧的委派信息.
-
-        Returns:
-            可直接写回 profile 的 skill assignments.
-        """
-
-        existing_map = {
-            str(item.get("skill_name", "") or ""): dict(item)
-            for item in list(existing_profile.get("skill_assignments", []) or [])
-            if str(dict(item).get("skill_name", "") or "").strip()
-        }
-        items: list[dict[str, Any]] = []
-        for skill_name in skill_names:
-            items.append(dict(existing_map.get(skill_name, {"skill_name": skill_name})))
-        return items
 
     def _resolve_profile_default_model(
         self,

@@ -236,7 +236,7 @@
 - `prompt_ref`
 - `default_model`
 - `enabled_tools`
-- `skill_assignments`
+- `skills`
 - `computer_policy`
 - `config`
 

@@ -106,10 +106,9 @@ def test_filesystem_profile_loader_loads_yaml_profiles(tmp_path: Path) -> None:
                 "default_model: fs-model",
                 "enabled_tools:",
                 "  - reference_search",
-                "skill_assignments:",
-                "  - skill_name: reference_lookup",
-                "    delegation_mode: prefer_delegate",
-                "    delegate_agent_id: research_worker",
+                "skills:",
+                "  - reference_lookup",
+                "  - excel_processing",
             ]
         ),
         encoding="utf-8",
@@ -125,12 +124,10 @@ def test_filesystem_profile_loader_loads_yaml_profiles(tmp_path: Path) -> None:
     assert profiles["aca"].name == "Aca FS"
     assert profiles["aca"].default_model == "fs-model"
     assert profiles["aca"].enabled_tools == ["reference_search"]
-    assert len(profiles["aca"].skill_assignments) == 1
-    assert profiles["aca"].skill_assignments[0].delegation_mode == "prefer_delegate"
-    assert profiles["aca"].skill_assignments[0].delegate_agent_id == "research_worker"
+    assert profiles["aca"].skills == ["reference_lookup", "excel_processing"]
 
 
-def test_filesystem_profile_loader_rejects_unknown_delegation_mode(tmp_path: Path) -> None:
+def test_filesystem_profile_loader_rejects_legacy_skill_assignments_with_delegation_fields(tmp_path: Path) -> None:
     profiles_dir = tmp_path / "profiles"
     profiles_dir.mkdir()
     (profiles_dir / "aca.yaml").write_text(
@@ -139,7 +136,7 @@ def test_filesystem_profile_loader_rejects_unknown_delegation_mode(tmp_path: Pat
                 "name: Aca FS",
                 "skill_assignments:",
                 "  - skill_name: reference_lookup",
-                "    delegation_mode: unknown_mode",
+                "    delegate_agent_id: worker",
             ]
         ),
         encoding="utf-8",
@@ -149,7 +146,54 @@ def test_filesystem_profile_loader_rejects_unknown_delegation_mode(tmp_path: Pat
         default_model="fallback-model",
     )
 
-    with pytest.raises(ValueError, match="Unsupported delegation_mode"):
+    with pytest.raises(ValueError, match="Legacy skill_assignments"):
+        loader.load_all()
+
+
+def test_filesystem_profile_loader_migrates_legacy_skill_assignments(tmp_path: Path) -> None:
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+    (profiles_dir / "aca.yaml").write_text(
+        "\n".join(
+            [
+                "name: Aca FS",
+                "skill_assignments:",
+                "  - skill_name: reference_lookup",
+                "  - excel_processing",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    loader = FileSystemProfileLoader(
+        profiles_dir,
+        default_model="fallback-model",
+    )
+
+    profiles = loader.load_all()
+
+    assert profiles["aca"].skills == ["reference_lookup", "excel_processing"]
+    assert "skill_assignments" not in profiles["aca"].config
+
+
+def test_filesystem_profile_loader_rejects_non_string_skill_entries(tmp_path: Path) -> None:
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+    (profiles_dir / "aca.yaml").write_text(
+        "\n".join(
+            [
+                "name: Aca FS",
+                "skills:",
+                "  - skill_name: reference_lookup",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    loader = FileSystemProfileLoader(
+        profiles_dir,
+        default_model="fallback-model",
+    )
+
+    with pytest.raises(ValueError, match="Skill must be a string"):
         loader.load_all()
 
 

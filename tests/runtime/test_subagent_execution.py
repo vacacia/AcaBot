@@ -118,13 +118,7 @@ async def test_delegate_subagent_uses_real_local_child_run() -> None:
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
                         "default_model": "runtime-model",
-                        "skill_assignments": [
-                            {
-                                "skill_name": "sample_configured_skill",
-                                "delegation_mode": "must_delegate",
-                                "delegate_agent_id": "excel_worker",
-                            }
-                        ],
+                        "skills": ["sample_configured_skill"],
                     },
                     "excel_worker": {
                         "name": "Excel Worker",
@@ -164,7 +158,7 @@ async def test_delegate_subagent_uses_real_local_child_run() -> None:
     result = await components.tool_broker.execute(
         tool_name="delegate_subagent",
         arguments={
-            "skill_name": "sample_configured_skill",
+            "delegate_agent_id": "excel_worker",
             "task": "整理 Excel 文件并总结",
         },
         ctx=_tool_ctx(run_id=parent_run.run_id, profile=profile),
@@ -183,7 +177,6 @@ async def test_delegate_subagent_uses_real_local_child_run() -> None:
     assert child_run.status == "completed"
     assert child_run.metadata["run_kind"] == "subagent"
     assert child_run.metadata["parent_run_id"] == parent_run.run_id
-    assert child_run.metadata["delegated_skill"] == "sample_configured_skill"
 
     child_thread = await components.thread_manager.get(child_run.thread_id)
     assert child_thread is not None
@@ -265,13 +258,7 @@ async def test_delegate_subagent_child_run_uses_delegate_agent_model_binding(
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
                         "default_model": "runtime-model",
-                        "skill_assignments": [
-                            {
-                                "skill_name": "sample_configured_skill",
-                                "delegation_mode": "must_delegate",
-                                "delegate_agent_id": "excel_worker",
-                            }
-                        ],
+                        "skills": ["sample_configured_skill"],
                     },
                     "excel_worker": {
                         "name": "Excel Worker",
@@ -311,7 +298,7 @@ async def test_delegate_subagent_child_run_uses_delegate_agent_model_binding(
     result = await components.tool_broker.execute(
         tool_name="delegate_subagent",
         arguments={
-            "skill_name": "sample_configured_skill",
+            "delegate_agent_id": "excel_worker",
             "task": "整理 Excel 文件并总结",
         },
         ctx=_tool_ctx(run_id=parent_run.run_id, profile=profile),

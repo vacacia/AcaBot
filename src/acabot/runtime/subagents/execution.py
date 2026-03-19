@@ -92,7 +92,6 @@ class LocalSubagentExecutionService:
             last_event_at=event.timestamp,
         )
         thread.metadata.setdefault("parent_run_id", request.parent_run_id)
-        thread.metadata.setdefault("delegated_skill", request.skill_name)
         thread.metadata.setdefault("delegate_agent_id", request.delegate_agent_id)
 
         profile = self.profile_loader(decision)
@@ -153,7 +152,7 @@ class LocalSubagentExecutionService:
         source = self._build_event_source(request)
         task_text = str(request.payload.get("task", "") or "").strip()
         if not task_text:
-            task_text = f"delegate skill {request.skill_name}"
+            task_text = f"delegate to subagent {request.delegate_agent_id}"
         return StandardEvent(
             event_id=f"evt:subagent:{uuid.uuid4().hex}",
             event_type="message",
@@ -166,7 +165,6 @@ class LocalSubagentExecutionService:
             sender_role=None,
             metadata={
                 "subagent_child_run": True,
-                "delegated_skill": request.skill_name,
                 "parent_run_id": request.parent_run_id,
                 "payload": dict(request.payload),
             },
@@ -194,7 +192,6 @@ class LocalSubagentExecutionService:
                 "parent_run_id": request.parent_run_id,
                 "parent_thread_id": request.parent_thread_id,
                 "parent_agent_id": request.parent_agent_id,
-                "delegated_skill": request.skill_name,
                 "delegate_agent_id": request.delegate_agent_id,
             },
         )
@@ -263,7 +260,6 @@ class LocalSubagentExecutionService:
             summary = run.error or ""
 
         return SubagentDelegationResult(
-            skill_name=request.skill_name,
             ok=ok,
             delegated_run_id=run.run_id,
             summary=summary,
@@ -305,7 +301,6 @@ class LocalSubagentExecutionService:
                     step_type="subagent_delegation",
                     status=status,
                     payload={
-                        "skill_name": request.skill_name,
                         "delegate_agent_id": request.delegate_agent_id,
                         "child_run_id": child_run_id,
                         "result_ok": bool(result.ok) if result is not None else None,
