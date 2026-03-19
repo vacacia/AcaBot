@@ -1615,3 +1615,143 @@ async def test_logs_page_exists_and_exposes_mode_toggle(tmp_path: Path) -> None:
         assert "紧凑" in result["bodyText"]
     finally:
         await server.stop()
+
+
+async def test_memory_page_uses_search_list_create_layout_for_notes_panel(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+        log_buffer=InMemoryLogBuffer(),
+    )
+    await components.control_plane.create_sticky_note(
+        scope="channel",
+        scope_key="qq:group:42",
+        key="default",
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        result = await asyncio.to_thread(
+            run_page_script,
+            url=f"{base_url}/config/memory",
+            width=1440,
+            height=1000,
+            script="""
+              const notesPanel = document.querySelector('.note-panel');
+              const children = notesPanel
+                ? Array.from(notesPanel.children).map((item) => item.className || item.tagName)
+                : [];
+              return {
+                hasSearch: Boolean(document.querySelector('.note-search input')),
+                hasList: Boolean(document.querySelector('.note-list')),
+                hasCreate: Boolean(document.querySelector('.note-create')),
+                children,
+              };
+            """,
+        )
+
+        assert result["hasSearch"] is True
+        assert result["hasList"] is True
+        assert result["hasCreate"] is True
+    finally:
+        await server.stop()
+
+
+async def test_webui_defaults_to_dark_theme_and_exposes_system_mode(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+        log_buffer=InMemoryLogBuffer(),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        result = await asyncio.to_thread(
+            run_page_script,
+            url=f"{base_url}/",
+            width=1440,
+            height=1000,
+            script="""
+              const selector = document.querySelector('[data-theme-mode]');
+              const options = selector
+                ? Array.from(selector.querySelectorAll('option')).map((item) => item.textContent?.trim() || '')
+                : [];
+              return {
+                theme: document.documentElement.dataset.theme || '',
+                themeMode: document.documentElement.dataset.themeMode || '',
+                bodyText: document.body.textContent || '',
+              };
+            """,
+        )
+
+        assert result["theme"] == "dark"
+        assert result["themeMode"] == "dark"
+        assert "跟随系统" in result["bodyText"]
+    finally:
+        await server.stop()
+
+
+async def test_memory_page_preserves_state_when_navigating_away_and_back(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+        log_buffer=InMemoryLogBuffer(),
+    )
+    await components.control_plane.create_sticky_note(
+        scope="channel",
+        scope_key="qq:group:42",
+        key="default",
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        result = await asyncio.to_thread(
+            run_page_script,
+            url=f"{base_url}/config/memory",
+            width=1440,
+            height=1000,
+            wait_ms=2200,
+            script="""
+              const memoryLink = Array.from(document.querySelectorAll('a')).find((item) => item.textContent?.trim() === '记忆');
+              const pluginsLink = Array.from(document.querySelectorAll('a')).find((item) => item.textContent?.trim() === '插件');
+              const search = document.querySelector('.note-search input');
+              search.value = 'qq:';
+              search.dispatchEvent(new Event('input', { bubbles: true }));
+              pluginsLink.click();
+              return new Promise((resolve) => {
+                setTimeout(() => {
+                  memoryLink.click();
+                  setTimeout(() => {
+                    resolve({
+                      searchValue: document.querySelector('.note-search input')?.value || '',
+                    });
+                  }, 200);
+                }, 200);
+              });
+            """,
+        )
+
+        assert result["searchValue"] == "qq:"
+    finally:
+        await server.stop()

@@ -106,6 +106,14 @@ class ThreadPipeline:
         """
         # 标记 run 状态为 running
         await self.run_manager.mark_running(ctx.run.run_id)
+        logger.debug(
+            "Pipeline started: run_id=%s thread=%s agent=%s run_mode=%s deliver_actions=%s",
+            ctx.run.run_id,
+            ctx.thread.thread_id,
+            ctx.profile.agent_id,
+            ctx.decision.run_mode,
+            deliver_actions,
+        )
         try:
             await self._run_plugin_hooks(RuntimeHookPoint.ON_EVENT, ctx)
             if self.computer_runtime is not None:
@@ -124,6 +132,12 @@ class ThreadPipeline:
             # record_only 模式
             # -----------------------------------------------------
             if ctx.decision.run_mode == "record_only":
+                logger.info(
+                    "Pipeline record_only: run_id=%s thread=%s incoming_messages=%s",
+                    ctx.run.run_id,
+                    ctx.thread.thread_id,
+                    len(ctx.thread.working_messages),
+                )
                 await self.thread_manager.save(ctx.thread)
                 await self.run_manager.mark_completed(ctx.run.run_id)
                 await self._extract_memory_safely(ctx)
@@ -164,6 +178,14 @@ class ThreadPipeline:
                         timestamp=ctx.event.timestamp,
                     )
                 ctx.metadata["compaction_applied_to_thread"] = applied
+                logger.debug(
+                    "Compaction finished: run_id=%s applied=%s kept=%s dropped=%s summary_chars=%s",
+                    ctx.run.run_id,
+                    applied,
+                    len(compaction_result.compressed_messages),
+                    len(compaction_result.dropped_messages),
+                    len(compaction_result.summary_text or ""),
+                )
             else:
                 ctx.metadata["effective_working_summary"] = ctx.thread.working_summary
                 ctx.metadata["effective_compacted_messages"] = list(ctx.thread.working_messages)
@@ -184,10 +206,17 @@ class ThreadPipeline:
             # 注入记忆, 调用 Agent
             # -----------------------------------------------------
             await self._inject_memories(ctx)
+            logger.debug(
+                "Memory injected: run_id=%s memory_blocks=%s message_count=%s",
+                ctx.run.run_id,
+                len(ctx.memory_blocks),
+                len(ctx.messages),
+            )
             if self.message_preparation_service is not None:
                 self.message_preparation_service.apply_model_message(ctx)
             pre_agent_result = await self._run_plugin_hooks(RuntimeHookPoint.PRE_AGENT, ctx)
             if pre_agent_result.action == "skip_agent":
+                logger.debug("Agent execution skipped by plugin: run_id=%s", ctx.run.run_id)
                 ctx.response = AgentRuntimeResult(
                     status="completed",
                     actions=list(ctx.actions),
@@ -196,6 +225,13 @@ class ThreadPipeline:
             else:
                 ctx.response = await self.agent_runtime.execute(ctx)
                 ctx.actions = list(ctx.response.actions)
+                logger.debug(
+                    "Agent runtime returned: run_id=%s status=%s actions=%s pending_approval=%s",
+                    ctx.run.run_id,
+                    ctx.response.status,
+                    len(ctx.actions),
+                    bool(ctx.response.pending_approval),
+                )
             await self._run_plugin_hooks(RuntimeHookPoint.POST_AGENT, ctx)
 
             # -----------------------------------------------------
@@ -211,6 +247,12 @@ class ThreadPipeline:
                 await self._run_plugin_hooks(RuntimeHookPoint.ON_SENT, ctx)
             else:
                 ctx.delivery_report = self._build_internal_delivery_report(ctx)
+            logger.debug(
+                "Delivery prepared: run_id=%s delivered=%s failed=%s",
+                ctx.run.run_id,
+                len((ctx.delivery_report or DispatchReport()).delivered_items),
+                len((ctx.delivery_report or DispatchReport()).failed_action_ids),
+            )
             # -----------------------------------------------------
             # 收尾
             # -----------------------------------------------------
@@ -274,6 +316,12 @@ class ThreadPipeline:
         file_backed_blocks = self._collect_sticky_blocks_from_files(ctx)
         if file_backed_blocks:
             ctx.memory_blocks = [*file_backed_blocks, *ctx.memory_blocks]
+        logger.debug(
+            "Collected memory blocks: run_id=%s retrieved=%s file_backed=%s",
+            ctx.run.run_id,
+            len(ctx.memory_blocks) - len(file_backed_blocks),
+            len(file_backed_blocks),
+        )
 
         if self.retrieval_planner is not None:
             ctx.messages = self.retrieval_planner.assemble(
@@ -341,6 +389,13 @@ class ThreadPipeline:
                     pending,
                     delivery_report=ctx.delivery_report or DispatchReport(),
                 )
+            logger.debug(
+                "Run waiting approval: run_id=%s tool=%s approval_id=%s prompt_actions=%s",
+                ctx.run.run_id,
+                pending.tool_name,
+                pending.approval_id,
+                len(pending.required_action_ids),
+            )
             await self.run_manager.mark_waiting_approval(
                 ctx.run.run_id,
                 reason=pending.reason,
@@ -356,6 +411,11 @@ class ThreadPipeline:
             return
 
         if response.status == "failed":
+            logger.warning(
+                "Run failed from agent runtime: run_id=%s error=%s",
+                ctx.run.run_id,
+                response.error or "agent runtime failed",
+            )
             await self.run_manager.mark_failed(
                 ctx.run.run_id,
                 response.error or "agent runtime failed",
@@ -363,12 +423,14 @@ class ThreadPipeline:
             return
 
         if (ctx.delivery_report or DispatchReport()).has_failures:
+            logger.warning("Run completed with delivery errors: run_id=%s", ctx.run.run_id)
             await self.run_manager.mark_completed_with_errors(
                 ctx.run.run_id,
                 error_summary="partial delivery failure",
             )
             return
 
+        logger.info("Run completed cleanly: run_id=%s", ctx.run.run_id)
         await self.run_manager.mark_completed(ctx.run.run_id)
 
     async def _extract_memory_safely(self, ctx: RunContext) -> None:

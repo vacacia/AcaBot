@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue"
 
-import { apiGet } from "../lib/api"
+import { apiGet, peekCachedGet } from "../lib/api"
 
 type SkillItem = {
   skill_name: string
@@ -9,7 +9,7 @@ type SkillItem = {
   description?: string
 }
 
-const items = ref<SkillItem[]>([])
+const items = ref<SkillItem[]>(peekCachedGet<SkillItem[]>("/api/skills") ?? [])
 
 onMounted(() => {
   void apiGet<SkillItem[]>("/api/skills").then((payload) => {

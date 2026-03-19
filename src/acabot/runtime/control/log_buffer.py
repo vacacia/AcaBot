@@ -17,6 +17,7 @@ class LogEntry:
     level: str
     logger: str
     message: str
+    kind: str = "runtime"
     seq: int = 0
 
 
@@ -87,6 +88,7 @@ class InMemoryLogHandler(logging.Handler):
                 level=str(record.levelname or "INFO"),
                 logger=str(record.name or ""),
                 message=message,
+                kind=str(getattr(record, "log_kind", "") or "runtime"),
             )
         )
 

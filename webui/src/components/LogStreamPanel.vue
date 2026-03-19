@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from "vue"
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from "vue"
 
 import { apiGet } from "../lib/api"
 
@@ -9,6 +9,7 @@ type LogItem = {
   level: string
   logger: string
   message: string
+  kind?: string
 }
 
 type LogPayload = {
@@ -69,6 +70,17 @@ function levelClass(levelName: string): string {
       return "is-error"
     case "CRITICAL":
       return "is-critical"
+    default:
+      return ""
+  }
+}
+
+function kindClass(kindName?: string): string {
+  switch (String(kindName || "").toLowerCase()) {
+    case "napcat_message":
+      return "is-napcat-message"
+    case "napcat_notice":
+      return "is-napcat-notice"
     default:
       return ""
   }
@@ -192,6 +204,14 @@ onMounted(() => {
   })
 })
 
+onActivated(() => {
+  schedulePoll()
+})
+
+onDeactivated(() => {
+  cancelPoll()
+})
+
 onBeforeUnmount(() => {
   disposed = true
   cancelPoll()
@@ -232,11 +252,17 @@ onBeforeUnmount(() => {
     <div v-else-if="loading && logs.length === 0" class="empty">正在加载日志…</div>
     <div v-else-if="logs.length === 0" class="empty">暂无日志</div>
     <div v-else ref="logList" class="log-list" :style="{ height }">
-      <article v-for="item in logs" :key="item.seq" class="log-line" :class="levelClass(item.level)">
+      <article
+        v-for="item in logs"
+        :key="item.seq"
+        class="log-line"
+        :class="[levelClass(item.level), kindClass(item.kind)]"
+      >
         <div class="log-meta">
           <span class="seq-chip">#{{ item.seq }}</span>
           <span class="time-chip">{{ new Date(item.timestamp * 1000).toLocaleTimeString("zh-CN", { hour12: false }) }}</span>
           <span class="level-chip" :class="levelClass(item.level)">{{ item.level }}</span>
+          <span v-if="item.kind && item.kind !== 'runtime'" class="kind-chip" :class="kindClass(item.kind)">{{ item.kind }}</span>
           <span class="logger-chip">{{ item.logger }}</span>
         </div>
         <pre class="log-message">{{ item.message }}</pre>
@@ -310,19 +336,19 @@ button {
   margin: 0 0 12px;
   padding: 12px 14px;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.68);
+  background: var(--panel-strong);
   color: var(--muted);
   font-size: 13px;
 }
 
 .status.warn {
-  color: #9a6700;
-  background: rgba(154, 103, 0, 0.08);
+  color: var(--warning);
+  background: rgba(154, 103, 0, 0.12);
 }
 
 .status.error {
-  color: #b42318;
-  background: rgba(180, 35, 24, 0.08);
+  color: var(--danger);
+  background: rgba(180, 35, 24, 0.14);
 }
 
 .log-list {
@@ -335,7 +361,7 @@ button {
 .log-line {
   border: 1px solid var(--line);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.82);
+  background: color-mix(in srgb, var(--panel-strong) 92%, transparent);
   padding: 8px 10px;
   border-left-width: 4px;
 }
@@ -363,31 +389,32 @@ button {
     monospace;
   font-size: 12px;
   line-height: 1.45;
-  color: #19304d;
+  color: var(--log-message);
 }
 
 .seq-chip,
 .time-chip,
 .level-chip,
+.kind-chip,
 .logger-chip {
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
   padding: 2px 8px;
-  background: rgba(19, 41, 68, 0.06);
+  background: rgba(19, 41, 68, 0.12);
 }
 
 .seq-chip {
   font-weight: 700;
-  color: #35506f;
+  color: var(--log-seq);
 }
 
 .time-chip {
-  color: #52667f;
+  color: var(--log-time);
 }
 
 .logger-chip {
-  color: #40556f;
+  color: var(--log-logger);
   max-width: 100%;
   overflow-wrap: anywhere;
 }
@@ -397,29 +424,44 @@ button {
   letter-spacing: 0.03em;
 }
 
+.kind-chip {
+  font-weight: 700;
+  color: var(--napcat-chip);
+}
+
 .log-line.is-debug {
   border-left-color: #7c8ba1;
-  background: linear-gradient(90deg, rgba(124, 139, 161, 0.08), rgba(255, 255, 255, 0.82));
+  background: linear-gradient(90deg, rgba(124, 139, 161, 0.12), color-mix(in srgb, var(--panel-strong) 94%, transparent));
 }
 
 .log-line.is-info {
   border-left-color: #0f6cb8;
-  background: linear-gradient(90deg, rgba(15, 108, 184, 0.08), rgba(255, 255, 255, 0.82));
+  background: linear-gradient(90deg, rgba(15, 108, 184, 0.14), color-mix(in srgb, var(--panel-strong) 94%, transparent));
 }
 
 .log-line.is-warning {
   border-left-color: #d97706;
-  background: linear-gradient(90deg, rgba(217, 119, 6, 0.1), rgba(255, 255, 255, 0.84));
+  background: linear-gradient(90deg, rgba(217, 119, 6, 0.16), color-mix(in srgb, var(--panel-strong) 94%, transparent));
 }
 
 .log-line.is-error {
   border-left-color: #dc2626;
-  background: linear-gradient(90deg, rgba(220, 38, 38, 0.1), rgba(255, 255, 255, 0.84));
+  background: linear-gradient(90deg, rgba(220, 38, 38, 0.18), color-mix(in srgb, var(--panel-strong) 94%, transparent));
 }
 
 .log-line.is-critical {
   border-left-color: #7c3aed;
-  background: linear-gradient(90deg, rgba(124, 58, 237, 0.12), rgba(255, 255, 255, 0.86));
+  background: linear-gradient(90deg, rgba(124, 58, 237, 0.2), color-mix(in srgb, var(--panel-strong) 94%, transparent));
+}
+
+.log-line.is-napcat-message {
+  box-shadow: inset 0 0 0 1px rgba(24, 119, 104, 0.12);
+  background: linear-gradient(90deg, rgba(24, 119, 104, 0.18), color-mix(in srgb, var(--panel-strong) 94%, transparent));
+}
+
+.log-line.is-napcat-notice {
+  box-shadow: inset 0 0 0 1px rgba(20, 184, 166, 0.12);
+  background: linear-gradient(90deg, rgba(20, 184, 166, 0.18), color-mix(in srgb, var(--panel-strong) 94%, transparent));
 }
 
 .level-chip.is-debug {
@@ -445,6 +487,16 @@ button {
 .level-chip.is-critical {
   background: rgba(124, 58, 237, 0.16);
   color: #6d28d9;
+}
+
+.kind-chip.is-napcat-message {
+  background: rgba(24, 119, 104, 0.16);
+  color: #0f766e;
+}
+
+.kind-chip.is-napcat-notice {
+  background: rgba(20, 184, 166, 0.16);
+  color: #0f766e;
 }
 
 .panel.is-dense {
@@ -493,6 +545,7 @@ button {
 .panel.is-dense .seq-chip,
 .panel.is-dense .time-chip,
 .panel.is-dense .level-chip,
+.panel.is-dense .kind-chip,
 .panel.is-dense .logger-chip {
   padding: 1px 6px;
 }

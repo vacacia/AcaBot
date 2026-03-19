@@ -1,5 +1,66 @@
 # 当前进展 Handoff
 
+## 2026-03-19 skill 临时分析笔记
+
+- 这轮又单独补了一篇临时文档:
+  - `docs/tmp-skill-notes.md`
+- 这篇不是最终共识文档，而是围绕 `skill` 该怎么改的一份设计笔记。
+- 这轮有几个关键结论被明确写死了:
+  - `skill` 和 `subagent` 不是同一层概念
+  - `subagent` 是内部 agent
+  - `skill` 是能力包, 不该继续承担 delegation 语义
+  - skill-based delegation 应该整套删除, 不保留半兼容状态
+- 另外，这轮还重新收了一次“skill 是否一定要通过 tool 实现”这个问题:
+  - 结论是 **不一定**
+  - 更关键的问题不是“是否 tool 化”，而是“是否给模型暴露了稳定的 skill 可见路径”
+- 文档里把 skill 的三种落法单独比较了一次:
+  - prompt 暴露摘要 + bot 用 `read` 按需读取
+  - 一个很薄的 `load_skill(name)` helper
+  - 一 skill 一 tool
+- 后来又按用户要求把 `docs/tmp-skill-notes.md` 里“对 AcaBot 的落地结论”进一步收死:
+  - 不再把实现方式写成 A / B / C 的开放选择
+  - 直接定成 **方案 A**:
+    - prompt 暴露 skill 摘要
+    - 提供稳定的 `/skills/...` visible path
+    - 模型按需用 `read` 读取 `SKILL.md` / references / scripts / assets
+  - 文档里还顺手把一个容易说乱的点写清楚了:
+    - 方案 A 不是没法审计
+    - 只是默认拿到的是文件级审计
+    - 只要 `/skills/...` 路径稳定, runtime 就能再补一层 skill 语义审计
+  - 后来又按用户要求把 `docs/tmp-skill-notes.md` 的第 6 节继续重写了一次:
+    - 不再用模糊的“先收这个再收那个”说法
+    - 直接写成“原来是什么, 最后改成什么, 中间具体怎么替换”
+    - 核心口径现在是:
+      - 原来: `skill_assignments: list[SkillAssignment]`，同时夹带 delegation 语义
+      - 最后: `skills: list[str]`，skill 只表示可见能力包
+      - subagent delegation 完全改成独立的一条线
+  - 现在这篇临时文档的开放问题, 已经从“skill 怎么定位”收成了纯工程问题:
+    - `/skills/...` visible path 怎么做
+    - skill mirror / backend / sandbox 的路径语义怎么统一
+    - skill 语义审计怎么补
+- 如果后续真的开始删 skill-based delegation, 这篇文档就是最直接的临时口径。
+
+## 2026-03-19 架构问题审视文档
+
+- 这轮没有继续改 runtime 或 WebUI 代码，而是回头重新审视了一次现有框架，单独补了一篇“现在最严重的问题是什么”的判断文档:
+  - `docs/20-critical-architecture-issues.md`
+- 这篇文档不是问题总表，也不是未来蓝图。
+- 它只做一件事：明确当前最该优先处理的结构性问题。
+- 这次给出的结论是:
+  - 第一严重问题不是某个单点 bug，而是**能力边界和抽象边界没有完全收口**
+  - 典型表现包括:
+    - direct subagent delegation 还能绕过一部分 profile / assignment 语义
+    - `skill` 还停在“说明书”和“运行时能力单元”的中间态
+    - `tool / plugin / skill / subagent` 这组概念还没有完全收成单一能力模型
+- 文档里还顺带把另外两类次级问题排了优先级:
+  - `runtime` 继续中心化，子域边界更多靠文档维持
+  - 产品概念、配置概念、底层实现概念还没完全对齐
+- 这篇文档的作用不是替代 `docs/15-known-issues-and-design-gaps.md`，而是给以后继续演进时一个更明确的“先怕什么、先修什么”的判断依据。
+- 如果后续真的开始动 subagent / skill / capability visibility 这条线，建议先回看:
+  - `docs/20-critical-architecture-issues.md`
+  - `docs/06-tools-plugins-and-subagents.md`
+  - `docs/15-known-issues-and-design-gaps.md`
+
 ## 2026-03-18 这轮追加进展
 
 - 这轮继续把控制台往 OpenClaw 那种“按职责拆页面”的方向收了一次，不再保留一个什么都塞进去的 `Bot` 页。
@@ -106,6 +167,85 @@
 - 这次没有直接照搬 AstrBot 的 SSE，而是先做了更适合 AcaBot 当前 `ThreadingHTTPServer + JSON API` 结构的最小稳妥版本:
   - `seq + delta polling`
   - 后续如果要继续做 SSE，可以直接挂在这套契约上
+
+## 2026-03-19 全链路日志补强
+
+- 在前一个提交之后, 又继续补了一轮真正的运行链路日志, 这部分当前**还没 commit**。
+- 这轮不是继续堆 WebUI, 而是把“消息从 NapCat 进来后一路发生了什么”尽量打全:
+  - `src/acabot/gateway/napcat.py`
+    - 记录 NapCat 入站消息
+    - 记录 NapCat notice
+    - 记录 NapCat 出站消息
+    - 记录 send / call_api 的 ack 和 timeout
+  - `src/acabot/runtime/app.py`
+    - 记录 backend mode 进入/退出
+    - 记录 backend bang command
+    - 记录 profile/model 解析结果
+    - 记录 thread agent override
+    - 记录 recovery 汇总
+  - `src/acabot/runtime/pipeline.py`
+    - 记录 pipeline 启动
+    - 记录 `record_only`
+    - 记录 compaction 结果
+    - 记录 memory 注入结果
+    - 记录 skip_agent
+    - 记录 delivery 汇总
+    - 记录 waiting approval / failed / completed
+  - `src/acabot/runtime/outbox.py`
+    - 记录 action send
+    - 记录 delivered / no_ack / exception
+    - 记录 assistant message 持久化
+- 这轮还给日志记录补了一个轻量 `kind` 字段:
+  - 默认 `runtime`
+  - NapCat 消息用 `napcat_message`
+  - NapCat notice 用 `napcat_notice`
+- 前端 `LogStreamPanel.vue` 已经开始读这个 `kind`, 所以 NapCat 消息和内部 runtime 日志现在可以用不同颜色区分。
+- 当前这轮已验证:
+  - `PYTHONPATH=src python3 -m pytest tests/runtime/test_log_buffer.py tests/runtime/test_webui_api.py tests/runtime/test_bootstrap.py tests/runtime/test_app.py tests/runtime/test_router.py tests/runtime/test_pipeline_runtime.py -q`
+    - 结果: `94 passed`
+  - `npm --prefix webui run build`
+    - 结果: 构建成功
+- 当前工作区剩余未提交改动主要就是这轮日志补强:
+  - `src/acabot/gateway/napcat.py`
+  - `src/acabot/runtime/app.py`
+  - `src/acabot/runtime/control/log_buffer.py`
+  - `src/acabot/runtime/outbox.py`
+  - `src/acabot/runtime/pipeline.py`
+  - `webui/src/components/LogStreamPanel.vue`
+  - `tests/runtime/test_log_buffer.py`
+  - 以及新生成的 `src/acabot/webui/` 构建产物
+
+## 2026-03-19 日志等级和工具链路修补
+
+- 用户反馈“现在日志几乎全是 INFO，重点看不见”。这轮已经把一批过程态日志下沉到 `DEBUG`:
+  - `acabot.agent` 里的:
+    - `LLM run request`
+    - `LLM requested tool calls`
+    - `LLM complete request`
+    - `LLM complete finished`
+    - `Tool execution requested by LLM`
+    - `Tool execution finished`
+- 仍保留在更高等级的主要是:
+  - 真正完成的 run
+  - route / pipeline 的关键状态切换
+  - warning / error / exception
+- 另外用户看到“模型健康检查通过，但真实调用失败”，这里真正根因不是 health check:
+  - `computer_tool_adapter.py` 之前对 slots dataclass 直接取 `__dict__`
+  - `agent.py` 在 tool-call 回合里把 `assistant.content=None` 原样塞回下一轮 messages
+- 这两个点都会把真实运行时请求打坏, 但 health check 只跑最小 `ping`, 所以会出现:
+  - 健康检查通过
+  - 真实运行炸掉
+- 这轮已经修掉:
+  - `src/acabot/runtime/plugins/computer_tool_adapter.py`
+    - 改成 dataclass 安全序列化, 不再依赖 `__dict__`
+  - `src/acabot/agent/agent.py`
+    - tool-call 回合的 assistant message 如果 `content is None`, 会归一成空字符串
+- 这轮验证:
+  - `PYTHONPATH=src python3 -m pytest tests/test_agent.py tests/runtime/test_computer_tool_adapter.py -q`
+    - 结果: `12 passed`
+  - 更大回归:
+    - `PYTHONPATH=src python3 -m pytest tests/runtime/test_log_buffer.py tests/runtime/test_webui_api.py tests/runtime/test_bootstrap.py tests/runtime/test_app.py tests/runtime/test_router.py tests/runtime/test_pipeline_runtime.py tests/test_agent.py tests/runtime/test_computer_tool_adapter.py -q`
+    - 结果: `106 passed`
 
 ## 这轮已经完成了什么
 

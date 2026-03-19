@@ -57,10 +57,10 @@ watch(
 }
 
 .list {
-  border: 1px solid #d5deea;
+  border: 1px solid var(--panel-line-strong);
   border-radius: 10px;
   padding: 8px;
-  background: #fff;
+  background: var(--panel-white);
   max-height: 70vh;
   overflow: auto;
 }
@@ -76,16 +76,16 @@ watch(
 }
 
 .file-item.active {
-  background: #dff0ff;
-  color: #0b4f83;
+  background: var(--panel-blue-soft);
+  color: var(--panel-blue-soft-text);
   font-weight: 600;
 }
 
 .editor {
-  border: 1px solid #d5deea;
+  border: 1px solid var(--panel-line-strong);
   border-radius: 10px;
   padding: 10px;
-  background: #fff;
+  background: var(--panel-white);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -95,20 +95,21 @@ textarea {
   width: 100%;
   resize: vertical;
   min-height: 400px;
-  border: 1px solid #cdd8e9;
+  border: 1px solid var(--panel-line-soft);
   border-radius: 8px;
   padding: 8px;
   font-family: monospace;
+  background: var(--panel-strong);
+  color: var(--text);
 }
 
 .save {
   align-self: flex-end;
   border: 0;
   border-radius: 8px;
-  background: #0b77c5;
+  background: linear-gradient(135deg, var(--button-primary-start) 0%, var(--button-primary-end) 100%);
   color: #fff;
   padding: 8px 14px;
   cursor: pointer;
 }
 </style>
-

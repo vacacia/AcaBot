@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from "vue"
 
 import LogStreamPanel from "../components/LogStreamPanel.vue"
 import StatusCard from "../components/StatusCard.vue"
-import { apiGet } from "../lib/api"
+import { apiGet, peekCachedGet } from "../lib/api"
 
 type RuntimeStatus = {
   loaded_plugins?: string[]
@@ -19,11 +19,15 @@ type BackendStatus = {
   active_modes?: string[]
 }
 
-const status = ref<RuntimeStatus>({})
-const gateway = ref<GatewayStatus>({})
-const backend = ref<BackendStatus>({})
+const status = ref<RuntimeStatus>(peekCachedGet<RuntimeStatus>("/api/status") ?? {})
+const gateway = ref<GatewayStatus>(peekCachedGet<GatewayStatus>("/api/gateway/status") ?? {})
+const backend = ref<BackendStatus>(peekCachedGet<BackendStatus>("/api/backend/status") ?? {})
 const errorText = ref("")
-const loading = ref(false)
+const loading = ref(
+  !peekCachedGet<RuntimeStatus>("/api/status")
+  || !peekCachedGet<GatewayStatus>("/api/gateway/status")
+  || !peekCachedGet<BackendStatus>("/api/backend/status")
+)
 
 const cards = computed(() => [
   {

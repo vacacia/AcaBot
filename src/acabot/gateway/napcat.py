@@ -19,6 +19,7 @@ except ImportError:
 from .base import BaseGateway
 from .onebot_message import (
     extract_onebot_message_features,
+    extract_onebot_text,
     onebot_segment_to_attachment,
 )
 from acabot.types import (
@@ -129,6 +130,14 @@ class NapCatGateway(BaseGateway):
                     continue
                 # 事件: 翻译后分发给 Pipeline
                 event = self.translate(data)
+                if event is None:
+                    logger.debug(
+                        "NapCat event ignored: post_type=%s raw_keys=%s",
+                        data.get("post_type"),
+                        sorted(data.keys()),
+                    )
+                    continue
+                self._log_inbound_event(event)
                 if event and self._on_event:
                     asyncio.create_task(self._on_event(event))
         except websockets.ConnectionClosed:
@@ -152,7 +161,39 @@ class NapCatGateway(BaseGateway):
             return self._translate_message(raw)
         if post_type == "notice":
             return self._translate_notice(raw)
+        logger.debug("Unsupported NapCat post_type=%s", post_type)
         return None
+
+    def _log_inbound_event(self, event: StandardEvent) -> None:
+        """记录一条来自 NapCat 的已翻译事件日志."""
+
+        preview = self._preview_text(
+            event.message_preview
+            or event.notice_preview
+            or event.working_memory_text
+            or f"[{event.event_type}]"
+        )
+        if event.event_type == "message":
+            logger.info(
+                "NapCat inbound message: event_id=%s channel=%s user=%s group=%s subtype=%s preview=%s",
+                event.event_id,
+                event.session_key,
+                event.source.user_id,
+                event.source.group_id or "-",
+                event.message_subtype or "-",
+                preview,
+                extra={"log_kind": "napcat_message"},
+            )
+            return
+        logger.info(
+            "NapCat inbound notice: event_id=%s type=%s channel=%s user=%s preview=%s",
+            event.event_id,
+            event.event_type,
+            event.session_key,
+            event.source.user_id,
+            preview,
+            extra={"log_kind": "napcat_notice"},
+        )
 
     def _translate_message(self, raw: dict[str, Any]) -> StandardEvent:
         """翻译普通消息事件.
@@ -189,11 +230,6 @@ class NapCatGateway(BaseGateway):
             MsgSegment(type=s["type"], data=s.get("data", {}))
             for s in raw_segments
         ]
-        logger.debug(
-            "translate: msg_id=%s, segments=%s",
-            raw.get("message_id"),
-            [(s.type, s.data) for s in segments],
-        )
         return StandardEvent(
             event_id=f"evt_{raw.get('message_id', '')}",
             event_type="message",
@@ -855,11 +891,19 @@ class NapCatGateway(BaseGateway):
             return None
         payload = self.build_send_payload(action)
         echo = payload["echo"]
+        self._log_outbound_action(action, echo=echo)
         future: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[echo] = future
         await self._ws.send(json.dumps(payload))
         try:
-            return await asyncio.wait_for(future, timeout=self.timeout)
+            response = await asyncio.wait_for(future, timeout=self.timeout)
+            logger.debug(
+                "NapCat send ack: echo=%s status=%s retcode=%s",
+                echo,
+                response.get("status"),
+                response.get("retcode"),
+            )
+            return response
         except asyncio.TimeoutError:
             logger.error(f"Send timeout echo={echo}")
             return None
@@ -872,14 +916,66 @@ class NapCatGateway(BaseGateway):
             return {"status": "failed", "retcode": -1, "msg": "No WS connection"}
         echo = str(uuid.uuid4())
         payload = {"action": action, "params": params, "echo": echo}
+        logger.debug("NapCat call_api: action=%s echo=%s params=%s", action, echo, params)
         future: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[echo] = future
         await self._ws.send(json.dumps(payload))
         try:
-            return await asyncio.wait_for(future, timeout=self.timeout)
+            response = await asyncio.wait_for(future, timeout=self.timeout)
+            logger.debug(
+                "NapCat call_api ack: action=%s echo=%s status=%s retcode=%s",
+                action,
+                echo,
+                response.get("status"),
+                response.get("retcode"),
+            )
+            return response
         except asyncio.TimeoutError:
             return {"status": "failed", "retcode": -1, "msg": f"Timeout: {action}"}
         finally:
             self._pending.pop(echo, None)
+
+    def _log_outbound_action(self, action: Action, *, echo: str) -> None:
+        """为出站动作写一条简洁日志."""
+
+        if action.action_type in {ActionType.SEND_TEXT, ActionType.SEND_SEGMENTS}:
+            preview = self._preview_text(self._extract_action_text(action))
+            logger.info(
+                "NapCat outbound message: echo=%s action=%s target=%s preview=%s",
+                echo,
+                action.action_type,
+                self._target_label(action.target),
+                preview,
+                extra={"log_kind": "napcat_message"},
+            )
+            return
+        logger.info(
+            "NapCat outbound action: echo=%s action=%s target=%s payload=%s",
+            echo,
+            action.action_type,
+            self._target_label(action.target),
+            action.payload,
+        )
+
+    @staticmethod
+    def _extract_action_text(action: Action) -> str:
+        if action.action_type == ActionType.SEND_TEXT:
+            return str(action.payload.get("text", "") or "")
+        if action.action_type == ActionType.SEND_SEGMENTS:
+            return extract_onebot_text(list(action.payload.get("segments", []) or []))
+        return ""
+
+    @staticmethod
+    def _target_label(target: EventSource) -> str:
+        if target.message_type == "group":
+            return f"group:{target.group_id}"
+        return f"user:{target.user_id}"
+
+    @staticmethod
+    def _preview_text(text: str, max_len: int = 120) -> str:
+        raw = str(text or "").strip()
+        if len(raw) <= max_len:
+            return raw
+        return f"{raw[:max_len]}..."
 
     # endregion

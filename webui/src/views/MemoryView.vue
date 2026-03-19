@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue"
+import { computed, onBeforeUnmount, onMounted, ref } from "vue"
 
 import StickyNotePane from "../components/StickyNotePane.vue"
-import { apiGet, apiPost, apiPut } from "../lib/api"
+import { apiGet, apiPost, apiPut, peekCachedGet } from "../lib/api"
 
 type StickyScopeItem = {
   scope: string
@@ -22,35 +22,117 @@ type StickyNoteItem = {
   editable: { content: string }
 }
 
-const scopeItems = ref<StickyScopeItem[]>([])
-const noteItems = ref<StickyNoteSummary[]>([])
-const selectedScope = ref("channel")
-const selectedScopeKey = ref("")
-const selectedNoteKey = ref("")
-const noteItem = ref<StickyNoteItem | null>(null)
-const draftScope = ref("channel")
-const draftScopeKey = ref("")
+const MEMORY_SCOPE_STORAGE_KEY = "acabot.memory.scope"
+const MEMORY_NOTE_STORAGE_KEY = "acabot.memory.note"
+
+function noteListPath(scope: string, scopeKey: string): string {
+  return `/api/memory/sticky-notes?scope=${encodeURIComponent(scope)}&scope_key=${encodeURIComponent(scopeKey)}`
+}
+
+function noteItemPath(scope: string, scopeKey: string, key: string): string {
+  return `/api/memory/sticky-notes/item?scope=${encodeURIComponent(scope)}&scope_key=${encodeURIComponent(scopeKey)}&key=${encodeURIComponent(key)}`
+}
+
+function readStoredScope() {
+  const raw = localStorage.getItem(MEMORY_SCOPE_STORAGE_KEY)
+  if (!raw) {
+    return null
+  }
+  try {
+    return JSON.parse(raw) as { scope: string; scope_key: string }
+  } catch {
+    return null
+  }
+}
+
+function readStoredNote() {
+  const raw = localStorage.getItem(MEMORY_NOTE_STORAGE_KEY)
+  if (!raw) {
+    return null
+  }
+  try {
+    return JSON.parse(raw) as { scope: string; scope_key: string; key: string }
+  } catch {
+    return null
+  }
+}
+
+const cachedScopes = peekCachedGet<{ items: StickyScopeItem[] }>("/api/memory/sticky-notes/scopes")
+const storedScope = readStoredScope()
+const storedNote = readStoredNote()
+const initialScope = storedScope?.scope || "channel"
+const initialScopeKey = storedScope?.scope_key || ""
+const cachedNotes = initialScopeKey
+  ? peekCachedGet<{ items: StickyNoteSummary[] }>(noteListPath(initialScope, initialScopeKey))
+  : null
+const cachedNoteItem = storedNote
+  ? peekCachedGet<StickyNoteItem>(noteItemPath(storedNote.scope, storedNote.scope_key, storedNote.key))
+  : null
+
+const scopeItems = ref<StickyScopeItem[]>(cachedScopes?.items ?? [])
+const noteItems = ref<StickyNoteSummary[]>(cachedNotes?.items ?? [])
+const noteSearch = ref("")
+const selectedScope = ref(cachedNoteItem?.scope || initialScope)
+const selectedScopeKey = ref(cachedNoteItem?.scope_key || initialScopeKey)
+const selectedNoteKey = ref(cachedNoteItem?.key || storedNote?.key || "")
+const noteItem = ref<StickyNoteItem | null>(cachedNoteItem)
+const draftScope = ref(cachedNoteItem?.scope || initialScope)
+const draftScopeKey = ref(cachedNoteItem?.scope_key || initialScopeKey)
 const newNoteKey = ref("")
-const loadingText = ref("正在加载 sticky notes...")
+const loadingText = ref(cachedNoteItem || cachedNotes || cachedScopes ? "" : "正在加载 sticky notes...")
 const statusText = ref("")
 const errorText = ref("")
+
+let statusTimer: ReturnType<typeof setTimeout> | null = null
+
+const filteredNoteItems = computed(() => {
+  const keyword = noteSearch.value.trim().toLowerCase()
+  if (!keyword) {
+    return noteItems.value
+  }
+  return noteItems.value.filter((item) => item.key.toLowerCase().includes(keyword))
+})
+
+function clearStatus(): void {
+  statusText.value = ""
+  if (statusTimer !== null) {
+    clearTimeout(statusTimer)
+    statusTimer = null
+  }
+}
+
+function showStatus(message: string): void {
+  clearStatus()
+  statusText.value = message
+  statusTimer = setTimeout(() => {
+    statusText.value = ""
+    statusTimer = null
+  }, 1400)
+}
 
 async function loadScopes(): Promise<void> {
   const payload = await apiGet<{ items: StickyScopeItem[] }>("/api/memory/sticky-notes/scopes")
   scopeItems.value = payload.items ?? []
 }
 
-async function openScope(scope: string, scopeKey: string): Promise<void> {
+async function openScope(scope: string, scopeKey: string, preserveCurrent = false): Promise<void> {
   selectedScope.value = scope
   selectedScopeKey.value = scopeKey
   draftScope.value = scope
   draftScopeKey.value = scopeKey
-  selectedNoteKey.value = ""
-  noteItem.value = null
+  noteSearch.value = ""
+  if (!preserveCurrent) {
+    selectedNoteKey.value = ""
+    noteItem.value = null
+  }
+  localStorage.setItem(MEMORY_SCOPE_STORAGE_KEY, JSON.stringify({ scope, scope_key: scopeKey }))
   const payload = await apiGet<{ items: StickyNoteSummary[] }>(
-    `/api/memory/sticky-notes?scope=${encodeURIComponent(scope)}&scope_key=${encodeURIComponent(scopeKey)}`,
+    noteListPath(scope, scopeKey),
   )
   noteItems.value = payload.items ?? []
+  if (preserveCurrent && selectedNoteKey.value && noteItems.value.some((item) => item.key === selectedNoteKey.value)) {
+    return
+  }
   if (noteItems.value[0]?.key) {
     await openNote(noteItems.value[0].key)
   }
@@ -59,20 +141,28 @@ async function openScope(scope: string, scopeKey: string): Promise<void> {
 async function openNote(key: string): Promise<void> {
   if (!selectedScope.value || !selectedScopeKey.value) return
   const payload = await apiGet<StickyNoteItem>(
-    `/api/memory/sticky-notes/item?scope=${encodeURIComponent(selectedScope.value)}&scope_key=${encodeURIComponent(selectedScopeKey.value)}&key=${encodeURIComponent(key)}`,
+    noteItemPath(selectedScope.value, selectedScopeKey.value, key),
   )
   selectedNoteKey.value = key
   noteItem.value = payload
+  localStorage.setItem(
+    MEMORY_NOTE_STORAGE_KEY,
+    JSON.stringify({
+      scope: payload.scope,
+      scope_key: payload.scope_key,
+      key: payload.key,
+    }),
+  )
 }
 
 async function browseScope(): Promise<void> {
   if (!draftScopeKey.value.trim()) {
     errorText.value = "先填写右上角的 scope key，再点击浏览。"
-    statusText.value = ""
+    clearStatus()
     return
   }
   errorText.value = ""
-  statusText.value = ""
+  clearStatus()
   try {
     await openScope(draftScope.value, draftScopeKey.value.trim())
   } catch (error) {
@@ -83,16 +173,16 @@ async function browseScope(): Promise<void> {
 async function createNote(): Promise<void> {
   if (!draftScopeKey.value.trim()) {
     errorText.value = "新建 note 前，先在右上角填写 scope key 并点击浏览。"
-    statusText.value = ""
+    clearStatus()
     return
   }
   if (!newNoteKey.value.trim()) {
     errorText.value = "先填写 note key，再点击新建。"
-    statusText.value = ""
+    clearStatus()
     return
   }
   errorText.value = ""
-  statusText.value = ""
+  clearStatus()
   try {
     await apiPost<StickyNoteItem>("/api/memory/sticky-notes/item", {
       scope: draftScope.value,
@@ -102,7 +192,7 @@ async function createNote(): Promise<void> {
     newNoteKey.value = ""
     await loadScopes()
     await openScope(draftScope.value, draftScopeKey.value.trim())
-    statusText.value = "已创建并打开新的 sticky note"
+    showStatus("已创建并打开新的 sticky note")
   } catch (error) {
     errorText.value = error instanceof Error ? error.message : "新建 sticky note 失败"
   }
@@ -111,7 +201,7 @@ async function createNote(): Promise<void> {
 async function saveReadonly(content: string): Promise<void> {
   if (!noteItem.value) return
   errorText.value = ""
-  statusText.value = ""
+  clearStatus()
   try {
     noteItem.value = await apiPut<StickyNoteItem>("/api/memory/sticky-notes/readonly", {
       scope: noteItem.value.scope,
@@ -119,7 +209,7 @@ async function saveReadonly(content: string): Promise<void> {
       key: noteItem.value.key,
       content,
     })
-    statusText.value = "只读区已保存"
+    showStatus("只读区已保存")
   } catch (error) {
     errorText.value = error instanceof Error ? error.message : "保存只读区失败"
   }
@@ -128,7 +218,7 @@ async function saveReadonly(content: string): Promise<void> {
 async function saveEditable(content: string): Promise<void> {
   if (!noteItem.value) return
   errorText.value = ""
-  statusText.value = ""
+  clearStatus()
   try {
     noteItem.value = await apiPut<StickyNoteItem>("/api/memory/sticky-notes/item", {
       scope: noteItem.value.scope,
@@ -136,7 +226,7 @@ async function saveEditable(content: string): Promise<void> {
       key: noteItem.value.key,
       content,
     })
-    statusText.value = "可编辑区已保存"
+    showStatus("可编辑区已保存")
   } catch (error) {
     errorText.value = error instanceof Error ? error.message : "保存可编辑区失败"
   }
@@ -147,9 +237,27 @@ onMounted(() => {
     errorText.value = ""
     try {
       await loadScopes()
-      const first = scopeItems.value[0]
-      if (first) {
-        await openScope(first.scope, first.scope_key)
+      const preferredScope = draftScopeKey.value.trim()
+        ? { scope: draftScope.value, scope_key: draftScopeKey.value.trim() }
+        : scopeItems.value[0]
+          ? { scope: scopeItems.value[0].scope, scope_key: scopeItems.value[0].scope_key }
+          : null
+      if (preferredScope) {
+        const preserveCurrent =
+          Boolean(noteItem.value)
+          && noteItem.value?.scope === preferredScope.scope
+          && noteItem.value?.scope_key === preferredScope.scope_key
+        await openScope(preferredScope.scope, preferredScope.scope_key, preserveCurrent)
+        const preferredNote =
+          storedNote
+          && storedNote.scope === preferredScope.scope
+          && storedNote.scope_key === preferredScope.scope_key
+          && noteItems.value.some((item) => item.key === storedNote.key)
+            ? storedNote.key
+            : ""
+        if (preferredNote) {
+          await openNote(preferredNote)
+        }
       }
     } catch (error) {
       errorText.value = error instanceof Error ? error.message : "加载 sticky notes 失败"
@@ -157,6 +265,10 @@ onMounted(() => {
       loadingText.value = ""
     }
   })()
+})
+
+onBeforeUnmount(() => {
+  clearStatus()
 })
 </script>
 
@@ -180,60 +292,46 @@ onMounted(() => {
 
     <div class="content">
       <aside class="sidebar">
-        <section class="panel">
-          <div class="panel-header">
-            <div>
-              <h2>已存在 Scope</h2>
-              <p>先选 scope，再继续浏览下面的 note。</p>
-            </div>
-          </div>
-          <p v-if="scopeItems.length === 0" class="panel-empty">还没有 scope。先在右上角填 scope key，再到下面新建第一条 note。</p>
-          <button
-            v-for="item in scopeItems"
-            :key="`${item.scope}:${item.scope_key}`"
-            class="list-item"
-            :class="{ active: item.scope === selectedScope && item.scope_key === selectedScopeKey }"
-            type="button"
-            @click="void openScope(item.scope, item.scope_key)"
-          >
-            <strong>{{ item.scope }}</strong>
-            <span>{{ item.scope_key }}</span>
-          </button>
-        </section>
-
-        <section class="panel">
+        <section class="panel note-panel">
           <div class="panel-header">
             <div>
               <h2>Notes</h2>
               <p>{{ selectedScopeKey || "先选择 scope" }}</p>
             </div>
           </div>
-          <div class="new-note">
-            <input v-model="newNoteKey" type="text" placeholder="再填 note key，例如 default" />
-            <button type="button" @click="void createNote()">新建</button>
+          <div class="note-search">
+            <input v-model="noteSearch" type="text" placeholder="搜索 note" />
           </div>
-          <p v-if="errorText" class="panel-error">{{ errorText }}</p>
-          <p v-if="noteItems.length === 0" class="panel-empty">右上角先填并浏览 scope，这里再填 note key，点“新建”才会创建第一条记录。</p>
-          <button
-            v-for="item in noteItems"
-            :key="item.key"
-            class="list-item"
-            :class="{ active: item.key === selectedNoteKey }"
-            type="button"
-            @click="void openNote(item.key)"
-          >
-            {{ item.key }}
-          </button>
+          <div class="note-list">
+            <p v-if="errorText" class="panel-error">{{ errorText }}</p>
+            <p v-if="noteItems.length > 0 && filteredNoteItems.length === 0" class="panel-empty">没有匹配的 note。</p>
+            <button
+              v-for="item in filteredNoteItems"
+              :key="item.key"
+              class="list-item"
+              :class="{ active: item.key === selectedNoteKey }"
+              type="button"
+              @click="void openNote(item.key)"
+            >
+              {{ item.key }}
+            </button>
+          </div>
+          <div class="note-create">
+            <div class="new-note">
+              <input v-model="newNoteKey" type="text" placeholder="再填 note key，例如 default" />
+              <button type="button" @click="void createNote()">新建</button>
+            </div>
+          </div>
         </section>
       </aside>
 
       <section class="main-panel">
+        <p v-if="statusText" class="toast-status">{{ statusText }}</p>
         <div v-if="errorText" class="error">{{ errorText }}</div>
         <div v-else-if="loadingText" class="empty">{{ loadingText }}</div>
         <div v-else-if="noteItem === null" class="empty">
           先在右上角输入 scope key 并点击浏览。如果是第一次创建，直接在左侧 Notes 里填 note key，然后点“新建”。
         </div>
-        <p v-else-if="statusText" class="status">{{ statusText }}</p>
         <StickyNotePane
           v-else
           :readonly-content="noteItem.readonly.content"
@@ -350,8 +448,39 @@ button {
   min-width: 0;
 }
 
+.main-panel {
+  position: relative;
+}
+
 .panel-header {
   margin-bottom: 14px;
+}
+
+.note-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 420px;
+}
+
+.note-search {
+  margin-bottom: 12px;
+}
+
+.note-search input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.note-list {
+  flex: 1;
+  min-height: 120px;
+  overflow: auto;
+}
+
+.note-create {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
 }
 
 .list-item {
@@ -378,13 +507,36 @@ button {
 .panel-empty {
   padding: 18px;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.64);
+  background: var(--panel-strong);
   color: var(--muted);
 }
 
 .status {
   margin: 0 0 16px;
-  color: #166534;
+  color: var(--success);
+}
+
+.toast-status {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: max-content;
+  max-width: min(320px, calc(100% - 36px));
+  padding: 9px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(110, 212, 154, 0.22);
+  background: rgba(12, 38, 24, 0.88);
+  color: #dcfce7;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.22);
+  z-index: 2;
 }
 
 .panel-error {

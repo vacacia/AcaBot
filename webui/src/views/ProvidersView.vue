@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue"
 
-import { apiDelete, apiGet, apiPut } from "../lib/api"
+import { apiDelete, apiGet, apiPut, peekCachedGet } from "../lib/api"
 
 type ProviderRecord = {
   provider_id: string
@@ -51,11 +51,11 @@ type Catalog = {
   }
 }
 
-const providers = ref<ProviderRecord[]>([])
-const providerKinds = ref<string[]>([])
+const providers = ref<ProviderRecord[]>(peekCachedGet<ProviderRecord[]>("/api/models/providers") ?? [])
+const providerKinds = ref<string[]>(peekCachedGet<Catalog>("/api/ui/catalog")?.options.provider_kinds ?? [])
 const selectedId = ref("")
 const draft = ref<ProviderDraft | null>(null)
-const loading = ref(true)
+const loading = ref(!(providers.value.length > 0 || providerKinds.value.length > 0))
 const saveMessage = ref("")
 const errorMessage = ref("")
 
@@ -83,6 +83,12 @@ function blankDraft(): ProviderDraft {
     default_query_text: "",
     default_body_text: "",
   }
+}
+
+const cachedInitialProvider = providers.value[0]
+if (cachedInitialProvider) {
+  draft.value = toDraft(cachedInitialProvider)
+  selectedId.value = cachedInitialProvider.provider_id
 }
 
 function toDraft(item: ProviderRecord): ProviderDraft {
@@ -410,12 +416,12 @@ p {
 
 .status.ok {
   background: rgba(17, 120, 74, 0.08);
-  color: #11784a;
+  color: var(--success);
 }
 
 .status.error {
   background: rgba(186, 41, 41, 0.08);
-  color: #ba2929;
+  color: var(--danger);
 }
 
 .form-grid {
@@ -429,7 +435,7 @@ p {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  color: #23334f;
+  color: var(--heading-soft);
 }
 
 .field.full {
@@ -483,7 +489,7 @@ textarea {
 
 .primary-button {
   border: none;
-  background: linear-gradient(135deg, #0f6cb8 0%, #0a4a7b 100%);
+  background: linear-gradient(135deg, var(--button-primary-start) 0%, var(--button-primary-end) 100%);
   color: #fff;
 }
 

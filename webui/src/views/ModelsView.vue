@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue"
 
-import { apiDelete, apiGet, apiPost, apiPut } from "../lib/api"
+import { apiDelete, apiGet, apiPost, apiPut, peekCachedGet } from "../lib/api"
 
 type PresetRecord = {
   preset_id: string
@@ -42,11 +42,11 @@ type PresetDraft = {
   model_params_text: string
 }
 
-const presets = ref<PresetRecord[]>([])
-const providers = ref<ProviderRecord[]>([])
+const presets = ref<PresetRecord[]>(peekCachedGet<PresetRecord[]>("/api/models/presets") ?? [])
+const providers = ref<ProviderRecord[]>(peekCachedGet<ProviderRecord[]>("/api/models/providers") ?? [])
 const selectedId = ref("")
 const draft = ref<PresetDraft | null>(null)
-const loading = ref(true)
+const loading = ref(!(presets.value.length > 0 || providers.value.length > 0))
 const saveMessage = ref("")
 const errorMessage = ref("")
 
@@ -68,6 +68,12 @@ function blankDraft(): PresetDraft {
     max_output_tokens: "",
     model_params_text: "",
   }
+}
+
+const cachedInitialPreset = presets.value[0]
+if (cachedInitialPreset) {
+  draft.value = toDraft(cachedInitialPreset)
+  selectedId.value = cachedInitialPreset.preset_id
 }
 
 function providerLabel(providerId: string): string {
@@ -390,12 +396,12 @@ p {
 
 .status.ok {
   background: rgba(17, 120, 74, 0.08);
-  color: #11784a;
+  color: var(--success);
 }
 
 .status.error {
   background: rgba(186, 41, 41, 0.08);
-  color: #ba2929;
+  color: var(--danger);
 }
 
 .form-grid {
@@ -409,7 +415,7 @@ p {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  color: #23334f;
+  color: var(--heading-soft);
 }
 
 .field.full {
@@ -463,7 +469,7 @@ textarea {
 
 .primary-button {
   border: none;
-  background: linear-gradient(135deg, #0f6cb8 0%, #0a4a7b 100%);
+  background: linear-gradient(135deg, var(--button-primary-start) 0%, var(--button-primary-end) 100%);
   color: #fff;
 }
 

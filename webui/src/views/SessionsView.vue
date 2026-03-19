@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue"
 
-import { apiGet, apiPut } from "../lib/api"
+import { apiGet, apiPut, peekCachedGet } from "../lib/api"
 
 type CatalogPrompt = {
   prompt_ref: string
@@ -87,18 +87,22 @@ const memoryScopeOptions = [
   { value: "channel", label: "会话" },
 ]
 
-const catalog = ref<UiCatalog>({
-  prompts: [],
-  model_presets: [],
-  tools: [],
-  skills: [],
-  options: {
-    event_types: [],
-    event_type_labels: {},
-    session_channel_templates: [],
+const catalog = ref<UiCatalog>(
+  peekCachedGet<UiCatalog>("/api/ui/catalog") ?? {
+    prompts: [],
+    model_presets: [],
+    tools: [],
+    skills: [],
+    options: {
+      event_types: [],
+      event_type_labels: {},
+      session_channel_templates: [],
+    },
   },
-})
-const sessions = ref<SessionRecord[]>([])
+)
+const sessions = ref<SessionRecord[]>(
+  (peekCachedGet<{ items: SessionRecord[] }>("/api/sessions")?.items ?? []).map(normalizeRecord)
+)
 const selectedScope = ref("")
 const draft = ref<SessionRecord | null>(null)
 const activeTab = ref<"base" | "ai" | "response" | "other">("base")
@@ -574,7 +578,7 @@ button {
 
 .primary {
   border: 0;
-  background: linear-gradient(135deg, #0f6cb8 0%, #0a4a7b 100%);
+  background: linear-gradient(135deg, var(--button-primary-start) 0%, var(--button-primary-end) 100%);
   color: #fff;
 }
 
@@ -660,7 +664,7 @@ label.inline {
 .memory-card {
   border: 1px solid var(--line);
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--panel-strong);
   padding: 14px;
 }
 
@@ -710,12 +714,12 @@ label.inline {
 .save-ok {
   padding: 18px;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.64);
+  background: var(--panel-strong);
   color: var(--muted);
 }
 
 .save-ok {
-  color: #166534;
+  color: var(--success);
 }
 
 .create-dialog {
@@ -723,7 +727,7 @@ label.inline {
   padding: 16px;
   border: 1px solid var(--line);
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.84);
+  background: var(--panel-white);
 }
 
 .dialog-actions {

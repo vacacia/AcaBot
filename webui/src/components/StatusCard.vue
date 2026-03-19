@@ -16,27 +16,26 @@ defineProps<{
 
 <style scoped>
 .card {
-  border: 1px solid #d5deea;
+  border: 1px solid var(--panel-line-strong);
   border-radius: 12px;
   padding: 12px;
-  background: #fff;
+  background: var(--panel-white);
 }
 
 .title {
-  color: #4d5d75;
+  color: var(--muted);
   font-size: 12px;
 }
 
 .value {
   font-size: 20px;
   font-weight: 700;
-  color: #173257;
+  color: var(--heading-strong);
   margin: 4px 0;
 }
 
 .hint {
-  color: #6d7686;
+  color: var(--muted);
   font-size: 12px;
 }
 </style>
-

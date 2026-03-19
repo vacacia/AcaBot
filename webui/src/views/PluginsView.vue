@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue"
 
-import { apiGet, apiPost, apiPut } from "../lib/api"
+import { apiGet, apiPost, apiPut, peekCachedGet } from "../lib/api"
 
 type PluginConfig = {
   path: string
@@ -10,7 +10,7 @@ type PluginConfig = {
   display_name?: string
 }
 
-const items = ref<PluginConfig[]>([])
+const items = ref<PluginConfig[]>(peekCachedGet<{ items: PluginConfig[] }>("/api/system/plugins/config")?.items ?? [])
 const saveMessage = ref("")
 const errorMessage = ref("")
 
@@ -126,12 +126,12 @@ button {
 
 .status.ok {
   background: rgba(17, 120, 74, 0.08);
-  color: #11784a;
+  color: var(--success);
 }
 
 .status.error {
   background: rgba(186, 41, 41, 0.08);
-  color: #ba2929;
+  color: var(--danger);
 }
 
 .item {
@@ -141,7 +141,7 @@ button {
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--panel-white);
   margin-bottom: 12px;
 }
 

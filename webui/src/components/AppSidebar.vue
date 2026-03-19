@@ -7,6 +7,35 @@
         <div class="brand-subtitle">控制台</div>
       </div>
     </div>
+    <div class="theme-switcher" data-theme-mode>
+      <span class="theme-label">主题</span>
+      <div class="theme-segment" role="group" aria-label="主题模式">
+        <button
+          class="theme-option"
+          :class="{ active: themeMode === 'light' }"
+          type="button"
+          @click="emit('update:theme-mode', 'light')"
+        >
+          浅色
+        </button>
+        <button
+          class="theme-option"
+          :class="{ active: themeMode === 'dark' }"
+          type="button"
+          @click="emit('update:theme-mode', 'dark')"
+        >
+          深色
+        </button>
+        <button
+          class="theme-option"
+          :class="{ active: themeMode === 'system' }"
+          type="button"
+          @click="emit('update:theme-mode', 'system')"
+        >
+          跟随系统
+        </button>
+      </div>
+    </div>
     <nav class="nav">
       <RouterLink class="nav-item" to="/">首页</RouterLink>
       <div class="group-title">配置</div>
@@ -26,12 +55,23 @@
   </aside>
 </template>
 
+<script setup lang="ts">
+type ThemeMode = "light" | "dark" | "system"
+
+defineProps<{
+  themeMode: ThemeMode
+}>()
+
+const emit = defineEmits<{
+  (e: "update:theme-mode", value: ThemeMode): void
+}>()
+</script>
+
 <style scoped>
 .sidebar {
   width: 248px;
   border-right: 1px solid var(--line);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.84) 0%, rgba(245, 249, 255, 0.7) 100%);
+  background: var(--sidebar-bg);
   backdrop-filter: blur(18px);
   padding: 20px 14px;
   box-sizing: border-box;
@@ -40,13 +80,62 @@
   gap: 10px;
   min-width: 0;
   overflow: auto;
-  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.55);
+  box-shadow: var(--sidebar-shadow);
 }
 
 .nav {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.theme-switcher {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.theme-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.theme-segment {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--theme-switch-bg);
+}
+
+.theme-option {
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--theme-switch-text);
+  padding: 10px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease,
+    transform 120ms ease;
+}
+
+.theme-option.active {
+  background: var(--theme-switch-active-bg);
+  color: var(--theme-switch-active-text);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.theme-option:hover {
+  transform: translateY(-1px);
 }
 
 .brand {
@@ -62,7 +151,7 @@
   border-radius: 14px;
   display: grid;
   place-items: center;
-  background: linear-gradient(135deg, #0f6cb8 0%, #0a4a7b 100%);
+  background: linear-gradient(135deg, var(--sidebar-brand-mark-start) 0%, var(--sidebar-brand-mark-end) 100%);
   color: #fff;
   font-weight: 800;
   letter-spacing: 0.08em;
@@ -71,7 +160,7 @@
 .brand-title {
   font-size: 20px;
   font-weight: 800;
-  color: #173257;
+  color: var(--heading-strong);
 }
 
 .brand-subtitle {
@@ -95,7 +184,7 @@
   display: block;
   padding: 10px 12px;
   border-radius: 12px;
-  color: #23334f;
+  color: var(--sidebar-text);
   text-decoration: none;
   transition:
     background-color 120ms ease,
@@ -110,9 +199,18 @@
 
 .nav-item.router-link-active {
   background: linear-gradient(135deg, rgba(15, 108, 184, 0.16), rgba(15, 108, 184, 0.08));
-  color: #0b4f83;
+  color: var(--sidebar-active);
   font-weight: 600;
   box-shadow: inset 0 0 0 1px rgba(15, 108, 184, 0.12);
+}
+
+:root[data-theme="dark"] .nav-item:hover {
+  background: rgba(102, 183, 255, 0.1);
+}
+
+:root[data-theme="dark"] .nav-item.router-link-active {
+  background: linear-gradient(135deg, rgba(102, 183, 255, 0.18), rgba(102, 183, 255, 0.08));
+  box-shadow: inset 0 0 0 1px rgba(102, 183, 255, 0.16);
 }
 
 @media (max-width: 960px) {

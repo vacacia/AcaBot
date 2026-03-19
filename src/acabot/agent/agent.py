@@ -84,7 +84,9 @@ class LitellmAgent(BaseAgent):
             )
 
         completion = self._get_acompletion()
-        full_messages = [{"role": "system", "content": system_prompt}] + list(messages)
+        full_messages = self._sanitize_messages(
+            [{"role": "system", "content": system_prompt}] + list(messages)
+        )
         tools_param = self._build_tools_param(active_tools)
         total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         tool_calls_made: list[ToolCallRecord] = []
@@ -99,7 +101,7 @@ class LitellmAgent(BaseAgent):
                 if tools_param:
                     kwargs["tools"] = tools_param
 
-                logger.info(
+                logger.debug(
                     "LLM run request: model=%s messages=%s tools=%s request_options=%s",
                     use_model,
                     len(full_messages),
@@ -120,7 +122,7 @@ class LitellmAgent(BaseAgent):
 
             msg = choice.message
             if msg.tool_calls:
-                logger.info(
+                logger.debug(
                     "LLM requested tool calls: model=%s count=%s names=%s",
                     use_model,
                     len(msg.tool_calls),
@@ -190,11 +192,13 @@ class LitellmAgent(BaseAgent):
         use_model = str(model or "").strip()
         if not use_model:
             return AgentResponse(error="model is required", model_used="")
-        full_messages = [{"role": "system", "content": system_prompt}] + list(messages)
+        full_messages = self._sanitize_messages(
+            [{"role": "system", "content": system_prompt}] + list(messages)
+        )
         try:
             kwargs: dict[str, Any] = {"model": use_model, "messages": full_messages}
             kwargs.update(self._normalized_request_options(request_options))
-            logger.info(
+            logger.debug(
                 "LLM complete request: model=%s messages=%s request_options=%s",
                 use_model,
                 len(full_messages),
@@ -205,7 +209,7 @@ class LitellmAgent(BaseAgent):
                 response = await response
             choice = response.choices[0]
             usage = response.usage
-            logger.info(
+            logger.debug(
                 "LLM complete finished: model=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s text_preview=%s",
                 use_model,
                 getattr(usage, "prompt_tokens", 0),
@@ -279,6 +283,22 @@ class LitellmAgent(BaseAgent):
         return max(0, int(value))
 
     @staticmethod
+    def _sanitize_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """把消息列表归一化成对模型请求更安全的形状."""
+
+        sanitized: list[dict[str, Any]] = []
+        normalized_count = 0
+        for message in messages:
+            item = dict(message)
+            if "content" not in item or item.get("content") is None:
+                item["content"] = ""
+                normalized_count += 1
+            sanitized.append(item)
+        if normalized_count:
+            logger.warning("Normalized messages with empty content: count=%s", normalized_count)
+        return sanitized
+
+    @staticmethod
     def _normalized_request_options(
         request_options: dict[str, Any] | None,
     ) -> dict[str, Any]:
@@ -312,7 +332,9 @@ class LitellmAgent(BaseAgent):
 
         raw = msg.model_dump()
         assistant_msg = {
-            key: value for key, value in raw.items() if value is not None or key == "content"
+            key: ("" if key == "content" and value is None else value)
+            for key, value in raw.items()
+            if value is not None or key == "content"
         }
         full_messages.append(assistant_msg)
 
@@ -323,7 +345,7 @@ class LitellmAgent(BaseAgent):
             except json.JSONDecodeError:
                 arguments = {}
 
-            logger.info(
+            logger.debug(
                 "Tool execution requested by LLM: name=%s args=%s",
                 tool_name,
                 self._preview_json(arguments),
@@ -335,7 +357,7 @@ class LitellmAgent(BaseAgent):
             if not isinstance(execution, ToolExecutionResult):
                 execution = normalize_tool_result(execution)
             all_attachments.extend(execution.attachments)
-            logger.info(
+            logger.debug(
                 "Tool execution finished: name=%s attachments=%s content_preview=%s",
                 tool_name,
                 len(execution.attachments),

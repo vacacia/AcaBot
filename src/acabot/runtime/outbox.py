@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from acabot.types import Action, ActionType
@@ -25,6 +26,8 @@ from .contracts import (
     RunContext,
 )
 from .storage.stores import MessageStore
+
+logger = logging.getLogger("acabot.runtime.outbox")
 
 
 class Outbox:
@@ -69,9 +72,21 @@ class Outbox:
         report = DispatchReport()
         for item in items:
             try:
+                logger.debug(
+                    "Outbox send: run_id=%s action_id=%s action_type=%s thread=%s",
+                    item.run_id,
+                    item.plan.action_id,
+                    item.plan.action.action_type,
+                    item.thread_id,
+                )
                 # 发送, 拿发送结果
                 raw = await self.gateway.send(item.plan.action)
                 if raw is None:
+                    logger.warning(
+                        "Outbox send failed without ack: run_id=%s action_id=%s",
+                        item.run_id,
+                        item.plan.action_id,
+                    )
                     report.results.append(
                         DeliveryResult(
                             action_id=item.plan.action_id,
@@ -90,11 +105,22 @@ class Outbox:
                 )
                 report.results.append(result)
                 report.delivered_items.append(item)
+                logger.debug(
+                    "Outbox delivered: run_id=%s action_id=%s platform_message_id=%s",
+                    item.run_id,
+                    item.plan.action_id,
+                    result.platform_message_id or "-",
+                )
                 # region message落库
                 if self._should_persist_action(item.plan.action):
                     await self._persist_success(item=item, result=result)
                 # endregion
             except Exception as exc:
+                logger.exception(
+                    "Outbox dispatch crashed: run_id=%s action_id=%s",
+                    item.run_id,
+                    item.plan.action_id,
+                )
                 report.results.append(
                     DeliveryResult(
                         action_id=item.plan.action_id,
@@ -155,6 +181,12 @@ class Outbox:
                     "thread_content": item.plan.thread_content,
                 },
             )
+        )
+        logger.debug(
+            "Outbox persisted assistant message: run_id=%s action_id=%s thread=%s",
+            item.run_id,
+            item.plan.action_id,
+            item.thread_id,
         )
 
     @staticmethod

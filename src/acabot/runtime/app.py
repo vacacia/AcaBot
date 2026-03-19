@@ -183,7 +183,7 @@ class RuntimeApp:
             if self.plugin_manager is not None:
                 await self.plugin_manager.ensure_started()
             decision = await self.router.route(event)
-            logger.info(
+            logger.debug(
                 "Route resolved: event_id=%s agent=%s run_mode=%s thread=%s channel=%s",
                 event.event_id,
                 decision.agent_id,
@@ -208,6 +208,13 @@ class RuntimeApp:
                 model_request, model_snapshot, summary_model_request = self._resolve_model_requests(
                     decision=decision,
                     profile=profile,
+                )
+                logger.debug(
+                    "Profile/model resolved: event_id=%s agent=%s model=%s summary_model=%s",
+                    event.event_id,
+                    profile.agent_id,
+                    getattr(model_request, "model", "") or "-",
+                    getattr(summary_model_request, "model", "") or "-",
                 )
             except Exception as exc:
                 # 路由或配置加载失败, 无法继续正常 run 了. 记录一个 run 来关联这个事件, 并收尾为 failed.
@@ -239,6 +246,7 @@ class RuntimeApp:
                         run_id=run.run_id,
                     )
                 )
+                logger.debug("Channel event persisted: event_id=%s run_id=%s", event.event_id, run.run_id)
             
             ctx = RunContext(
                 run=run,
@@ -288,6 +296,7 @@ class RuntimeApp:
             return False
 
         if event.is_private and text == "/maintain":
+            logger.info("Backend mode entered: actor=%s thread=%s", actor_id, thread_id)
             self.backend_mode_registry.enter_backend_mode(
                 thread_id=thread_id,
                 actor_id=actor_id,
@@ -296,10 +305,12 @@ class RuntimeApp:
             return True
 
         if event.is_private and text in {"/maintain off", "/maintain exit"}:
+            logger.info("Backend mode exited: actor=%s thread=%s", actor_id, thread_id)
             self.backend_mode_registry.exit_backend_mode(thread_id)
             return True
 
         if event.is_private and self.backend_mode_registry.is_backend_mode(thread_id):
+            logger.debug("Backend direct message: actor=%s thread=%s summary=%s", actor_id, thread_id, text)
             result = await self.backend_bridge.handle_admin_direct(
                 self._build_backend_request(
                     event=event,
@@ -313,6 +324,7 @@ class RuntimeApp:
         if text.startswith("!"):
             summary = text[1:].strip()
             if summary:
+                logger.debug("Backend bang command: actor=%s thread=%s summary=%s", actor_id, thread_id, summary)
                 result = await self.backend_bridge.handle_admin_direct(
                     self._build_backend_request(
                         event=event,
@@ -335,6 +347,12 @@ class RuntimeApp:
         """
 
         text = self._extract_backend_reply_text(result)
+        logger.debug(
+            "Backend direct reply: event_id=%s channel=%s preview=%s",
+            event.event_id,
+            event.session_key,
+            self._preview_event(event=replace(event, message_preview=text)),
+        )
         await self.gateway.send(
             Action(
                 action_type=ActionType.SEND_TEXT,
@@ -502,6 +520,12 @@ class RuntimeApp:
         if not override_agent_id:
             return decision
         # override + 留痕
+        logger.debug(
+            "Thread agent override applied: thread=%s original_agent=%s override_agent=%s",
+            thread.thread_id,
+            decision.agent_id,
+            override_agent_id,
+        )
         return replace(
             decision,
             agent_id=override_agent_id,
@@ -552,6 +576,11 @@ class RuntimeApp:
             report.interrupted_run_ids.append(run.run_id)
 
         self.last_recovery_report = report
+        logger.debug(
+            "Recovery completed: interrupted=%s pending_approvals=%s",
+            len(report.interrupted_run_ids),
+            len(report.pending_approvals),
+        )
         return report
 
     def list_pending_approvals(self) -> list[PendingApprovalRecord]:

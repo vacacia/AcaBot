@@ -52,10 +52,10 @@ watch(
 }
 
 section {
-  border: 1px solid #d5deea;
+  border: 1px solid var(--panel-line-strong);
   border-radius: 10px;
   padding: 10px;
-  background: #fff;
+  background: var(--panel-white);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -64,25 +64,27 @@ section {
 
 header {
   font-weight: 700;
-  color: #163459;
+  color: var(--heading-strong);
 }
 
 textarea {
   width: 100%;
   resize: vertical;
-  border: 1px solid #cdd8e9;
+  border: 1px solid var(--panel-line-soft);
   border-radius: 8px;
   padding: 8px;
   font-family: monospace;
   box-sizing: border-box;
   min-height: 320px;
+  background: var(--panel-strong);
+  color: var(--text);
 }
 
 button {
   align-self: flex-end;
   border: 0;
   border-radius: 8px;
-  background: #0b77c5;
+  background: linear-gradient(135deg, var(--button-primary-start) 0%, var(--button-primary-end) 100%);
   color: #fff;
   padding: 8px 14px;
   cursor: pointer;

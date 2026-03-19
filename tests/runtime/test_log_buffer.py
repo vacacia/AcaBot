@@ -1,4 +1,6 @@
-from acabot.runtime.control.log_buffer import InMemoryLogBuffer, LogEntry
+import logging
+
+from acabot.runtime.control.log_buffer import InMemoryLogBuffer, InMemoryLogHandler, LogEntry
 
 
 def test_in_memory_log_buffer_supports_cursor_based_deltas() -> None:
@@ -12,6 +14,7 @@ def test_in_memory_log_buffer_supports_cursor_based_deltas() -> None:
     assert snapshot["next_seq"] == 3
     assert snapshot["reset_required"] is False
     assert [item["seq"] for item in snapshot["items"]] == [1, 2, 3]
+    assert [item["kind"] for item in snapshot["items"]] == ["runtime", "runtime", "runtime"]
 
     delta = buffer.list_entries(after_seq=1, limit=10)
 
@@ -31,3 +34,18 @@ def test_in_memory_log_buffer_marks_reset_when_cursor_falls_out_of_window() -> N
 
     assert delta["reset_required"] is True
     assert [item["seq"] for item in delta["items"]] == [3, 4]
+
+
+def test_in_memory_log_handler_preserves_log_kind() -> None:
+    buffer = InMemoryLogBuffer(max_entries=5)
+    handler = InMemoryLogHandler(buffer)
+    logger = logging.getLogger("acabot.test.log_kind")
+    logger.setLevel(logging.INFO)
+    logger.handlers = [handler]
+    logger.propagate = False
+
+    logger.info("hello", extra={"log_kind": "napcat_message"})
+
+    snapshot = buffer.list_entries(limit=10)
+
+    assert snapshot["items"][0]["kind"] == "napcat_message"

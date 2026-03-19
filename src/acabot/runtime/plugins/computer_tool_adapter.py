@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from acabot.agent import ToolSpec
@@ -202,7 +203,7 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
         lines = [f"{item.kind} {item.path}" for item in items]
         return ToolResult(
             llm_content="\n".join(lines) if lines else "(empty)",
-            raw={"items": [item.__dict__ for item in items]},
+            raw={"items": [self._serialize(item) for item in items]},
         )
 
     async def _grep(self, arguments: dict[str, Any], ctx: ToolExecutionContext) -> ToolResult:
@@ -230,7 +231,7 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
         )
         return ToolResult(
             llm_content=self._format_command_result(result),
-            raw=result.__dict__,
+            raw=self._serialize(result),
         )
 
     async def _bash_open(self, arguments: dict[str, Any], ctx: ToolExecutionContext) -> ToolResult:
@@ -274,7 +275,7 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
         )
         return ToolResult(
             llm_content=self._format_command_result(result),
-            raw=result.__dict__,
+            raw=self._serialize(result),
         )
 
     async def _bash_close(self, arguments: dict[str, Any], ctx: ToolExecutionContext) -> ToolResult:
@@ -325,3 +326,13 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
         if stderr:
             parts.append(f"stderr:\n{stderr}")
         return "\n".join(parts)
+
+    @staticmethod
+    def _serialize(value: Any) -> Any:
+        if is_dataclass(value):
+            return asdict(value)
+        if isinstance(value, list):
+            return [ComputerToolAdapterPlugin._serialize(item) for item in value]
+        if isinstance(value, dict):
+            return {key: ComputerToolAdapterPlugin._serialize(item) for key, item in value.items()}
+        return value

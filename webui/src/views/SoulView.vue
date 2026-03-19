@@ -2,7 +2,7 @@
 import { onMounted, ref } from "vue"
 
 import FileEditorPane, { type SoulFileItem } from "../components/FileEditorPane.vue"
-import { apiGet, apiPost, apiPut } from "../lib/api"
+import { apiGet, apiPost, apiPut, peekCachedGet } from "../lib/api"
 
 type SoulFilePayload = {
   name: string
@@ -10,12 +10,12 @@ type SoulFilePayload = {
   content: string
 }
 
-const files = ref<SoulFileItem[]>([])
-const selectedName = ref("")
-const content = ref("")
+const files = ref<SoulFileItem[]>(peekCachedGet<{ items: SoulFileItem[] }>("/api/soul/files")?.items ?? [])
+const selectedName = ref(files.value[0]?.name ?? "")
+const content = ref(selectedName.value ? (peekCachedGet<SoulFilePayload>(`/api/soul/file?name=${encodeURIComponent(selectedName.value)}`)?.content ?? "") : "")
 const errorText = ref("")
 const newFileName = ref("")
-const loading = ref(false)
+const loading = ref(files.value.length === 0)
 
 async function loadFiles(preferredName = ""): Promise<void> {
   const payload = await apiGet<{ items: SoulFileItem[] }>("/api/soul/files")
@@ -163,7 +163,7 @@ button {
 .empty {
   padding: 18px;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.64);
+  background: var(--panel-strong);
   color: var(--muted);
 }
 </style>

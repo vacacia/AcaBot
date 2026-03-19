@@ -1,17 +1,24 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue"
 
-import { apiGet, apiPut } from "../lib/api"
+import { apiGet, apiPut, peekCachedGet } from "../lib/api"
 
 type AdminsPayload = {
   admin_actor_ids: string[]
 }
 
-const draft = ref<AdminsPayload | null>(null)
-const adminActorIdsText = ref("")
+const cachedAdmins = peekCachedGet<AdminsPayload>("/api/admins")
+const draft = ref<AdminsPayload | null>(
+  cachedAdmins
+    ? {
+        admin_actor_ids: [...cachedAdmins.admin_actor_ids],
+      }
+    : null
+)
+const adminActorIdsText = ref(cachedAdmins?.admin_actor_ids.join("\n") ?? "")
 const saveMessage = ref("")
 const errorMessage = ref("")
-const loading = ref(true)
+const loading = ref(!cachedAdmins)
 
 async function loadPage(): Promise<void> {
   loading.value = true
@@ -112,7 +119,7 @@ onMounted(() => {
 h1 {
   margin: 0;
   font-size: 36px;
-  color: #173257;
+  color: var(--heading-strong);
 }
 
 .summary {
@@ -136,7 +143,7 @@ h1 {
   font-weight: 700;
   color: #fff;
   cursor: pointer;
-  background: linear-gradient(135deg, #0f6cb8 0%, #0a4a7b 100%);
+  background: linear-gradient(135deg, var(--button-primary-start) 0%, var(--button-primary-end) 100%);
   box-shadow: 0 14px 30px rgba(10, 74, 123, 0.18);
 }
 
@@ -152,19 +159,19 @@ h1 {
 }
 
 .status.ok {
-  color: #166534;
+  color: var(--success);
 }
 
 .status.error {
-  color: #b42318;
+  color: var(--danger);
 }
 
 .card {
-  border: 1px solid rgba(15, 108, 184, 0.12);
+  border: 1px solid var(--panel-line-strong);
   border-radius: 24px;
   padding: 24px;
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 18px 40px rgba(25, 58, 103, 0.08);
+  background: var(--panel-white);
+  box-shadow: var(--shadow);
   display: grid;
   gap: 14px;
 }
@@ -172,7 +179,7 @@ h1 {
 .card h2 {
   margin: 0;
   font-size: 22px;
-  color: #173257;
+  color: var(--heading-strong);
 }
 
 .card-summary {
@@ -189,18 +196,19 @@ h1 {
 .field span {
   font-size: 14px;
   font-weight: 600;
-  color: #1f2f49;
+  color: var(--heading-soft);
 }
 
 .field textarea {
   width: 100%;
-  border: 1px solid rgba(15, 108, 184, 0.2);
+  border: 1px solid var(--panel-line-soft);
   border-radius: 18px;
   padding: 14px 16px;
   font: inherit;
   resize: vertical;
   min-height: 220px;
-  background: rgba(247, 250, 255, 0.86);
+  background: var(--panel-strong);
+  color: var(--text);
   box-sizing: border-box;
 }
 </style>

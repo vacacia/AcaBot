@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue"
 import StatusCard from "../components/StatusCard.vue"
-import { apiGet } from "../lib/api"
+import { apiGet, peekCachedGet } from "../lib/api"
 
 type MetaPayload = {
   storage_mode: string
@@ -17,9 +17,9 @@ type BackendStatus = {
   session_path?: string
 }
 
-const meta = ref<MetaPayload | null>(null)
-const gateway = ref<GatewayStatus>({})
-const backend = ref<BackendStatus>({})
+const meta = ref<MetaPayload | null>(peekCachedGet<MetaPayload>("/api/meta"))
+const gateway = ref<GatewayStatus>(peekCachedGet<GatewayStatus>("/api/gateway/status") ?? {})
+const backend = ref<BackendStatus>(peekCachedGet<BackendStatus>("/api/backend/status") ?? {})
 
 onMounted(() => {
   void (async () => {

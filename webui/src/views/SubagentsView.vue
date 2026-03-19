@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue"
 
-import { apiGet } from "../lib/api"
+import { apiGet, peekCachedGet } from "../lib/api"
 
 type ExecutorItem = {
   executor_id?: string
@@ -10,7 +10,7 @@ type ExecutorItem = {
   description?: string
 }
 
-const items = ref<ExecutorItem[]>([])
+const items = ref<ExecutorItem[]>(peekCachedGet<ExecutorItem[]>("/api/subagents/executors") ?? [])
 
 onMounted(() => {
   void apiGet<ExecutorItem[]>("/api/subagents/executors").then((payload) => {

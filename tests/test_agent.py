@@ -238,6 +238,91 @@ class TestToolCalling:
                     tool_executor=tool_executor,
                 )
 
+    async def test_tool_call_round_rewrites_null_assistant_content_to_empty_string(self, agent):
+        tool_spec = ToolSpec(
+            name="get_time",
+            description="Get current time",
+            parameters={"type": "object", "properties": {}},
+        )
+        tc_msg = _make_msg(
+            content=None,
+            role="assistant",
+            tool_calls=[
+                type(
+                    "TC",
+                    (),
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": type(
+                            "F",
+                            (),
+                            {"name": "get_time", "arguments": "{}"},
+                        )(),
+                    },
+                )()
+            ],
+        )
+        tc_resp = AsyncMock()
+        tc_resp.choices = [type("C", (), {"message": tc_msg})()]
+        tc_resp.usage = type(
+            "U",
+            (),
+            {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        )()
+
+        final_resp = AsyncMock()
+        final_resp.choices = [
+            type("C", (), {"message": type("M", (), {"content": "ok", "tool_calls": None})()})()
+        ]
+        final_resp.usage = type(
+            "U",
+            (),
+            {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30},
+        )()
+
+        async def tool_executor(tool_name, arguments):
+            _ = tool_name, arguments
+            return ToolExecutionResult(content="{}", raw={})
+
+        with patch("acabot.agent.agent.acompletion", side_effect=[tc_resp, final_resp]) as mock_call:
+            await agent.run(
+                system_prompt="test",
+                messages=[{"role": "user", "content": "time?"}],
+                model="gpt-4o-mini",
+                tools=[tool_spec],
+                tool_executor=tool_executor,
+            )
+
+        second_messages = mock_call.call_args_list[1].kwargs["messages"]
+        assert second_messages[2]["role"] == "assistant"
+        assert second_messages[2]["content"] == ""
+
+    async def test_run_sanitizes_none_content_from_existing_history(self, agent):
+        mock_resp = AsyncMock()
+        mock_resp.choices = [
+            type("C", (), {"message": type("M", (), {"content": "ok", "tool_calls": None})()})()
+        ]
+        mock_resp.usage = type(
+            "U",
+            (),
+            {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        )()
+
+        with patch("acabot.agent.agent.acompletion", return_value=mock_resp) as mock_call:
+            await agent.run(
+                system_prompt="test",
+                messages=[
+                    {"role": "assistant", "content": None},
+                    {"role": "user", "content": "hello"},
+                ],
+                model="gpt-4o-mini",
+            )
+
+        sent_messages = mock_call.call_args.kwargs["messages"]
+        assert sent_messages[1]["role"] == "assistant"
+        assert sent_messages[1]["content"] == ""
+
     async def test_max_tool_rounds_override_is_applied(self, agent):
         tc_msg = _make_msg(
             content=None,
