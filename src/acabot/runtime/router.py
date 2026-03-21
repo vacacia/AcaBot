@@ -10,6 +10,7 @@ from typing import Any, Callable
 from acabot.types import StandardEvent
 
 from .contracts import EventPolicyDecision, InboundRule, RouteDecision, RunMode
+from .control.session_runtime import SessionRuntime
 
 
 # region inbound规则
@@ -141,6 +142,7 @@ class RuntimeRouter:
         decide_run_mode: Callable[..., RunMode | tuple[RunMode, dict[str, Any]]] | None = None,
         resolve_agent: Callable[..., tuple[str, dict[str, Any]]] | None = None,
         resolve_event_policy: Callable[..., EventPolicyDecision] | None = None,
+        session_runtime: SessionRuntime | None = None,
     ) -> None:
         """初始化最小路由器.
 
@@ -149,12 +151,14 @@ class RuntimeRouter:
             decide_run_mode: 可选回调, 用于决定这条消息是 `respond`, `record_only` 还是 `silent_drop`.
             resolve_agent: 可选回调, 用于根据 canonical id 解析最终 agent_id 和 binding metadata.
             resolve_event_policy: 可选回调, 用于解析 event log 和 memory extraction 策略.
+            session_runtime: 会话配置驱动的决策运行时. 提供时优先走新主线.
         """
 
         self.default_agent_id = default_agent_id
         self.decide_run_mode = decide_run_mode
         self.resolve_agent = resolve_agent
         self.resolve_event_policy = resolve_event_policy
+        self.session_runtime = session_runtime
 
     async def route(self, event: StandardEvent) -> RouteDecision:
         """把一条标准事件解析成 RouteDecision.
@@ -165,6 +169,9 @@ class RuntimeRouter:
         Returns:
             本次消息的 RouteDecision.
         """
+
+        if self.session_runtime is not None:
+            return self._route_with_session_runtime(event)
 
         thread_id = self.build_thread_id(event)
         actor_id = self.build_actor_id(event)
@@ -186,9 +193,9 @@ class RuntimeRouter:
             channel_scope=channel_scope,
         )
         return RouteDecision(
-            thread_id=thread_id, # 走哪个 thread
-            actor_id=actor_id, # 谁发的消息
-            agent_id=agent_id, # 用哪个 agent 处理
+            thread_id=thread_id,
+            actor_id=actor_id,
+            agent_id=agent_id,
             channel_scope=channel_scope,
             run_mode=run_mode,
             metadata={
@@ -224,6 +231,64 @@ class RuntimeRouter:
         """
 
         return cls.build_channel_scope(event)
+
+    def _route_with_session_runtime(self, event: StandardEvent) -> RouteDecision:
+        """通过 SessionRuntime 解析当前事件.
+
+        Args:
+            event: 当前标准事件.
+
+        Returns:
+            一份带有细化 domain decisions 的 RouteDecision.
+        """
+
+        assert self.session_runtime is not None
+        facts = self.session_runtime.build_facts(event)
+        session = self.session_runtime.load_session(facts)
+        surface = self.session_runtime.resolve_surface(facts, session)
+        routing = self.session_runtime.resolve_routing(facts, session, surface)
+        admission = self.session_runtime.resolve_admission(facts, session, surface)
+        context = self.session_runtime.resolve_context(facts, session, surface)
+        persistence = self.session_runtime.resolve_persistence(facts, session, surface)
+        extraction = self.session_runtime.resolve_extraction(facts, session, surface)
+        computer = self.session_runtime.resolve_computer(facts, session, surface)
+        return RouteDecision(
+            thread_id=facts.thread_id,
+            actor_id=facts.actor_id,
+            agent_id=routing.profile_id,
+            channel_scope=facts.channel_scope,
+            run_mode=admission.mode,
+            metadata={
+                "bot_relation": event.bot_relation,
+                "target_reasons": list(event.target_reasons),
+                "mentions_self": event.mentions_self,
+                "reply_targets_self": event.reply_targets_self,
+                "surface_id": surface.surface_id,
+                "surface_exists": surface.exists,
+                "routing_profile_id": routing.profile_id,
+                "routing_actor_lane": routing.actor_lane,
+                "admission_mode": admission.mode,
+                "event_persist": persistence.persist_event,
+                "event_extract_to_memory": extraction.extract_to_memory,
+                "event_memory_scopes": list(extraction.memory_scopes),
+                "event_tags": list(extraction.tags),
+                "computer_backend": computer.backend,
+                "computer_allow_exec": computer.allow_exec,
+                "computer_allow_sessions": computer.allow_sessions,
+                "context_labels": list(context.context_labels),
+                "context_retrieval_tags": list(context.retrieval_tags),
+                "binding_kind": "session_config",
+                "binding_rule_id": surface.surface_id,
+            },
+            event_facts=facts,
+            surface_resolution=surface,
+            routing_decision=routing,
+            admission_decision=admission,
+            context_decision=context,
+            persistence_decision=persistence,
+            extraction_decision=extraction,
+            computer_policy_decision=computer,
+        )
 
     def _decide_run_mode(
         self,

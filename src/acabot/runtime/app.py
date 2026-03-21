@@ -220,7 +220,7 @@ class RuntimeApp:
                 # 路由或配置加载失败, 无法继续正常 run 了. 记录一个 run 来关联这个事件, 并收尾为 failed.
                 run = await self.run_manager.open(event=event, decision=decision)
                 run_id = run.run_id
-                if decision.metadata.get("event_persist", True):
+                if self._should_persist_event(decision):
                     await self.channel_event_store.save(
                         self._build_channel_event_record(
                             event=event,
@@ -238,7 +238,7 @@ class RuntimeApp:
                 model_snapshot=model_snapshot,
             )
             run_id = run.run_id
-            if decision.metadata.get("event_persist", True):
+            if self._should_persist_event(decision):
                 await self.channel_event_store.save(
                     self._build_channel_event_record(
                         event=event,
@@ -254,8 +254,16 @@ class RuntimeApp:
                 decision=decision,
                 thread=thread,
                 profile=profile,
-                model_request=model_request, # 解析出的 model 被打包进 RunContext
+                model_request=model_request,
                 summary_model_request=summary_model_request,
+                event_facts=decision.event_facts,
+                surface_resolution=decision.surface_resolution,
+                routing_decision=decision.routing_decision,
+                admission_decision=decision.admission_decision,
+                context_decision=decision.context_decision,
+                persistence_decision=decision.persistence_decision,
+                extraction_decision=decision.extraction_decision,
+                computer_policy_decision=decision.computer_policy_decision,
             )
             await self.pipeline.execute(ctx)
             logger.info(
@@ -498,6 +506,21 @@ class RuntimeApp:
             },
             raw_event=dict(event.raw_event),
         )
+
+    @staticmethod
+    def _should_persist_event(decision: RouteDecision) -> bool:
+        """判断当前事件是否需要写入 ChannelEventStore.
+
+        Args:
+            decision: 当前事件对应的 RouteDecision.
+
+        Returns:
+            bool: 需要持久化返回 `True`.
+        """
+
+        if decision.persistence_decision is not None:
+            return decision.persistence_decision.persist_event
+        return bool(decision.metadata.get("event_persist", True))
 
     # region override decision
     @staticmethod

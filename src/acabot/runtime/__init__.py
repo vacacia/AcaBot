@@ -220,6 +220,8 @@ from .control.profile_loader import (
     StaticProfileLoader,
     StaticPromptLoader,
 )
+from .control.session_loader import SessionConfigLoader
+from .control.session_runtime import SessionRuntime
 from .references import (
     LocalReferenceBackend,
     NullReferenceBackend,
@@ -467,7 +469,9 @@ __all__ = [
     "RunStore",
     "RuntimeRouter",
     "SessionConfig",
+    "SessionConfigLoader",
     "SessionLocatorResult",
+    "SessionRuntime",
     "RetrievalPlan",
     "RetrievalPlanner",
     "Outbox",

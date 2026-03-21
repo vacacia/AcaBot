@@ -15,6 +15,16 @@ if TYPE_CHECKING:
     from ..computer import AttachmentSnapshot, ComputerPolicy, WorkspaceState
     from ..memory.memory_broker import MemoryBlock
     from ..model.model_registry import RuntimeModelRequest
+    from .session_config import (
+        AdmissionDecision,
+        ComputerPolicyDecision,
+        ContextDecision,
+        EventFacts,
+        ExtractionDecision,
+        PersistenceDecision,
+        RoutingDecision,
+        SurfaceResolution,
+    )
 
 
 @dataclass(slots=True)
@@ -207,6 +217,14 @@ class RunContext:
     profile: AgentProfile
     model_request: "RuntimeModelRequest | None" = None
     summary_model_request: "RuntimeModelRequest | None" = None
+    event_facts: "EventFacts | None" = None
+    surface_resolution: "SurfaceResolution | None" = None
+    routing_decision: "RoutingDecision | None" = None
+    admission_decision: "AdmissionDecision | None" = None
+    context_decision: "ContextDecision | None" = None
+    persistence_decision: "PersistenceDecision | None" = None
+    extraction_decision: "ExtractionDecision | None" = None
+    computer_policy_decision: "ComputerPolicyDecision | None" = None
     workspace_state: "WorkspaceState | None" = None
     attachment_snapshots: list["AttachmentSnapshot"] = field(default_factory=list)
     resolved_message: ResolvedMessage | None = None

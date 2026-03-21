@@ -8,6 +8,16 @@ from typing import TYPE_CHECKING, Any
 from acabot.types import StandardEvent
 
 from .common import RunMode
+from .session_config import (
+    AdmissionDecision,
+    ComputerPolicyDecision,
+    ContextDecision,
+    EventFacts,
+    ExtractionDecision,
+    PersistenceDecision,
+    RoutingDecision,
+    SurfaceResolution,
+)
 
 if TYPE_CHECKING:
     from ..computer import ComputerPolicy
@@ -323,7 +333,12 @@ class EventPolicyDecision:
 
 @dataclass(slots=True)
 class RouteDecision:
-    """router 的解析结果."""
+    """router 的解析结果.
+
+    这层仍然是 app / run manager 当前主线使用的路由对象,
+    但它现在还会带上 session-config 主线算出来的细化决策,
+    这样 app 和 pipeline 可以逐步改成直接消费正式决策对象.
+    """
 
     thread_id: str
     actor_id: str
@@ -331,6 +346,14 @@ class RouteDecision:
     channel_scope: str
     run_mode: RunMode = "respond"
     metadata: dict[str, Any] = field(default_factory=dict)
+    event_facts: EventFacts | None = None
+    surface_resolution: SurfaceResolution | None = None
+    routing_decision: RoutingDecision | None = None
+    admission_decision: AdmissionDecision | None = None
+    context_decision: ContextDecision | None = None
+    persistence_decision: PersistenceDecision | None = None
+    extraction_decision: ExtractionDecision | None = None
+    computer_policy_decision: ComputerPolicyDecision | None = None
 
 
 __all__ = [
