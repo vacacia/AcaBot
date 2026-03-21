@@ -18,6 +18,32 @@ from .test_outbox import FakeGateway, FakeMessageStore
 from .test_pipeline_runtime import FakeAgentRuntime
 
 
+class CapturingAgentRuntime(FakeAgentRuntime):
+    """在调用父类前先把 RunContext 记下来.
+
+    Attributes:
+        last_ctx (object | None): 最近一次执行时收到的上下文.
+    """
+
+    def __init__(self) -> None:
+        """初始化捕获器."""
+
+        self.last_ctx = None
+
+    async def execute(self, ctx):
+        """记录当前上下文并继续执行原有假 agent 逻辑.
+
+        Args:
+            ctx: 当前 run 的上下文对象.
+
+        Returns:
+            object: 父类执行结果.
+        """
+
+        self.last_ctx = ctx
+        return await super().execute(ctx)
+
+
 # region helpers
 
 def _write_session(tmp_path: Path) -> Path:
@@ -131,15 +157,17 @@ def _profile_loader(decision) -> AgentProfile:
 
 
 
-def _build_app(tmp_path: Path) -> tuple[RuntimeApp, InMemoryRunManager, FakeGateway]:
+def _build_app(
+    tmp_path: Path,
+) -> tuple[RuntimeApp, InMemoryRunManager, FakeGateway, CapturingAgentRuntime]:
     """构造带 SessionRuntime 的 RuntimeApp.
 
     Args:
         tmp_path (Path): pytest 提供的临时目录.
 
     Returns:
-        tuple[RuntimeApp, InMemoryRunManager, FakeGateway]:
-            app、run_manager 和 fake gateway.
+        tuple[RuntimeApp, InMemoryRunManager, FakeGateway, CapturingAgentRuntime]:
+            app、run_manager、fake gateway 和捕获上下文的 agent runtime.
     """
 
     _write_session(tmp_path)
@@ -147,6 +175,7 @@ def _build_app(tmp_path: Path) -> tuple[RuntimeApp, InMemoryRunManager, FakeGate
     run_manager = InMemoryRunManager()
     thread_manager = InMemoryThreadManager()
     session_runtime = SessionRuntime(SessionConfigLoader(config_root=tmp_path / "sessions"))
+    agent_runtime = CapturingAgentRuntime()
     app = RuntimeApp(
         gateway=gateway,
         router=RuntimeRouter(default_agent_id="unused", session_runtime=session_runtime),
@@ -154,21 +183,21 @@ def _build_app(tmp_path: Path) -> tuple[RuntimeApp, InMemoryRunManager, FakeGate
         run_manager=run_manager,
         channel_event_store=InMemoryChannelEventStore(),
         pipeline=ThreadPipeline(
-            agent_runtime=FakeAgentRuntime(),
+            agent_runtime=agent_runtime,
             outbox=Outbox(gateway=gateway, store=FakeMessageStore()),
             run_manager=run_manager,
             thread_manager=thread_manager,
         ),
         profile_loader=_profile_loader,
     )
-    return app, run_manager, gateway
+    return app, run_manager, gateway, agent_runtime
 
 
 # endregion
 
 
 async def test_runtime_app_uses_session_config_for_profile_and_run_mode(tmp_path: Path) -> None:
-    app, run_manager, gateway = _build_app(tmp_path)
+    app, run_manager, gateway, agent_runtime = _build_app(tmp_path)
 
     await app.handle_event(_group_event(text="hello @bot", mentions_self=True, sender_role="admin"))
 
@@ -178,11 +207,14 @@ async def test_runtime_app_uses_session_config_for_profile_and_run_mode(tmp_path
     assert run.metadata["surface_id"] == "message.mention"
     assert run.metadata["admission_mode"] == "respond"
     assert run.metadata["computer_backend"] == "host"
+    assert agent_runtime.last_ctx is not None
+    assert agent_runtime.last_ctx.computer_policy_decision is not None
+    assert agent_runtime.last_ctx.computer_policy_decision.backend == "host"
     assert gateway.sent[0].payload["text"] == "hello back"
 
 
 async def test_runtime_app_respects_record_only_surface_mode(tmp_path: Path) -> None:
-    app, run_manager, gateway = _build_app(tmp_path)
+    app, run_manager, gateway, _agent_runtime = _build_app(tmp_path)
 
     await app.handle_event(_group_event(text="just chatting", mentions_self=False, sender_role="member"))
 

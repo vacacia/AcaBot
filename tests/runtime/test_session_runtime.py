@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 from acabot.runtime.control.session_loader import SessionConfigLoader
@@ -5,11 +6,12 @@ from acabot.runtime.control.session_runtime import SessionRuntime
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
 
-def _write_session(tmp_path: Path) -> Path:
+def _write_session(tmp_path: Path, *, plain_mode: str = "record_only") -> Path:
     """写入一份最小可用的 session config 测试夹具.
 
     Args:
         tmp_path (Path): pytest 提供的临时目录.
+        plain_mode (str): `message.plain` surface 的 admission mode.
 
     Returns:
         Path: 写入后的配置文件路径.
@@ -18,7 +20,7 @@ def _write_session(tmp_path: Path) -> Path:
     config_path = tmp_path / "sessions/qq/group/123.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
-        """
+        f"""
 session:
   id: qq:group:123
   template: qq_group
@@ -49,7 +51,7 @@ surfaces:
   message.plain:
     admission:
       default:
-        mode: record_only
+        mode: {plain_mode}
 """.strip(),
         encoding="utf-8",
     )
@@ -122,3 +124,89 @@ def test_session_runtime_resolves_domain_decisions_from_surface_cases(tmp_path: 
     assert admission.mode == "respond"
     assert computer.backend == "host"
     assert computer.source_case_id == "admin_host"
+
+
+
+def test_session_runtime_rejects_invalid_admission_mode(tmp_path: Path) -> None:
+    _write_session(tmp_path, plain_mode="recordonly")
+    runtime = SessionRuntime(SessionConfigLoader(config_root=tmp_path / "sessions"))
+    facts = runtime.build_facts(_group_mention_event(sender_role="member"))
+    facts = replace(facts, mentions_self=False, targets_self=False, metadata={**facts.metadata, "text": "plain"})
+    session = runtime.load_session(facts)
+    surface = runtime.resolve_surface(facts, session)
+
+    try:
+        runtime.resolve_admission(facts, session, surface)
+    except ValueError as exc:
+        assert "unsupported admission mode" in str(exc)
+    else:
+        raise AssertionError("invalid admission mode should fail")
+
+
+
+def test_session_runtime_does_not_fall_from_mention_into_command_surface(tmp_path: Path) -> None:
+    config_path = tmp_path / "sessions/qq/group/123.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        """
+session:
+  id: qq:group:123
+  template: qq_group
+frontstage:
+  profile: aca.qq.group.default
+surfaces:
+  message.command:
+    admission:
+      default:
+        mode: respond
+  message.plain:
+    admission:
+      default:
+        mode: record_only
+""".strip(),
+        encoding="utf-8",
+    )
+    runtime = SessionRuntime(SessionConfigLoader(config_root=tmp_path / "sessions"))
+    facts = runtime.build_facts(_group_mention_event(sender_role="member"))
+    session = runtime.load_session(facts)
+
+    surface = runtime.resolve_surface(facts, session)
+
+    assert surface.surface_id == "message.plain"
+
+
+
+def test_session_runtime_rejects_unknown_when_ref(tmp_path: Path) -> None:
+    config_path = tmp_path / "sessions/qq/group/123.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        """
+session:
+  id: qq:group:123
+  template: qq_group
+frontstage:
+  profile: aca.qq.group.default
+surfaces:
+  message.mention:
+    computer:
+      default:
+        backend: docker
+      cases:
+        - case_id: broken_ref
+          when_ref: missing_selector
+          use:
+            backend: host
+""".strip(),
+        encoding="utf-8",
+    )
+    runtime = SessionRuntime(SessionConfigLoader(config_root=tmp_path / "sessions"))
+    facts = runtime.build_facts(_group_mention_event(sender_role="admin"))
+    session = runtime.load_session(facts)
+    surface = runtime.resolve_surface(facts, session)
+
+    try:
+        runtime.resolve_computer(facts, session, surface)
+    except ValueError as exc:
+        assert "unknown selector" in str(exc)
+    else:
+        raise AssertionError("unknown when_ref should fail")

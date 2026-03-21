@@ -211,8 +211,9 @@ class SessionRuntime:
             selectors=session.selectors,
             domain=domain,
         )
+        mode = self._parse_admission_mode(payload.get("mode", "respond"))
         return AdmissionDecision(
-            mode=str(payload.get("mode", "respond") or "respond"),
+            mode=mode,
             reason="surface case" if case_id else "surface default",
             source_case_id=case_id,
             priority=priority,
@@ -433,9 +434,9 @@ class SessionRuntime:
                 return ["message.command", "message.private", "message.plain"]
             return ["message.private", "message.plain"]
         if facts.mentions_self:
-            return ["message.mention", "message.reply_to_bot", "message.command", "message.plain"]
+            return ["message.mention", "message.plain"]
         if facts.reply_targets_self:
-            return ["message.reply_to_bot", "message.command", "message.plain"]
+            return ["message.reply_to_bot", "message.plain"]
         if text.startswith("/"):
             return ["message.command", "message.plain"]
         return ["message.plain"]
@@ -514,12 +515,18 @@ class SessionRuntime:
 
         Returns:
             MatchSpec | None: 当前 case 的匹配条件. 没有条件时返回 `None`.
+
+        Raises:
+            ValueError: `when_ref` 指向了不存在的 selector 时抛出.
         """
 
         if case.when is not None:
             return case.when
         if case.when_ref:
-            return selectors.get(case.when_ref)
+            spec = selectors.get(case.when_ref)
+            if spec is None:
+                raise ValueError(f"unknown selector: {case.when_ref}")
+            return spec
         return MatchSpec()
 
     @staticmethod
@@ -561,6 +568,25 @@ class SessionRuntime:
         if preset:
             notes.append(f"preset:{preset}")
         return notes
+
+    @staticmethod
+    def _parse_admission_mode(raw: object) -> str:
+        """校验 admission mode.
+
+        Args:
+            raw (object): 原始 admission mode 值.
+
+        Returns:
+            str: 规范化后的 admission mode.
+
+        Raises:
+            ValueError: mode 不在支持范围内时抛出.
+        """
+
+        mode = str(raw or "respond")
+        if mode not in {"respond", "record_only", "silent_drop"}:
+            raise ValueError(f"unsupported admission mode: {mode}")
+        return mode
 
 
 # endregion
