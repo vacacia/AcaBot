@@ -24,27 +24,21 @@ class ComputerBackendNotImplemented(RuntimeError):
 
 @dataclass(slots=True)
 class ComputerPolicy:
-    """Agent 级 computer policy."""
+    """Agent 级 computer policy.
+
+    Attributes:
+        backend (str): 当前 run 使用的 backend.
+        allow_exec (bool): 是否允许一次性 shell 命令.
+        allow_sessions (bool): 是否允许持久 shell session.
+        auto_stage_attachments (bool): 是否自动把附件拉进 Work World.
+        network_mode (str): backend 网络模式.
+    """
 
     backend: ComputerBackendKind = "host"
-    read_only: bool = False
-    allow_write: bool = True
     allow_exec: bool = True
     allow_sessions: bool = True
     auto_stage_attachments: bool = True
     network_mode: ComputerNetworkMode = "enabled"
-
-
-@dataclass(slots=True)
-class ComputerRuntimeOverride:
-    """thread metadata 中的运行时 computer override."""
-
-    backend: str = ""
-    read_only: bool | None = None
-    allow_write: bool | None = None
-    allow_exec: bool | None = None
-    allow_sessions: bool | None = None
-    network_mode: str = ""
 
 
 @dataclass(slots=True)
@@ -141,14 +135,25 @@ class WorldInputBundle:
 
 @dataclass(slots=True)
 class WorkspaceState:
-    """当前 run 可见的 computer/workspace 状态摘要."""
+    """当前 run 可见的 computer/workspace 状态摘要.
+
+    Attributes:
+        thread_id (str): 当前 thread ID.
+        agent_id (str): 当前 agent ID.
+        backend_kind (str): 当前 backend 名字.
+        workspace_host_path (str): `/workspace` 对应的宿主机路径.
+        workspace_visible_root (str): 模型侧看到的 workspace 根路径.
+        available_tools (list[str]): 当前 run 实际可见的 computer 工具列表.
+        attachment_count (int): 当前 run 已 stage 的附件数量.
+        mirrored_skill_names (list[str]): 当前 thread 已物化到宿主机的 skill 列表.
+        active_session_ids (list[str]): 当前 thread 活跃 shell session 列表.
+    """
 
     thread_id: str
     agent_id: str
     backend_kind: str
     workspace_host_path: str
     workspace_visible_root: str
-    read_only: bool
     available_tools: list[str] = field(default_factory=list)
     attachment_count: int = 0
     mirrored_skill_names: list[str] = field(default_factory=list)
@@ -234,7 +239,20 @@ class CommandSession:
 
 @dataclass(slots=True)
 class ComputerRuntimeConfig:
-    """computer 子系统的全局运行配置."""
+    """computer 子系统的全局运行配置.
+
+    Attributes:
+        root_dir (str): computer 宿主机根目录.
+        skill_catalog_dir (str): skill catalog 根目录.
+        max_attachment_size_bytes (int): 单个附件最大尺寸.
+        max_total_attachment_bytes_per_run (int): 单次 run 附件总大小上限.
+        attachment_download_timeout_sec (int): 附件下载超时.
+        attachment_download_retries (int): 附件下载重试次数.
+        exec_stdout_window_bytes (int): exec stdout 窗口大小.
+        exec_stderr_window_bytes (int): exec stderr 窗口大小.
+        docker_image (str): docker backend 镜像.
+        docker_network_mode (str): docker backend 网络模式.
+    """
 
     root_dir: str
     skill_catalog_dir: str
@@ -246,7 +264,6 @@ class ComputerRuntimeConfig:
     exec_stderr_window_bytes: int = 256 * 1024
     docker_image: str = "python:3.12-slim"
     docker_network_mode: str = "bridge"
-    docker_read_only_rootfs: bool = True
 
 
 class ComputerBackend(Protocol):
@@ -315,8 +332,6 @@ def parse_computer_policy(
     if raw is None or raw == "":
         return ComputerPolicy(
             backend=base.backend,
-            read_only=base.read_only,
-            allow_write=base.allow_write,
             allow_exec=base.allow_exec,
             allow_sessions=base.allow_sessions,
             auto_stage_attachments=base.auto_stage_attachments,
@@ -326,29 +341,12 @@ def parse_computer_policy(
         raise ValueError("computer policy must be a mapping")
     return ComputerPolicy(
         backend=str(raw.get("backend", base.backend) or base.backend),
-        read_only=bool(raw.get("read_only", base.read_only)),
-        allow_write=bool(raw.get("allow_write", base.allow_write)),
         allow_exec=bool(raw.get("allow_exec", base.allow_exec)),
         allow_sessions=bool(raw.get("allow_sessions", base.allow_sessions)),
         auto_stage_attachments=bool(
             raw.get("auto_stage_attachments", base.auto_stage_attachments)
         ),
         network_mode=str(raw.get("network_mode", base.network_mode) or base.network_mode),
-    )
-
-
-def parse_computer_override(raw: object) -> ComputerRuntimeOverride:
-    """从 thread metadata 读取 computer override."""
-
-    if not isinstance(raw, dict):
-        return ComputerRuntimeOverride()
-    return ComputerRuntimeOverride(
-        backend=str(raw.get("backend", "") or ""),
-        read_only=raw.get("read_only"),
-        allow_write=raw.get("allow_write"),
-        allow_exec=raw.get("allow_exec"),
-        allow_sessions=raw.get("allow_sessions"),
-        network_mode=str(raw.get("network_mode", "") or ""),
     )
 
 
@@ -364,7 +362,6 @@ __all__ = [
     "ComputerNetworkMode",
     "ComputerPolicy",
     "ComputerRuntimeConfig",
-    "ComputerRuntimeOverride",
     "ExecutionView",
     "ResolvedWorldPath",
     "WorldInputBundle",
@@ -373,6 +370,5 @@ __all__ = [
     "WorkspaceFileEntry",
     "WorkspaceSandboxStatus",
     "WorkspaceState",
-    "parse_computer_override",
     "parse_computer_policy",
 ]

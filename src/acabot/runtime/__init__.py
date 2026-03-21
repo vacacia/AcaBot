@@ -43,7 +43,6 @@ from .computer import (
     ComputerBackend,
     ComputerRuntimeConfig,
     ComputerPolicy,
-    ComputerRuntimeOverride,
     ComputerRuntime,
     DockerSandboxBackend,
     HostComputerBackend,
@@ -52,7 +51,6 @@ from .computer import (
     WorkspaceManager,
     WorkspaceSandboxStatus,
     WorkspaceState,
-    parse_computer_override,
     parse_computer_policy,
 )
 from .control.config_control_plane import RuntimeConfigControlPlane
@@ -313,7 +311,6 @@ __all__ = [
     "ComputerBackend",
     "ComputerRuntimeConfig",
     "ComputerPolicy",
-    "ComputerRuntimeOverride",
     "ComputerRuntime",
     "RuntimeConfigControlPlane",
     "RuntimeHttpApiServer",
@@ -417,7 +414,6 @@ __all__ = [
     "PromptSlot",
     "DEFAULT_IMAGE_CAPTION_PROMPT",
     "parse_image_caption_settings",
-    "parse_computer_override",
     "parse_computer_policy",
     "RouteDecision",
     "RoutingDecision",

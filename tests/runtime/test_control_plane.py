@@ -11,7 +11,6 @@ from acabot.runtime import (
     ComputerPolicy,
     ComputerRuntime,
     ComputerRuntimeConfig,
-    ComputerRuntimeOverride,
     FileSystemSkillPackageLoader,
     HostComputerBackend,
     InMemoryChannelEventStore,
@@ -404,7 +403,6 @@ async def test_runtime_control_plane_rejects_thread_computer_override_api(
 
     result = await control_plane.set_thread_computer_override(
         thread_id="thread:1",
-        override=ComputerRuntimeOverride(backend="docker"),
     )
 
     assert result.ok is False

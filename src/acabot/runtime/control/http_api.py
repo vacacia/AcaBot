@@ -14,7 +14,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from acabot.config import Config
 
-from ..computer import ComputerRuntimeOverride
 from .control_plane import RuntimeControlPlane
 from ..references import ReferenceDocumentInput
 
@@ -711,34 +710,6 @@ class RuntimeHttpApiServer:
             return self._ok(self._await(self.control_plane.list_workspace_sessions(thread_id=thread_id)))
         if len(segments) == 2 and segments[1] == "sandbox" and method == "GET":
             return self._ok(self._await(self.control_plane.get_sandbox_status(thread_id=thread_id)))
-        if len(segments) == 2 and segments[1] == "override":
-            if method == "POST":
-                override = ComputerRuntimeOverride(
-                    backend=str(payload.get("backend", "") or ""),
-                    read_only=payload.get("read_only"),
-                    allow_write=payload.get("allow_write"),
-                    allow_exec=payload.get("allow_exec"),
-                    allow_sessions=payload.get("allow_sessions"),
-                    network_mode=str(payload.get("network_mode", "") or ""),
-                )
-                return self._ok(
-                    self._await(
-                        self.control_plane.set_thread_computer_override(
-                            thread_id=thread_id,
-                            override=override,
-                            force=bool(payload.get("force", False)),
-                        )
-                    )
-                )
-            if method == "DELETE":
-                return self._ok(
-                    self._await(
-                        self.control_plane.clear_thread_computer_override(
-                            thread_id=thread_id,
-                            force=_query_bool(query, "force", False),
-                        )
-                    )
-                )
         if len(segments) == 2 and segments[1] == "prune" and method == "POST":
             return self._ok(
                 self._await(

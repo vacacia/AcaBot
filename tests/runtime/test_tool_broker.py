@@ -155,7 +155,6 @@ async def test_tool_broker_filters_computer_tools_by_run_policy() -> None:
         backend_kind="host",
         workspace_host_path="/tmp/workspace",
         workspace_visible_root="/workspace",
-        read_only=True,
         available_tools=["read"],
     )
 
@@ -187,7 +186,6 @@ async def test_tool_broker_rejects_run_hidden_tool_on_direct_execute() -> None:
         backend_kind="host",
         workspace_host_path="/tmp/workspace",
         workspace_visible_root="/workspace",
-        read_only=False,
         available_tools=["read"],
     )
 

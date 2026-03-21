@@ -116,8 +116,6 @@ def build_default_computer_policy(config: Config) -> ComputerPolicy:
     computer_conf = dict(runtime_conf.get("computer", {}))
     defaults = ComputerPolicy(
         backend=str(computer_conf.get("backend", "host") or "host"),
-        read_only=bool(computer_conf.get("read_only", False)),
-        allow_write=bool(computer_conf.get("allow_write", True)),
         allow_exec=bool(computer_conf.get("allow_exec", True)),
         allow_sessions=bool(computer_conf.get("allow_sessions", True)),
         auto_stage_attachments=bool(computer_conf.get("auto_stage_attachments", True)),
@@ -170,7 +168,6 @@ def build_computer_runtime(
         ),
         docker_image=str(computer_conf.get("docker_image", "python:3.12-slim") or "python:3.12-slim"),
         docker_network_mode=str(computer_conf.get("docker_network_mode", "bridge") or "bridge"),
-        docker_read_only_rootfs=bool(computer_conf.get("docker_read_only_rootfs", True)),
     )
     return ComputerRuntime(
         config=computer_config,

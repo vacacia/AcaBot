@@ -22,7 +22,6 @@ from dataclasses import asdict
 
 from ..app import RuntimeApp
 from ..computer import (
-    ComputerRuntimeOverride,
     ComputerRuntime,
     WorkspaceFileEntry,
     WorkspaceSandboxStatus,
@@ -1213,12 +1212,10 @@ class RuntimeControlPlane:
         self,
         *,
         thread_id: str,
-        override: ComputerRuntimeOverride,
         force: bool = False,
     ) -> AgentSwitchSnapshot:
         return await self.workspace_ops.set_thread_computer_override(
             thread_id=thread_id,
-            override=override,
             force=force,
         )
 

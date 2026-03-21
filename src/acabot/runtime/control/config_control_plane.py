@@ -57,8 +57,6 @@ def _default_computer_policy(config: Config) -> ComputerPolicy:
     computer_conf = dict(runtime_conf.get("computer", {}))
     defaults = ComputerPolicy(
         backend=str(computer_conf.get("backend", "host") or "host"),
-        read_only=bool(computer_conf.get("read_only", False)),
-        allow_write=bool(computer_conf.get("allow_write", True)),
         allow_exec=bool(computer_conf.get("allow_exec", True)),
         allow_sessions=bool(computer_conf.get("allow_sessions", True)),
         auto_stage_attachments=bool(computer_conf.get("auto_stage_attachments", True)),
@@ -328,8 +326,6 @@ def _profile_to_config(profile: AgentProfile) -> dict[str, Any]:
     if profile.computer_policy is not None:
         data["computer"] = {
             "backend": profile.computer_policy.backend,
-            "read_only": profile.computer_policy.read_only,
-            "allow_write": profile.computer_policy.allow_write,
             "allow_exec": profile.computer_policy.allow_exec,
             "allow_sessions": profile.computer_policy.allow_sessions,
             "auto_stage_attachments": profile.computer_policy.auto_stage_attachments,

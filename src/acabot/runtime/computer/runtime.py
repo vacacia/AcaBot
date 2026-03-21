@@ -21,7 +21,6 @@ from .contracts import (
     ComputerBackendNotImplemented,
     ComputerPolicy,
     ComputerRuntimeConfig,
-    ComputerRuntimeOverride,
     ResolvedWorldPath,
     WorldInputBundle,
     WorkspaceFileEntry,
@@ -54,8 +53,6 @@ class ComputerRuntime:
         self.run_manager = run_manager
         self.default_policy = default_policy or ComputerPolicy(
             backend="host",
-            read_only=False,
-            allow_write=True,
             allow_exec=True,
             allow_sessions=True,
             auto_stage_attachments=True,
@@ -116,7 +113,6 @@ class ComputerRuntime:
             backend_kind=backend.kind,
             workspace_host_path=str(workspace_dir),
             workspace_visible_root="/workspace",
-            read_only=False,
             available_tools=self._available_tools(policy, world_view=world_view),
             attachment_count=len(staged.snapshots),
             mirrored_skill_names=self.list_mirrored_skills(ctx.thread.thread_id),
@@ -151,8 +147,6 @@ class ComputerRuntime:
         decision = ctx.computer_policy_decision
         return ComputerPolicy(
             backend=str(decision.backend or base.backend),
-            read_only=base.read_only,
-            allow_write=base.allow_write,
             allow_exec=bool(decision.allow_exec),
             allow_sessions=bool(decision.allow_sessions),
             auto_stage_attachments=base.auto_stage_attachments,
@@ -716,7 +710,6 @@ class ComputerRuntime:
                     backend_kind=self._backend_for_thread(thread_id),
                     workspace_host_path=str(path),
                     workspace_visible_root=self.workspace_manager.visible_root(),
-                    read_only=False,
                     available_tools=self._available_tools(self.default_policy),
                     attachment_count=len(list((path / "attachments").rglob("*"))) if (path / "attachments").exists() else 0,
                     mirrored_skill_names=self.list_mirrored_skills(thread_id),
@@ -725,37 +718,6 @@ class ComputerRuntime:
             )
         return items
 
-    async def set_thread_override(
-        self,
-        *,
-        thread,
-        override: ComputerRuntimeOverride,
-    ) -> None:
-        """提示 thread computer override 已删除.
-
-        Args:
-            thread: 目标 thread.
-            override: 请求设置的 override.
-
-        Raises:
-            RuntimeError: 固定抛出, 提示这条旧能力已经删除.
-        """
-
-        _ = thread, override
-        raise RuntimeError("thread computer override removed; edit session config instead")
-
-    async def clear_thread_override(self, *, thread) -> None:
-        """提示 thread computer override 已删除.
-
-        Args:
-            thread: 目标 thread.
-
-        Raises:
-            RuntimeError: 固定抛出, 提示这条旧能力已经删除.
-        """
-
-        _ = thread
-        raise RuntimeError("thread computer override removed; edit session config instead")
 
     @staticmethod
     def _join_world_path(base_world_path: str, child_visible_path: str) -> str:

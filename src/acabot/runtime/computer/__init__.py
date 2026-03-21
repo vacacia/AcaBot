@@ -10,7 +10,6 @@ from .contracts import (
     ComputerBackendNotImplemented,
     ComputerPolicy,
     ComputerRuntimeConfig,
-    ComputerRuntimeOverride,
     ExecutionView,
     ResolvedWorldPath,
     WorldInputBundle,
@@ -19,7 +18,6 @@ from .contracts import (
     WorkspaceFileEntry,
     WorkspaceSandboxStatus,
     WorkspaceState,
-    parse_computer_override,
     parse_computer_policy,
 )
 from .runtime import ComputerRuntime
@@ -36,7 +34,6 @@ __all__ = [
     "ComputerPolicy",
     "ComputerRuntime",
     "ComputerRuntimeConfig",
-    "ComputerRuntimeOverride",
     "DockerSandboxBackend",
     "ExecutionView",
     "HostComputerBackend",
@@ -50,6 +47,5 @@ __all__ = [
     "WorkspaceManager",
     "WorkspaceSandboxStatus",
     "WorkspaceState",
-    "parse_computer_override",
     "parse_computer_policy",
 ]

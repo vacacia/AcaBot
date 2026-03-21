@@ -319,10 +319,8 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
     def _policy_from_ctx(ctx: ToolExecutionContext) -> ComputerPolicy:
         return ComputerPolicy(
             backend=str(ctx.metadata.get("backend_kind", "host") or "host"),
-            read_only=False,
-            allow_write=True,
-            allow_exec=bool(ctx.metadata.get("allow_exec", True)),
-            allow_sessions=bool(ctx.metadata.get("allow_sessions", True)),
+            allow_exec=bool(ctx.metadata.get("allow_exec", False)),
+            allow_sessions=bool(ctx.metadata.get("allow_sessions", False)),
             auto_stage_attachments=True,
             network_mode=str(ctx.metadata.get("network_mode", "enabled") or "enabled"),
         )

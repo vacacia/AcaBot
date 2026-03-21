@@ -6,7 +6,6 @@ import time
 
 from ..computer import (
     ComputerRuntime,
-    ComputerRuntimeOverride,
     WorkspaceFileEntry,
     WorkspaceSandboxStatus,
     WorkspaceState,
@@ -99,10 +98,9 @@ class RuntimeWorkspaceControlOps:
         self,
         *,
         thread_id: str,
-        override: ComputerRuntimeOverride,
         force: bool = False,
     ) -> AgentSwitchSnapshot:
-        _ = override, force
+        _ = force
         return AgentSwitchSnapshot(
             ok=False,
             thread_id=thread_id,
