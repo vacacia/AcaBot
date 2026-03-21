@@ -94,31 +94,6 @@ class RuntimeWorkspaceControlOps:
             step_types=step_types,
         )
 
-    async def set_thread_computer_override(
-        self,
-        *,
-        thread_id: str,
-        force: bool = False,
-    ) -> AgentSwitchSnapshot:
-        _ = force
-        return AgentSwitchSnapshot(
-            ok=False,
-            thread_id=thread_id,
-            message="thread computer override removed; edit session config instead",
-        )
-
-    async def clear_thread_computer_override(
-        self,
-        *,
-        thread_id: str,
-        force: bool = False,
-    ) -> AgentSwitchSnapshot:
-        _ = force
-        return AgentSwitchSnapshot(
-            ok=False,
-            thread_id=thread_id,
-            message="thread computer override removed; edit session config instead",
-        )
 
     async def prune_workspace(self, *, thread_id: str, force: bool = False) -> AgentSwitchSnapshot:
         if self.computer_runtime is None:

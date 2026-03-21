@@ -1208,22 +1208,6 @@ class RuntimeControlPlane:
             step_types=step_types,
         )
 
-    async def set_thread_computer_override(
-        self,
-        *,
-        thread_id: str,
-        force: bool = False,
-    ) -> AgentSwitchSnapshot:
-        return await self.workspace_ops.set_thread_computer_override(
-            thread_id=thread_id,
-            force=force,
-        )
-
-    async def clear_thread_computer_override(self, *, thread_id: str, force: bool = False) -> AgentSwitchSnapshot:
-        return await self.workspace_ops.clear_thread_computer_override(
-            thread_id=thread_id,
-            force=force,
-        )
 
     async def prune_workspace(self, *, thread_id: str, force: bool = False) -> AgentSwitchSnapshot:
         return await self.workspace_ops.prune_workspace(thread_id=thread_id, force=force)
