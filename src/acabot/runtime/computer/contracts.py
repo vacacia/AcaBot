@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from acabot.types import EventAttachment
+from ..contracts import ComputerPolicyDecision
 
 
 ComputerBackendKind = str
@@ -44,6 +45,102 @@ class ComputerRuntimeOverride:
     allow_exec: bool | None = None
     allow_sessions: bool | None = None
     network_mode: str = ""
+
+
+@dataclass(slots=True)
+class WorldRootPolicy:
+    """单个 Work World root 的权限定义.
+
+    Attributes:
+        root_kind (str): root 名字, 例如 `workspace`.
+        visible (bool): 当前 actor 是否看得见这个 root.
+        writable (bool): 当前 actor 是否允许写这个 root.
+    """
+
+    root_kind: str
+    visible: bool
+    writable: bool
+
+
+@dataclass(slots=True)
+class ResolvedWorldPath:
+    """一次 world path 解析结果.
+
+    Attributes:
+        world_path (str): 模型侧使用的 world path.
+        root_kind (str): 命中的 root 名字.
+        relative_path (str): root 内相对路径.
+        host_path (str): 实际宿主机路径.
+        execution_path (str): shell 看到的执行路径. 当前 shell 不可见时为空字符串.
+        visible (bool): 当前路径是否可见.
+        writable (bool): 当前路径是否可写.
+    """
+
+    world_path: str
+    root_kind: str
+    relative_path: str
+    host_path: str
+    execution_path: str
+    visible: bool
+    writable: bool
+
+
+@dataclass(slots=True)
+class ExecutionView:
+    """shell 侧看到的执行视图摘要.
+
+    Attributes:
+        workspace_path (str): shell 里 workspace 对应的真实路径.
+        skills_path (str): shell 里 skills 对应的真实路径. 当前 shell 不可见时为空字符串.
+        self_path (str): shell 里 self 对应的真实路径. 当前 shell 不可见时为空字符串.
+        backend (str): 当前使用的 backend.
+    """
+
+    workspace_path: str
+    skills_path: str
+    self_path: str
+    backend: str
+
+
+class WorldView(Protocol):
+    """Work World 视图协议."""
+
+    thread_id: str
+    actor_kind: str
+    profile_id: str
+    root_policies: dict[str, WorldRootPolicy]
+    workspace_root_host_path: str
+    skills_root_host_path: str
+    self_root_host_path: str
+    visible_skill_names: list[str]
+    execution_view: ExecutionView
+
+    def resolve(self, world_path: str) -> ResolvedWorldPath:
+        """把 world path 解析成正式路径对象."""
+
+        ...
+
+
+@dataclass(slots=True)
+class WorldInputBundle:
+    """构造 Work World 所需的稳定输入.
+
+    Attributes:
+        thread_id (str): 当前 thread ID.
+        profile_id (str): 当前 profile ID.
+        actor_kind (str): 当前 actor 的 world 身份.
+        self_scope_id (str): `/self` 对应的宿主机 scope 标识.
+        visible_skill_names (list[str] | None): 当前 actor 真正可见的 skill 名.
+            传入空列表表示“明确没有可见 skill”, 传入 `None` 表示回退到 policy.
+        computer_policy (ComputerPolicyDecision): 当前 run 的 computer 决策结果.
+    """
+
+    thread_id: str
+    profile_id: str
+    actor_kind: str
+    self_scope_id: str
+    visible_skill_names: list[str] | None = None
+    computer_policy: ComputerPolicyDecision = field(default_factory=ComputerPolicyDecision)
 
 
 @dataclass(slots=True)
@@ -272,6 +369,11 @@ __all__ = [
     "ComputerPolicy",
     "ComputerRuntimeConfig",
     "ComputerRuntimeOverride",
+    "ExecutionView",
+    "ResolvedWorldPath",
+    "WorldInputBundle",
+    "WorldRootPolicy",
+    "WorldView",
     "WorkspaceFileEntry",
     "WorkspaceSandboxStatus",
     "WorkspaceState",
