@@ -181,6 +181,44 @@ async def test_runtime_control_plane_reports_status_snapshot(tmp_path: Path) -> 
     assert status.pending_approval_count == 1
 
 
+async def test_runtime_control_plane_status_exposes_delegate_agent_id() -> None:
+    gateway = FakeGateway()
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    control_plane = RuntimeControlPlane(
+        app=RuntimeApp(
+            gateway=gateway,
+            router=RuntimeRouter(default_agent_id="aca"),
+            thread_manager=thread_manager,
+            run_manager=run_manager,
+            channel_event_store=InMemoryChannelEventStore(),
+            pipeline=ThreadPipeline(
+                agent_runtime=FakeAgentRuntime(),
+                outbox=Outbox(gateway=gateway, store=FakeMessageStore()),
+                run_manager=run_manager,
+                thread_manager=thread_manager,
+            ),
+            profile_loader=_profile_loader,
+        ),
+        run_manager=run_manager,
+    )
+    run = await run_manager.open(
+        event=_event(),
+        decision=RouteDecision(
+            thread_id="thread:subagent",
+            actor_id="qq:user:10001",
+            agent_id="sample_worker",
+            channel_scope="qq:user:10001",
+            metadata={"run_kind": "subagent", "delegate_agent_id": "sample_worker"},
+        ),
+    )
+    await run_manager.mark_running(run.run_id)
+
+    status = await control_plane.get_status()
+
+    assert status.active_runs[0].delegate_agent_id == "sample_worker"
+
+
 async def test_runtime_control_plane_lists_catalog_skills_and_agent_assignments(tmp_path: Path) -> None:
     skill_catalog = _catalog()
     profile_registry = _profile_registry()

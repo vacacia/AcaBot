@@ -1,5 +1,6 @@
 ref
 tmp
+.tmp
 .codebuddy
 .claude
 .codex
@@ -37,3 +38,7 @@ docs/explore
 .acabot-runtime/
 webui/node_modules/
 webui/.vite/
+
+
+notes
+docs/ex

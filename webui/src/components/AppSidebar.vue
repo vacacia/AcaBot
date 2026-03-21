@@ -38,6 +38,21 @@
     </div>
     <nav class="nav">
       <RouterLink class="nav-item" to="/">首页</RouterLink>
+      <div class="group-title">预览</div>
+      <RouterLink class="nav-item" to="/preview/glass-lab/graphite">Glass Palettes</RouterLink>
+      <RouterLink class="nav-item" to="/preview/glass-lab/editorial-graphite">Editorial Study</RouterLink>
+      <RouterLink class="nav-item" to="/preview/glass-lab/instrument-brass">Instrument Study</RouterLink>
+      <RouterLink class="nav-item" to="/preview/material-console/cold-graphite">Material Cold</RouterLink>
+      <RouterLink class="nav-item" to="/preview/material-console/warm-mineral">Material Warm</RouterLink>
+      <RouterLink class="nav-item" to="/preview/material-console/deep-flagship">Material Dark</RouterLink>
+      <RouterLink class="nav-item" to="/preview/material-dark/smoked-graphite">Dark Smoke</RouterLink>
+      <RouterLink class="nav-item" to="/preview/material-dark/mineral-dusk">Dark Dusk</RouterLink>
+      <RouterLink class="nav-item" to="/preview/material-dark/slate-flagship">Dark Slate</RouterLink>
+      <RouterLink class="nav-item" to="/preview/material-dark/monochrome-graphite">Dark Mono</RouterLink>
+      <RouterLink class="nav-item" to="/preview/material-dark/cold-black-titanium">Dark Titanium</RouterLink>
+      <RouterLink class="nav-item" to="/preview/material-dark/warm-black-ore">Dark Ore</RouterLink>
+      <RouterLink class="nav-item" to="/preview/material-dark/blue-black-flagship">Dark Flagship</RouterLink>
+      <RouterLink class="nav-item" to="/preview/material-frost/smoke/glass/accent">Frost Study</RouterLink>
       <div class="group-title">配置</div>
       <RouterLink class="nav-item" to="/config/soul">Soul</RouterLink>
       <RouterLink class="nav-item" to="/config/memory">记忆</RouterLink>

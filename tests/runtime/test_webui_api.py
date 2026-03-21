@@ -488,6 +488,84 @@ runtime:
     )
 
 
+async def test_runtime_reload_updates_default_agent_dependent_state(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+gateway:
+  host: "127.0.0.1"
+  port: 8080
+
+agent:
+  default_model: "test-model"
+
+runtime:
+  default_agent_id: "aca"
+  profiles:
+    aca:
+      name: "Aca"
+      prompt_ref: "prompt/aca"
+      default_model: "model-a"
+      admin_actor_ids:
+        - "qq:private:1"
+    worker:
+      name: "Worker"
+      prompt_ref: "prompt/worker"
+      default_model: "model-w"
+  prompts:
+    prompt/aca: "hello aca"
+    prompt/worker: "hello worker"
+""".strip(),
+        encoding="utf-8",
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+
+    assert components.tool_broker.default_agent_id == "aca"
+    assert components.subagent_delegator.default_agent_id == "aca"
+    assert components.app.backend_admin_actor_ids == {"qq:private:1"}
+
+    config_path.write_text(
+        """
+gateway:
+  host: "127.0.0.1"
+  port: 8080
+
+agent:
+  default_model: "test-model"
+
+runtime:
+  default_agent_id: "worker"
+  profiles:
+    aca:
+      name: "Aca"
+      prompt_ref: "prompt/aca"
+      default_model: "model-a"
+    worker:
+      name: "Worker"
+      prompt_ref: "prompt/worker"
+      default_model: "model-w"
+      admin_actor_ids:
+        - "qq:private:2"
+  prompts:
+    prompt/aca: "hello aca"
+    prompt/worker: "hello worker"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = await components.control_plane.reload_runtime_configuration()
+
+    assert result["default_agent_id"] == "worker"
+    assert components.tool_broker.default_agent_id == "worker"
+    assert components.subagent_delegator.default_agent_id == "worker"
+    assert components.app.backend_admin_actor_ids == {"qq:private:2"}
+
+
 async def test_runtime_config_control_plane_upserts_profile_prompt_and_rule(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     _write_config(config_path)
@@ -1488,6 +1566,30 @@ def test_webui_shell_is_vite_bundle_entry() -> None:
     assert "<div id=\"app\"></div>" in html
     assert "data-view=\"sessions\"" not in html
     assert "<script type=\"module\"" in html
+
+
+def test_webui_router_exposes_glass_lab_palette_preview_routes() -> None:
+    router_source = Path("webui/src/router.ts").read_text(encoding="utf-8")
+
+    assert 'path: "/preview/glass-lab"' in router_source
+    assert 'redirect: "/preview/glass-lab/graphite"' in router_source
+    assert 'name: "glass-lab-graphite"' in router_source
+    assert 'path: "/preview/glass-lab/graphite"' in router_source
+    assert 'name: "glass-lab-verdigris"' in router_source
+    assert 'path: "/preview/glass-lab/verdigris"' in router_source
+    assert 'name: "glass-lab-brass"' in router_source
+    assert 'path: "/preview/glass-lab/brass"' in router_source
+    assert 'name: "glass-lab-bordeaux"' in router_source
+    assert 'path: "/preview/glass-lab/bordeaux"' in router_source
+
+
+def test_webui_router_exposes_advanced_glass_study_routes() -> None:
+    router_source = Path("webui/src/router.ts").read_text(encoding="utf-8")
+
+    assert 'name: "glass-editorial-graphite"' in router_source
+    assert 'path: "/preview/glass-lab/editorial-graphite"' in router_source
+    assert 'name: "glass-instrument-brass"' in router_source
+    assert 'path: "/preview/glass-lab/instrument-brass"' in router_source
 
 
 async def test_memory_page_does_not_overflow_on_narrow_width(tmp_path: Path) -> None:
