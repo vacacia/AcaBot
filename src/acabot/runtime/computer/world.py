@@ -85,7 +85,6 @@ class _WorldViewImpl(WorldView):
             host_path=str(host_path),
             execution_path=self._execution_path(root_kind, relative_path),
             visible=True,
-            writable=policy.writable,
         )
 
     @staticmethod
@@ -293,7 +292,6 @@ class WorkWorldBuilder:
             root_policies[root_kind] = WorldRootPolicy(
                 root_kind=root_kind,
                 visible=bool(raw.get("visible", False)),
-                writable=bool(raw.get("writable", False)),
             )
         return root_policies
 
@@ -309,7 +307,7 @@ class WorkWorldBuilder:
         """
 
         if bundle.visible_skill_names is None:
-            names = list(bundle.computer_policy.visible_skills)
+            names = list(bundle.computer_policy.visible_skills or [])
         else:
             names = list(bundle.visible_skill_names)
         return sorted({name for name in names if name})

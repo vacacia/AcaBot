@@ -43,7 +43,7 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
             RuntimeToolRegistration(
                 spec=ToolSpec(
                     name="read",
-                    description="Read a UTF-8 text file from the current workspace.",
+                    description="Read a UTF-8 text file from the current Work World. Use world paths like /workspace/..., /skills/..., /self/... .",
                     parameters={
                         "type": "object",
                         "properties": {
@@ -57,7 +57,7 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
             RuntimeToolRegistration(
                 spec=ToolSpec(
                     name="write",
-                    description="Write a UTF-8 text file into the current workspace.",
+                    description="Write a UTF-8 text file into the current Work World. Use world paths like /workspace/..., /skills/..., /self/... .",
                     parameters={
                         "type": "object",
                         "properties": {
@@ -72,7 +72,7 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
             RuntimeToolRegistration(
                 spec=ToolSpec(
                     name="ls",
-                    description="List files and directories from the current workspace.",
+                    description="List files and directories from the current Work World. Use world paths like /workspace/..., /skills/..., /self/... .",
                     parameters={
                         "type": "object",
                         "properties": {
@@ -85,7 +85,7 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
             RuntimeToolRegistration(
                 spec=ToolSpec(
                     name="grep",
-                    description="Search text recursively inside the current workspace.",
+                    description="Search text recursively inside the current Work World. Use world paths like /workspace/..., /skills/..., /self/... .",
                     parameters={
                         "type": "object",
                         "properties": {
@@ -100,7 +100,7 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
             RuntimeToolRegistration(
                 spec=ToolSpec(
                     name="exec",
-                    description="Run a one-shot shell command inside the current workspace.",
+                    description="Run a one-shot shell command inside the current Work World execution view.",
                     parameters={
                         "type": "object",
                         "properties": {
@@ -114,7 +114,7 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
             RuntimeToolRegistration(
                 spec=ToolSpec(
                     name="bash_open",
-                    description="Open a shared shell session bound to the current thread workspace.",
+                    description="Open a shared shell session bound to the current Work World execution view.",
                     parameters={"type": "object", "properties": {}},
                 ),
                 handler=self._bash_open,
@@ -167,13 +167,14 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
     async def _read(self, arguments: dict[str, Any], ctx: ToolExecutionContext) -> ToolResult:
         service = self._require_runtime()
         await self._ensure_loaded_skill_mirrors(ctx)
-        content = await service.read_workspace_file(
-            thread_id=ctx.thread_id,
-            relative_path=str(arguments.get("path", "") or "/"),
+        path = str(arguments.get("path", "") or "/workspace")
+        content = await service.read_world_file(
+            world_view=self._require_world_view(ctx),
+            world_path=path,
         )
         return ToolResult(
             llm_content=content,
-            raw={"path": arguments.get("path", "/"), "content": content},
+            raw={"path": path, "content": content},
         )
 
     async def _write(self, arguments: dict[str, Any], ctx: ToolExecutionContext) -> ToolResult:
@@ -182,9 +183,9 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
         path = str(arguments.get("path", "") or "")
         content = str(arguments.get("content", "") or "")
         policy = self._policy_from_ctx(ctx)
-        await service.write_workspace_file(
-            thread_id=ctx.thread_id,
-            relative_path=path,
+        await service.write_world_file(
+            world_view=self._require_world_view(ctx),
+            world_path=path,
             content=content,
             policy=policy,
         )
@@ -196,9 +197,10 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
     async def _ls(self, arguments: dict[str, Any], ctx: ToolExecutionContext) -> ToolResult:
         service = self._require_runtime()
         await self._ensure_loaded_skill_mirrors(ctx)
-        items = await service.list_workspace_entries(
-            thread_id=ctx.thread_id,
-            relative_path=str(arguments.get("path", "/") or "/"),
+        path = str(arguments.get("path", "/workspace") or "/workspace")
+        items = await service.list_world_entries(
+            world_view=self._require_world_view(ctx),
+            world_path=path,
         )
         lines = [f"{item.kind} {item.path}" for item in items]
         return ToolResult(
@@ -209,9 +211,9 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
     async def _grep(self, arguments: dict[str, Any], ctx: ToolExecutionContext) -> ToolResult:
         service = self._require_runtime()
         await self._ensure_loaded_skill_mirrors(ctx)
-        matches = await service.grep_workspace(
-            thread_id=ctx.thread_id,
-            relative_path=str(arguments.get("path", "/") or "/"),
+        matches = await service.grep_world(
+            world_view=self._require_world_view(ctx),
+            world_path=str(arguments.get("path", "/workspace") or "/workspace"),
             pattern=str(arguments.get("pattern", "") or ""),
         )
         lines = [f"{item['path']}:{item['line']}: {item['content']}" for item in matches]
@@ -228,6 +230,7 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
             run_id=ctx.run_id,
             command=str(arguments.get("command", "") or ""),
             policy=self._policy_from_ctx(ctx),
+            world_view=self._require_world_view(ctx),
         )
         return ToolResult(
             llm_content=self._format_command_result(result),
@@ -243,6 +246,7 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
             run_id=ctx.run_id,
             agent_id=ctx.agent_id,
             policy=self._policy_from_ctx(ctx),
+            world_view=self._require_world_view(ctx),
         )
         return ToolResult(
             llm_content=f"Opened session {session.session_id}",
@@ -296,20 +300,27 @@ class ComputerToolAdapterPlugin(RuntimePlugin):
             raise RuntimeError("computer runtime unavailable")
         return self._computer_runtime
 
+    @staticmethod
+    def _require_world_view(ctx: ToolExecutionContext):
+        if ctx.world_view is None:
+            raise RuntimeError("world view unavailable")
+        return ctx.world_view
+
     async def _ensure_loaded_skill_mirrors(self, ctx: ToolExecutionContext) -> None:
         if self._computer_runtime is None or self._skill_catalog is None:
             return
         await self._computer_runtime.ensure_loaded_skills_mirrored(
             ctx.thread_id,
             self._skill_catalog,
+            world_view=ctx.world_view,
         )
 
     @staticmethod
     def _policy_from_ctx(ctx: ToolExecutionContext) -> ComputerPolicy:
         return ComputerPolicy(
             backend=str(ctx.metadata.get("backend_kind", "host") or "host"),
-            read_only=bool(ctx.metadata.get("read_only", False)),
-            allow_write=bool(ctx.metadata.get("allow_write", True)),
+            read_only=False,
+            allow_write=True,
             allow_exec=bool(ctx.metadata.get("allow_exec", True)),
             allow_sessions=bool(ctx.metadata.get("allow_sessions", True)),
             auto_stage_attachments=True,

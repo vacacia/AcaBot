@@ -26,6 +26,7 @@ from acabot.runtime import (
     ToolPolicyDecision,
     ToolResult,
     ToolRuntimeState,
+    WorkspaceState,
 )
 from acabot.runtime.plugin_manager import RuntimePluginContext
 from acabot.runtime.plugins.backend_bridge_tool import BackendBridgeToolPlugin
@@ -127,6 +128,78 @@ async def test_tool_broker_build_tool_runtime_returns_executor() -> None:
     assert execution.raw["run_id"] == "run:1"
 
 
+async def test_tool_broker_filters_computer_tools_by_run_policy() -> None:
+    broker = ToolBroker()
+
+    async def read_tool(arguments: dict[str, Any], ctx) -> ToolResult:
+        _ = arguments, ctx
+        return ToolResult(llm_content="read")
+
+    async def write_tool(arguments: dict[str, Any], ctx) -> ToolResult:
+        _ = arguments, ctx
+        return ToolResult(llm_content="write")
+
+    async def exec_tool(arguments: dict[str, Any], ctx) -> ToolResult:
+        _ = arguments, ctx
+        return ToolResult(llm_content="exec")
+
+    broker.register_tool(ToolSpec(name="read", description="read", parameters={"type": "object", "properties": {}}), read_tool)
+    broker.register_tool(ToolSpec(name="write", description="write", parameters={"type": "object", "properties": {}}), write_tool)
+    broker.register_tool(ToolSpec(name="exec", description="exec", parameters={"type": "object", "properties": {}}), exec_tool)
+
+    ctx = _context()
+    ctx.profile.enabled_tools = ["read", "write", "exec"]
+    ctx.workspace_state = WorkspaceState(
+        thread_id=ctx.thread.thread_id,
+        agent_id=ctx.profile.agent_id,
+        backend_kind="host",
+        workspace_host_path="/tmp/workspace",
+        workspace_visible_root="/workspace",
+        read_only=True,
+        available_tools=["read"],
+    )
+
+    tool_runtime = broker.build_tool_runtime(ctx)
+
+    assert [tool.name for tool in tool_runtime.tools] == ["read"]
+
+
+async def test_tool_broker_rejects_run_hidden_tool_on_direct_execute() -> None:
+    broker = ToolBroker()
+
+    async def write_tool(arguments: dict[str, Any], ctx) -> ToolResult:
+        _ = arguments, ctx
+        return ToolResult(llm_content="write")
+
+    broker.register_tool(
+        ToolSpec(
+            name="write",
+            description="write",
+            parameters={"type": "object", "properties": {}},
+        ),
+        write_tool,
+    )
+    ctx = _context()
+    ctx.profile.enabled_tools = ["write"]
+    ctx.workspace_state = WorkspaceState(
+        thread_id=ctx.thread.thread_id,
+        agent_id=ctx.profile.agent_id,
+        backend_kind="host",
+        workspace_host_path="/tmp/workspace",
+        workspace_visible_root="/workspace",
+        read_only=False,
+        available_tools=["read"],
+    )
+
+    result = await broker.execute(
+        tool_name="write",
+        arguments={"path": "/workspace/out.txt", "content": "x"},
+        ctx=broker._build_execution_context(ctx),
+    )
+
+    assert '"error": "Tool not enabled for current run: write"' in result.llm_content
+
+
 async def test_tool_broker_normalizes_legacy_tool_def_result() -> None:
     broker = ToolBroker()
 
@@ -184,7 +257,7 @@ async def test_tool_broker_returns_error_when_tool_not_enabled() -> None:
         ctx=broker._build_execution_context(ctx),
     )
 
-    assert '"error": "Tool not enabled for profile: dangerous_tool"' in result.llm_content
+    assert '"error": "Tool not enabled for current run: dangerous_tool"' in result.llm_content
 
 
 async def test_tool_broker_policy_can_reject_tool() -> None:

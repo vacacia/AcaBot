@@ -19,6 +19,7 @@ def _ctx() -> ToolExecutionContext:
             computer_policy=ComputerPolicy(),
             config={},
         ),
+        world_view=object(),
         metadata={},
     )
 
@@ -28,14 +29,15 @@ async def test_computer_tool_adapter_ls_serializes_slots_dataclass() -> None:
         async def ensure_loaded_skills_mirrored(self, *args, **kwargs):
             _ = args, kwargs
 
-        async def list_workspace_entries(self, **kwargs):
-            _ = kwargs
+        async def list_world_entries(self, **kwargs):
+            assert kwargs["world_path"] == "/workspace"
+            assert kwargs["world_view"] is not None
             return [WorkspaceFileEntry(path="/workspace/demo.txt", kind="file", size_bytes=12, modified_at=1)]
 
     plugin = ComputerToolAdapterPlugin()
     plugin._computer_runtime = Runtime()
 
-    result = await plugin._ls({"path": "/"}, _ctx())
+    result = await plugin._ls({"path": "/workspace"}, _ctx())
 
     assert result.raw == {
         "items": [
@@ -55,7 +57,7 @@ async def test_computer_tool_adapter_exec_serializes_slots_dataclass() -> None:
             _ = args, kwargs
 
         async def exec_once(self, **kwargs):
-            _ = kwargs
+            assert kwargs["world_view"] is not None
             return CommandExecutionResult(
                 ok=True,
                 exit_code=0,

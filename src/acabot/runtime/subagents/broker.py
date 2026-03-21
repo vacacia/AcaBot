@@ -208,6 +208,8 @@ class SubagentDelegationBroker:
         resolved_delegate_agent_id = str(delegate_agent_id or "").strip()
         if not resolved_delegate_agent_id:
             return self._failed("", "delegate_agent_id is required")
+        if resolved_delegate_agent_id == profile.agent_id:
+            return self._failed(resolved_delegate_agent_id, "current agent cannot delegate to itself")
         executor_item = self.executor_registry.get(resolved_delegate_agent_id)
         if executor_item is None:
             return self._failed(resolved_delegate_agent_id, f"subagent executor not found: {resolved_delegate_agent_id}")

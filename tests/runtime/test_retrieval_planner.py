@@ -1,5 +1,7 @@
 from acabot.runtime import (
     AgentProfile,
+    ContextDecision,
+    ExtractionDecision,
     MemoryBlock,
     PromptAssemblyConfig,
     RetrievalPlanner,
@@ -156,3 +158,77 @@ def test_retrieval_planner_never_injects_skill_guides() -> None:
 
     assert ctx.prompt_slots == []
     assert messages == list(ctx.thread.working_messages)
+
+
+
+def test_retrieval_planner_uses_typed_extraction_decision_scopes() -> None:
+    planner = RetrievalPlanner(PromptAssemblyConfig())
+    ctx = _ctx()
+    ctx.extraction_decision = ExtractionDecision(
+        extract_to_memory=True,
+        memory_scopes=["channel"],
+        tags=["project"],
+    )
+    ctx.decision.metadata.clear()
+
+    plan = planner.prepare(ctx)
+
+    assert plan.requested_scopes == ["channel"]
+    assert plan.requested_tags == []
+
+
+
+def test_retrieval_planner_applies_context_labels_and_prompt_slots() -> None:
+    planner = RetrievalPlanner(PromptAssemblyConfig())
+    ctx = _ctx()
+    ctx.context_decision = ContextDecision(
+        context_labels=["admin_message", "high_priority"],
+        prompt_slots=[
+            {
+                "slot_id": "slot:session-note",
+                "slot_type": "session_context",
+                "title": "Session Note",
+                "content": "请优先给出执行步骤。",
+                "position": "system_message",
+                "message_role": "system",
+                "stable": True,
+            }
+        ],
+    )
+    ctx.retrieval_plan = planner.prepare(ctx)
+
+    messages = planner.assemble(ctx, memory_blocks=[])
+
+    assert [slot.slot_type for slot in ctx.prompt_slots] == ["context_labels", "session_context"]
+    assert "admin_message" in str(messages[0]["content"])
+    assert "请优先给出执行步骤。" in str(messages[1]["content"])
+
+
+
+def test_retrieval_planner_filters_sticky_notes_by_context_scope() -> None:
+    planner = RetrievalPlanner(PromptAssemblyConfig())
+    ctx = _ctx()
+    ctx.context_decision = ContextDecision(sticky_note_scopes=["user"])
+    ctx.retrieval_plan = planner.prepare(ctx)
+
+    messages = planner.assemble(
+        ctx,
+        memory_blocks=[
+            MemoryBlock(
+                title="User Sticky",
+                content="用户更喜欢短回答",
+                scope="user",
+                metadata={"memory_type": "sticky_note", "edit_mode": "readonly"},
+            ),
+            MemoryBlock(
+                title="Channel Sticky",
+                content="本群正在讨论项目排期",
+                scope="channel",
+                metadata={"memory_type": "sticky_note", "edit_mode": "readonly"},
+            ),
+        ],
+    )
+
+    assert ctx.prompt_slots[0].slot_type == "sticky_notes"
+    assert "用户更喜欢短回答" in str(messages[0]["content"])
+    assert "本群正在讨论项目排期" not in str(messages[0]["content"])

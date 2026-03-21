@@ -141,9 +141,9 @@ async def test_ops_control_plugin_can_switch_thread_agent() -> None:
     await gateway.handler(_message_event("/switch_agent ops", event_id="evt-switch"))
     await gateway.handler(_message_event("hello", event_id="evt-normal"))
 
-    assert gateway.sent[0].payload["text"] == "thread agent switched to ops"
-    assert agent.calls[0]["system_prompt"] == "You are the operator agent."
-    assert agent.calls[0]["model"] == "model-o"
+    assert "removed" in gateway.sent[0].payload["text"]
+    assert agent.calls[0]["system_prompt"].startswith("You are Aca.")
+    assert agent.calls[0]["model"] == "model-a"
 
 
 async def test_ops_control_plugin_can_show_memory() -> None:

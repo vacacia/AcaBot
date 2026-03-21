@@ -184,7 +184,6 @@ async def test_runtime_plugin_manager_registers_and_unloads_subagent_executors()
         tool_broker=ToolBroker(skill_catalog=catalog),
         skill_catalog=catalog,
         subagent_delegator=SubagentDelegationBroker(
-            skill_catalog=catalog,
             executor_registry=executor_registry,
         ),
         plugins=[SampleDelegationWorkerPlugin()],

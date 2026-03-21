@@ -200,8 +200,6 @@ class RuntimeApp:
                 channel_scope=decision.channel_scope,
                 last_event_at=event.timestamp,
             )
-            # 是否应用 thread 级别的 **agent** override
-            decision = self._apply_thread_agent_override(decision, thread)
             try:
                 # 先契约, 后执行
                 profile = self._load_profile_for_event(decision)
@@ -359,7 +357,7 @@ class RuntimeApp:
             "Backend direct reply: event_id=%s channel=%s preview=%s",
             event.event_id,
             event.session_key,
-            self._preview_event(event=replace(event, message_preview=text)),
+            text[:120],
         )
         await self.gateway.send(
             Action(

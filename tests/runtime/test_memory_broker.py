@@ -1,4 +1,4 @@
-from acabot.runtime import MemoryBlock, MemoryBroker, RunContext
+from acabot.runtime import ContextDecision, ExtractionDecision, MemoryBlock, MemoryBroker, RunContext
 from acabot.runtime.contracts import (
     AgentProfile,
     MemoryCandidate,
@@ -143,6 +143,37 @@ async def test_memory_broker_prefers_memory_user_content_override() -> None:
 
     request = extractor.calls[0]
     assert request.user_content == "[acacia/10001] [notice:poke] [图片说明: 一张群聊截图]"
+
+
+async def test_memory_broker_passes_context_retrieval_tags() -> None:
+    retriever = RecordingRetriever()
+    broker = MemoryBroker(retriever=retriever)
+    ctx = _ctx()
+    ctx.context_decision = ContextDecision(retrieval_tags=["urgent", "project"])
+
+    await broker.retrieve(ctx)
+
+    request = retriever.calls[0]
+    assert request.requested_tags == ["urgent", "project"]
+
+
+async def test_memory_broker_prefers_typed_extraction_decision() -> None:
+    extractor = RecordingExtractor()
+    broker = MemoryBroker(extractor=extractor)
+    ctx = _ctx()
+    ctx.decision.metadata.clear()
+    ctx.extraction_decision = ExtractionDecision(
+        extract_to_memory=True,
+        memory_scopes=["channel"],
+        tags=["typed", "project"],
+    )
+
+    await broker.extract_after_run(ctx)
+
+    request = extractor.calls[0]
+    assert request.requested_scopes == ["channel"]
+    assert request.event_tags == ["typed", "project"]
+    assert request.metadata["extract_to_memory"] is True
 
 
 async def test_memory_broker_formats_message_projection_candidates() -> None:

@@ -1,15 +1,18 @@
 from pathlib import Path
 
+import pytest
+
 from acabot.runtime import (
+    AgentProfile,
+    ComputerPolicy,
+    ComputerPolicyDecision,
     ComputerRuntime,
     ComputerRuntimeConfig,
     DockerSandboxBackend,
-    ComputerPolicy,
     RouteDecision,
     RunContext,
     RunRecord,
     ThreadState,
-    AgentProfile,
 )
 from acabot.types import EventAttachment, EventSource, MsgSegment, StandardEvent
 
@@ -65,6 +68,19 @@ def _ctx(tmp_path: Path) -> tuple[ComputerRuntime, RunContext]:
             default_model="test-model",
             computer_policy=ComputerPolicy(),
             config={},
+            skills=[],
+        ),
+        computer_policy_decision=ComputerPolicyDecision(
+            actor_kind="frontstage_agent",
+            backend="host",
+            allow_exec=True,
+            allow_sessions=True,
+            roots={
+                "workspace": {"visible": True},
+                "skills": {"visible": True},
+                "self": {"visible": True},
+            },
+            visible_skills=None,
         ),
     )
     return service, ctx
@@ -79,6 +95,9 @@ async def test_computer_runtime_prepares_workspace_state(tmp_path: Path) -> None
     assert ctx.workspace_state.backend_kind == "host"
     assert ctx.workspace_state.workspace_visible_root == "/workspace"
     assert Path(ctx.workspace_state.workspace_host_path).exists()
+    assert ctx.world_view is not None
+    assert ctx.world_view.resolve("/workspace").world_path == "/workspace"
+    assert ctx.world_view.execution_view.workspace_path == ctx.workspace_state.workspace_host_path
 
 
 async def test_computer_runtime_stages_file_url_attachments(tmp_path: Path) -> None:
@@ -98,6 +117,7 @@ async def test_computer_runtime_stages_file_url_attachments(tmp_path: Path) -> N
     assert len(ctx.attachment_snapshots) == 1
     assert ctx.attachment_snapshots[0].download_status == "staged"
     assert Path(ctx.attachment_snapshots[0].staged_path).read_text(encoding="utf-8") == "hello attachment"
+    assert ctx.attachment_snapshots[0].metadata["world_path"].startswith("/workspace/attachments/inbound/evt-1/")
 
 
 async def test_computer_runtime_supports_exec_and_shell_session(tmp_path: Path) -> None:
@@ -110,11 +130,13 @@ async def test_computer_runtime_supports_exec_and_shell_session(tmp_path: Path) 
         thread_id=ctx.thread.thread_id,
         command="printf 'hello world'",
         policy=policy,
+        world_view=ctx.world_view,
     )
     session = await service.open_session(
         thread_id=ctx.thread.thread_id,
         agent_id=ctx.profile.agent_id,
         policy=policy,
+        world_view=ctx.world_view,
     )
     await service.write_session(
         thread_id=ctx.thread.thread_id,
@@ -133,6 +155,92 @@ async def test_computer_runtime_supports_exec_and_shell_session(tmp_path: Path) 
 
     assert exec_result.ok is True
     assert "hello world" in exec_result.stdout_excerpt
+    assert session.cwd_visible == ctx.world_view.execution_view.workspace_path
+
+
+async def test_computer_runtime_world_view_respects_decision_visible_skills(tmp_path: Path) -> None:
+    service, ctx = _ctx(tmp_path)
+    ctx.profile.skills = ["profile_skill"]
+    ctx.computer_policy_decision = ComputerPolicyDecision(
+        actor_kind="frontstage_agent",
+        backend="host",
+        allow_exec=True,
+        allow_sessions=True,
+        roots={
+            "workspace": {"visible": True},
+            "skills": {"visible": True},
+            "self": {"visible": True},
+        },
+        visible_skills=["decision_skill"],
+    )
+    shared_skills = service.workspace_manager.ensure_skills_layout(ctx.thread.thread_id)
+    (shared_skills / "decision_skill").mkdir(parents=True, exist_ok=True)
+    (shared_skills / "decision_skill" / "SKILL.md").write_text("decision", encoding="utf-8")
+    (shared_skills / "profile_skill").mkdir(parents=True, exist_ok=True)
+    (shared_skills / "profile_skill" / "SKILL.md").write_text("profile", encoding="utf-8")
+
+    await service.prepare_run_context(ctx)
+
+    assert ctx.world_view is not None
+    assert ctx.world_view.resolve("/skills/decision_skill/SKILL.md").root_kind == "skills"
+    try:
+        ctx.world_view.resolve("/skills/profile_skill/SKILL.md")
+    except FileNotFoundError:
+        pass
+    else:
+        raise AssertionError("profile-level skill should not leak into world view")
+
+
+async def test_computer_runtime_refreshes_skills_world_view_after_mirroring(tmp_path: Path) -> None:
+    service, ctx = _ctx(tmp_path)
+    ctx.profile.skills = ["sample_skill"]
+    source_skill = tmp_path / "catalog" / "sample_skill"
+    source_skill.mkdir(parents=True, exist_ok=True)
+    (source_skill / "SKILL.md").write_text("sample skill", encoding="utf-8")
+
+    class Catalog:
+        def get(self, skill_name: str):
+            if skill_name != "sample_skill":
+                return None
+            return type("Manifest", (), {"root_dir": source_skill})()
+
+    await service.prepare_run_context(ctx)
+    assert ctx.world_view is not None
+
+    with pytest.raises(FileNotFoundError):
+        ctx.world_view.resolve("/skills/sample_skill/SKILL.md")
+
+    service.mark_skill_loaded(ctx.thread.thread_id, "sample_skill")
+    await service.ensure_loaded_skills_mirrored(
+        ctx.thread.thread_id,
+        Catalog(),
+        world_view=ctx.world_view,
+    )
+
+    resolved = ctx.world_view.resolve("/skills/sample_skill/SKILL.md")
+    assert Path(resolved.host_path).read_text(encoding="utf-8") == "sample skill"
+
+
+async def test_computer_runtime_hides_shell_tools_when_workspace_is_not_visible(tmp_path: Path) -> None:
+    service, ctx = _ctx(tmp_path)
+    ctx.computer_policy_decision = ComputerPolicyDecision(
+        actor_kind="frontstage_agent",
+        backend="host",
+        allow_exec=True,
+        allow_sessions=True,
+        roots={
+            "workspace": {"visible": False},
+            "skills": {"visible": True},
+            "self": {"visible": True},
+        },
+        visible_skills=None,
+    )
+
+    await service.prepare_run_context(ctx)
+
+    assert ctx.workspace_state is not None
+    assert "exec" not in ctx.workspace_state.available_tools
+    assert "bash_open" not in ctx.workspace_state.available_tools
 
 
 async def test_computer_runtime_resolves_platform_file_id_via_gateway_api(tmp_path: Path) -> None:

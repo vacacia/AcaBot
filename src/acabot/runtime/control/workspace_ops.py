@@ -102,34 +102,12 @@ class RuntimeWorkspaceControlOps:
         override: ComputerRuntimeOverride,
         force: bool = False,
     ) -> AgentSwitchSnapshot:
-        if self.thread_manager is None:
-            return AgentSwitchSnapshot(ok=False, thread_id=thread_id, message="thread manager unavailable")
-        if self.computer_runtime is None:
-            return AgentSwitchSnapshot(ok=False, thread_id=thread_id, message="computer runtime unavailable")
-        thread = await self.thread_manager.get(thread_id)
-        if thread is None:
-            return AgentSwitchSnapshot(ok=False, thread_id=thread_id, message="thread not found")
-        active_runs = [run for run in await self.run_manager.list_active() if run.thread_id == thread_id]
-        active_sessions = self.computer_runtime.list_session_ids(thread_id)
-        if (active_runs or active_sessions) and not force:
-            return AgentSwitchSnapshot(ok=False, thread_id=thread_id, message="thread in use")
-        if force:
-            await self.computer_runtime.close_all_sessions(thread_id)
-            for run in active_runs:
-                await self.run_manager.append_step(
-                    self._control_plane_step(
-                        run_id=run.run_id,
-                        thread_id=thread_id,
-                        step_type="computer_override",
-                        status="cancelled",
-                        payload={"reason": "computer override changed by operator"},
-                    )
-                )
-                await self.run_manager.mark_cancelled(run.run_id, "computer override changed by operator")
-            await self.computer_runtime.stop_workspace_sandbox(thread_id)
-        await self.computer_runtime.set_thread_override(thread=thread, override=override)
-        await self.thread_manager.save(thread)
-        return AgentSwitchSnapshot(ok=True, thread_id=thread_id, message="computer override set")
+        _ = override, force
+        return AgentSwitchSnapshot(
+            ok=False,
+            thread_id=thread_id,
+            message="thread computer override removed; edit session config instead",
+        )
 
     async def clear_thread_computer_override(
         self,
@@ -137,34 +115,12 @@ class RuntimeWorkspaceControlOps:
         thread_id: str,
         force: bool = False,
     ) -> AgentSwitchSnapshot:
-        if self.thread_manager is None:
-            return AgentSwitchSnapshot(ok=False, thread_id=thread_id, message="thread manager unavailable")
-        if self.computer_runtime is None:
-            return AgentSwitchSnapshot(ok=False, thread_id=thread_id, message="computer runtime unavailable")
-        thread = await self.thread_manager.get(thread_id)
-        if thread is None:
-            return AgentSwitchSnapshot(ok=False, thread_id=thread_id, message="thread not found")
-        active_runs = [run for run in await self.run_manager.list_active() if run.thread_id == thread_id]
-        active_sessions = self.computer_runtime.list_session_ids(thread_id)
-        if (active_runs or active_sessions) and not force:
-            return AgentSwitchSnapshot(ok=False, thread_id=thread_id, message="thread in use")
-        if force:
-            await self.computer_runtime.close_all_sessions(thread_id)
-            for run in active_runs:
-                await self.run_manager.append_step(
-                    self._control_plane_step(
-                        run_id=run.run_id,
-                        thread_id=thread_id,
-                        step_type="computer_override_clear",
-                        status="cancelled",
-                        payload={"reason": "computer override cleared by operator"},
-                    )
-                )
-                await self.run_manager.mark_cancelled(run.run_id, "computer override cleared by operator")
-            await self.computer_runtime.stop_workspace_sandbox(thread_id)
-        await self.computer_runtime.clear_thread_override(thread=thread)
-        await self.thread_manager.save(thread)
-        return AgentSwitchSnapshot(ok=True, thread_id=thread_id, message="computer override cleared")
+        _ = force
+        return AgentSwitchSnapshot(
+            ok=False,
+            thread_id=thread_id,
+            message="thread computer override removed; edit session config instead",
+        )
 
     async def prune_workspace(self, *, thread_id: str, force: bool = False) -> AgentSwitchSnapshot:
         if self.computer_runtime is None:

@@ -57,9 +57,9 @@ def _bundle(*, actor_kind: str) -> WorldInputBundle:
     """
 
     roots = {
-        "workspace": {"visible": True, "writable": True},
-        "skills": {"visible": True, "writable": False},
-        "self": {"visible": actor_kind != "subagent", "writable": actor_kind != "subagent"},
+        "workspace": {"visible": True},
+        "skills": {"visible": True},
+        "self": {"visible": actor_kind != "subagent"},
     }
     return WorldInputBundle(
         thread_id="qq:group:123",
@@ -91,8 +91,6 @@ def test_frontstage_world_exposes_workspace_skills_and_self(tmp_path: Path) -> N
     assert workspace.root_kind == "workspace"
     assert skills.root_kind == "skills"
     assert self_path.root_kind == "self"
-    assert workspace.writable is True
-    assert skills.writable is False
     assert Path(workspace.host_path).parent.name == "workspace"
 
 
@@ -105,14 +103,14 @@ def test_subagent_world_hides_self(tmp_path: Path) -> None:
 
 
 
-def test_world_marks_skills_read_only_and_workspace_writable(tmp_path: Path) -> None:
+def test_world_resolves_workspace_and_skills_paths(tmp_path: Path) -> None:
     world = _builder(tmp_path).build(_bundle(actor_kind="frontstage_agent"))
 
     workspace = world.resolve("/workspace/out/report.md")
     skills = world.resolve("/skills/sample_skill/SKILL.md")
 
-    assert workspace.writable is True
-    assert skills.writable is False
+    assert workspace.root_kind == "workspace"
+    assert skills.root_kind == "skills"
     assert skills.execution_path == skills.host_path
 
 

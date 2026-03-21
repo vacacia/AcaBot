@@ -7,6 +7,7 @@ from acabot.runtime import (
     AgentRuntimeResult,
     ContextCompactionConfig,
     ContextCompactor,
+    ContextDecision,
     InMemoryRunManager,
     InMemoryThreadManager,
     InMemoryToolAudit,
@@ -413,6 +414,65 @@ async def test_thread_pipeline_assembles_sticky_summary_and_retrieval_slots() ->
     assert "<summary>" in str(agent_runtime.captured_messages[1]["content"])
     assert "群里最近一直在讨论实习材料" in str(agent_runtime.captured_messages[1]["content"])
     assert "Relationship Memory" in str(agent_runtime.captured_messages[2]["content"])
+
+
+async def test_thread_pipeline_applies_context_slots_and_labels() -> None:
+    class InspectingAgentRuntime(AgentRuntime):
+        def __init__(self) -> None:
+            self.captured_messages = []
+
+        async def execute(self, ctx: RunContext) -> AgentRuntimeResult:
+            self.captured_messages = list(ctx.messages)
+            return AgentRuntimeResult(status="completed", text="ok")
+
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    gateway = FakeGateway()
+    outbox = Outbox(gateway=gateway, store=FakeMessageStore())
+    agent_runtime = InspectingAgentRuntime()
+    pipeline = ThreadPipeline(
+        agent_runtime=agent_runtime,
+        outbox=outbox,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+        retrieval_planner=RetrievalPlanner(PromptAssemblyConfig()),
+    )
+
+    event = _event()
+    decision = _decision()
+    thread = await thread_manager.get_or_create(
+        thread_id=decision.thread_id,
+        channel_scope=decision.channel_scope,
+        last_event_at=event.timestamp,
+    )
+    run = await run_manager.open(event=event, decision=decision)
+    ctx = RunContext(
+        run=run,
+        event=event,
+        decision=decision,
+        thread=thread,
+        profile=_profile(),
+        context_decision=ContextDecision(
+            context_labels=["admin_message"],
+            prompt_slots=[
+                {
+                    "slot_id": "slot:session-note",
+                    "slot_type": "session_context",
+                    "title": "Session Note",
+                    "content": "请优先给出可执行步骤。",
+                    "position": "system_message",
+                    "message_role": "system",
+                    "stable": True,
+                }
+            ],
+        ),
+    )
+
+    await pipeline.execute(ctx)
+
+    assert [slot.slot_type for slot in ctx.prompt_slots] == ["context_labels", "session_context"]
+    assert "admin_message" in str(agent_runtime.captured_messages[0]["content"])
+    assert "请优先给出可执行步骤。" in str(agent_runtime.captured_messages[1]["content"])
 
 
 async def test_thread_pipeline_compresses_working_memory_before_model_call() -> None:

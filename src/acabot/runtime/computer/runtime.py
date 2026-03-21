@@ -17,17 +17,20 @@ from .contracts import (
     CommandExecutionResult,
     CommandSession,
     ComputerBackend,
+    ComputerPolicyDecision,
     ComputerBackendNotImplemented,
     ComputerPolicy,
     ComputerRuntimeConfig,
     ComputerRuntimeOverride,
+    ResolvedWorldPath,
+    WorldInputBundle,
     WorkspaceFileEntry,
     WorkspaceSandboxStatus,
     WorkspaceState,
-    parse_computer_override,
     parse_computer_policy,
 )
 from .workspace import WorkspaceManager, sanitize_filename
+from .world import WorkWorldBuilder
 
 if TYPE_CHECKING:
     from ..contracts import RunContext
@@ -59,6 +62,7 @@ class ComputerRuntime:
             network_mode="enabled",
         )
         self.workspace_manager = WorkspaceManager(config)
+        self.world_builder = WorkWorldBuilder(self.workspace_manager)
         self.backends: dict[str, ComputerBackend] = {
             "host": HostComputerBackend(
                 stdout_window_bytes=config.exec_stdout_window_bytes,
@@ -76,15 +80,21 @@ class ComputerRuntime:
         self._sessions: dict[str, dict[str, CommandSession]] = {}
         self._loaded_skills: dict[str, set[str]] = {}
         self._thread_backend_state: dict[str, str] = {}
-        self._thread_override_backends: dict[str, str] = {}
 
     async def prepare_run_context(self, ctx: "RunContext") -> None:
+        """为当前 run 准备 computer 相关上下文.
+
+        Args:
+            ctx (RunContext): 当前 run 的执行上下文.
+        """
+
         policy = self.effective_policy_for_ctx(ctx)
-        workspace_dir = self.workspace_manager.ensure_workspace_layout(ctx.thread.thread_id)
+        world_view = self.build_world_view(ctx, policy=policy)
+        workspace_dir = Path(world_view.workspace_root_host_path)
         backend = self.backends[policy.backend]
         await backend.ensure_workspace(
             host_path=workspace_dir,
-            visible_root=self.workspace_manager.visible_root(),
+            visible_root=world_view.execution_view.workspace_path,
         )
         staged = AttachmentStageResult()
         if policy.auto_stage_attachments and ctx.event.attachments:
@@ -93,9 +103,11 @@ class ComputerRuntime:
                 run_id=ctx.run.run_id,
                 event_id=ctx.event.event_id,
                 attachments=list(ctx.event.attachments),
+                world_view=world_view,
             )
         ctx.computer_policy_effective = policy
         ctx.computer_backend_kind = backend.kind
+        ctx.world_view = world_view
         self._set_thread_backend_state(ctx.thread.thread_id, backend.kind)
         ctx.attachment_snapshots = list(staged.snapshots)
         ctx.workspace_state = WorkspaceState(
@@ -103,9 +115,9 @@ class ComputerRuntime:
             agent_id=ctx.profile.agent_id,
             backend_kind=backend.kind,
             workspace_host_path=str(workspace_dir),
-            workspace_visible_root=self.workspace_manager.visible_root(),
-            read_only=bool(policy.read_only),
-            available_tools=["read", "write", "ls", "grep", "exec", "bash_open", "bash_write", "bash_read", "bash_close"],
+            workspace_visible_root="/workspace",
+            read_only=False,
+            available_tools=self._available_tools(policy, world_view=world_view),
             attachment_count=len(staged.snapshots),
             mirrored_skill_names=self.list_mirrored_skills(ctx.thread.thread_id),
             active_session_ids=self.list_session_ids(ctx.thread.thread_id),
@@ -117,15 +129,104 @@ class ComputerRuntime:
             status="completed",
             payload={
                 "backend_kind": backend.kind,
-                "workspace_root": self.workspace_manager.visible_root(),
+                "workspace_root": "/workspace",
                 "attachment_count": len(staged.snapshots),
+                "execution_workspace_path": world_view.execution_view.workspace_path,
             },
         )
 
     def effective_policy_for_ctx(self, ctx: "RunContext") -> ComputerPolicy:
-        policy = parse_computer_policy(ctx.profile.config.get("computer"), defaults=ctx.profile.computer_policy)
-        override = parse_computer_override(ctx.thread.metadata.get("computer_override"))
-        return self._apply_override(policy, override)
+        """计算当前 run 的有效 computer policy.
+
+        Args:
+            ctx (RunContext): 当前 run 的执行上下文.
+
+        Returns:
+            ComputerPolicy: 当前 run 的有效 computer policy.
+        """
+
+        base = parse_computer_policy(ctx.profile.config.get("computer"), defaults=ctx.profile.computer_policy)
+        if ctx.computer_policy_decision is None:
+            return base
+        decision = ctx.computer_policy_decision
+        return ComputerPolicy(
+            backend=str(decision.backend or base.backend),
+            read_only=base.read_only,
+            allow_write=base.allow_write,
+            allow_exec=bool(decision.allow_exec),
+            allow_sessions=bool(decision.allow_sessions),
+            auto_stage_attachments=base.auto_stage_attachments,
+            network_mode=base.network_mode,
+        )
+
+    def build_world_view(self, ctx: "RunContext", *, policy: ComputerPolicy):
+        """根据当前上下文构造 Work World 视图.
+
+        Args:
+            ctx (RunContext): 当前 run 的执行上下文.
+            policy (ComputerPolicy): 当前 run 的有效 computer policy.
+
+        Returns:
+            WorldView: 当前 run 的 world 视图.
+        """
+
+        return self.world_builder.build(
+            WorldInputBundle(
+                thread_id=ctx.thread.thread_id,
+                profile_id=ctx.profile.agent_id,
+                actor_kind=(
+                    ctx.computer_policy_decision.actor_kind
+                    if ctx.computer_policy_decision is not None
+                    else (
+                        "subagent"
+                        if str(ctx.decision.metadata.get("run_kind", "") or "") == "subagent"
+                        else "frontstage_agent"
+                    )
+                ),
+                self_scope_id=ctx.profile.agent_id,
+                visible_skill_names=(
+                    list(ctx.computer_policy_decision.visible_skills)
+                    if ctx.computer_policy_decision is not None
+                    and ctx.computer_policy_decision.visible_skills is not None
+                    else list(ctx.profile.skills)
+                ),
+                computer_policy=(
+                    ctx.computer_policy_decision
+                    if ctx.computer_policy_decision is not None
+                    else self._fallback_computer_policy_decision(ctx, policy)
+                ),
+            )
+        )
+
+    def _fallback_computer_policy_decision(
+        self,
+        ctx: "RunContext",
+        policy: ComputerPolicy,
+    ):
+        """在没有 session-driven computer decision 时生成最小兜底决策.
+
+        Args:
+            ctx (RunContext): 当前 run 的执行上下文.
+            policy (ComputerPolicy): 当前 run 的有效 computer policy.
+
+        Returns:
+            ComputerPolicyDecision: 最小兜底 computer 决策.
+        """
+
+        _ = ctx
+        actor_kind = "subagent" if str(ctx.decision.metadata.get("run_kind", "") or "") == "subagent" else "frontstage_agent"
+        return ComputerPolicyDecision(
+            actor_kind=actor_kind,
+            backend=policy.backend,
+            allow_exec=policy.allow_exec,
+            allow_sessions=policy.allow_sessions,
+            roots={
+                "workspace": {"visible": True},
+                "skills": {"visible": True},
+                "self": {"visible": actor_kind != "subagent"},
+            },
+            visible_skills=None,
+        )
 
     async def stage_attachments(
         self,
@@ -135,6 +236,7 @@ class ComputerRuntime:
         event_id: str,
         attachments: list[EventAttachment],
         category: str = "inbound",
+        world_view=None,
     ) -> AttachmentStageResult:
         normalized_category = sanitize_filename(category) or "inbound"
         target_root = self.workspace_manager.attachments_dir_for_thread(thread_id) / normalized_category / event_id
@@ -149,6 +251,13 @@ class ComputerRuntime:
                 config=self.config,
                 gateway=self.gateway,
             )
+            if world_view is not None and snapshot.staged_path:
+                relative = Path(snapshot.staged_path).resolve().relative_to(Path(world_view.workspace_root_host_path).resolve())
+                relative_text = str(relative).replace("\\", "/")
+                snapshot.metadata["world_path"] = f"/workspace/{relative_text}"
+                snapshot.metadata["execution_path"] = str(
+                    Path(world_view.execution_view.workspace_path) / relative_text
+                )
             total += snapshot.size_bytes
             if total > self.config.max_total_attachment_bytes_per_run:
                 snapshot.download_status = "failed"
@@ -171,6 +280,54 @@ class ComputerRuntime:
             },
         )
         return result
+
+    async def list_world_entries(
+        self,
+        *,
+        world_view,
+        world_path: str = "/workspace",
+    ) -> list[WorkspaceFileEntry]:
+        """按 world path 列出目录项.
+
+        Args:
+            world_view: 当前 run 的 Work World 视图.
+            world_path (str): 目标 world path.
+
+        Returns:
+            list[WorkspaceFileEntry]: 当前路径下的目录项列表.
+        """
+
+        resolved = world_view.resolve(world_path)
+        items = await self.backends["host"].list_entries(
+            host_path=Path(resolved.host_path),
+            relative_path="/",
+        )
+        return [
+            WorkspaceFileEntry(
+                path=self._join_world_path(resolved.world_path, item.path),
+                kind=item.kind,
+                size_bytes=item.size_bytes,
+                modified_at=item.modified_at,
+            )
+            for item in items
+        ]
+
+    async def read_world_file(self, *, world_view, world_path: str) -> str:
+        """按 world path 读取文件.
+
+        Args:
+            world_view: 当前 run 的 Work World 视图.
+            world_path (str): 目标 world path.
+
+        Returns:
+            str: 文件文本内容.
+        """
+
+        resolved = world_view.resolve(world_path)
+        return await self.backends["host"].read_text(
+            host_path=Path(resolved.host_path).parent,
+            relative_path=Path(resolved.host_path).name,
+        )
 
     async def list_workspace_entries(
         self,
@@ -199,6 +356,30 @@ class ComputerRuntime:
             relative_path="/attachments",
         )
 
+    async def write_world_file(
+        self,
+        *,
+        world_view,
+        world_path: str,
+        content: str,
+        policy: ComputerPolicy,
+    ) -> None:
+        """按 world path 写文件.
+
+        Args:
+            world_view: 当前 run 的 Work World 视图.
+            world_path (str): 目标 world path.
+            content (str): 要写入的文本.
+            policy (ComputerPolicy): 当前有效 computer policy.
+        """
+
+        resolved = world_view.resolve(world_path)
+        await self.backends["host"].write_text(
+            host_path=Path(resolved.host_path).parent,
+            relative_path=Path(resolved.host_path).name,
+            content=content,
+        )
+
     async def write_workspace_file(
         self,
         *,
@@ -207,14 +388,47 @@ class ComputerRuntime:
         content: str,
         policy: ComputerPolicy,
     ) -> None:
-        if policy.read_only or not policy.allow_write:
-            raise PermissionError("write is disabled by computer policy")
+        _ = policy
         host_path = self.workspace_manager.workspace_dir_for_thread(thread_id)
         return await self.backends["host"].write_text(
             host_path=host_path,
             relative_path=relative_path,
             content=content,
         )
+
+    async def grep_world(
+        self,
+        *,
+        world_view,
+        world_path: str,
+        pattern: str,
+    ) -> list[dict[str, Any]]:
+        """按 world path 做 grep.
+
+        Args:
+            world_view: 当前 run 的 Work World 视图.
+            world_path (str): 目标 world path.
+            pattern (str): 正则模式.
+
+        Returns:
+            list[dict[str, Any]]: 匹配结果.
+        """
+
+        resolved = world_view.resolve(world_path)
+        matches = await self.backends["host"].grep_text(
+            host_path=Path(resolved.host_path),
+            relative_path="/",
+            pattern=pattern,
+        )
+        normalized: list[dict[str, Any]] = []
+        for item in matches:
+            normalized.append(
+                {
+                    **item,
+                    "path": self._join_world_path(resolved.world_path, item["path"]),
+                }
+            )
+        return normalized
 
     async def grep_workspace(
         self,
@@ -250,7 +464,19 @@ class ComputerRuntime:
         self,
         thread_id: str,
         skill_catalog: "SkillCatalog",
+        world_view=None,
     ) -> list[str]:
+        """确保当前 thread 已加载的 skills 已经镜像到宿主机.
+
+        Args:
+            thread_id (str): 当前 thread ID.
+            skill_catalog (SkillCatalog): skill catalog.
+            world_view: 当前 run 的 Work World 视图.
+
+        Returns:
+            list[str]: 本次确认存在的 skill 名列表.
+        """
+
         mirrored: list[str] = []
         for skill_name in self.list_loaded_skills(thread_id):
             manifest = skill_catalog.get(skill_name)
@@ -262,6 +488,8 @@ class ComputerRuntime:
                 source_dir=manifest.root_dir,
             )
             mirrored.append(skill_name)
+        if world_view is not None:
+            self.refresh_world_skills_view(world_view)
         return mirrored
 
     def list_mirrored_skills(self, thread_id: str) -> list[str]:
@@ -284,8 +512,26 @@ class ComputerRuntime:
         run_id: str = "",
         command: str,
         policy: ComputerPolicy,
+        world_view=None,
     ) -> CommandExecutionResult:
-        workspace = self.workspace_manager.workspace_dir_for_thread(thread_id)
+        """执行一次性 shell 命令.
+
+        Args:
+            thread_id (str): 当前 thread ID.
+            run_id (str): 当前 run_id.
+            command (str): 要执行的命令.
+            policy (ComputerPolicy): 当前有效 computer policy.
+            world_view: 当前 run 的 Work World 视图.
+
+        Returns:
+            CommandExecutionResult: 执行结果.
+        """
+
+        if world_view is not None:
+            self._ensure_workspace_shell_access(world_view)
+        workspace = Path(
+            world_view.workspace_root_host_path if world_view is not None else self.workspace_manager.workspace_dir_for_thread(thread_id)
+        )
         backend = self.backends[policy.backend]
         result = await backend.exec_once(host_path=workspace, command=command, policy=policy)
         self._set_thread_backend_state(thread_id, backend.kind)
@@ -300,6 +546,9 @@ class ComputerRuntime:
                 "stdout_truncated": result.stdout_truncated,
                 "stderr_truncated": result.stderr_truncated,
                 "metadata": dict(result.metadata),
+                "execution_cwd": (
+                    world_view.execution_view.workspace_path if world_view is not None else str(workspace)
+                ),
             },
         )
         return result
@@ -311,13 +560,33 @@ class ComputerRuntime:
         run_id: str = "",
         agent_id: str,
         policy: ComputerPolicy,
+        world_view=None,
     ) -> CommandSession:
-        workspace = self.workspace_manager.workspace_dir_for_thread(thread_id)
+        """打开一个 shell session.
+
+        Args:
+            thread_id (str): 当前 thread ID.
+            run_id (str): 当前 run_id.
+            agent_id (str): 当前 agent_id.
+            policy (ComputerPolicy): 当前有效 computer policy.
+            world_view: 当前 run 的 Work World 视图.
+
+        Returns:
+            CommandSession: 新建 session.
+        """
+
+        if world_view is not None:
+            self._ensure_workspace_shell_access(world_view)
+        workspace = Path(
+            world_view.workspace_root_host_path if world_view is not None else self.workspace_manager.workspace_dir_for_thread(thread_id)
+        )
         session = CommandSession(
             session_id=f"session:{thread_id}:{int(time.time() * 1000)}",
             thread_id=thread_id,
             backend_kind=policy.backend,
-            cwd_visible=self.workspace_manager.visible_root(),
+            cwd_visible=(
+                world_view.execution_view.workspace_path if world_view is not None else self.workspace_manager.visible_root()
+            ),
             cwd_host_path=str(workspace),
             created_at=int(time.time()),
         )
@@ -401,7 +670,7 @@ class ComputerRuntime:
             await backend.stop_workspace_sandbox(thread_id=thread_id, host_path=workspace)
         except ComputerBackendNotImplemented:
             return
-        if thread_id not in self._thread_override_backends and not self._sessions.get(thread_id):
+        if not self._sessions.get(thread_id):
             self._set_thread_backend_state(thread_id, "host")
 
     async def get_sandbox_status(self, thread_id: str) -> WorkspaceSandboxStatus:
@@ -448,7 +717,7 @@ class ComputerRuntime:
                     workspace_host_path=str(path),
                     workspace_visible_root=self.workspace_manager.visible_root(),
                     read_only=False,
-                    available_tools=["read", "write", "ls", "grep", "exec", "bash_open", "bash_write", "bash_read", "bash_close"],
+                    available_tools=self._available_tools(self.default_policy),
                     attachment_count=len(list((path / "attachments").rglob("*"))) if (path / "attachments").exists() else 0,
                     mirrored_skill_names=self.list_mirrored_skills(thread_id),
                     active_session_ids=self.list_session_ids(thread_id),
@@ -462,36 +731,127 @@ class ComputerRuntime:
         thread,
         override: ComputerRuntimeOverride,
     ) -> None:
-        thread.metadata["computer_override"] = {
-            "backend": override.backend,
-            "read_only": override.read_only,
-            "allow_write": override.allow_write,
-            "allow_exec": override.allow_exec,
-            "allow_sessions": override.allow_sessions,
-            "network_mode": override.network_mode,
-        }
-        if override.backend:
-            self._thread_override_backends[thread.thread_id] = override.backend
-        else:
-            self._thread_override_backends.pop(thread.thread_id, None)
+        """提示 thread computer override 已删除.
+
+        Args:
+            thread: 目标 thread.
+            override: 请求设置的 override.
+
+        Raises:
+            RuntimeError: 固定抛出, 提示这条旧能力已经删除.
+        """
+
+        _ = thread, override
+        raise RuntimeError("thread computer override removed; edit session config instead")
 
     async def clear_thread_override(self, *, thread) -> None:
-        thread.metadata.pop("computer_override", None)
-        self._thread_override_backends.pop(thread.thread_id, None)
-        if not self._sessions.get(thread.thread_id) and thread.thread_id not in self._thread_backend_state:
-            self._set_thread_backend_state(thread.thread_id, "host")
+        """提示 thread computer override 已删除.
+
+        Args:
+            thread: 目标 thread.
+
+        Raises:
+            RuntimeError: 固定抛出, 提示这条旧能力已经删除.
+        """
+
+        _ = thread
+        raise RuntimeError("thread computer override removed; edit session config instead")
 
     @staticmethod
-    def _apply_override(policy: ComputerPolicy, override: ComputerRuntimeOverride) -> ComputerPolicy:
-        return ComputerPolicy(
-            backend=override.backend or policy.backend,
-            read_only=policy.read_only if override.read_only is None else bool(override.read_only),
-            allow_write=policy.allow_write if override.allow_write is None else bool(override.allow_write),
-            allow_exec=policy.allow_exec if override.allow_exec is None else bool(override.allow_exec),
-            allow_sessions=policy.allow_sessions if override.allow_sessions is None else bool(override.allow_sessions),
-            auto_stage_attachments=policy.auto_stage_attachments,
-            network_mode=override.network_mode or policy.network_mode,
-        )
+    def _join_world_path(base_world_path: str, child_visible_path: str) -> str:
+        """把子路径拼回完整 world path.
+
+        Args:
+            base_world_path (str): 当前已解析的 world path.
+            child_visible_path (str): backend 返回的子路径, 例如 `/demo.txt`.
+
+        Returns:
+            str: 完整 world path.
+        """
+
+        base = base_world_path.rstrip("/")
+        child = str(child_visible_path or "").strip()
+        if child in {"", "/"}:
+            return base or "/"
+        return f"{base}/{child.lstrip('/')}"
+
+    @staticmethod
+    def _available_tools(policy: ComputerPolicy, world_view=None) -> list[str]:
+        """根据当前 policy 生成可用工具列表.
+
+        Args:
+            policy (ComputerPolicy): 当前有效 computer policy.
+            world_view: 当前 run 的 Work World 视图.
+
+        Returns:
+            list[str]: 当前 run 里应该显示的 computer 工具列表.
+        """
+
+        tools = ["read", "write", "ls", "grep"]
+        workspace_shell_access = True
+        if world_view is not None:
+            workspace_policy = world_view.root_policies.get("workspace")
+            workspace_shell_access = bool(
+                workspace_policy is not None
+                and workspace_policy.visible
+                and world_view.execution_view.workspace_path
+            )
+        if policy.allow_exec and workspace_shell_access:
+            tools.append("exec")
+        if policy.allow_sessions and workspace_shell_access:
+            tools.extend(["bash_open", "bash_write", "bash_read", "bash_close"])
+        return tools
+
+    def refresh_world_skills_view(self, world_view) -> None:
+        """刷新当前 world 的 skills 视图目录.
+
+        Args:
+            world_view: 当前 run 的 Work World 视图.
+        """
+
+        view_root = Path(world_view.skills_root_host_path)
+        source_root = self.workspace_manager.skills_dir_for_thread(world_view.thread_id)
+        view_root.mkdir(parents=True, exist_ok=True)
+        allowed = set(world_view.visible_skill_names)
+        for child in list(view_root.iterdir()):
+            if child.name in allowed:
+                continue
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+        for skill_name in sorted(allowed):
+            source = source_root / skill_name
+            target = view_root / skill_name
+            if not source.exists():
+                continue
+            if target.exists():
+                if target.is_dir():
+                    shutil.rmtree(target)
+                else:
+                    target.unlink()
+            if source.is_dir():
+                shutil.copytree(source, target)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+
+    @staticmethod
+    def _ensure_workspace_shell_access(world_view) -> None:
+        """确保当前 world 允许 shell 进入 workspace.
+
+        Args:
+            world_view: 当前 run 的 Work World 视图.
+
+        Raises:
+            PermissionError: workspace 不允许 shell 使用时抛出.
+        """
+
+        workspace_policy = world_view.root_policies.get("workspace")
+        if workspace_policy is None or not workspace_policy.visible:
+            raise PermissionError("workspace is not visible in current world")
+        if not world_view.execution_view.workspace_path:
+            raise PermissionError("workspace is not available in current execution view")
 
     def _require_session(self, thread_id: str, session_id: str) -> CommandSession:
         session = self._sessions.get(thread_id, {}).get(session_id)
@@ -503,9 +863,6 @@ class ComputerRuntime:
         sessions = self._sessions.get(thread_id, {})
         if sessions:
             return next(iter(sessions.values())).backend_kind
-        override_backend = self._thread_override_backends.get(thread_id, "")
-        if override_backend:
-            return override_backend
         backend_kind = self._thread_backend_state.get(thread_id, "")
         if backend_kind:
             return backend_kind

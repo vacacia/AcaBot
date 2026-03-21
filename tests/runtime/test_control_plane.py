@@ -372,11 +372,11 @@ async def test_runtime_control_plane_show_memory_returns_items() -> None:
     assert result.items[0].content == "群规"
 
 
-async def test_runtime_control_plane_get_sandbox_status_uses_thread_override_backend(
+async def test_runtime_control_plane_rejects_thread_computer_override_api(
     tmp_path: Path,
 ) -> None:
     thread_manager = InMemoryThreadManager()
-    thread = await thread_manager.get_or_create(
+    await thread_manager.get_or_create(
         thread_id="thread:1",
         channel_scope="qq:user:10001",
     )
@@ -402,14 +402,13 @@ async def test_runtime_control_plane_get_sandbox_status_uses_thread_override_bac
         computer_runtime=computer_runtime,
     )
 
-    await computer_runtime.set_thread_override(
-        thread=thread,
+    result = await control_plane.set_thread_computer_override(
+        thread_id="thread:1",
         override=ComputerRuntimeOverride(backend="docker"),
     )
-    await thread_manager.save(thread)
-    status = await control_plane.get_sandbox_status(thread_id="thread:1")
 
-    assert status.backend_kind == "docker"
+    assert result.ok is False
+    assert "removed" in result.message
 
 
 async def test_computer_runtime_one_shot_exec_persists_backend_state(tmp_path: Path) -> None:
@@ -432,12 +431,12 @@ async def test_computer_runtime_one_shot_exec_persists_backend_state(tmp_path: P
     assert status.backend_kind == "docker"
 
 
-async def test_runtime_control_plane_clear_thread_override_resets_backend_to_host(
+async def test_runtime_control_plane_rejects_clear_thread_computer_override_api(
     tmp_path: Path,
 ) -> None:
     thread_manager = InMemoryThreadManager()
     run_manager = InMemoryRunManager()
-    thread = await thread_manager.get_or_create(
+    await thread_manager.get_or_create(
         thread_id="thread:1",
         channel_scope="qq:user:10001",
     )
@@ -463,14 +462,7 @@ async def test_runtime_control_plane_clear_thread_override_resets_backend_to_hos
         computer_runtime=computer_runtime,
     )
 
-    await computer_runtime.set_thread_override(
-        thread=thread,
-        override=ComputerRuntimeOverride(backend="docker"),
-    )
-    await thread_manager.save(thread)
-    status_before = await control_plane.get_sandbox_status(thread_id="thread:1")
-    await control_plane.clear_thread_computer_override(thread_id="thread:1")
-    status_after = await control_plane.get_sandbox_status(thread_id="thread:1")
+    result = await control_plane.clear_thread_computer_override(thread_id="thread:1")
 
-    assert status_before.backend_kind == "docker"
-    assert status_after.backend_kind == "host"
+    assert result.ok is False
+    assert "removed" in result.message

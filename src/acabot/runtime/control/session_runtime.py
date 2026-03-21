@@ -340,13 +340,18 @@ class SessionRuntime:
         )
         actor_kind = str(payload.get("actor_kind", "frontstage_agent") or "frontstage_agent")
         roots = dict(payload.get("roots", {}) or {}) or self._default_roots(actor_kind)
+        visible_skills = (
+            list(payload.get("visible_skills", []))
+            if "visible_skills" in payload
+            else None
+        )
         return ComputerPolicyDecision(
             actor_kind=actor_kind,
             backend=str(payload.get("backend", "host") or "host"),
             allow_exec=bool(payload.get("allow_exec", True)),
             allow_sessions=bool(payload.get("allow_sessions", True)),
             roots=roots,
-            visible_skills=list(payload.get("visible_skills", [])),
+            visible_skills=visible_skills,
             notes=self._computer_notes(payload),
             reason="surface case" if case_id else "surface default",
             source_case_id=case_id,
@@ -542,14 +547,14 @@ class SessionRuntime:
 
         if actor_kind == "subagent":
             return {
-                "workspace": {"visible": True, "writable": True},
-                "skills": {"visible": True, "writable": False},
-                "self": {"visible": False, "writable": False},
+                "workspace": {"visible": True},
+                "skills": {"visible": True},
+                "self": {"visible": False},
             }
         return {
-            "workspace": {"visible": True, "writable": True},
-            "skills": {"visible": True, "writable": False},
-            "self": {"visible": True, "writable": True},
+            "workspace": {"visible": True},
+            "skills": {"visible": True},
+            "self": {"visible": True},
         }
 
     @staticmethod

@@ -12,7 +12,7 @@ from .records import PendingApprovalRecord, RunRecord, ThreadState
 from .routing import AgentProfile, RouteDecision
 
 if TYPE_CHECKING:
-    from ..computer import AttachmentSnapshot, ComputerPolicy, WorkspaceState
+    from ..computer import AttachmentSnapshot, ComputerPolicy, WorkspaceState, WorldView
     from ..memory.memory_broker import MemoryBlock
     from ..model.model_registry import RuntimeModelRequest
     from .session_config import (
@@ -139,10 +139,23 @@ class PromptSlot:
 
 @dataclass(slots=True)
 class RetrievalPlan:
-    """进入模型前的 retrieval 和 prompt assembly 计划."""
+    """进入模型前的 retrieval 和 prompt assembly 计划.
+
+    Attributes:
+        requested_scopes (list[str]): 本次 retrieval 需要读取的 scope 列表.
+        requested_memory_types (list[str]): 本次 retrieval 需要读取的 memory type 列表.
+        requested_tags (list[str]): 本次 retrieval 的 tag 过滤条件.
+        sticky_note_scopes (list[str]): sticky note 允许注入的 scope 列表.
+        compressed_messages (list[dict[str, Any]]): compaction 后保留下来的消息.
+        dropped_messages (list[dict[str, Any]]): 被 compaction 丢弃的消息.
+        prompt_slots (list[PromptSlot]): 最终要注入模型的 prompt slots.
+        metadata (dict[str, Any]): 其他 planning 元数据.
+    """
 
     requested_scopes: list[str] = field(default_factory=list)
     requested_memory_types: list[str] = field(default_factory=list)
+    requested_tags: list[str] = field(default_factory=list)
+    sticky_note_scopes: list[str] = field(default_factory=list)
     compressed_messages: list[dict[str, Any]] = field(default_factory=list)
     dropped_messages: list[dict[str, Any]] = field(default_factory=list)
     prompt_slots: list[PromptSlot] = field(default_factory=list)
@@ -225,6 +238,7 @@ class RunContext:
     persistence_decision: "PersistenceDecision | None" = None
     extraction_decision: "ExtractionDecision | None" = None
     computer_policy_decision: "ComputerPolicyDecision | None" = None
+    world_view: "WorldView | None" = None
     workspace_state: "WorkspaceState | None" = None
     attachment_snapshots: list["AttachmentSnapshot"] = field(default_factory=list)
     resolved_message: ResolvedMessage | None = None

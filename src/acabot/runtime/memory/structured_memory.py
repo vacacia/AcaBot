@@ -87,6 +87,7 @@ class StoreBackedMemoryRetriever:
         )
         blocks: list[MemoryBlock] = []
 
+        requested_tags = set(request.requested_tags)
         for scope in hints.scopes:
             scope_key = _scope_key_for_request(scope=scope, request=request)
             items = await self.store.find(
@@ -96,6 +97,8 @@ class StoreBackedMemoryRetriever:
                 limit=self.per_scope_limit,
             )
             for item in items:
+                if requested_tags and not requested_tags.intersection(item.tags):
+                    continue
                 blocks.append(self._to_block(item))
 
         return blocks

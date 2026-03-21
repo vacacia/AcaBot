@@ -415,21 +415,11 @@ class RuntimeHttpApiServer:
                 )
             )
         if segments == ["sessions"] and method == "GET":
-            return self._ok(self._await(self.control_plane.list_sessions()))
+            return 501, {"ok": False, "error": "session shell redesign pending"}
         if len(segments) == 2 and segments[0] == "sessions" and method == "GET":
-            result = self._await(self.control_plane.get_session(channel_scope=segments[1]))
-            if result is None:
-                return 404, {"ok": False, "error": "session not found"}
-            return self._ok(result)
+            return 501, {"ok": False, "error": "session shell redesign pending"}
         if len(segments) == 2 and segments[0] == "sessions" and method == "PUT":
-            return self._ok(
-                self._await(
-                    self.control_plane.put_session(
-                        channel_scope=segments[1],
-                        payload=payload,
-                    )
-                )
-            )
+            return 501, {"ok": False, "error": "session shell redesign pending"}
         if segments == ["skills"] and method == "GET":
             return self._ok(self._await(self.control_plane.list_skills()))
         if len(segments) == 3 and segments[0] == "agents" and segments[2] == "skills" and method == "GET":
@@ -488,40 +478,7 @@ class RuntimeHttpApiServer:
                 return self._ok({"deleted": True})
 
         if len(segments) >= 2 and segments[0] == "rules":
-            rule_group = segments[1]
-            if rule_group == "bindings":
-                return self._handle_rule_group(
-                    method=method,
-                    segments=segments[2:],
-                    list_fn=self.control_plane.list_binding_rules,
-                    get_fn=self.control_plane.get_binding_rule,
-                    put_fn=self.control_plane.upsert_binding_rule,
-                    delete_fn=self.control_plane.delete_binding_rule,
-                    id_key="rule_id",
-                    payload=payload,
-                )
-            if rule_group == "inbound":
-                return self._handle_rule_group(
-                    method=method,
-                    segments=segments[2:],
-                    list_fn=self.control_plane.list_inbound_rules,
-                    get_fn=self.control_plane.get_inbound_rule,
-                    put_fn=self.control_plane.upsert_inbound_rule,
-                    delete_fn=self.control_plane.delete_inbound_rule,
-                    id_key="rule_id",
-                    payload=payload,
-                )
-            if rule_group == "event-policies":
-                return self._handle_rule_group(
-                    method=method,
-                    segments=segments[2:],
-                    list_fn=self.control_plane.list_event_policies,
-                    get_fn=self.control_plane.get_event_policy,
-                    put_fn=self.control_plane.upsert_event_policy,
-                    delete_fn=self.control_plane.delete_event_policy,
-                    id_key="policy_id",
-                    payload=payload,
-                )
+            return 501, {"ok": False, "error": "legacy rule API removed"}
 
         if segments == ["runtime", "reload-config"] and method == "POST":
             return self._ok(self._await(self.control_plane.reload_runtime_configuration()))

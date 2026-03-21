@@ -119,6 +119,8 @@ class RetrievalPlanner:
 
         requested_scopes = self._requested_scopes(ctx)
         requested_memory_types = self._requested_memory_types(ctx)
+        requested_tags = self._requested_tags(ctx)
+        sticky_note_scopes = self._sticky_note_scopes(ctx)
         token_stats = dict(ctx.metadata.get("token_stats", {}))
         compressed_messages = [
             dict(message)
@@ -133,6 +135,8 @@ class RetrievalPlanner:
         plan = RetrievalPlan(
             requested_scopes=requested_scopes,
             requested_memory_types=requested_memory_types,
+            requested_tags=requested_tags,
+            sticky_note_scopes=sticky_note_scopes,
             compressed_messages=compressed_messages,
             dropped_messages=dropped_messages,
             prompt_slots=[],
@@ -143,6 +147,9 @@ class RetrievalPlanner:
                 "thread_summary_present": bool(summary_text.strip()),
                 "working_summary_text": summary_text,
                 "token_stats": token_stats,
+                "context_labels": list(
+                    ctx.context_decision.context_labels if ctx.context_decision is not None else []
+                ),
             },
         )
         return plan
@@ -164,8 +171,13 @@ class RetrievalPlanner:
         """
 
         plan = ctx.retrieval_plan or self.prepare(ctx)
-        sticky_blocks, retrieved_blocks = self._split_memory_blocks(memory_blocks)
+        sticky_blocks, retrieved_blocks = self._split_memory_blocks(
+            memory_blocks,
+            allowed_sticky_scopes=plan.sticky_note_scopes,
+        )
         slots: list[PromptSlot] = []
+
+        slots.extend(self._context_slots(ctx))
 
         soul_text = str(ctx.metadata.get("soul_prompt_text", "") or "").strip()
         if soul_text:
@@ -270,11 +282,16 @@ class RetrievalPlanner:
             去重后的 scope 列表.
         """
 
-        raw_values = list(ctx.decision.metadata.get("event_memory_scopes", []))
-        # 过滤: 只保留已知的 scopes
+        raw_values = (
+            list(ctx.extraction_decision.memory_scopes)
+            if ctx.extraction_decision is not None
+            else list(ctx.decision.metadata.get("event_memory_scopes", []))
+        )
+        context_scopes = self._sticky_note_scopes(ctx)
         scopes = [value for value in raw_values if value in _KNOWN_MEMORY_SCOPES]
         if not scopes:
             scopes = list(self.config.default_scopes)
+        scopes.extend(context_scopes)
         return _dedupe(scopes)
 
     def _requested_memory_types(self, ctx: RunContext) -> list[str]:
@@ -293,17 +310,52 @@ class RetrievalPlanner:
             memory_types = list(self.config.default_memory_types)
         return _dedupe(memory_types)
 
+    @staticmethod
+    def _requested_tags(ctx: RunContext) -> list[str]:
+        """解析当前 run 的 retrieval tag 过滤条件.
+
+        Args:
+            ctx: 当前 run 的执行上下文.
+
+        Returns:
+            list[str]: 去重后的 retrieval tag 列表.
+        """
+
+        if ctx.context_decision is None:
+            return []
+        return _dedupe(list(ctx.context_decision.retrieval_tags))
+
+    @staticmethod
+    def _sticky_note_scopes(ctx: RunContext) -> list[str]:
+        """解析 sticky note 允许注入的 scope 列表.
+
+        Args:
+            ctx: 当前 run 的执行上下文.
+
+        Returns:
+            list[str]: 去重后的 sticky note scope 列表.
+        """
+
+        if ctx.context_decision is None:
+            return []
+        return _dedupe([
+            value for value in ctx.context_decision.sticky_note_scopes if value in _KNOWN_MEMORY_SCOPES
+        ])
+
     # endregion
 
     # region slot formatting
     def _split_memory_blocks(
         self,
         blocks: list[MemoryBlock],
+        *,
+        allowed_sticky_scopes: list[str],
     ) -> tuple[list[MemoryBlock], list[MemoryBlock]]:
         """把 memory blocks 拆成 sticky 和普通 retrieval.
 
         Args:
             blocks: 当前 run 检索到的 memory blocks.
+            allowed_sticky_scopes: sticky note 允许注入的 scope 列表.
 
         Returns:
             `(sticky_blocks, retrieved_blocks)`.
@@ -311,13 +363,78 @@ class RetrievalPlanner:
 
         sticky_blocks: list[MemoryBlock] = []
         retrieved_blocks: list[MemoryBlock] = []
+        allowed = set(allowed_sticky_scopes)
         for block in blocks:
             memory_type = str(block.metadata.get("memory_type", "") or "")
             if memory_type == "sticky_note":
+                if allowed and block.scope not in allowed:
+                    continue
                 sticky_blocks.append(block)
                 continue
             retrieved_blocks.append(block)
         return sticky_blocks, retrieved_blocks
+
+    def _context_slots(self, ctx: RunContext) -> list[PromptSlot]:
+        """把 context decision 转成 prompt slots.
+
+        Args:
+            ctx: 当前 run 的执行上下文.
+
+        Returns:
+            list[PromptSlot]: 需要优先注入的 context slots.
+        """
+
+        if ctx.context_decision is None:
+            return []
+
+        slots: list[PromptSlot] = []
+        if ctx.context_decision.context_labels:
+            slots.append(
+                PromptSlot(
+                    slot_id="slot:context-labels",
+                    slot_type="context_labels",
+                    title="Context Labels",
+                    content=self._format_context_labels(ctx.context_decision.context_labels),
+                    position="system_message",
+                    message_role="system",
+                    stable=True,
+                    metadata={"labels": list(ctx.context_decision.context_labels)},
+                )
+            )
+
+        for index, raw in enumerate(ctx.context_decision.prompt_slots, start=1):
+            content = str(raw.get("content", "") or "").strip()
+            if not content:
+                continue
+            slots.append(
+                PromptSlot(
+                    slot_id=str(raw.get("slot_id", f"slot:context:{index}") or f"slot:context:{index}"),
+                    slot_type=str(raw.get("slot_type", "session_context") or "session_context"),
+                    title=str(raw.get("title", f"Context Slot {index}") or f"Context Slot {index}"),
+                    content=content,
+                    position=str(raw.get("position", "system_message") or "system_message"),
+                    message_role=str(raw.get("message_role", "system") or "system"),
+                    stable=bool(raw.get("stable", True)),
+                    metadata=dict(raw.get("metadata", {}) or {}),
+                )
+            )
+        return slots
+
+    @staticmethod
+    def _format_context_labels(labels: list[str]) -> str:
+        """把 context labels 格式化成可注入文本.
+
+        Args:
+            labels: 当前命中的 context labels.
+
+        Returns:
+            str: 适合注入 prompt 的文本.
+        """
+
+        lines = ["当前消息命中了这些上下文标签:"]
+        for label in labels:
+            lines.append(f"- {label}")
+        return "\n".join(lines)
 
     def _format_sticky_notes(self, blocks: list[MemoryBlock]) -> str:
         """格式化 sticky notes slot.
@@ -357,7 +474,6 @@ class RetrievalPlanner:
         return {
             "backend_kind": state.backend_kind,
             "workspace_visible_root": state.workspace_visible_root,
-            "read_only": state.read_only,
             "available_tools": list(state.available_tools),
             "attachment_count": state.attachment_count,
             "active_session_ids": list(state.active_session_ids),
@@ -370,7 +486,6 @@ class RetrievalPlanner:
             "You have access to a computer workspace.",
             f"- backend: {state['backend_kind']}",
             f"- cwd: {state['workspace_visible_root']}",
-            f"- read_only: {state['read_only']}",
             f"- available_tools: {', '.join(state['available_tools']) or '-'}",
             f"- staged_attachments: {state['attachment_count']}",
             f"- active_sessions: {len(state['active_session_ids'])}",

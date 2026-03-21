@@ -65,6 +65,7 @@ class MemoryRetrievalRequest:
         working_summary (str): 当前 thread 的 working summary.
         requested_scopes (list[str]): control plane 建议读取的 memory scope 列表.
         requested_memory_types (list[str]): control plane 建议读取的 memory_type 列表.
+        requested_tags (list[str]): 本次 retrieval 的 tag 过滤条件.
         event_tags (list[str]): 当前事件的 event tags.
         metadata (dict[str, Any]): 其他 retrieval 元数据.
     """
@@ -81,6 +82,7 @@ class MemoryRetrievalRequest:
     working_summary: str
     requested_scopes: list[str] = field(default_factory=list)
     requested_memory_types: list[str] = field(default_factory=list)
+    requested_tags: list[str] = field(default_factory=list)
     event_tags: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -268,12 +270,28 @@ class MemoryBroker:
             working_summary=self._working_summary(ctx),
             requested_scopes=list(
                 (ctx.retrieval_plan.requested_scopes if ctx.retrieval_plan is not None else [])
-                or ctx.decision.metadata.get("event_memory_scopes", [])
+                or (
+                    list(ctx.extraction_decision.memory_scopes)
+                    if ctx.extraction_decision is not None
+                    else list(ctx.decision.metadata.get("event_memory_scopes", []))
+                )
             ),
             requested_memory_types=list(
                 ctx.retrieval_plan.requested_memory_types if ctx.retrieval_plan is not None else []
             ),
-            event_tags=list(ctx.decision.metadata.get("event_tags", [])),
+            requested_tags=list(
+                (ctx.retrieval_plan.requested_tags if ctx.retrieval_plan is not None else [])
+                or (
+                    list(ctx.context_decision.retrieval_tags)
+                    if ctx.context_decision is not None
+                    else []
+                )
+            ),
+            event_tags=(
+                list(ctx.extraction_decision.tags)
+                if ctx.extraction_decision is not None
+                else list(ctx.decision.metadata.get("event_tags", []))
+            ),
             metadata={
                 "run_mode": ctx.decision.run_mode,
                 "sender_role": ctx.event.sender_role,
@@ -305,11 +323,23 @@ class MemoryBroker:
             run_status=str(ctx.run.status),
             user_content=self._user_content(ctx),
             delivered_messages=self._delivered_messages(ctx.delivery_report),
-            requested_scopes=list(ctx.decision.metadata.get("event_memory_scopes", [])),
-            event_tags=list(ctx.decision.metadata.get("event_tags", [])),
+            requested_scopes=(
+                list(ctx.extraction_decision.memory_scopes)
+                if ctx.extraction_decision is not None
+                else list(ctx.decision.metadata.get("event_memory_scopes", []))
+            ),
+            event_tags=(
+                list(ctx.extraction_decision.tags)
+                if ctx.extraction_decision is not None
+                else list(ctx.decision.metadata.get("event_tags", []))
+            ),
             metadata={
                 "event_policy_id": ctx.decision.metadata.get("event_policy_id", ""),
-                "extract_to_memory": ctx.decision.metadata.get("event_extract_to_memory", False),
+                "extract_to_memory": (
+                    ctx.extraction_decision.extract_to_memory
+                    if ctx.extraction_decision is not None
+                    else ctx.decision.metadata.get("event_extract_to_memory", False)
+                ),
                 "thread_summary": self._working_summary(ctx),
             },
         )

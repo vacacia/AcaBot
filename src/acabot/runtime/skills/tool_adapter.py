@@ -53,7 +53,14 @@ class SkillToolPlugin(RuntimePlugin):
     ) -> ToolResult:
         catalog = self._require_catalog()
         skill_name = str(arguments.get("name", "") or "").strip()
-        allowed = {item.skill_name for item in catalog.visible_skills(ctx.profile)}
+        if ctx.world_view is not None:
+            skills_policy = ctx.world_view.root_policies.get("skills")
+            if skills_policy is None or not skills_policy.visible:
+                allowed = set()
+            else:
+                allowed = set(ctx.world_view.visible_skill_names)
+        else:
+            allowed = {item.skill_name for item in catalog.visible_skills(ctx.profile)}
         if not skill_name or skill_name not in allowed:
             return ToolResult(
                 llm_content=f"Skill not assigned to current agent: {skill_name or '-'}",

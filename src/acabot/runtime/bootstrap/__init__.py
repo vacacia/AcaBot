@@ -65,6 +65,7 @@ from .loaders import (
     build_inbound_rules,
     build_profiles,
     build_prompt_loader,
+    build_session_runtime,
 )
 
 
@@ -132,6 +133,7 @@ def build_runtime_components(
     """根据配置和注入依赖组装一套最小 runtime 组件."""
 
     runtime_conf = config.get("runtime", {})
+    fs_conf = dict(runtime_conf.get("filesystem", {}))
     default_computer_policy = build_default_computer_policy(config)
     profiles = build_profiles(config, default_computer_policy=default_computer_policy)
     filesystem_profiles = build_filesystem_profiles(
@@ -154,11 +156,14 @@ def build_runtime_components(
     inbound_registry = InboundRuleRegistry(inbound_rules)
     event_policy_registry = EventPolicyRegistry(event_policies)
 
+    use_session_runtime = bool(config.path) or "sessions_dir" in fs_conf
+    session_runtime = build_session_runtime(config) if use_session_runtime else None
     runtime_router = router or RuntimeRouter(
         default_agent_id=default_agent_id,
-        decide_run_mode=inbound_registry.resolve,
-        resolve_agent=profile_registry.resolve_agent,
-        resolve_event_policy=event_policy_registry.resolve,
+        decide_run_mode=None if use_session_runtime else inbound_registry.resolve,
+        resolve_agent=None if use_session_runtime else profile_registry.resolve_agent,
+        resolve_event_policy=None if use_session_runtime else event_policy_registry.resolve,
+        session_runtime=session_runtime,
     )
     runtime_thread_manager = thread_manager or build_thread_manager(config)
     runtime_run_manager = run_manager or build_run_manager(config)

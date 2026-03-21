@@ -488,8 +488,9 @@ class ComputerPolicyDecision:
         backend (str): 当前使用的 backend.
         allow_exec (bool): 是否允许执行一次性命令.
         allow_sessions (bool): 是否允许开启 shell session.
-        roots (dict[str, dict[str, bool]]): 每个 world root 的可见性和可写性.
-        visible_skills (list[str]): 当前 actor 真正可见的技能列表.
+        roots (dict[str, dict[str, bool]]): 每个 world root 的可见性定义.
+        visible_skills (list[str] | None): 当前 actor 真正可见的技能列表.
+            传入 `None` 表示继续沿用 profile / capability 默认值.
         notes (list[str]): 其他说明.
         reason (str): 这次决策为什么是这个结果.
         source_case_id (str): 命中的 case ID. 没命中时为空.
@@ -502,7 +503,7 @@ class ComputerPolicyDecision:
     allow_exec: bool = True
     allow_sessions: bool = True
     roots: dict[str, dict[str, bool]] = field(default_factory=dict)
-    visible_skills: list[str] = field(default_factory=list)
+    visible_skills: list[str] | None = None
     notes: list[str] = field(default_factory=list)
     reason: str = ""
     source_case_id: str = ""

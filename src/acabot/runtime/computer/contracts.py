@@ -49,17 +49,15 @@ class ComputerRuntimeOverride:
 
 @dataclass(slots=True)
 class WorldRootPolicy:
-    """单个 Work World root 的权限定义.
+    """单个 Work World root 的可见性定义.
 
     Attributes:
         root_kind (str): root 名字, 例如 `workspace`.
         visible (bool): 当前 actor 是否看得见这个 root.
-        writable (bool): 当前 actor 是否允许写这个 root.
     """
 
     root_kind: str
     visible: bool
-    writable: bool
 
 
 @dataclass(slots=True)
@@ -73,7 +71,6 @@ class ResolvedWorldPath:
         host_path (str): 实际宿主机路径.
         execution_path (str): shell 看到的执行路径. 当前 shell 不可见时为空字符串.
         visible (bool): 当前路径是否可见.
-        writable (bool): 当前路径是否可写.
     """
 
     world_path: str
@@ -82,7 +79,6 @@ class ResolvedWorldPath:
     host_path: str
     execution_path: str
     visible: bool
-    writable: bool
 
 
 @dataclass(slots=True)

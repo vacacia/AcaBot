@@ -75,9 +75,9 @@ def test_decision_objects_keep_reason_and_case_identity() -> None:
         allow_exec=True,
         allow_sessions=True,
         roots={
-            "workspace": {"visible": True, "writable": True},
-            "skills": {"visible": True, "writable": False},
-            "self": {"visible": True, "writable": True},
+            "workspace": {"visible": True},
+            "skills": {"visible": True},
+            "self": {"visible": True},
         },
         visible_skills=["sample_skill"],
         notes=["default surface policy"],
@@ -91,5 +91,5 @@ def test_decision_objects_keep_reason_and_case_identity() -> None:
     )
 
     assert routing.profile_id == "aca.qq.group.default"
-    assert computer.roots["skills"]["writable"] is False
+    assert computer.roots["skills"]["visible"] is True
     assert admission.source_case_id == "reply_messages"

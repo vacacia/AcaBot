@@ -672,9 +672,108 @@ async def test_build_runtime_components_control_plane_can_switch_thread_agent() 
     components.app.install()
     await gateway.handler(event)
 
-    assert switch.ok is True
-    assert agent.calls[0]["system_prompt"] == "You are the operator agent."
-    assert agent.calls[0]["model"] == "model-o"
+    assert switch.ok is False
+    assert "removed" in switch.message
+    assert agent.calls[0]["system_prompt"].startswith("You are Aca.")
+    assert agent.calls[0]["model"] == "model-a"
+
+
+async def test_build_runtime_components_routes_through_session_config(tmp_path: Path) -> None:
+    sessions_dir = tmp_path / "sessions/qq/group"
+    sessions_dir.mkdir(parents=True)
+    (sessions_dir / "42.yaml").write_text(
+        """
+session:
+  id: qq:group:42
+  template: qq_group
+frontstage:
+  profile: aca
+selectors:
+  sender_is_admin:
+    sender_roles: [admin]
+surfaces:
+  message.mention:
+    routing:
+      default:
+        profile: ops
+    admission:
+      default:
+        mode: respond
+    extraction:
+      default:
+        extract_to_memory: true
+        scopes: [channel]
+        tags: [mention]
+  message.plain:
+    routing:
+      default:
+        profile: aca
+    admission:
+      default:
+        mode: record_only
+""".strip(),
+        encoding="utf-8",
+    )
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+agent:
+  default_model: "fallback-model"
+  system_prompt: "Fallback prompt."
+
+runtime:
+  default_agent_id: "aca"
+  filesystem:
+    base_dir: .
+    sessions_dir: sessions
+  profiles:
+    aca:
+      name: "Aca"
+      prompt_ref: "prompt/aca"
+      default_model: "model-a"
+    ops:
+      name: "Ops"
+      prompt_ref: "prompt/ops"
+      default_model: "model-o"
+  prompts:
+    prompt/aca: "You are Aca."
+    prompt/ops: "You are Ops."
+""".strip(),
+        encoding="utf-8",
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+
+    decision = await components.router.route(
+        StandardEvent(
+            event_id="evt-session-1",
+            event_type="message",
+            platform="qq",
+            timestamp=123,
+            source=EventSource(
+                platform="qq",
+                message_type="group",
+                user_id="10001",
+                group_id="42",
+            ),
+            segments=[MsgSegment(type="text", data={"text": "hello @bot"})],
+            raw_message_id="msg-session-1",
+            sender_nickname="acacia",
+            sender_role="admin",
+            mentions_self=True,
+            targets_self=True,
+        )
+    )
+
+    assert decision.agent_id == "ops"
+    assert decision.run_mode == "respond"
+    assert decision.metadata["surface_id"] == "message.mention"
+    assert decision.metadata["event_memory_scopes"] == ["channel"]
+    assert decision.metadata["event_tags"] == ["mention"]
 
 
 async def test_build_runtime_components_loads_binding_rules_from_filesystem(

@@ -3,6 +3,7 @@ from pathlib import Path
 from acabot.config import Config
 from acabot.runtime import (
     AgentProfile,
+    ComputerPolicyDecision,
     ComputerRuntime,
     ComputerRuntimeConfig,
     FileSystemSkillPackageLoader,
@@ -138,3 +139,103 @@ async def test_skill_tool_rejects_invisible_skill(tmp_path: Path) -> None:
 
     assert result.raw["ok"] is False
     assert result.raw["reason"] == "skill_not_assigned"
+
+
+async def test_skill_tool_respects_world_visible_skills(tmp_path: Path) -> None:
+    catalog = _catalog()
+    computer_runtime = _runtime(tmp_path)
+    broker = ToolBroker(skill_catalog=catalog)
+    manager = RuntimePluginManager(
+        config=Config({}),
+        gateway=FakeGateway(),
+        tool_broker=broker,
+        computer_runtime=computer_runtime,
+        skill_catalog=catalog,
+        plugins=[SkillToolPlugin()],
+    )
+    await manager.ensure_started()
+
+    ctx = _context()
+    ctx.profile = AgentProfile(
+        agent_id="aca",
+        name="Aca",
+        prompt_ref="prompt/default",
+        default_model="test-model",
+        skills=["sample_configured_skill", "excel_processing"],
+    )
+    ctx.computer_policy_decision = ComputerPolicyDecision(
+        actor_kind="frontstage_agent",
+        backend="host",
+        allow_exec=True,
+        allow_sessions=True,
+        roots={
+            "workspace": {"visible": True},
+            "skills": {"visible": True},
+            "self": {"visible": True},
+        },
+        visible_skills=["sample_configured_skill"],
+    )
+    await computer_runtime.prepare_run_context(ctx)
+
+    blocked = await broker.execute(
+        tool_name="skill",
+        arguments={"name": "excel_processing"},
+        ctx=broker._build_execution_context(ctx),
+    )
+    allowed = await broker.execute(
+        tool_name="skill",
+        arguments={"name": "sample_configured_skill"},
+        ctx=broker._build_execution_context(ctx),
+    )
+
+    assert blocked.raw["ok"] is False
+    assert blocked.raw["reason"] == "skill_not_assigned"
+    assert allowed.raw["ok"] is True
+    assert allowed.raw["skill_name"] == "sample_configured_skill"
+
+
+async def test_skill_tool_disappears_when_skills_root_is_hidden(tmp_path: Path) -> None:
+    catalog = _catalog()
+    computer_runtime = _runtime(tmp_path)
+    broker = ToolBroker(skill_catalog=catalog)
+    manager = RuntimePluginManager(
+        config=Config({}),
+        gateway=FakeGateway(),
+        tool_broker=broker,
+        computer_runtime=computer_runtime,
+        skill_catalog=catalog,
+        plugins=[SkillToolPlugin()],
+    )
+    await manager.ensure_started()
+
+    ctx = _context()
+    ctx.profile = AgentProfile(
+        agent_id="aca",
+        name="Aca",
+        prompt_ref="prompt/default",
+        default_model="test-model",
+        skills=["sample_configured_skill"],
+    )
+    ctx.computer_policy_decision = ComputerPolicyDecision(
+        actor_kind="frontstage_agent",
+        backend="host",
+        allow_exec=True,
+        allow_sessions=True,
+        roots={
+            "workspace": {"visible": True},
+            "skills": {"visible": False},
+            "self": {"visible": True},
+        },
+        visible_skills=["sample_configured_skill"],
+    )
+    await computer_runtime.prepare_run_context(ctx)
+
+    tool_runtime = broker.build_tool_runtime(ctx)
+    result = await broker.execute(
+        tool_name="skill",
+        arguments={"name": "sample_configured_skill"},
+        ctx=broker._build_execution_context(ctx),
+    )
+
+    assert "skill" not in [tool.name for tool in tool_runtime.tools]
+    assert '"error": "Tool not enabled for current run: skill"' in str(result.llm_content)

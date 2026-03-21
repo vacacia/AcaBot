@@ -254,84 +254,37 @@ class RuntimeControlPlane:
         thread_id: str,
         agent_id: str,
     ) -> AgentSwitchSnapshot:
-        """为指定 thread 设置临时 agent override.
+        """返回 thread agent override 已删除的提示.
 
-        
         Args:
             thread_id: 目标 thread 标识.
-            agent_id: 要切换到的 agent 标识.
+            agent_id: 请求切换到的 agent 标识.
 
         Returns:
-            一份 AgentSwitchSnapshot.
+            AgentSwitchSnapshot: 固定返回不支持.
         """
 
-        if self.profile_registry is not None and not self.profile_registry.has_agent(agent_id):
-            return AgentSwitchSnapshot(
-                ok=False,
-                thread_id=thread_id,
-                agent_id=agent_id,
-                message="unknown agent_id",
-            )
-        if self.thread_manager is None:
-            return AgentSwitchSnapshot(
-                ok=False,
-                thread_id=thread_id,
-                agent_id=agent_id,
-                message="thread manager unavailable",
-            )
-
-        thread = await self.thread_manager.get(thread_id)
-        if thread is None:
-            return AgentSwitchSnapshot(
-                ok=False,
-                thread_id=thread_id,
-                agent_id=agent_id,
-                message="thread not found",
-            )
-
-        # Thread Metadata Infection
-        # 实际运行时在 _apply_thread_agent_override 生效
-        thread.metadata["thread_agent_override"] = agent_id
-        thread.metadata["thread_agent_override_set_at"] = int(time.time())
-        await self.thread_manager.save(thread)
+        _ = agent_id
         return AgentSwitchSnapshot(
-            ok=True,
+            ok=False,
             thread_id=thread_id,
-            agent_id=agent_id,
+            message="thread agent override removed; edit session config instead",
         )
 
     async def clear_thread_agent_override(self, *, thread_id: str) -> AgentSwitchSnapshot:
-        """清除指定 thread 的临时 agent override.
+        """返回 thread agent override 已删除的提示.
 
         Args:
             thread_id: 目标 thread 标识.
 
         Returns:
-            一份 AgentSwitchSnapshot.
+            AgentSwitchSnapshot: 固定返回不支持.
         """
 
-        if self.thread_manager is None:
-            return AgentSwitchSnapshot(
-                ok=False,
-                thread_id=thread_id,
-                message="thread manager unavailable",
-            )
-
-        thread = await self.thread_manager.get(thread_id)
-        if thread is None:
-            return AgentSwitchSnapshot(
-                ok=False,
-                thread_id=thread_id,
-                message="thread not found",
-            )
-
-        thread.metadata.pop("thread_agent_override", None)
-        thread.metadata.pop("thread_agent_override_set_at", None)
-        await self.thread_manager.save(thread)
         return AgentSwitchSnapshot(
-            ok=True,
+            ok=False,
             thread_id=thread_id,
-            message="cleared",
+            message="thread agent override removed; edit session config instead",
         )
 
     async def show_memory(
@@ -868,41 +821,40 @@ class RuntimeControlPlane:
         }
 
     async def list_sessions(self) -> dict[str, object]:
-        """返回 Session 产品壳列表.
+        """返回 session shell 已下线的提示.
 
         Returns:
-            只包含 `基础信息 / AI / 消息响应 / 其他` 的 Session 列表.
+            dict[str, object]: 固定抛错, 提示 session shell 正在重设计.
         """
 
-        return {"items": await self.session_shell_ops.list_sessions()}
+        raise NotImplementedError("session shell redesign pending; legacy /api/sessions removed")
 
     async def get_session(self, *, channel_scope: str) -> dict[str, object] | None:
-        """读取一个 Session 产品壳对象.
+        """返回 session shell 已下线的提示.
 
         Args:
             channel_scope: Session 对应的 channel scope.
 
         Returns:
-            Session 产品壳对象; 不存在时返回 `None`.
+            dict[str, object] | None: 固定抛错.
         """
 
-        return await self.session_shell_ops.get_session(channel_scope=channel_scope)
+        _ = channel_scope
+        raise NotImplementedError("session shell redesign pending; legacy /api/sessions removed")
 
     async def put_session(self, *, channel_scope: str, payload: dict[str, object]) -> dict[str, object]:
-        """保存一个 Session 产品壳对象.
+        """返回 session shell 已下线的提示.
 
         Args:
             channel_scope: Session 对应的 channel scope.
-            payload: 前端提交的 Session 壳数据.
+            payload: 前端提交的数据.
 
         Returns:
-            保存后的 Session 产品壳对象.
+            dict[str, object]: 固定抛错.
         """
 
-        return await self.session_shell_ops.upsert_session(
-            channel_scope=channel_scope,
-            payload=dict(payload),
-        )
+        _ = channel_scope, payload
+        raise NotImplementedError("session shell redesign pending; legacy /api/sessions removed")
 
     async def get_backend_status(self) -> BackendStatusSnapshot:
         """返回后台维护面的最小状态快照."""

@@ -33,7 +33,7 @@ from acabot.types import EventSource, MsgSegment, StandardEvent
 
 from ..model.model_resolution import resolve_model_requests_for_profile
 from ..model.model_registry import FileSystemModelRegistryManager
-from ..contracts import RouteDecision, RunContext, RunRecord, RunStep
+from ..contracts import ComputerPolicyDecision, RouteDecision, RunContext, RunRecord, RunStep
 from ..pipeline import ThreadPipeline
 from ..storage.runs import RunManager
 from ..storage.threads import ThreadManager
@@ -113,6 +113,18 @@ class LocalSubagentExecutionService:
             profile=profile,
             model_request=model_request,
             summary_model_request=summary_model_request,
+            computer_policy_decision=ComputerPolicyDecision(
+                actor_kind="subagent",
+                backend=(profile.computer_policy.backend if profile.computer_policy is not None else "host"),
+                allow_exec=(profile.computer_policy.allow_exec if profile.computer_policy is not None else True),
+                allow_sessions=(profile.computer_policy.allow_sessions if profile.computer_policy is not None else True),
+                roots={
+                    "workspace": {"visible": True},
+                    "skills": {"visible": True},
+                    "self": {"visible": False},
+                },
+                visible_skills=list(profile.skills),
+            ),
             metadata={
                 "delivery_mode": "internal",
                 "subagent_child_run": True,

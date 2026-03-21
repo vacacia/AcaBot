@@ -1,5 +1,6 @@
 from acabot.config import Config
 from acabot.runtime import (
+    AgentRuntimeResult,
     FileSystemModelRegistryManager,
     ModelBinding,
     ModelPreset,
@@ -192,6 +193,84 @@ async def test_delegate_subagent_uses_real_local_child_run() -> None:
     assert parent_steps[1].status == "completed"
     assert parent_steps[1].payload["child_run_id"] == child_run_id
     assert parent_steps[1].payload["result_summary"] == "worker summary"
+
+
+async def test_delegate_subagent_builds_subagent_computer_policy() -> None:
+    gateway = FakeGateway()
+    config = Config(
+        {
+            "agent": {
+                "default_model": "runtime-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "profiles": {
+                    "aca": {
+                        "name": "Aca",
+                        "prompt_ref": "prompt/aca",
+                        "default_model": "runtime-model",
+                    },
+                    "excel_worker": {
+                        "name": "Excel Worker",
+                        "prompt_ref": "prompt/excel_worker",
+                        "default_model": "runtime-model",
+                    },
+                },
+                "prompts": {
+                    "prompt/aca": "You are Aca.",
+                    "prompt/excel_worker": "You are Excel Worker.",
+                },
+            },
+        }
+    )
+    components = build_runtime_components(
+        config,
+        gateway=gateway,
+        agent=FakeAgent(FakeAgentResponse(text="worker summary", model_used="runtime-model")),
+    )
+    await components.plugin_manager.ensure_started()
+
+    captured = {}
+
+    async def fake_execute(ctx, deliver_actions: bool = True):
+        captured["ctx"] = ctx
+        _ = deliver_actions
+        ctx.response = AgentRuntimeResult(status="completed", text="worker summary")
+        await components.run_manager.mark_completed(ctx.run.run_id)
+
+    components.pipeline.execute = fake_execute  # type: ignore[method-assign]
+
+    parent_decision = RouteDecision(
+        thread_id="qq:user:10001",
+        actor_id="qq:user:10001",
+        agent_id="aca",
+        channel_scope="qq:user:10001",
+    )
+    parent_run = await components.run_manager.open(
+        event=_event(),
+        decision=parent_decision,
+    )
+    profile = components.profile_loader.profiles["aca"]
+
+    result = await components.tool_broker.execute(
+        tool_name="delegate_subagent",
+        arguments={
+            "delegate_agent_id": "excel_worker",
+            "task": "整理 Excel 文件并总结",
+        },
+        ctx=_tool_ctx(run_id=parent_run.run_id, profile=profile),
+    )
+
+    assert result.raw["ok"] is True
+    child_ctx = captured["ctx"]
+    assert child_ctx.event_facts is None
+    assert child_ctx.surface_resolution is None
+    assert child_ctx.context_decision is None
+    assert child_ctx.extraction_decision is None
+    assert child_ctx.computer_policy_decision is not None
+    assert child_ctx.computer_policy_decision.actor_kind == "subagent"
+    assert child_ctx.computer_policy_decision.roots["self"]["visible"] is False
 
 
 async def test_bootstrap_registers_local_profile_subagent_executors() -> None:

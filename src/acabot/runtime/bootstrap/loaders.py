@@ -20,6 +20,8 @@ from ..control.profile_loader import (
     normalize_profile_config,
     resolve_profile_skills,
 )
+from ..control.session_loader import SessionConfigLoader
+from ..control.session_runtime import SessionRuntime
 from .config import (
     parse_binding_rule_config,
     parse_event_policy_config,
@@ -191,6 +193,27 @@ def build_event_policies(config: Config) -> list[EventPolicy]:
     ]
 
 
+def build_session_runtime(config: Config) -> SessionRuntime:
+    """构造 session-config 驱动的决策运行时.
+
+    Args:
+        config: 当前 runtime 配置.
+
+    Returns:
+        SessionRuntime: 读取 `sessions/**/*.yaml` 的会话决策运行时.
+    """
+
+    runtime_conf = config.get("runtime", {})
+    fs_conf = dict(runtime_conf.get("filesystem", {}))
+    sessions_dir = resolve_filesystem_path(
+        config,
+        fs_conf,
+        key="sessions_dir",
+        default="sessions",
+    )
+    return SessionRuntime(SessionConfigLoader(config_root=sessions_dir))
+
+
 def build_filesystem_event_policies(config: Config) -> list[EventPolicy]:
     runtime_conf = config.get("runtime", {})
     fs_conf = dict(runtime_conf.get("filesystem", {}))
@@ -219,4 +242,5 @@ __all__ = [
     "build_profiles",
     "build_inbound_rules",
     "build_prompt_loader",
+    "build_session_runtime",
 ]
