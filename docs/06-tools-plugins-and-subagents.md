@@ -579,17 +579,25 @@ subagent delegation 是另一条独立链:
 
 ## 当前已经存在的 plugin 方向
 
-看 `src/acabot/runtime/plugins/` 可以大概知道已有思路:
+看 `src/acabot/runtime/plugins/` 可以大概知道现状:
 
-- `computer_tool_adapter`
-- `skill_tool`
-- `subagent_delegation`
+- `backend_bridge_tool`
 - `sticky_notes`
 - `napcat_tools`
 - `reference_tools`
 - `ops_control`
 
-这说明项目已经倾向于把“能力暴露给模型”的事情做成 plugin / tool，而不是继续把主线塞胖。
+前台基础工具现在已经不再挂在 plugin 生命周期上了。
+这些工具已经收进 `src/acabot/runtime/builtin_tools/`:
+
+- `read`
+- `write`
+- `edit`
+- `bash`
+- `skill`
+- `delegate_subagent`
+
+现在 plugin 主要表示外部扩展能力, builtin tool 表示 runtime 自带的前台能力。两者不要再混着看。
 
 ## 常见误区
 

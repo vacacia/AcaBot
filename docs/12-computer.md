@@ -2,268 +2,315 @@
 
 这一篇讲的是 AcaBot 里的 `computer`。
 
-它不是“给模型直接用的一组工具”那么简单，更准确地说，它是 workspace、附件落地、shell session 和执行后端的基础设施层。上面那层再通过 plugin / tool adapter 暴露给 bot。
+现在这层已经很明确了：
 
-关键文件:
+- `computer` 是前台文件工具和 shell 工具背后的共用运行时
+- 前台真正暴露给模型看的 builtin tool 只有：
+  - `read`
+  - `write`
+  - `edit`
+  - `bash`
+- 这些工具都吃 Work World path：
+  - `/workspace/...`
+  - `/skills/...`
+  - `/self/...`
+
+它不是 plugin，也不是给模型直接看的一个大对象名字。模型看到的是工具名，真正干活的是 `ComputerRuntime`。
+
+## 关键文件
 
 - `src/acabot/runtime/computer/`
-- `src/acabot/runtime/plugins/computer_tool_adapter.py`
+- `src/acabot/runtime/builtin_tools/computer.py`
 - `src/acabot/runtime/bootstrap/`
 
-## 这层到底负责什么
+## 这层现在负责什么
 
-`computer` 现在主要负责四件事:
+`computer` 现在主要负责五件事：
 
 - 管 thread 级 workspace
-- 把 inbound attachment 落到本地
-- 提供 exec / bash session 这类执行能力
-- 给 skill mirror 留接缝
+- 把 inbound attachment 拉进 `/workspace/attachments/...`
+- 处理 world path 到宿主机路径的读写
+- 跑一次性 shell 命令
+- 维护内部 shell session 和 backend 状态
 
-不要把它理解成“一个工具集合”。工具只是它的上层接口形态。
+前台工具只是它的表面，不是它的全部。
 
-## 关键对象
+## 前台工具面
 
-### `ComputerPolicy`
+现在前台 builtin tool 已经固定成四个：
 
-这是 agent 级稳定策略。
+- `read(path, offset?, limit?)`
+- `write(path, content)`
+- `edit(path, oldText, newText)`
+- `bash(command, timeout?)`
 
-主要字段:
+这四个工具都由：
 
-- `backend`
-- `read_only`
-- `allow_write`
-- `allow_exec`
-- `allow_sessions`
-- `auto_stage_attachments`
-- `network_mode`
+- `src/acabot/runtime/builtin_tools/computer.py`
 
-它表达的是“这个 agent 默认怎么使用 computer 子系统”，不是某次 run 的临时状态。
+注册进 `ToolBroker`。
 
-### `ComputerRuntimeOverride`
+这一层只负责：
 
-这是 thread metadata 里的临时 override。
+- 定义 tool schema
+- 接住模型调用
+- 把参数转给 `ComputerRuntime`
+- 把结果整理成 `ToolResult`
 
-它只覆盖 thread 级行为，不改 profile 真源。
+不要把这层当成本体。本体还是 `ComputerRuntime`。
 
-### `WorkspaceState`
+## `ComputerRuntime` 是真正入口
 
-这是给 runtime、tool 上下文和控制面看的轻量摘要，不是完整文件树。
+如果你要改这套系统，最先该看的是：
 
-你如果只是想知道“当前 thread 的 workspace 大致长什么样”，看这个对象就够。
+- `src/acabot/runtime/computer/runtime.py`
 
-### `AttachmentSnapshot`
+现在它已经有这组清楚的入口：
 
-表示一条附件从平台引用到本地副本的状态快照。
+- `prepare_run_context()`
+- `stage_attachments()`
+- `read_world_path()`
+- `write_world_path()`
+- `edit_world_path()`
+- `bash_world()`
+- `exec_once()`
+- `open_session()` / `write_session()` / `read_session()` / `close_session()`
 
-图片、文件、音频、视频最后只要进入 staging，都会以这种形式进入 run 上下文。
+其中：
 
-### `CommandSession`
+- `read / write / edit / bash` 是前台 builtin tool 用的入口
+- `exec_once()` 和 shell session 这组方法现在主要是内部能力
+- 前台不再直接暴露 `exec / bash_open / bash_write / bash_read / bash_close`
 
-thread 级 shell session。也就是 `bash_open / bash_write / bash_read / bash_close` 那套底层状态。
+## world path 怎么工作
 
-## workspace 怎么组织
+前台工具传进来的不是宿主机路径，而是 world path。
 
-真正管路径布局的是 `WorkspaceManager`。
+真正负责把 world path 变成正式路径的是：
 
-它大致会给每个 thread 建这样一套结构:
+- `src/acabot/runtime/computer/world.py`
+- `src/acabot/runtime/computer/runtime.py`
 
-- `workspace/`
-- `workspace/attachments/`
-- `workspace/scratch/`
-- `workspace/skills/`
+现在的规则是：
 
-还有一个 `.thread_id` 文件用来反查 thread。
+- `/workspace/...` 指向当前 thread 的工作目录
+- `/skills/...` 指向当前 world 真正可见的 skill 目录
+- `/self/...` 指向当前 actor 的持久 self 目录
 
-### 一个重要约束
+前台工具不用自己知道这些映射细节。它们只管把 world path 交给 `ComputerRuntime`。
 
-`resolve_relative_path()` 会检查路径逃逸和 symlink 逃逸。
+## 宿主机目录怎么组织
 
-所以如果你要改 file tool 或 workspace 操作，别随手绕过这层路径约束。
+真正管宿主机目录布局的是：
+
+- `src/acabot/runtime/computer/workspace.py`
+
+现在最重要的几条路径是：
+
+- `threads/<thread>/workspace/`
+- `threads/<thread>/workspace/attachments/`
+- `threads/<thread>/workspace/scratch/`
+- `threads/<thread>/workspace/skills/`
+- `threads/<thread>/skill_views/<view>/`
+- `self/<scope>/`
+
+可以简单理解成：
+
+- `/workspace` 对应 thread 的工作目录
+- `/skills` 的 canonical 目录在 thread workspace 里
+- 每个 world 还会有自己的 skills view
+- `/self` 是单独的持久目录，不跟 thread 一起删
+
+## `/skills` 现在的规则
+
+这块之前最容易写错，现在要记住当前真相：
+
+- `/skills/...` 的读写已经走 canonical skills 目录
+- 不再写进 `skill_views/...` 副本
+- 可见的 skill 可以直接被 `read` 访问
+- 写完以后会刷新 skills view
+- builtin surface 不再自己偷偷做 skill mirror 准备
+- 这件事已经收回 `ComputerRuntime` 里处理
+
+## `read` 现在是什么行为
+
+前台 `read` 现在已经对齐到更像 pi 的样子：
+
+- 参数是 `path / offset / limit`
+- 文本文件支持分页
+- offset 越界会报错
+- 图片按文件字节识别，不按后缀猜
+- 支持：
+  - `png`
+  - `jpg`
+  - `gif`
+  - `webp`
+- 图片返回的是说明文字 + 图片内容块
+
+相关 helper：
+
+- `src/acabot/runtime/computer/reading.py`
+- `src/acabot/runtime/computer/media.py`
+
+## `write` 现在是什么行为
+
+前台 `write` 现在已经收成：
+
+- 自动创建父目录
+- 文件不存在就创建
+- 已存在就覆盖
+- 返回写入的 UTF-8 字节数
+- 前台文案是：
+  - `Successfully wrote N bytes to PATH`
+
+## `edit` 现在是什么行为
+
+前台 `edit` 现在已经收成：
+
+- 参数名和 pi 一样：
+  - `path`
+  - `oldText`
+  - `newText`
+- 先精确匹配
+- 找不到时报错
+- 多次匹配时报错
+- 支持 `newText=""` 删除文字
+- 保留 UTF-8 BOM
+- 保留原来的换行风格
+- 支持 fuzzy 匹配
+- 返回 diff
+
+相关 helper：
+
+- `src/acabot/runtime/computer/editing.py`
+
+这里还有一个很容易误判的点：
+
+- 当前行为要以 **pi 当前 `dist/core/tools/edit.js` / `edit-diff.js`** 为准
+- fuzzy 命中后，pi 当前版本就是会拿归一化后的整份文字做替换基底
+- `Found N occurrences` 这一步，pi 当前版本也是按 fuzzy 归一化后的文字计数
+
+AcaBot 现在和这套行为保持一致。
+
+## `bash` 现在是什么行为
+
+前台 shell 工具面现在已经收成：
+
+- `bash(command, timeout?)`
+
+这层现在由：
+
+- `src/acabot/runtime/builtin_tools/computer.py`
+- `src/acabot/runtime/computer/runtime.py`
+
+配合完成。
+
+当前规则是：
+
+- 前台不再暴露 `exec / bash_open / bash_write / bash_read / bash_close`
+- `bash` 会把 `command / timeout` 转给 `ComputerRuntime.bash_world()`
+- `bash_world()` 再走 `exec_once()`
+- host / docker backend 的一次性命令执行都已经支持可选超时秒数
+- 当前 world 看不到 `/workspace` 时，前台不会显示 `bash`
 
 ## backend 怎么分层
 
-底层通过 `ComputerBackend` 抽象三类后端:
+底层通过 `ComputerBackend` 抽象三类后端：
 
 - `host`
 - `docker`
 - `remote`
 
-当前最成熟的是 `host`。
+关键文件：
 
-### `HostComputerBackend`
+- `src/acabot/runtime/computer/backends.py`
+- `src/acabot/runtime/computer/contracts.py`
 
-现在真正最常用的后端。
+现在 backend 主要只做这些底层事情：
 
-负责:
-
-- 列文件
-- 读写文本
-- grep
-- 一次性 exec
-- 打开 / 关闭 shell session
-
-### `DockerSandboxBackend`
-
-是 sandbox 方向的抽象接缝，不是“整个 computer 才靠 docker 才能工作”。
-
-### `RemoteComputerBackend`
-
-留给远端执行面，当前不是主用路径。
-
-## `ComputerRuntime` 是真正入口
-
-如果你要改这套系统，最先该看的是 `ComputerRuntime`，不是某个 backend。
-
-它做的事情包括:
-
-- `prepare_run_context()`
-- `stage_attachments()`
-- workspace 文件读写 / grep
+- `read_text()`
+- `read_bytes()`
+- `write_text()`
 - `exec_once()`
-- shell session 生命周期
-- skill mirror
+- shell session 打开 / 写入 / 读取 / 关闭
 
-### `prepare_run_context()`
+backend 不负责这些事情：
 
-这是主线接 computer 的关键点。
-
-它会:
-
-- 计算 effective policy
-- 确保 workspace 存在
-- 准备 backend
-- 如果配置允许，自动把当前 event 的附件做 staging
-- 把 `workspace_state` 和 `attachment_snapshots` 填进 `RunContext`
-
-所以图片转述、文件处理、多模态输入这类需求，很多都得从这里接。
-
-现在还要补一句:
-
-- 当前消息附件还是走这里自动 staging
-- `reply` 图片虽然不是 `event.attachments`，但也复用同一套 staging 逻辑，只是落到 `attachments/reply/...`
+- world path 解析
+- `/skills` `/self` 可见性判断
+- `oldText / newText` 的编辑规则
+- 给模型拼最终工具文案
 
 ## 附件 staging 怎么走
 
-当前 attachment resolver 主要有两段:
+附件 staging 还是 `computer` 这层的重要职责。
 
-- `UrlAttachmentResolver`
-- `GatewayAttachmentResolver`
+关键入口：
 
-默认策略是:
+- `stage_attachments()`
+- `prepare_run_context()`
 
-1. 先直接按 URL / file URL 下载
-2. 不行再尝试 `gateway.call_api()` 二次解析
+默认流程还是：
 
-当前图片实现就是建立在这条链上的:
+1. 先按 URL / file URL 拉取
+2. 不行再尝试 gateway API 做二次解析
+3. 最后把文件放进 `/workspace/attachments/...`
 
-- 普通 inbound 图片先走这里
-- `reply` 图片先 `get_msg` 拿到消息里的图片引用
-- 再交回 staging 逻辑立即落本地
+当前 event 附件和 reply 图片都复用这套路径。
 
-### 这意味着什么
+## `WorkspaceState` 给谁看
 
-如果平台附件不是直接可下载 URL，而是平台 file_id，这层才是真正要补的地方。
+`WorkspaceState` 是给这些地方看的摘要：
 
-不要在 pipeline 里临时写一段下载逻辑把它绕过去。
+- runtime 上下文
+- tool 上下文
+- control plane
+- WebUI
 
-## skill mirror 是干什么的
+它不是完整文件树，但会告诉你这些关键信息：
 
-这是为了让当前 thread 的 workspace 里能看到已经加载过的 skill 目录副本。
+- 当前 thread
+- 当前 backend
+- `/workspace` 的宿主机路径
+- 当前 run 真正可见的 computer 工具
+- 当前 attachment 数量
+- 当前活跃 shell session
 
-相关方法:
+## 现在最容易搞错的边界
 
-- `mark_skill_loaded()`
-- `ensure_loaded_skills_mirrored()`
-- `list_mirrored_skills()`
+### 1. 把 builtin tool 当本体
 
-它的意义不是“执行 skill”，而是:
+前台 builtin tool 只是接线层。本体还是 `ComputerRuntime`。
 
-- 当 bot 已经读取过 skill
-- workspace 工具又需要访问 skill 目录里的脚本 / 资源
-- 就把 skill root mirror 到当前 thread workspace 里
+### 2. 把 plugin 当成基础工具入口
 
-这和你想要的“外部 skill 真正可用”是有关联的。以后如果要让 AcaBot 真正吃外部 skill，这里大概率还是要继续扩。
+现在 `read / write / edit / bash` 已经不是 plugin 了。
+它们属于 runtime 自带的 builtin tool。
 
-## computer tool adapter 是怎么接上的
+### 3. 在 pipeline 里自己写附件下载
 
-`computer` 本体不直接暴露给模型。
+附件 staging 现在还是应该尽量留在 `computer` 里处理。
 
-真正给模型看的，是 `ComputerToolAdapterPlugin` 暴露的工具:
+### 4. 只改 backend，不看 runtime
 
-- `read`
-- `write`
-- `ls`
-- `grep`
-- `exec`
-- `bash_open`
-- `bash_write`
-- `bash_read`
-- `bash_close`
+很多行为是 `ComputerRuntime` 决定的，不是 backend 决定的。
+比如：
 
-这层做的事是:
+- `/skills` 准备
+- world path 解析
+- attachment staging
+- `WorkspaceState` 组装
 
-- 把 tool call 转给 `ComputerRuntime`
-- 把返回值包装成 `ToolResult`
-- 在需要时确保已加载的 skill 已经 mirror 进 workspace
-
-## 改这块时最容易搞错的边界
-
-### 1. 把 tool adapter 当本体
-
-本体是 `ComputerRuntime`，不是 `computer_tool_adapter.py`。
-
-### 2. 在主线里自己处理附件下载
-
-附件 staging 应该尽量留在 computer 层。
-
-### 3. 不区分 profile policy 和 thread override
-
-一个是稳定配置，一个是运行中临时覆盖，别混。
-
-### 4. 只改 host backend，不看 runtime 行为
-
-有些行为是 runtime 决定的，不是 backend 决定的，比如 attachment staging、run step 审计、workspace state 组装。
-
-## 哪些需求会碰这里
-
-- 图片转述 / 图片先落本地再喂 VLM
-- 文件上传后让 bot 读文件
-- 让 bot 执行 shell 命令
-- skill 目录里的脚本 / 资源在 workspace 内可见
-- WebUI 查看 workspace / sandbox / session
-
-## 当前已知风险 / 缺口
-
-### 1. 文件类操作和 backend 语义还没完全统一
-
-当前 `exec/session` 会按 effective backend 走，但 `list/read/write/grep` 这几条路径的语义还偏向 host workspace。
-
-这意味着如果以后你认真推进 docker / remote backend，一定要重新检查:
-
-- 文件读写到底应该落在哪个 backend
-- host path 和 visible workspace 的关系是否还成立
-
-### 2. 附件超限后的清理还不够彻底
-
-当前总附件大小限制是在 staging 之后才判定。
-
-所以如果某个附件已经下到本地，后面才发现超限，磁盘上的临时文件不一定会立刻被清掉。以后如果修这个行为，这里要同步。
-
-### 3. skill mirror 现在只是接缝，不是完整 skill runtime
-
-当前 mirror 更像“让 workspace 能看到已经加载过的 skill 目录”，不是 skill 本体执行系统。
-
-如果以后你让 AcaBot 真正跑外部 skill，这里很可能还要继续扩。
-
-## 如果改这里，通常同步哪些文档
+## 改这里时通常一起看哪些文档
 
 - `12-computer.md`
-- 如果影响 skill mirror，再看 `06-tools-plugins-and-subagents.md`
-- 如果影响图片 / 文件主线，再看 `02-runtime-mainline.md` 和 `10-change-playbooks.md`
+- `06-tools-plugins-and-subagents.md`
+- 如果影响主线，再看 `02-runtime-mainline.md`
 
 ## 读源码顺序建议
 
-1. `src/acabot/runtime/computer/`
-2. `src/acabot/runtime/plugins/computer_tool_adapter.py`
-3. `src/acabot/runtime/bootstrap/`
-4. `src/acabot/runtime/control/control_plane.py`
+1. `src/acabot/runtime/computer/runtime.py`
+2. `src/acabot/runtime/computer/contracts.py`
+3. `src/acabot/runtime/computer/backends.py`
+4. `src/acabot/runtime/computer/workspace.py`
+5. `src/acabot/runtime/builtin_tools/computer.py`
