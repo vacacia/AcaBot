@@ -1,19 +1,10 @@
-"""runtime.plugins.subagent_delegation 提供 subagent delegation 工具插件.
+"""runtime.builtin_tools.subagents 注册 subagent builtin tool.
 
-组件关系:
-
-    RuntimePluginManager
-            |
-            v
-    SubagentDelegationPlugin
-            |
-            v
-    SubagentDelegationBroker
-
-目标:
-- 给主 agent 一个显式的 `delegate_subagent` 工具
-- 让 subagent delegation 成为一条独立能力链
-- 不再让 skill 承担委派语义
+这个文件负责把 subagent delegation 能力暴露成一个基础工具.
+它和下面这些组件直接相关:
+- `runtime.subagents`: 真正做委派编排
+- `runtime.tool_broker`: 保存对模型可见的工具目录
+- `runtime.bootstrap`: 启动时注册 builtin subagent tool
 """
 
 from __future__ import annotations
@@ -22,87 +13,72 @@ from typing import Any
 
 from acabot.agent import ToolSpec
 
-from ..plugin_manager import RuntimePlugin, RuntimePluginContext, RuntimeToolRegistration
 from ..subagents import SubagentDelegationBroker
-from ..tool_broker import ToolExecutionContext, ToolResult
+from ..tool_broker import ToolBroker, ToolExecutionContext, ToolResult
 
 
-# region plugin
-class SubagentDelegationPlugin(RuntimePlugin):
-    """subagent delegation 工具插件.
+# region source
+BUILTIN_SUBAGENT_TOOL_SOURCE = "builtin:subagents"
+
+
+# endregion
+
+
+# region surface
+class BuiltinSubagentToolSurface:
+    """subagent builtin tool 的注册和执行入口.
 
     Attributes:
-        name (str): 插件名.
-        _delegator (SubagentDelegationBroker | None): subagent delegation 编排入口.
+        delegator (SubagentDelegationBroker | None): subagent delegation 编排入口.
     """
 
-    name = "subagent_delegation"
+    def __init__(self, *, delegator: SubagentDelegationBroker | None) -> None:
+        """保存 builtin subagent tool 依赖."""
 
-    def __init__(self) -> None:
-        """初始化插件状态."""
+        self.delegator = delegator
 
-        self._delegator: SubagentDelegationBroker | None = None
+    def register(self, tool_broker: ToolBroker) -> list[str]:
+        """把 subagent builtin tool 注册到 ToolBroker."""
 
-    async def setup(self, runtime: RuntimePluginContext) -> None:
-        """保存 subagent delegation broker.
-
-        Args:
-            runtime: runtime plugin 上下文.
-        """
-
-        self._delegator = runtime.subagent_delegator
-
-    def runtime_tools(self) -> list[RuntimeToolRegistration]:
-        """返回 `delegate_subagent` 工具定义.
-
-        Returns:
-            一条 runtime-native 工具注册项.
-        """
-
-        return [
-            RuntimeToolRegistration(
-                spec=ToolSpec(
-                    name="delegate_subagent",
-                    description="Delegate work to a visible subagent by delegate_agent_id.",
-                    parameters={
-                        "type": "object",
-                        "properties": {
-                            "delegate_agent_id": {
-                                "type": "string",
-                                "description": "Visible subagent id.",
-                            },
-                            "task": {
-                                "type": "string",
-                                "description": "A concise task description for the subagent.",
-                            },
-                            "payload": {
-                                "type": "object",
-                                "description": "Optional structured payload passed to the subagent.",
-                            },
+        tool_broker.unregister_source(BUILTIN_SUBAGENT_TOOL_SOURCE)
+        if self.delegator is None:
+            return []
+        tool_broker.register_tool(
+            ToolSpec(
+                name="delegate_subagent",
+                description="Delegate work to a visible subagent by delegate_agent_id.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "delegate_agent_id": {
+                            "type": "string",
+                            "description": "Visible subagent id.",
                         },
-                        "required": ["delegate_agent_id", "task"],
+                        "task": {
+                            "type": "string",
+                            "description": "A concise task description for the subagent.",
+                        },
+                        "payload": {
+                            "type": "object",
+                            "description": "Optional structured payload passed to the subagent.",
+                        },
                     },
-                ),
-                handler=self._delegate_subagent,
-            )
-        ]
+                    "required": ["delegate_agent_id", "task"],
+                },
+            ),
+            self._delegate_subagent,
+            source=BUILTIN_SUBAGENT_TOOL_SOURCE,
+        )
+        return ["delegate_subagent"]
 
     async def _delegate_subagent(
         self,
         arguments: dict[str, Any],
         ctx: ToolExecutionContext,
     ) -> ToolResult:
-        """执行一次 subagent delegation.
+        """执行一次 subagent delegation."""
 
-        Args:
-            arguments: 工具参数.
-            ctx: 当前工具执行上下文.
-
-        Returns:
-            一份适合主 agent 消费的 ToolResult.
-        """
-
-        delegator = self._delegator
+        delegator = self.delegator
         if delegator is None:
             return ToolResult(
                 llm_content="Delegation broker unavailable.",
@@ -167,3 +143,9 @@ class SubagentDelegationPlugin(RuntimePlugin):
 
 
 # endregion
+
+
+__all__ = [
+    "BUILTIN_SUBAGENT_TOOL_SOURCE",
+    "BuiltinSubagentToolSurface",
+]

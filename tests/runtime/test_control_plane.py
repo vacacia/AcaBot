@@ -11,7 +11,6 @@ from acabot.runtime import (
     ComputerPolicy,
     ComputerRuntime,
     ComputerRuntimeConfig,
-    ComputerRuntimeOverride,
     FileSystemSkillPackageLoader,
     HostComputerBackend,
     InMemoryChannelEventStore,
@@ -372,46 +371,6 @@ async def test_runtime_control_plane_show_memory_returns_items() -> None:
     assert result.items[0].content == "群规"
 
 
-async def test_runtime_control_plane_get_sandbox_status_uses_thread_override_backend(
-    tmp_path: Path,
-) -> None:
-    thread_manager = InMemoryThreadManager()
-    thread = await thread_manager.get_or_create(
-        thread_id="thread:1",
-        channel_scope="qq:user:10001",
-    )
-    computer_runtime = _computer_runtime(tmp_path)
-    control_plane = RuntimeControlPlane(
-        app=RuntimeApp(
-            gateway=FakeGateway(),
-            router=RuntimeRouter(default_agent_id="aca"),
-            thread_manager=thread_manager,
-            run_manager=InMemoryRunManager(),
-            channel_event_store=InMemoryChannelEventStore(),
-            pipeline=ThreadPipeline(
-                agent_runtime=FakeAgentRuntime(),
-                outbox=Outbox(gateway=FakeGateway(), store=FakeMessageStore()),
-                run_manager=InMemoryRunManager(),
-                thread_manager=thread_manager,
-            ),
-            profile_loader=_profile_loader,
-            computer_runtime=computer_runtime,
-        ),
-        run_manager=InMemoryRunManager(),
-        thread_manager=thread_manager,
-        computer_runtime=computer_runtime,
-    )
-
-    await computer_runtime.set_thread_override(
-        thread=thread,
-        override=ComputerRuntimeOverride(backend="docker"),
-    )
-    await thread_manager.save(thread)
-    status = await control_plane.get_sandbox_status(thread_id="thread:1")
-
-    assert status.backend_kind == "docker"
-
-
 async def test_computer_runtime_one_shot_exec_persists_backend_state(tmp_path: Path) -> None:
     computer_runtime = _computer_runtime(tmp_path)
     docker_backend = HostComputerBackend(
@@ -432,45 +391,3 @@ async def test_computer_runtime_one_shot_exec_persists_backend_state(tmp_path: P
     assert status.backend_kind == "docker"
 
 
-async def test_runtime_control_plane_clear_thread_override_resets_backend_to_host(
-    tmp_path: Path,
-) -> None:
-    thread_manager = InMemoryThreadManager()
-    run_manager = InMemoryRunManager()
-    thread = await thread_manager.get_or_create(
-        thread_id="thread:1",
-        channel_scope="qq:user:10001",
-    )
-    computer_runtime = _computer_runtime(tmp_path)
-    control_plane = RuntimeControlPlane(
-        app=RuntimeApp(
-            gateway=FakeGateway(),
-            router=RuntimeRouter(default_agent_id="aca"),
-            thread_manager=thread_manager,
-            run_manager=run_manager,
-            channel_event_store=InMemoryChannelEventStore(),
-            pipeline=ThreadPipeline(
-                agent_runtime=FakeAgentRuntime(),
-                outbox=Outbox(gateway=FakeGateway(), store=FakeMessageStore()),
-                run_manager=run_manager,
-                thread_manager=thread_manager,
-            ),
-            profile_loader=_profile_loader,
-            computer_runtime=computer_runtime,
-        ),
-        run_manager=run_manager,
-        thread_manager=thread_manager,
-        computer_runtime=computer_runtime,
-    )
-
-    await computer_runtime.set_thread_override(
-        thread=thread,
-        override=ComputerRuntimeOverride(backend="docker"),
-    )
-    await thread_manager.save(thread)
-    status_before = await control_plane.get_sandbox_status(thread_id="thread:1")
-    await control_plane.clear_thread_computer_override(thread_id="thread:1")
-    status_after = await control_plane.get_sandbox_status(thread_id="thread:1")
-
-    assert status_before.backend_kind == "docker"
-    assert status_after.backend_kind == "host"

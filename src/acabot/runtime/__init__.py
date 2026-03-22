@@ -10,8 +10,9 @@ Runtime 层是将 AcaBot 各大组件拼装起来
 3. 交互与沙箱 (Tools & Compute): `ToolBroker` (工具收发), `ComputerService` (终端执行与工作区隔离)
 4. 身份与委派 (Identity & Delegation): `AgentProfile` (人格设定), `SubagentExecutionService` (主副 Agent 委派)
 
-由于依赖反转, `computer` 作为物理沙箱抽象在此处定义
-而将沙箱暴漏为 LLM 工具的具体适配器逻辑位于 `runtime.plugins.computer_tool_adapter`。
+由于依赖反转, `computer` 作为物理沙箱抽象在此处定义.
+前台基础工具的注册入口位于 `runtime.builtin_tools`.
+runtime 扩展插件位于 `runtime.plugins`.
 """
 
 from .agent_runtime import AgentRuntime
@@ -43,16 +44,17 @@ from .computer import (
     ComputerBackend,
     ComputerRuntimeConfig,
     ComputerPolicy,
-    ComputerRuntimeOverride,
     ComputerRuntime,
     DockerSandboxBackend,
+    WorldPathEditResult,
+    WorldPathReadResult,
+    WorldPathWriteResult,
     HostComputerBackend,
     RemoteComputerBackend,
     WorkspaceFileEntry,
     WorkspaceManager,
     WorkspaceSandboxStatus,
     WorkspaceState,
-    parse_computer_override,
     parse_computer_policy,
 )
 from .control.config_control_plane import RuntimeConfigControlPlane
@@ -76,7 +78,6 @@ from .control.control_plane import (
     SubagentExecutorSnapshot,
 )
 from .control.snapshots import BackendStatusSnapshot
-from .control.event_policy import EventPolicyRegistry
 from .storage.event_store import InMemoryChannelEventStore
 from .memory.memory_broker import (
     MemoryBlock,
@@ -126,18 +127,26 @@ from .model.model_registry import (
     snapshot_from_runtime_request,
 )
 from .contracts import (
+    AdmissionDecision,
+    AdmissionDomainConfig,
     AgentProfile,
     DelegationMode,
     ApprovalRequired,
     ApprovalDecisionResult,
     AgentRuntimeResult,
-    BindingRule,
     ChannelEventRecord,
+    ComputerDomainConfig,
+    ComputerPolicyDecision,
+    ContextDecision,
+    ContextDomainConfig,
     DeliveryResult,
     DispatchReport,
-    EventPolicy,
-    EventPolicyDecision,
-    InboundRule,
+    DomainCase,
+    DomainConfig,
+    EventFacts,
+    ExtractionDecision,
+    ExtractionDomainConfig,
+    MatchSpec,
     MemoryCandidate,
     MemoryEditMode,
     MemoryItem,
@@ -146,6 +155,8 @@ from .contracts import (
     OutboxItem,
     PendingApproval,
     PendingApprovalRecord,
+    PersistenceDecision,
+    PersistenceDomainConfig,
     PlannedAction,
     PromptSlot,
     RecoveryReport,
@@ -153,10 +164,16 @@ from .contracts import (
     ResolvedMessage,
     RetrievalPlan,
     RouteDecision,
+    RoutingDecision,
+    RoutingDomainConfig,
     RunContext,
     RunRecord,
     RunStatus,
     RunStep,
+    SessionConfig,
+    SessionLocatorResult,
+    SurfaceConfig,
+    SurfaceResolution,
     ThreadRecord,
     ThreadState,
 )
@@ -178,20 +195,14 @@ from .plugin_manager import (
 )
 from .plugins import (
     BackendBridgeToolPlugin,
-    ComputerToolAdapterPlugin,
     NapCatToolsPlugin,
     OpsControlPlugin,
     ReferenceToolsPlugin,
-    SkillToolPlugin,
     StickyNotesPlugin,
-    SubagentDelegationPlugin,
 )
 from .control.profile_loader import (
     AgentProfileRegistry,
     ChainedPromptLoader,
-    FileSystemBindingLoader,
-    FileSystemEventPolicyLoader,
-    FileSystemInboundRuleLoader,
     FileSystemProfileLoader,
     FileSystemPromptLoader,
     ProfileLoader,
@@ -200,6 +211,8 @@ from .control.profile_loader import (
     StaticProfileLoader,
     StaticPromptLoader,
 )
+from .control.session_loader import ConfigBackedSessionConfigLoader, SessionConfigLoader, StaticSessionConfigLoader
+from .control.session_runtime import SessionRuntime
 from .references import (
     LocalReferenceBackend,
     NullReferenceBackend,
@@ -215,7 +228,7 @@ from .references import (
     ReferenceSpace,
 )
 from .memory.retrieval_planner import PromptAssemblyConfig, RetrievalPlanner
-from .router import InboundRuleRegistry, RuntimeRouter
+from .router import RuntimeRouter
 from .soul import SoulSource
 from .storage.runs import InMemoryRunManager, RunManager, StoreBackedRunManager
 from .skills import FileSystemSkillPackageLoader
@@ -262,6 +275,8 @@ from .tool_broker import (
 from .storage.threads import InMemoryThreadManager, StoreBackedThreadManager, ThreadManager
 
 __all__ = [
+    "AdmissionDecision",
+    "AdmissionDomainConfig",
     "AgentRuntime",
     "AgentRuntimeResult",
     "AgentProfile",
@@ -280,15 +295,18 @@ __all__ = [
     "ApprovalDecisionResult",
     "ApprovalResumeResult",
     "ApprovalResumer",
-    "BindingRule",
     "ChainedPromptLoader",
     "ChannelEventRecord",
     "ChannelEventStore",
+    "ComputerDomainConfig",
+    "ComputerPolicyDecision",
     "ComputerBackend",
     "ComputerRuntimeConfig",
     "ComputerPolicy",
-    "ComputerRuntimeOverride",
     "ComputerRuntime",
+    "WorldPathEditResult",
+    "WorldPathReadResult",
+    "WorldPathWriteResult",
     "RuntimeConfigControlPlane",
     "RuntimeHttpApiServer",
     "ContextCompactionConfig",
@@ -305,17 +323,19 @@ __all__ = [
     "SubagentExecutorSnapshot",
     "ContextSummarizer",
     "ModelContextSummarizer",
+    "ContextDecision",
+    "ContextDomainConfig",
     "DeliveryResult",
     "DispatchReport",
     "DockerSandboxBackend",
+    "DomainCase",
+    "DomainConfig",
     "BackendBridgeToolPlugin",
     "build_runtime_components",
-    "EventPolicy",
-    "EventPolicyDecision",
-    "EventPolicyRegistry",
+    "EventFacts",
+    "ExtractionDecision",
+    "ExtractionDomainConfig",
     "SoulSource",
-    "InboundRule",
-    "InboundRuleRegistry",
     "InMemoryChannelEventStore",
     "InMemoryRunManager",
     "InMemoryMessageStore",
@@ -328,9 +348,6 @@ __all__ = [
     "MessageResolutionService",
     "FileSystemProfileLoader",
     "FileSystemPromptLoader",
-    "FileSystemBindingLoader",
-    "FileSystemInboundRuleLoader",
-    "FileSystemEventPolicyLoader",
     "MemoryBlock",
     "MemoryBroker",
     "MemoryCandidate",
@@ -363,6 +380,7 @@ __all__ = [
     "EffectiveModelSnapshot",
     "FileSystemModelRegistryManager",
     "InMemoryMemoryStore",
+    "MatchSpec",
     "NoopApprovalResumer",
     "ToolApprovalResumer",
     "NullContextSummarizer",
@@ -378,12 +396,15 @@ __all__ = [
     "PromptAssemblyConfig",
     "PromptLoader",
     "ReloadablePromptLoader",
+    "PersistenceDecision",
+    "PersistenceDomainConfig",
     "PromptSlot",
     "DEFAULT_IMAGE_CAPTION_PROMPT",
     "parse_image_caption_settings",
-    "parse_computer_override",
     "parse_computer_policy",
     "RouteDecision",
+    "RoutingDecision",
+    "RoutingDomainConfig",
     "RecoveryReport",
     "ResolvedImageInput",
     "ResolvedMessage",
@@ -416,13 +437,10 @@ __all__ = [
     "load_runtime_plugins_from_config",
     "parse_runtime_plugin_spec",
     "BackendBridgeToolPlugin",
-    "ComputerToolAdapterPlugin",
     "NapCatToolsPlugin",
     "OpsControlPlugin",
     "ReferenceToolsPlugin",
-    "SkillToolPlugin",
     "StickyNotesPlugin",
-    "SubagentDelegationPlugin",
     "RunContext",
     "RunManager",
     "RunRecord",
@@ -430,6 +448,12 @@ __all__ = [
     "RunStep",
     "RunStore",
     "RuntimeRouter",
+    "SessionConfig",
+    "SessionConfigLoader",
+    "ConfigBackedSessionConfigLoader",
+    "StaticSessionConfigLoader",
+    "SessionLocatorResult",
+    "SessionRuntime",
     "RetrievalPlan",
     "RetrievalPlanner",
     "Outbox",
@@ -456,6 +480,8 @@ __all__ = [
     "StoreBackedRunManager",
     "StoreBackedThreadManager",
     "StructuredMemoryExtractor",
+    "SurfaceConfig",
+    "SurfaceResolution",
     "ThreadPipeline",
     "ThreadManager",
     "ThreadRecord",

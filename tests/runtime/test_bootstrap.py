@@ -2,14 +2,16 @@
 
 这一组测试验证默认 runtime 组件树是否按配置正确装配.
 当前主线已经切到 `ModelAgentRuntime`, 因此这里的 fake agent 只需要满足
-新的 `BaseAgent.run()` duck-typed 形状, 不再强调 legacy runtime.
+新的 `BaseAgent.run()` duck-typed 形状.
 """
 
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from acabot.agent import ToolDef
+import pytest
+
+from acabot.agent import ToolDef, ToolSpec
 from acabot.config import Config
 from acabot.runtime import (
     ApprovalRequired,
@@ -22,6 +24,7 @@ from acabot.runtime import (
     OpenVikingReferenceBackend,
     RuntimePlugin,
     RuntimePluginContext,
+    RuntimePluginManager,
     RetrievalPlanner,
     RouteDecision,
     SQLiteChannelEventStore,
@@ -613,781 +616,114 @@ async def test_build_runtime_components_exposes_control_plane() -> None:
     assert status.loaded_plugins == []
 
 
-async def test_build_runtime_components_control_plane_can_switch_thread_agent() -> None:
-    config = Config(
-        {
-            "agent": {
-                "default_model": "fallback-model",
-                "system_prompt": "Fallback prompt.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                        "default_model": "model-a",
-                    },
-                    "ops": {
-                        "name": "Ops",
-                        "prompt_ref": "prompt/ops",
-                        "default_model": "model-o",
-                    },
-                },
-                "prompts": {
-                    "prompt/aca": "You are Aca.",
-                    "prompt/ops": "You are the operator agent.",
-                },
-            },
-        }
-    )
-    gateway = FakeGateway()
-    agent = FakeAgent(FakeAgentResponse(text="ok", model_used="model-o"))
-    components = build_runtime_components(config, gateway=gateway, agent=agent)
-    await components.thread_manager.get_or_create(
-        thread_id="qq:user:10001",
-        channel_scope="qq:user:10001",
-    )
-    switch = await components.control_plane.switch_thread_agent(
-        thread_id="qq:user:10001",
-        agent_id="ops",
-    )
-    event = StandardEvent(
-        event_id="evt-switch-1",
-        event_type="message",
-        platform="qq",
-        timestamp=123,
-        source=EventSource(
-            platform="qq",
-            message_type="private",
-            user_id="10001",
-            group_id=None,
-        ),
-        segments=[MsgSegment(type="text", data={"text": "hello"})],
-        raw_message_id="msg-switch-1",
-        sender_nickname="acacia",
-        sender_role=None,
-    )
 
-    components.app.install()
-    await gateway.handler(event)
-
-    assert switch.ok is True
-    assert agent.calls[0]["system_prompt"] == "You are the operator agent."
-    assert agent.calls[0]["model"] == "model-o"
-
-
-async def test_build_runtime_components_loads_binding_rules_from_filesystem(
-    tmp_path: Path,
-) -> None:
-    bindings_dir = tmp_path / "bindings"
-    bindings_dir.mkdir()
-    (bindings_dir / "group.yaml").write_text(
-        "\n".join(
-            [
-                "agent_id: group",
-                "priority: 60",
-                "match:",
-                "  channel_scope: qq:group:20002",
-            ]
-        ),
+async def test_build_runtime_components_routes_through_session_config(tmp_path: Path) -> None:
+    sessions_dir = tmp_path / "sessions/qq/group"
+    sessions_dir.mkdir(parents=True)
+    (sessions_dir / "42.yaml").write_text(
+        """
+session:
+  id: qq:group:42
+  template: qq_group
+frontstage:
+  profile: aca
+selectors:
+  sender_is_admin:
+    sender_roles: [admin]
+surfaces:
+  message.mention:
+    routing:
+      default:
+        profile: ops
+    admission:
+      default:
+        mode: respond
+    extraction:
+      default:
+        extract_to_memory: true
+        scopes: [channel]
+        tags: [mention]
+  message.plain:
+    routing:
+      default:
+        profile: aca
+    admission:
+      default:
+        mode: record_only
+""".strip(),
         encoding="utf-8",
     )
-    config = Config(
-        {
-            "agent": {
-                "default_model": "fallback-model",
-                "system_prompt": "Fallback prompt.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                        "default_model": "model-a",
-                    },
-                    "group": {
-                        "name": "Group",
-                        "prompt_ref": "prompt/group",
-                        "default_model": "model-g",
-                    },
-                },
-                "prompts": {
-                    "prompt/aca": "You are Aca.",
-                    "prompt/group": "You are the group agent.",
-                },
-                "filesystem": {
-                    "enabled": True,
-                    "base_dir": str(tmp_path),
-                },
-            },
-        }
-    )
-    gateway = FakeGateway()
-    agent = FakeAgent(FakeAgentResponse(text="hello group", model_used="model-g"))
-    components = build_runtime_components(config, gateway=gateway, agent=agent)
-    event = StandardEvent(
-        event_id="evt-group-fs-1",
-        event_type="message",
-        platform="qq",
-        timestamp=456,
-        source=EventSource(
-            platform="qq",
-            message_type="group",
-            user_id="10001",
-            group_id="20002",
-        ),
-        segments=[MsgSegment(type="text", data={"text": "hello group"})],
-        raw_message_id="msg-group-fs-1",
-        sender_nickname="acacia",
-        sender_role=None,
-    )
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+agent:
+  default_model: "fallback-model"
+  system_prompt: "Fallback prompt."
 
-    components.app.install()
-    await gateway.handler(event)
-
-    assert agent.calls[0]["system_prompt"] == "You are the group agent."
-    assert agent.calls[0]["model"] == "model-g"
-
-
-async def test_build_runtime_components_uses_channel_binding_for_group_event() -> None:
-    config = Config(
-        {
-            "agent": {
-                "default_model": "fallback-model",
-                "system_prompt": "Fallback prompt.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                        "default_model": "model-a",
-                    },
-                    "group": {
-                        "name": "Group",
-                        "prompt_ref": "prompt/group",
-                        "default_model": "model-g",
-                    },
-                },
-                "prompts": {
-                    "prompt/aca": "You are Aca.",
-                    "prompt/group": "You are the group agent.",
-                },
-                "binding_rules": [
-                    {
-                        "rule_id": "group-default",
-                        "agent_id": "group",
-                        "priority": 40,
-                        "match": {
-                            "channel_scope": "qq:group:20002",
-                        },
-                    }
-                ],
-            },
-        }
-    )
-    gateway = FakeGateway()
-    agent = FakeAgent(FakeAgentResponse(text="hello group", model_used="model-g"))
-    components = build_runtime_components(config, gateway=gateway, agent=agent)
-    event = StandardEvent(
-        event_id="evt-group-1",
-        event_type="message",
-        platform="qq",
-        timestamp=456,
-        source=EventSource(
-            platform="qq",
-            message_type="group",
-            user_id="10001",
-            group_id="20002",
-        ),
-        segments=[MsgSegment(type="text", data={"text": "hello group"})],
-        raw_message_id="msg-group-1",
-        sender_nickname="acacia",
-        sender_role=None,
-    )
-
-    components.app.install()
-    await gateway.handler(event)
-
-    assert agent.calls[0]["system_prompt"] == "You are the group agent."
-    assert agent.calls[0]["model"] == "model-g"
-
-
-async def test_build_runtime_components_uses_admin_override_rule() -> None:
-    config = Config(
-        {
-            "agent": {
-                "default_model": "fallback-model",
-                "system_prompt": "Fallback prompt.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                        "default_model": "model-a",
-                    },
-                    "group": {
-                        "name": "Group",
-                        "prompt_ref": "prompt/group",
-                        "default_model": "model-g",
-                    },
-                    "ops": {
-                        "name": "Ops",
-                        "prompt_ref": "prompt/ops",
-                        "default_model": "model-o",
-                    },
-                },
-                "prompts": {
-                    "prompt/aca": "You are Aca.",
-                    "prompt/group": "You are the group agent.",
-                    "prompt/ops": "You are the operator agent.",
-                },
-                "binding_rules": [
-                    {
-                        "rule_id": "group-default",
-                        "agent_id": "group",
-                        "priority": 40,
-                        "match": {
-                            "channel_scope": "qq:group:20002",
-                        },
-                    },
-                    {
-                        "rule_id": "group-admins",
-                        "agent_id": "ops",
-                        "priority": 80,
-                        "match": {
-                            "channel_scope": "qq:group:20002",
-                            "sender_roles": ["admin", "owner"],
-                        },
-                    },
-                ],
-            },
-        }
-    )
-    gateway = FakeGateway()
-    agent = FakeAgent(FakeAgentResponse(text="hello ops", model_used="model-o"))
-    components = build_runtime_components(config, gateway=gateway, agent=agent)
-    event = StandardEvent(
-        event_id="evt-group-admin-1",
-        event_type="message",
-        platform="qq",
-        timestamp=456,
-        source=EventSource(
-            platform="qq",
-            message_type="group",
-            user_id="10001",
-            group_id="20002",
-        ),
-        segments=[MsgSegment(type="text", data={"text": "hello ops"})],
-        raw_message_id="msg-group-admin-1",
-        sender_nickname="acacia",
-        sender_role="admin",
-    )
-
-    components.app.install()
-    await gateway.handler(event)
-
-    assert agent.calls[0]["system_prompt"] == "You are the operator agent."
-    assert agent.calls[0]["model"] == "model-o"
-
-
-async def test_build_runtime_components_supports_targets_self_binding_rule() -> None:
-    config = Config(
-        {
-            "agent": {
-                "default_model": "fallback-model",
-                "system_prompt": "Fallback prompt.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                        "default_model": "model-a",
-                    },
-                    "mention": {
-                        "name": "Mention",
-                        "prompt_ref": "prompt/mention",
-                        "default_model": "model-m",
-                    },
-                },
-                "prompts": {
-                    "prompt/aca": "You are Aca.",
-                    "prompt/mention": "You are the directed mention agent.",
-                },
-                "binding_rules": [
-                    {
-                        "rule_id": "mention-directed",
-                        "agent_id": "mention",
-                        "priority": 80,
-                        "match": {
-                            "event_type": "message",
-                            "channel_scope": "qq:group:20002",
-                            "targets_self": True,
-                        },
-                    },
-                ],
-            },
-        }
-    )
-    gateway = FakeGateway()
-    agent = FakeAgent(FakeAgentResponse(text="hello mention", model_used="model-m"))
-    components = build_runtime_components(config, gateway=gateway, agent=agent)
-    event = StandardEvent(
-        event_id="evt-group-mention-1",
-        event_type="message",
-        platform="qq",
-        timestamp=456,
-        source=EventSource(
-            platform="qq",
-            message_type="group",
-            user_id="10001",
-            group_id="20002",
-        ),
-        segments=[MsgSegment(type="text", data={"text": "hello @bot"})],
-        raw_message_id="msg-group-mention-1",
-        sender_nickname="acacia",
-        sender_role="member",
-        targets_self=True,
-    )
-
-    components.app.install()
-    await gateway.handler(event)
-
-    assert agent.calls[0]["system_prompt"] == "You are the directed mention agent."
-    assert agent.calls[0]["model"] == "model-m"
-
-
-async def test_build_runtime_components_supports_event_type_binding_override() -> None:
-    config = Config(
-        {
-            "agent": {
-                "default_model": "fallback-model",
-                "system_prompt": "Fallback prompt.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                        "default_model": "model-a",
-                    },
-                    "group": {
-                        "name": "Group",
-                        "prompt_ref": "prompt/group",
-                        "default_model": "model-g",
-                    },
-                    "notice": {
-                        "name": "Notice",
-                        "prompt_ref": "prompt/notice",
-                        "default_model": "model-n",
-                    },
-                },
-                "prompts": {
-                    "prompt/aca": "You are Aca.",
-                    "prompt/group": "You are the group agent.",
-                    "prompt/notice": "You are the notice agent.",
-                },
-                "binding_rules": [
-                    {
-                        "rule_id": "group-default",
-                        "agent_id": "group",
-                        "priority": 40,
-                        "match": {
-                            "channel_scope": "qq:group:20002",
-                        },
-                    },
-                    {
-                        "rule_id": "group-poke",
-                        "agent_id": "notice",
-                        "priority": 70,
-                        "match": {
-                            "event_type": "poke",
-                            "channel_scope": "qq:group:20002",
-                        },
-                    },
-                ],
-            },
-        }
-    )
-    gateway = FakeGateway()
-    agent = FakeAgent(FakeAgentResponse(text="noticed", model_used="model-n"))
-    components = build_runtime_components(config, gateway=gateway, agent=agent)
-    event = StandardEvent(
-        event_id="evt-poke-2",
-        event_type="poke",
-        platform="qq",
-        timestamp=789,
-        source=EventSource(
-            platform="qq",
-            message_type="group",
-            user_id="10001",
-            group_id="20002",
-        ),
-        segments=[],
-        raw_message_id="",
-        sender_nickname="acacia",
-        sender_role="member",
-        operator_id="10001",
-    )
-
-    components.app.install()
-    await gateway.handler(event)
-
-    assert agent.calls[0]["system_prompt"] == "You are the notice agent."
-    assert agent.calls[0]["model"] == "model-n"
-
-
-async def test_build_runtime_components_applies_inbound_rules() -> None:
-    config = Config(
-        {
-            "agent": {
-                "default_model": "test-model",
-                "system_prompt": "You are Aca.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "default_prompt_ref": "prompt/default",
-                "inbound_rules": [
-                    {
-                        "rule_id": "ignore-poke",
-                        "run_mode": "silent_drop",
-                        "match": {
-                            "platform": "qq",
-                            "event_type": "poke",
-                        },
-                    }
-                ],
-            },
-        }
-    )
-    gateway = FakeGateway()
-    agent = FakeAgent(FakeAgentResponse(text="should not send"))
-    components = build_runtime_components(config, gateway=gateway, agent=agent)
-    event = StandardEvent(
-        event_id="evt-poke-1",
-        event_type="poke",
-        platform="qq",
-        timestamp=123,
-        source=EventSource(
-            platform="qq",
-            message_type="private",
-            user_id="10001",
-            group_id=None,
-        ),
-        segments=[],
-        raw_message_id="",
-        sender_nickname="",
-        sender_role=None,
-        operator_id="10001",
-    )
-
-    components.app.install()
-    await gateway.handler(event)
-
-    assert agent.calls == []
-    assert gateway.sent == []
-    assert await components.channel_event_store.get_thread_events("qq:user:10001") == []
-
-
-async def test_build_runtime_components_loads_inbound_rules_from_filesystem(
-    tmp_path: Path,
-) -> None:
-    inbound_dir = tmp_path / "inbound_rules"
-    inbound_dir.mkdir()
-    (inbound_dir / "poke.yaml").write_text(
-        "\n".join(
-            [
-                "run_mode: silent_drop",
-                "match:",
-                "  platform: qq",
-                "  event_type: poke",
-            ]
-        ),
+runtime:
+  default_agent_id: "aca"
+  filesystem:
+    base_dir: .
+    sessions_dir: sessions
+  profiles:
+    aca:
+      name: "Aca"
+      prompt_ref: "prompt/aca"
+      default_model: "model-a"
+    ops:
+      name: "Ops"
+      prompt_ref: "prompt/ops"
+      default_model: "model-o"
+  prompts:
+    prompt/aca: "You are Aca."
+    prompt/ops: "You are Ops."
+""".strip(),
         encoding="utf-8",
     )
-    config = Config(
-        {
-            "agent": {
-                "default_model": "test-model",
-                "system_prompt": "You are Aca.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "default_prompt_ref": "prompt/default",
-                "filesystem": {
-                    "enabled": True,
-                    "base_dir": str(tmp_path),
-                },
-            },
-        }
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
     )
-    gateway = FakeGateway()
-    agent = FakeAgent(FakeAgentResponse(text="should not send"))
-    components = build_runtime_components(config, gateway=gateway, agent=agent)
-    event = StandardEvent(
-        event_id="evt-poke-fs-1",
-        event_type="poke",
-        platform="qq",
-        timestamp=123,
-        source=EventSource(
+
+    decision = await components.router.route(
+        StandardEvent(
+            event_id="evt-session-1",
+            event_type="message",
             platform="qq",
-            message_type="private",
-            user_id="10001",
-            group_id=None,
-        ),
-        segments=[],
-        raw_message_id="",
-        sender_nickname="",
-        sender_role=None,
-        operator_id="10001",
+            timestamp=123,
+            source=EventSource(
+                platform="qq",
+                message_type="group",
+                user_id="10001",
+                group_id="42",
+            ),
+            segments=[MsgSegment(type="text", data={"text": "hello @bot"})],
+            raw_message_id="msg-session-1",
+            sender_nickname="acacia",
+            sender_role="admin",
+            mentions_self=True,
+            targets_self=True,
+        )
     )
 
-    components.app.install()
-    await gateway.handler(event)
-
-    assert agent.calls == []
-    assert gateway.sent == []
-    assert await components.channel_event_store.get_thread_events("qq:user:10001") == []
-
-
-async def test_build_runtime_components_records_record_only_notice_event() -> None:
-    config = Config(
-        {
-            "agent": {
-                "default_model": "test-model",
-                "system_prompt": "You are Aca.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "default_prompt_ref": "prompt/default",
-                "inbound_rules": [
-                    {
-                        "rule_id": "record-recall",
-                        "run_mode": "record_only",
-                        "match": {
-                            "platform": "qq",
-                            "event_type": "recall",
-                        },
-                    }
-                ],
-            },
-        }
-    )
-    gateway = FakeGateway()
-    agent = FakeAgent(FakeAgentResponse(text="should not send"))
-    components = build_runtime_components(config, gateway=gateway, agent=agent)
-    event = StandardEvent(
-        event_id="evt-recall-1",
-        event_type="recall",
-        platform="qq",
-        timestamp=456,
-        source=EventSource(
-            platform="qq",
-            message_type="group",
-            user_id="10001",
-            group_id="20002",
-        ),
-        segments=[],
-        raw_message_id="",
-        sender_nickname="acacia",
-        sender_role="member",
-        operator_id="10002",
-        target_message_id="msg-42",
-    )
-
-    components.app.install()
-    await gateway.handler(event)
-
-    assert agent.calls == []
-    assert gateway.sent == []
-    saved = await components.channel_event_store.get_thread_events("qq:group:20002")
-    assert saved[0].event_type == "recall"
-    assert saved[0].content_text == "[notice:recall target=msg-42]"
-    assert saved[0].metadata["run_mode"] == "record_only"
+    assert decision.agent_id == "ops"
+    assert decision.run_mode == "respond"
+    assert decision.metadata["surface_id"] == "message.mention"
+    assert decision.metadata["event_memory_scopes"] == ["channel"]
+    assert decision.metadata["event_tags"] == ["mention"]
 
 
-async def test_build_runtime_components_applies_event_policies_to_run_metadata() -> None:
-    config = Config(
-        {
-            "agent": {
-                "default_model": "test-model",
-                "system_prompt": "You are Aca.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "default_prompt_ref": "prompt/default",
-                "event_policies": [
-                    {
-                        "policy_id": "group-poke-memory",
-                        "priority": 80,
-                        "match": {
-                            "platform": "qq",
-                            "event_type": "poke",
-                            "channel_scope": "qq:group:20002",
-                        },
-                        "persist_event": False,
-                        "extract_to_memory": True,
-                        "memory_scopes": ["episodic", "relationship"],
-                        "tags": ["notice", "poke"],
-                    }
-                ],
-            },
-        }
-    )
-    gateway = FakeGateway()
-    agent = FakeAgent(FakeAgentResponse(text="hello back"))
-    components = build_runtime_components(config, gateway=gateway, agent=agent)
-    event = StandardEvent(
-        event_id="evt-poke-memory-1",
-        event_type="poke",
-        platform="qq",
-        timestamp=321,
-        source=EventSource(
-            platform="qq",
-            message_type="group",
-            user_id="10001",
-            group_id="20002",
-        ),
-        segments=[],
-        raw_message_id="",
-        sender_nickname="acacia",
-        sender_role="member",
-        operator_id="10001",
-    )
-
-    components.app.install()
-    await gateway.handler(event)
-
-    run = next(iter(components.run_manager._runs.values()))
-    assert run.metadata["event_policy_id"] == "group-poke-memory"
-    assert run.metadata["event_extract_to_memory"] is True
-    assert run.metadata["event_memory_scopes"] == ["episodic", "relationship"]
-    assert await components.channel_event_store.get_thread_events("qq:group:20002") == []
 
 
-async def test_build_runtime_components_loads_event_policies_from_filesystem(
-    tmp_path: Path,
-) -> None:
-    policies_dir = tmp_path / "event_policies"
-    policies_dir.mkdir()
-    (policies_dir / "poke.yaml").write_text(
-        "\n".join(
-            [
-                "match:",
-                "  platform: qq",
-                "  event_type: poke",
-                "  channel_scope: qq:group:20002",
-                "persist_event: false",
-                "extract_to_memory: true",
-                "memory_scopes:",
-                "  - episodic",
-                "  - relationship",
-                "tags:",
-                "  - notice",
-                "  - poke",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    config = Config(
-        {
-            "agent": {
-                "default_model": "test-model",
-                "system_prompt": "You are Aca.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "default_prompt_ref": "prompt/default",
-                "filesystem": {
-                    "enabled": True,
-                    "base_dir": str(tmp_path),
-                },
-            },
-        }
-    )
-    gateway = FakeGateway()
-    agent = FakeAgent(FakeAgentResponse(text="hello back"))
-    components = build_runtime_components(config, gateway=gateway, agent=agent)
-    event = StandardEvent(
-        event_id="evt-poke-memory-fs-1",
-        event_type="poke",
-        platform="qq",
-        timestamp=321,
-        source=EventSource(
-            platform="qq",
-            message_type="group",
-            user_id="10001",
-            group_id="20002",
-        ),
-        segments=[],
-        raw_message_id="",
-        sender_nickname="acacia",
-        sender_role="member",
-        operator_id="10001",
-    )
-
-    components.app.install()
-    await gateway.handler(event)
-
-    run = next(iter(components.run_manager._runs.values()))
-    assert run.metadata["event_extract_to_memory"] is True
-    assert run.metadata["event_memory_scopes"] == ["episodic", "relationship"]
-    assert await components.channel_event_store.get_thread_events("qq:group:20002") == []
 
 
-async def test_build_runtime_components_persists_minimal_episodic_memory() -> None:
-    config = Config(
-        {
-            "agent": {
-                "default_model": "test-model",
-                "system_prompt": "You are Aca.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "default_prompt_ref": "prompt/default",
-                "event_policies": [
-                    {
-                        "policy_id": "private-message-memory",
-                        "priority": 80,
-                        "match": {
-                            "platform": "qq",
-                            "event_type": "message",
-                            "channel_scope": "qq:user:10001",
-                        },
-                        "persist_event": True,
-                        "extract_to_memory": True,
-                        "memory_scopes": ["episodic", "relationship"],
-                        "tags": ["chat"],
-                    }
-                ],
-            },
-        }
-    )
-    gateway = FakeGateway()
-    agent = FakeAgent(FakeAgentResponse(text="hello back"))
-    components = build_runtime_components(config, gateway=gateway, agent=agent)
 
-    components.app.install()
-    await gateway.handler(_event())
 
-    items = await components.memory_store.find(
-        scope="relationship",
-        scope_key="qq:user:10001|qq:user:10001",
-        memory_types=["episodic"],
-    )
 
-    assert len(items) == 1
-    assert items[0].memory_type == "episodic"
-    assert items[0].source_event_id == "evt-1"
-    assert "assistant_1: hello back" in items[0].content
+
+
 
 
 async def test_build_runtime_components_wires_tool_broker_into_agent_runtime() -> None:
@@ -1442,7 +778,7 @@ async def test_build_runtime_components_wires_tool_broker_into_agent_runtime() -
     assert agent.calls[0]["tools"][0].name == "get_time"
 
 
-async def test_build_runtime_components_auto_loads_computer_tool_adapter_plugin() -> None:
+async def test_build_runtime_components_registers_builtin_computer_tools() -> None:
     config = Config(
         {
             "agent": {
@@ -1456,7 +792,7 @@ async def test_build_runtime_components_auto_loads_computer_tool_adapter_plugin(
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
                         "default_model": "test-model",
-                        "enabled_tools": ["read", "exec"],
+                        "enabled_tools": ["read"],
                     }
                 },
                 "prompts": {
@@ -1480,10 +816,193 @@ async def test_build_runtime_components_auto_loads_computer_tool_adapter_plugin(
         )
     )
     visible = components.tool_broker.visible_tools(profile)
+    sources = {
+        item["name"]: item["source"]
+        for item in components.tool_broker.list_registered_tools()
+    }
 
-    assert "computer_tool_adapter" in [plugin.name for plugin in components.plugin_manager.loaded]
-    assert "backend_bridge_tool" in [plugin.name for plugin in components.plugin_manager.loaded]
-    assert [tool.name for tool in visible] == ["read", "exec"]
+    assert [plugin.name for plugin in components.plugin_manager.loaded] == ["backend_bridge_tool"]
+    assert sources["read"] == "builtin:computer"
+    assert "exec" not in sources
+    assert [tool.name for tool in visible] == ["read"]
+
+
+async def test_build_runtime_components_drops_stale_tools_from_removed_computer_adapter() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "test-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "profiles": {
+                    "aca": {
+                        "name": "Aca",
+                        "prompt_ref": "prompt/aca",
+                        "default_model": "test-model",
+                        "enabled_tools": ["read", "ls", "exec"],
+                    }
+                },
+                "prompts": {
+                    "prompt/aca": "You are Aca.",
+                },
+            },
+        }
+    )
+    broker = ToolBroker()
+    broker.register_tool(
+        ToolSpec(
+            name="ls",
+            description="stale ls",
+            parameters={"type": "object", "properties": {}},
+        ),
+        lambda arguments, ctx: {"ok": True},
+        source="plugin:computer_tool_adapter",
+    )
+    broker.register_tool(
+        ToolSpec(
+            name="exec",
+            description="stale exec",
+            parameters={"type": "object", "properties": {}},
+        ),
+        lambda arguments, ctx: {"ok": True},
+        source="plugin:computer_tool_adapter",
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+        tool_broker=broker,
+    )
+    profile = components.profile_loader.load(
+        RouteDecision(
+            thread_id="qq:user:10001",
+            actor_id="qq:user:10001",
+            agent_id="aca",
+            channel_scope="qq:user:10001",
+        )
+    )
+    visible = components.tool_broker.visible_tools(profile)
+    sources = {
+        item["name"]: item["source"]
+        for item in components.tool_broker.list_registered_tools()
+    }
+
+    assert "ls" not in sources
+    assert "exec" not in sources
+    assert [tool.name for tool in visible] == ["read"]
+
+
+async def test_build_runtime_components_drops_stale_builtin_plugins_from_reused_plugin_manager() -> None:
+    class StaleComputerToolAdapterPlugin(RuntimePlugin):
+        name = "computer_tool_adapter"
+
+        async def setup(self, runtime: RuntimePluginContext) -> None:
+            _ = runtime
+
+        def tools(self) -> list[ToolDef]:
+            return [
+                ToolDef(
+                    name="ls",
+                    description="stale ls",
+                    parameters={"type": "object", "properties": {}},
+                    handler=lambda arguments: {"ok": True, "arguments": arguments},
+                )
+            ]
+
+    config = Config(
+        {
+            "agent": {
+                "default_model": "test-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "profiles": {
+                    "aca": {
+                        "name": "Aca",
+                        "prompt_ref": "prompt/aca",
+                        "default_model": "test-model",
+                        "enabled_tools": ["read", "ls"],
+                    }
+                },
+                "prompts": {
+                    "prompt/aca": "You are Aca.",
+                },
+            },
+        }
+    )
+    broker = ToolBroker()
+    plugin_manager = RuntimePluginManager(
+        config=config,
+        gateway=FakeGateway(),
+        tool_broker=broker,
+        builtin_plugins=[StaleComputerToolAdapterPlugin()],
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+        tool_broker=broker,
+        plugin_manager=plugin_manager,
+    )
+    await components.plugin_manager.ensure_started()
+    profile = components.profile_loader.load(
+        RouteDecision(
+            thread_id="qq:user:10001",
+            actor_id="qq:user:10001",
+            agent_id="aca",
+            channel_scope="qq:user:10001",
+        )
+    )
+    visible = components.tool_broker.visible_tools(profile)
+
+    assert [plugin.name for plugin in components.plugin_manager.loaded] == ["backend_bridge_tool"]
+    assert [tool.name for tool in visible] == ["read"]
+
+
+async def test_build_runtime_components_rejects_started_plugin_manager() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "test-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "profiles": {
+                    "aca": {
+                        "name": "Aca",
+                        "prompt_ref": "prompt/aca",
+                        "default_model": "test-model",
+                        "enabled_tools": ["read"],
+                    }
+                },
+                "prompts": {
+                    "prompt/aca": "You are Aca.",
+                },
+            },
+        }
+    )
+    broker = ToolBroker()
+    plugin_manager = RuntimePluginManager(
+        config=config,
+        gateway=FakeGateway(),
+        tool_broker=broker,
+    )
+    await plugin_manager.ensure_started()
+
+    with pytest.raises(ValueError, match="fresh RuntimePluginManager"):
+        build_runtime_components(
+            config,
+            gateway=FakeGateway(),
+            agent=FakeAgent(FakeAgentResponse(text="ok")),
+            tool_broker=broker,
+            plugin_manager=plugin_manager,
+        )
 
 
 async def test_build_runtime_components_full_plugin_reload_keeps_builtin_plugins() -> None:
@@ -1533,11 +1052,15 @@ async def test_build_runtime_components_full_plugin_reload_keeps_builtin_plugins
         )
     )
     visible = components.tool_broker.visible_tools(profile)
+    sources = {
+        item["name"]: item["source"]
+        for item in components.tool_broker.list_registered_tools()
+    }
 
     assert missing == []
-    assert "computer_tool_adapter" in loaded_names
-    assert "skill_tool" in loaded_names
-    assert "backend_bridge_tool" in loaded_names
+    assert loaded_names == ["backend_bridge_tool"]
+    assert sources["read"] == "builtin:computer"
+    assert sources["skill"] == "builtin:skills"
     assert [tool.name for tool in visible] == ["read", "skill"]
 
 
@@ -1586,9 +1109,14 @@ async def test_build_runtime_components_reload_keeps_conditional_subagent_delega
     loaded_names, missing = await components.app.reload_plugins()
     profile = components.profile_loader.profiles["aca"]
     visible = components.tool_broker.visible_tools(profile)
+    sources = {
+        item["name"]: item["source"]
+        for item in components.tool_broker.list_registered_tools()
+    }
 
     assert missing == []
-    assert "subagent_delegation" in loaded_names
+    assert loaded_names == ["backend_bridge_tool"]
+    assert sources["delegate_subagent"] == "builtin:subagents"
     assert "delegate_subagent" in [tool.name for tool in visible]
 
 
@@ -2020,87 +1548,5 @@ def test_build_runtime_components_selects_openviking_reference_backend() -> None
     assert components.reference_backend.base_uri == "viking://resources/acabot-test"
 
 
-def test_build_runtime_components_rejects_thread_id_in_binding_rules() -> None:
-    config = Config(
-        {
-            "agent": {
-                "default_model": "fallback-model",
-                "system_prompt": "Fallback prompt.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                        "default_model": "model-a",
-                    },
-                },
-                "binding_rules": [
-                    {
-                        "rule_id": "bad-thread-rule",
-                        "agent_id": "aca",
-                        "match": {
-                            "thread_id": "thread:temporary",
-                        },
-                    }
-                ],
-            },
-        }
-    )
-
-    try:
-        build_runtime_components(
-            config,
-            gateway=FakeGateway(),
-            agent=FakeAgent(FakeAgentResponse(text="ok")),
-        )
-    except ValueError as exc:
-        assert "must not declare thread_id" in str(exc)
-        return
-
-    raise AssertionError("Expected thread_id in binding_rules to raise ValueError")
 
 
-def test_build_runtime_components_rejects_thread_id_in_filesystem_binding_rules(
-    tmp_path: Path,
-) -> None:
-    bindings_dir = tmp_path / "bindings"
-    bindings_dir.mkdir()
-    (bindings_dir / "bad.yaml").write_text(
-        "\n".join(
-            [
-                "agent_id: aca",
-                "match:",
-                "  thread_id: runtime-internal",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    config = Config(
-        {
-            "agent": {
-                "default_model": "fallback-model",
-                "system_prompt": "Fallback prompt.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "filesystem": {
-                    "enabled": True,
-                    "base_dir": str(tmp_path),
-                },
-            },
-        }
-    )
-
-    try:
-        build_runtime_components(
-            config,
-            gateway=FakeGateway(),
-            agent=FakeAgent(FakeAgentResponse(text="ok")),
-        )
-    except ValueError as exc:
-        assert "must not declare thread_id" in str(exc)
-        return
-
-    raise AssertionError("Expected filesystem binding_rules thread_id to raise ValueError")

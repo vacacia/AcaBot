@@ -7,7 +7,6 @@ from acabot.runtime import (
     AgentProfile,
     ComputerRuntime,
     ComputerRuntimeConfig,
-    ComputerToolAdapterPlugin,
     FileSystemSkillPackageLoader,
     InMemoryRunManager,
     InMemoryThreadManager,
@@ -112,6 +111,41 @@ class FailingAgentRuntime:
         raise AssertionError("plugin should skip agent runtime")
 
 
+class BuiltinMarkerPlugin(RuntimePlugin):
+    """用于验证 builtin plugin 保留逻辑的最小假插件."""
+
+    name = "builtin_marker"
+
+    async def setup(self, runtime: RuntimePluginContext) -> None:
+        """这个测试插件不需要额外初始化.
+
+        Args:
+            runtime: 当前 runtime plugin 上下文.
+        """
+
+        _ = runtime
+
+    def tools(self) -> list[ToolDef]:
+        """返回一条最小 builtin marker 工具.
+
+        Returns:
+            list[ToolDef]: 只包含一条 builtin marker 工具.
+        """
+
+        async def handler(arguments: dict[str, Any]) -> Any:
+            _ = arguments
+            return {"ok": True}
+
+        return [
+            ToolDef(
+                name="builtin_marker",
+                description="Builtin marker tool.",
+                parameters={"type": "object", "properties": {}},
+                handler=handler,
+            )
+        ]
+
+
 def _event() -> StandardEvent:
     return StandardEvent(
         event_id="evt-plugin",
@@ -184,7 +218,6 @@ async def test_runtime_plugin_manager_registers_and_unloads_subagent_executors()
         tool_broker=ToolBroker(skill_catalog=catalog),
         skill_catalog=catalog,
         subagent_delegator=SubagentDelegationBroker(
-            skill_catalog=catalog,
             executor_registry=executor_registry,
         ),
         plugins=[SampleDelegationWorkerPlugin()],
@@ -351,6 +384,46 @@ async def test_runtime_plugin_manager_can_reload_selected_plugins_only() -> None
     assert AnotherConfiguredRuntimePlugin.teardown_calls == 0
 
 
+async def test_runtime_plugin_manager_selected_reload_updates_failed_import_paths() -> None:
+    config = Config(
+        {
+            "runtime": {
+                "plugins": [
+                    "tests.runtime.runtime_plugin_samples:SampleConfiguredRuntimePlugin",
+                    "does.not.exist:MissingOne",
+                ],
+            },
+        }
+    )
+    manager = RuntimePluginManager(
+        config=config,
+        gateway=FakeGateway(),
+        tool_broker=ToolBroker(skill_catalog=_catalog()),
+        skill_catalog=_catalog(),
+    )
+
+    loaded_names, missing = await manager.reload_from_config()
+    assert loaded_names == ["sample_configured_runtime"]
+    assert missing == ["does.not.exist:MissingOne"]
+    assert manager.failed_plugin_import_paths == ["does.not.exist:MissingOne"]
+
+    config.replace(
+        {
+            "runtime": {
+                "plugins": [
+                    "tests.runtime.runtime_plugin_samples:SampleConfiguredRuntimePlugin",
+                    "still.missing:MissingTwo",
+                ],
+            },
+        }
+    )
+    reloaded_names, missing_after = await manager.reload_from_config(["sample_configured_runtime"])
+
+    assert reloaded_names == ["sample_configured_runtime"]
+    assert missing_after == []
+    assert manager.failed_plugin_import_paths == ["still.missing:MissingTwo"]
+
+
 async def test_runtime_plugin_manager_selected_reload_keeps_builtin_plugins(
     tmp_path: Path,
 ) -> None:
@@ -371,7 +444,7 @@ async def test_runtime_plugin_manager_selected_reload_keeps_builtin_plugins(
         gateway=FakeGateway(),
         tool_broker=ToolBroker(),
         computer_runtime=_computer_runtime(tmp_path),
-        builtin_plugins=[ComputerToolAdapterPlugin()],
+        builtin_plugins=[BuiltinMarkerPlugin()],
     )
 
     loaded_names, missing = await manager.reload_from_config()
@@ -380,7 +453,7 @@ async def test_runtime_plugin_manager_selected_reload_keeps_builtin_plugins(
         name="Aca",
         prompt_ref="prompt/default",
         default_model="test-model",
-        enabled_tools=["read"],
+        enabled_tools=["builtin_marker"],
     )
     visible_before = manager.tool_broker.visible_tools(builtin_profile)
 
@@ -389,10 +462,10 @@ async def test_runtime_plugin_manager_selected_reload_keeps_builtin_plugins(
     )
     visible_after = manager.tool_broker.visible_tools(builtin_profile)
 
-    assert "computer_tool_adapter" in loaded_names
+    assert "builtin_marker" in loaded_names
     assert "sample_configured_runtime" in loaded_names
     assert missing == []
     assert reloaded_names == ["sample_configured_runtime"]
     assert missing_after == []
-    assert [tool.name for tool in visible_before] == ["read"]
-    assert [tool.name for tool in visible_after] == ["read"]
+    assert [tool.name for tool in visible_before] == ["builtin_marker"]
+    assert [tool.name for tool in visible_after] == ["builtin_marker"]

@@ -10,15 +10,22 @@ from .contracts import (
     ComputerBackendNotImplemented,
     ComputerPolicy,
     ComputerRuntimeConfig,
-    ComputerRuntimeOverride,
+    ExecutionView,
+    ResolvedWorldPath,
+    WorldPathEditResult,
+    WorldPathReadResult,
+    WorldPathWriteResult,
+    WorldInputBundle,
+    WorldRootPolicy,
+    WorldView,
     WorkspaceFileEntry,
     WorkspaceSandboxStatus,
     WorkspaceState,
-    parse_computer_override,
     parse_computer_policy,
 )
 from .runtime import ComputerRuntime
 from .workspace import WorkspaceManager
+from .world import WorkWorldBuilder
 
 __all__ = [
     "AttachmentSnapshot",
@@ -30,14 +37,21 @@ __all__ = [
     "ComputerPolicy",
     "ComputerRuntime",
     "ComputerRuntimeConfig",
-    "ComputerRuntimeOverride",
     "DockerSandboxBackend",
+    "ExecutionView",
     "HostComputerBackend",
     "RemoteComputerBackend",
+    "ResolvedWorldPath",
+    "WorkWorldBuilder",
+    "WorldPathEditResult",
+    "WorldPathReadResult",
+    "WorldPathWriteResult",
+    "WorldInputBundle",
+    "WorldRootPolicy",
+    "WorldView",
     "WorkspaceFileEntry",
     "WorkspaceManager",
     "WorkspaceSandboxStatus",
     "WorkspaceState",
-    "parse_computer_override",
     "parse_computer_policy",
 ]

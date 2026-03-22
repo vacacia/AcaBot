@@ -86,3 +86,23 @@ async def test_subagent_delegation_broker_calls_registered_executor() -> None:
     assert result.summary == "done: 整理表格"
     assert result.metadata["executor_agent_id"] == "excel_worker"
     assert result.metadata["executor_source"] == "test"
+
+
+async def test_subagent_delegation_broker_rejects_self_delegate() -> None:
+    executors = SubagentExecutorRegistry()
+    executors.register("aca", lambda request: {"ok": True}, source="test")
+    broker = SubagentDelegationBroker(executor_registry=executors, default_agent_id="aca")
+
+    result = await broker.delegate(
+        run_id="run:1",
+        thread_id="thread:1",
+        actor_id="qq:user:10001",
+        channel_scope="qq:user:10001",
+        parent_agent_id="aca",
+        profile=_profile(),
+        delegate_agent_id="aca",
+        payload={"task": "整理表格"},
+    )
+
+    assert result.ok is False
+    assert "itself" in result.error

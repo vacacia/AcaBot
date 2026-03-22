@@ -192,25 +192,6 @@ class OpsControlPlugin(RuntimePlugin):
             result = await self._control_plane.reload_plugins(arguments)
             return self._format_reload_result(result)
 
-        if command == "switch_agent":
-            if not arguments:
-                return "usage: /switch_agent <agent_id>"
-            result = await self._control_plane.switch_thread_agent(
-                thread_id=ctx.thread.thread_id,
-                agent_id=arguments[0],
-            )
-            if result.ok:
-                return f"thread agent switched to {result.agent_id}"
-            return f"switch_agent failed: {result.message}"
-
-        if command == "clear_agent":
-            result = await self._control_plane.clear_thread_agent_override(
-                thread_id=ctx.thread.thread_id,
-            )
-            if result.ok:
-                return "thread agent override cleared"
-            return f"clear_agent failed: {result.message}"
-
         if command == "memory" and arguments[:1] == ["show"]:
             if len(arguments) < 3:
                 return "usage: /memory show <scope> <scope_key> [memory_type1,memory_type2]"

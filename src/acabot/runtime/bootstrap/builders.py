@@ -19,7 +19,7 @@ from ..memory.memory_broker import MemoryBroker
 from ..memory.retrieval_planner import PromptAssemblyConfig, RetrievalPlanner
 from ..model.model_registry import FileSystemModelRegistryManager
 from ..plugin_manager import RuntimePlugin
-from ..plugins import BackendBridgeToolPlugin, ComputerToolAdapterPlugin, SkillToolPlugin, SubagentDelegationPlugin
+from ..plugins import BackendBridgeToolPlugin
 from ..references import (
     LocalReferenceBackend,
     NullReferenceBackend,
@@ -47,15 +47,17 @@ from .config import get_persistence_sqlite_path, optional_str, resolve_filesyste
 
 
 def build_builtin_runtime_plugins(profiles: dict[str, AgentProfile]) -> list[RuntimePlugin]:
-    """按当前 profile 集合组装默认内置 runtime plugins."""
+    """组装当前仍然走 plugin 生命周期的内置插件.
 
-    builtin_plugins: list[RuntimePlugin] = [
-        ComputerToolAdapterPlugin(),
-        SkillToolPlugin(),
-        BackendBridgeToolPlugin(),
-    ]
-    builtin_plugins.append(SubagentDelegationPlugin())
-    return builtin_plugins
+    Args:
+        profiles: 当前 profile 映射. 这里暂时不需要使用它, 但保留签名不改调用方.
+
+    Returns:
+        list[RuntimePlugin]: 仍然通过 plugin manager 装配的内置插件列表.
+    """
+
+    _ = profiles
+    return [BackendBridgeToolPlugin()]
 
 
 def register_local_subagent_executors(
@@ -116,8 +118,6 @@ def build_default_computer_policy(config: Config) -> ComputerPolicy:
     computer_conf = dict(runtime_conf.get("computer", {}))
     defaults = ComputerPolicy(
         backend=str(computer_conf.get("backend", "host") or "host"),
-        read_only=bool(computer_conf.get("read_only", False)),
-        allow_write=bool(computer_conf.get("allow_write", True)),
         allow_exec=bool(computer_conf.get("allow_exec", True)),
         allow_sessions=bool(computer_conf.get("allow_sessions", True)),
         auto_stage_attachments=bool(computer_conf.get("auto_stage_attachments", True)),
@@ -131,6 +131,7 @@ def build_computer_runtime(
     *,
     gateway: GatewayProtocol,
     run_manager: RunManager,
+    skill_catalog=None,
 ) -> ComputerRuntime:
     runtime_conf = config.get("runtime", {})
     fs_conf = dict(runtime_conf.get("filesystem", {}))
@@ -170,13 +171,13 @@ def build_computer_runtime(
         ),
         docker_image=str(computer_conf.get("docker_image", "python:3.12-slim") or "python:3.12-slim"),
         docker_network_mode=str(computer_conf.get("docker_network_mode", "bridge") or "bridge"),
-        docker_read_only_rootfs=bool(computer_conf.get("docker_read_only_rootfs", True)),
     )
     return ComputerRuntime(
         config=computer_config,
         gateway=gateway,
         run_manager=run_manager,
         default_policy=build_default_computer_policy(config),
+        skill_catalog=skill_catalog,
     )
 
 

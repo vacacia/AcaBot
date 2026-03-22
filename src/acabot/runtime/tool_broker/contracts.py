@@ -11,6 +11,7 @@ from acabot.types import EventSource
 from ..contracts import AgentProfile, PlannedAction
 
 if TYPE_CHECKING:
+    from ..computer import WorldView
     from ..model.model_agent_runtime import ToolRuntimeState
 
 
@@ -52,7 +53,19 @@ class ToolAuditRecord:
 
 @dataclass(slots=True)
 class ToolExecutionContext:
-    """ToolBroker 执行工具时使用的上下文."""
+    """ToolBroker 执行工具时使用的上下文.
+
+    Attributes:
+        run_id (str): 当前 run_id.
+        thread_id (str): 当前 thread_id.
+        actor_id (str): 当前 actor_id.
+        agent_id (str): 当前 agent_id.
+        target (EventSource): 当前动作目标.
+        profile (AgentProfile): 当前 profile.
+        world_view (WorldView | None): 当前 run 的 Work World 视图.
+        state (ToolRuntimeState | None): 当前 tool runtime 状态.
+        metadata (dict[str, Any]): 其他执行元数据.
+    """
 
     run_id: str
     thread_id: str
@@ -60,6 +73,7 @@ class ToolExecutionContext:
     agent_id: str
     target: EventSource
     profile: AgentProfile
+    world_view: "WorldView | None" = None
     state: "ToolRuntimeState | None" = None
     metadata: dict[str, Any] = field(default_factory=dict)
 

@@ -1,34 +1,37 @@
-"""runtime.bootstrap.loaders 构造 profile、prompt 和事件规则."""
+"""runtime.bootstrap.loaders 构造 profile、prompt 和 session-runtime."""
 
 from __future__ import annotations
-
-from pathlib import Path
 
 from acabot.config import Config
 
 from ..computer import ComputerPolicy, parse_computer_policy
-from ..contracts import AgentProfile, BindingRule, EventPolicy, InboundRule
+from ..contracts import AgentProfile
 from ..control.profile_loader import (
     ChainedPromptLoader,
-    FileSystemBindingLoader,
-    FileSystemEventPolicyLoader,
-    FileSystemInboundRuleLoader,
     FileSystemProfileLoader,
     FileSystemPromptLoader,
     PromptLoader,
     StaticPromptLoader,
+    normalize_enabled_tools,
     normalize_profile_config,
     resolve_profile_skills,
 )
-from .config import (
-    parse_binding_rule_config,
-    parse_event_policy_config,
-    parse_inbound_rule_config,
-    resolve_filesystem_path,
-)
+from ..control.session_loader import ConfigBackedSessionConfigLoader, SessionConfigLoader
+from ..control.session_runtime import SessionRuntime
+from .config import resolve_filesystem_path
 
 
 def build_profiles(config: Config, *, default_computer_policy: ComputerPolicy) -> dict[str, AgentProfile]:
+    """从运行配置构造 inline profiles.
+
+    Args:
+        config: 当前 runtime 配置.
+        default_computer_policy: profile 未声明 computer 时的默认 policy.
+
+    Returns:
+        dict[str, AgentProfile]: 解析后的 profile 映射.
+    """
+
     runtime_conf = config.get("runtime", {})
     agent_conf = config.get("agent", {})
     profiles_conf = runtime_conf.get("profiles", {})
@@ -61,7 +64,7 @@ def build_profiles(config: Config, *, default_computer_policy: ComputerPolicy) -
             name=runtime_conf.get("default_agent_name", default_agent_id),
             prompt_ref=runtime_conf.get("default_prompt_ref", "prompt/default"),
             default_model=agent_conf.get("default_model", "gpt-4o-mini"),
-            enabled_tools=list(runtime_conf.get("enabled_tools", [])),
+            enabled_tools=normalize_enabled_tools(runtime_conf.get("enabled_tools", [])),
             skills=resolve_profile_skills(dict(runtime_conf)),
             computer_policy=default_computer_policy,
             config=dict(agent_conf),
@@ -70,6 +73,16 @@ def build_profiles(config: Config, *, default_computer_policy: ComputerPolicy) -
 
 
 def build_filesystem_profiles(config: Config, *, default_computer_policy: ComputerPolicy) -> dict[str, AgentProfile]:
+    """从文件系统加载 profiles.
+
+    Args:
+        config: 当前 runtime 配置.
+        default_computer_policy: profile 未声明 computer 时的默认 policy.
+
+    Returns:
+        dict[str, AgentProfile]: 文件系统 profile 映射.
+    """
+
     runtime_conf = config.get("runtime", {})
     fs_conf = dict(runtime_conf.get("filesystem", {}))
     if not bool(fs_conf.get("enabled", False)):
@@ -96,6 +109,16 @@ def build_prompt_map(
     config: Config,
     profiles: dict[str, AgentProfile],
 ) -> dict[str, str]:
+    """构造 inline prompt 映射.
+
+    Args:
+        config: 当前 runtime 配置.
+        profiles: 当前 profile 映射.
+
+    Returns:
+        dict[str, str]: `prompt_ref -> text` 映射.
+    """
+
     runtime_conf = config.get("runtime", {})
     agent_conf = config.get("agent", {})
     prompts = dict(runtime_conf.get("prompts", {}))
@@ -109,6 +132,16 @@ def build_prompt_loader(
     config: Config,
     profiles: dict[str, AgentProfile],
 ) -> PromptLoader:
+    """构造 prompt loader.
+
+    Args:
+        config: 当前 runtime 配置.
+        profiles: 当前 profile 映射.
+
+    Returns:
+        PromptLoader: 当前有效 prompt loader.
+    """
+
     runtime_conf = config.get("runtime", {})
     fs_conf = dict(runtime_conf.get("filesystem", {}))
     static_loader = StaticPromptLoader(build_prompt_map(config, profiles))
@@ -120,103 +153,38 @@ def build_prompt_loader(
         key="prompts_dir",
         default="prompts",
     )
-    return ChainedPromptLoader(
-        [
-            FileSystemPromptLoader(prompts_dir),
-            static_loader,
-        ]
-    )
+    return ChainedPromptLoader([
+        FileSystemPromptLoader(prompts_dir),
+        static_loader,
+    ])
 
 
-def build_binding_rules(config: Config) -> list[BindingRule]:
-    runtime_conf = config.get("runtime", {})
-    rules_conf = runtime_conf.get("binding_rules", [])
-    return [
-        parse_binding_rule_config(rule_conf, default_rule_id=f"rule:{index}")
-        for index, rule_conf in enumerate(rules_conf)
-    ]
+def build_session_runtime(config: Config) -> SessionRuntime:
+    """构造 session-config 驱动的决策运行时.
 
+    Args:
+        config: 当前 runtime 配置.
 
-def build_filesystem_binding_rules(config: Config) -> list[BindingRule]:
+    Returns:
+        SessionRuntime: 正式 session-config 决策运行时.
+    """
+
     runtime_conf = config.get("runtime", {})
     fs_conf = dict(runtime_conf.get("filesystem", {}))
-    if not bool(fs_conf.get("enabled", False)):
-        return []
-    bindings_dir = resolve_filesystem_path(
-        config,
-        fs_conf,
-        key="bindings_dir",
-        default="bindings",
-    )
-    loader = FileSystemBindingLoader(bindings_dir)
-    return [
-        parse_binding_rule_config(rule_conf, default_rule_id=f"fs_rule:{index}")
-        for index, rule_conf in enumerate(loader.load_all())
-    ]
-
-
-def build_inbound_rules(config: Config) -> list[InboundRule]:
-    runtime_conf = config.get("runtime", {})
-    rules_conf = runtime_conf.get("inbound_rules", [])
-    return [
-        parse_inbound_rule_config(rule_conf, default_rule_id=f"inbound:{index}")
-        for index, rule_conf in enumerate(rules_conf)
-    ]
-
-
-def build_filesystem_inbound_rules(config: Config) -> list[InboundRule]:
-    runtime_conf = config.get("runtime", {})
-    fs_conf = dict(runtime_conf.get("filesystem", {}))
-    if not bool(fs_conf.get("enabled", False)):
-        return []
-    inbound_dir = resolve_filesystem_path(
-        config,
-        fs_conf,
-        key="inbound_rules_dir",
-        default="inbound_rules",
-    )
-    loader = FileSystemInboundRuleLoader(inbound_dir)
-    return [
-        parse_inbound_rule_config(rule_conf, default_rule_id=f"fs_inbound:{index}")
-        for index, rule_conf in enumerate(loader.load_all())
-    ]
-
-
-def build_event_policies(config: Config) -> list[EventPolicy]:
-    runtime_conf = config.get("runtime", {})
-    policies_conf = runtime_conf.get("event_policies", [])
-    return [
-        parse_event_policy_config(policy_conf, default_policy_id=f"event_policy:{index}")
-        for index, policy_conf in enumerate(policies_conf)
-    ]
-
-
-def build_filesystem_event_policies(config: Config) -> list[EventPolicy]:
-    runtime_conf = config.get("runtime", {})
-    fs_conf = dict(runtime_conf.get("filesystem", {}))
-    if not bool(fs_conf.get("enabled", False)):
-        return []
-    policies_dir = resolve_filesystem_path(
-        config,
-        fs_conf,
-        key="event_policies_dir",
-        default="event_policies",
-    )
-    loader = FileSystemEventPolicyLoader(policies_dir)
-    return [
-        parse_event_policy_config(policy_conf, default_policy_id=f"fs_event_policy:{index}")
-        for index, policy_conf in enumerate(loader.load_all())
-    ]
+    if "sessions_dir" in fs_conf:
+        sessions_dir = resolve_filesystem_path(
+            config,
+            fs_conf,
+            key="sessions_dir",
+            default="sessions",
+        )
+        return SessionRuntime(SessionConfigLoader(config_root=sessions_dir))
+    return SessionRuntime(ConfigBackedSessionConfigLoader(config))
 
 
 __all__ = [
-    "build_binding_rules",
-    "build_event_policies",
-    "build_filesystem_binding_rules",
-    "build_filesystem_event_policies",
-    "build_filesystem_inbound_rules",
     "build_filesystem_profiles",
     "build_profiles",
-    "build_inbound_rules",
     "build_prompt_loader",
+    "build_session_runtime",
 ]

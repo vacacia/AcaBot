@@ -14,7 +14,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from acabot.config import Config
 
-from ..computer import ComputerRuntimeOverride
 from .control_plane import RuntimeControlPlane
 from ..references import ReferenceDocumentInput
 
@@ -415,21 +414,11 @@ class RuntimeHttpApiServer:
                 )
             )
         if segments == ["sessions"] and method == "GET":
-            return self._ok(self._await(self.control_plane.list_sessions()))
+            return 501, {"ok": False, "error": "session shell redesign pending"}
         if len(segments) == 2 and segments[0] == "sessions" and method == "GET":
-            result = self._await(self.control_plane.get_session(channel_scope=segments[1]))
-            if result is None:
-                return 404, {"ok": False, "error": "session not found"}
-            return self._ok(result)
+            return 501, {"ok": False, "error": "session shell redesign pending"}
         if len(segments) == 2 and segments[0] == "sessions" and method == "PUT":
-            return self._ok(
-                self._await(
-                    self.control_plane.put_session(
-                        channel_scope=segments[1],
-                        payload=payload,
-                    )
-                )
-            )
+            return 501, {"ok": False, "error": "session shell redesign pending"}
         if segments == ["skills"] and method == "GET":
             return self._ok(self._await(self.control_plane.list_skills()))
         if len(segments) == 3 and segments[0] == "agents" and segments[2] == "skills" and method == "GET":
@@ -438,9 +427,9 @@ class RuntimeHttpApiServer:
             return self._ok(self._await(self.control_plane.list_subagent_executors()))
 
         if segments == ["bot"] and method == "GET":
-            return self._ok(self._await(self.control_plane.get_bot()))
+            return 501, {"ok": False, "error": "bot shell redesign pending"}
         if segments == ["bot"] and method == "PUT":
-            return self._ok(self._await(self.control_plane.put_bot(payload=payload)))
+            return 501, {"ok": False, "error": "bot shell redesign pending"}
         if segments == ["admins"] and method == "GET":
             return self._ok(self._await(self.control_plane.get_admins()))
         if segments == ["admins"] and method == "PUT":
@@ -487,42 +476,6 @@ class RuntimeHttpApiServer:
                     return 404, {"ok": False, "error": "prompt not found"}
                 return self._ok({"deleted": True})
 
-        if len(segments) >= 2 and segments[0] == "rules":
-            rule_group = segments[1]
-            if rule_group == "bindings":
-                return self._handle_rule_group(
-                    method=method,
-                    segments=segments[2:],
-                    list_fn=self.control_plane.list_binding_rules,
-                    get_fn=self.control_plane.get_binding_rule,
-                    put_fn=self.control_plane.upsert_binding_rule,
-                    delete_fn=self.control_plane.delete_binding_rule,
-                    id_key="rule_id",
-                    payload=payload,
-                )
-            if rule_group == "inbound":
-                return self._handle_rule_group(
-                    method=method,
-                    segments=segments[2:],
-                    list_fn=self.control_plane.list_inbound_rules,
-                    get_fn=self.control_plane.get_inbound_rule,
-                    put_fn=self.control_plane.upsert_inbound_rule,
-                    delete_fn=self.control_plane.delete_inbound_rule,
-                    id_key="rule_id",
-                    payload=payload,
-                )
-            if rule_group == "event-policies":
-                return self._handle_rule_group(
-                    method=method,
-                    segments=segments[2:],
-                    list_fn=self.control_plane.list_event_policies,
-                    get_fn=self.control_plane.get_event_policy,
-                    put_fn=self.control_plane.upsert_event_policy,
-                    delete_fn=self.control_plane.delete_event_policy,
-                    id_key="policy_id",
-                    payload=payload,
-                )
-
         if segments == ["runtime", "reload-config"] and method == "POST":
             return self._ok(self._await(self.control_plane.reload_runtime_configuration()))
         if segments == ["runtime", "threads"] and method == "GET":
@@ -565,18 +518,6 @@ class RuntimeHttpApiServer:
                         )
                     )
                 )
-            if len(segments) == 4 and segments[3] == "agent-override":
-                if method == "POST":
-                    return self._ok(
-                        self._await(
-                            self.control_plane.switch_thread_agent(
-                                thread_id=thread_id,
-                                agent_id=str(payload.get("agent_id", "") or ""),
-                            )
-                        )
-                    )
-                if method == "DELETE":
-                    return self._ok(self._await(self.control_plane.clear_thread_agent_override(thread_id=thread_id)))
 
         if segments == ["runtime", "runs"] and method == "GET":
             statuses = [item for item in query.get("status", []) if item]
@@ -726,62 +667,12 @@ class RuntimeHttpApiServer:
         payload: dict[str, Any],
     ) -> tuple[int, dict[str, Any]]:
         thread_id = segments[0]
-        if len(segments) == 2 and segments[1] == "entries" and method == "GET":
-            return self._ok(
-                self._await(
-                    self.control_plane.list_workspace_entries(
-                        thread_id=thread_id,
-                        relative_path=_query_value(query, "path", "/") or "/",
-                    )
-                )
-            )
-        if len(segments) == 2 and segments[1] == "file" and method == "GET":
-            return self._ok(
-                {
-                    "thread_id": thread_id,
-                    "relative_path": _query_value(query, "path", ""),
-                    "content": self._await(
-                        self.control_plane.read_workspace_file(
-                            thread_id=thread_id,
-                            relative_path=_query_value(query, "path", ""),
-                        )
-                    ),
-                }
-            )
         if len(segments) == 2 and segments[1] == "attachments" and method == "GET":
             return self._ok(self._await(self.control_plane.list_workspace_attachments(thread_id=thread_id)))
         if len(segments) == 2 and segments[1] == "sessions" and method == "GET":
             return self._ok(self._await(self.control_plane.list_workspace_sessions(thread_id=thread_id)))
         if len(segments) == 2 and segments[1] == "sandbox" and method == "GET":
             return self._ok(self._await(self.control_plane.get_sandbox_status(thread_id=thread_id)))
-        if len(segments) == 2 and segments[1] == "override":
-            if method == "POST":
-                override = ComputerRuntimeOverride(
-                    backend=str(payload.get("backend", "") or ""),
-                    read_only=payload.get("read_only"),
-                    allow_write=payload.get("allow_write"),
-                    allow_exec=payload.get("allow_exec"),
-                    allow_sessions=payload.get("allow_sessions"),
-                    network_mode=str(payload.get("network_mode", "") or ""),
-                )
-                return self._ok(
-                    self._await(
-                        self.control_plane.set_thread_computer_override(
-                            thread_id=thread_id,
-                            override=override,
-                            force=bool(payload.get("force", False)),
-                        )
-                    )
-                )
-            if method == "DELETE":
-                return self._ok(
-                    self._await(
-                        self.control_plane.clear_thread_computer_override(
-                            thread_id=thread_id,
-                            force=_query_bool(query, "force", False),
-                        )
-                    )
-                )
         if len(segments) == 2 and segments[1] == "prune" and method == "POST":
             return self._ok(
                 self._await(
@@ -868,36 +759,6 @@ class RuntimeHttpApiServer:
                 )
             )
         return 404, {"ok": False, "error": "unknown reference endpoint"}
-
-    def _handle_rule_group(
-        self,
-        *,
-        method: str,
-        segments: list[str],
-        list_fn,
-        get_fn,
-        put_fn,
-        delete_fn,
-        id_key: str,
-        payload: dict[str, Any],
-    ) -> tuple[int, dict[str, Any]]:
-        if not segments and method == "GET":
-            return self._ok(self._await(list_fn()))
-        if len(segments) == 1:
-            entry_id = segments[0]
-            if method == "GET":
-                result = self._await(get_fn(entry_id))
-                if result is None:
-                    return 404, {"ok": False, "error": "entry not found"}
-                return self._ok(result)
-            if method == "PUT":
-                return self._ok(self._await(put_fn({**payload, id_key: entry_id})))
-            if method == "DELETE":
-                deleted = self._await(delete_fn(entry_id))
-                if not deleted:
-                    return 404, {"ok": False, "error": "entry not found"}
-                return self._ok({"deleted": True})
-        return 404, {"ok": False, "error": "unknown rules endpoint"}
 
     def _ok(self, data: Any) -> tuple[int, dict[str, Any]]:
         return 200, {"ok": True, "data": _to_jsonable(data)}

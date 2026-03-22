@@ -130,3 +130,50 @@ async def test_store_backed_memory_retriever_converts_memory_items_to_blocks() -
     assert blocks[0].scope == "relationship"
     assert blocks[0].source_ids == ["memory:1"]
     assert blocks[0].metadata["memory_type"] == "episodic"
+
+
+async def test_store_backed_memory_retriever_filters_by_requested_tags() -> None:
+    store = InMemoryMemoryStore()
+    await store.upsert(
+        MemoryItem(
+            memory_id="memory:1",
+            scope="relationship",
+            scope_key="qq:user:10001|qq:group:20002",
+            memory_type="episodic",
+            content="event_type: message\nuser: [acacia/10001] 你好",
+            edit_mode="draft",
+            author="extractor",
+            confidence=0.6,
+            source_run_id="run:1",
+            source_event_id="evt-1",
+            tags=["episodic", "project"],
+            metadata={"event_type": "message"},
+            created_at=123,
+            updated_at=123,
+        )
+    )
+    await store.upsert(
+        MemoryItem(
+            memory_id="memory:2",
+            scope="relationship",
+            scope_key="qq:user:10001|qq:group:20002",
+            memory_type="episodic",
+            content="event_type: message\nuser: [acacia/10001] 再见",
+            edit_mode="draft",
+            author="extractor",
+            confidence=0.6,
+            source_run_id="run:2",
+            source_event_id="evt-2",
+            tags=["episodic", "chitchat"],
+            metadata={"event_type": "message"},
+            created_at=124,
+            updated_at=124,
+        )
+    )
+    retriever = StoreBackedMemoryRetriever(store)
+    request = _retrieval_request()
+    request.requested_tags = ["project"]
+
+    blocks = await retriever(request)
+
+    assert [block.source_ids for block in blocks] == [["memory:1"]]

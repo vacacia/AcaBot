@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from inspect import isawaitable
 from typing import Any
@@ -27,6 +28,8 @@ from .contracts import (
     ToolResult,
 )
 from .policy import AllowAllToolPolicy, InMemoryToolAudit, ToolAudit, ToolPolicy
+
+logger = logging.getLogger("acabot.runtime.tool_broker")
 
 
 class ToolBroker:
@@ -69,6 +72,27 @@ class ToolBroker:
         source: str = "runtime",
         metadata: dict[str, Any] | None = None,
     ) -> None:
+        """注册一条工具定义.
+
+        Args:
+            spec: 工具 schema.
+            handler: 工具执行入口.
+            source: 当前工具来源.
+            metadata: 附加元数据.
+        """
+
+        existing = self._tools.get(spec.name)
+        if existing is not None:
+            existing_is_builtin = str(existing.source).startswith("builtin:")
+            new_is_builtin = str(source).startswith("builtin:")
+            if existing_is_builtin and not new_is_builtin:
+                logger.warning(
+                    "Ignore tool registration that would shadow builtin tool: name=%s source=%s existing_source=%s",
+                    spec.name,
+                    source,
+                    existing.source,
+                )
+                return
         self._tools[spec.name] = RegisteredTool(
             spec=spec,
             handler=handler,
@@ -129,7 +153,19 @@ class ToolBroker:
     def visible_tools(self, profile: AgentProfile) -> list[ToolSpec]:
         """按 profile 解析当前模型可见的工具列表."""
 
-        tool_names = self._allowed_tool_names(profile)
+        return self._visible_tools_from_names(profile, self._allowed_tool_names(profile))
+
+    def _visible_tools_from_names(self, profile: AgentProfile, tool_names: list[str]) -> list[ToolSpec]:
+        """按工具名列表构造最终可见工具描述.
+
+        Args:
+            profile: 当前 profile.
+            tool_names: 已经过滤后的工具名列表.
+
+        Returns:
+            list[ToolSpec]: 最终可见工具列表.
+        """
+
         if not tool_names:
             return []
 
@@ -139,6 +175,37 @@ class ToolBroker:
             if registered is None:
                 continue
             visible.append(self._build_visible_spec(profile, registered))
+        return visible
+
+    def _visible_tools_for_run(self, ctx: RunContext, tool_names: list[str]) -> list[ToolSpec]:
+        """按当前 run 的上下文构造最终可见工具描述.
+
+        Args:
+            ctx: 当前 run 的执行上下文.
+            tool_names: 已经过滤后的工具名列表.
+
+        Returns:
+            list[ToolSpec]: 当前 run 真正可见的工具列表.
+        """
+
+        if not tool_names:
+            return []
+
+        visible: list[ToolSpec] = []
+        for tool_name in tool_names:
+            registered = self._tools.get(tool_name)
+            if registered is None:
+                continue
+            if registered.spec.name == "skill":
+                visible.append(
+                    ToolSpec(
+                        name=registered.spec.name,
+                        description=self._skill_tool_description_for_run(ctx),
+                        parameters=dict(registered.spec.parameters),
+                    )
+                )
+                continue
+            visible.append(self._build_visible_spec(ctx.profile, registered))
         return visible
 
     def _build_visible_spec(
@@ -178,6 +245,43 @@ class ToolBroker:
             tool_names.append("ask_backend")
         return tool_names
 
+    def _allowed_tool_names_for_run(self, ctx: RunContext) -> list[str]:
+        """按当前 run 的真实上下文过滤工具名列表.
+
+        Args:
+            ctx: 当前 run 的执行上下文.
+
+        Returns:
+            list[str]: 当前 run 真正可见的工具名列表.
+        """
+
+        tool_names: list[str] = []
+        for tool_name in ctx.profile.enabled_tools:
+            if tool_name in tool_names:
+                continue
+            tool_names.append(tool_name)
+
+        run_visible_skills = self._visible_skills_for_run(ctx)
+        if run_visible_skills:
+            if "skill" in self._tools and "skill" not in tool_names:
+                tool_names.append("skill")
+        else:
+            tool_names = [tool_name for tool_name in tool_names if tool_name != "skill"]
+
+        if self._should_expose_delegate_tool(ctx.profile) and "delegate_subagent" not in tool_names:
+            tool_names.append("delegate_subagent")
+        if self._should_expose_backend_bridge_tool(ctx.profile) and "ask_backend" not in tool_names:
+            tool_names.append("ask_backend")
+
+        if ctx.workspace_state is None:
+            return tool_names
+        allowed = set(ctx.workspace_state.available_tools)
+        return [
+            tool_name
+            for tool_name in tool_names
+            if tool_name in allowed or tool_name not in {"read", "write", "edit", "bash"}
+        ]
+
     def _should_expose_skill_tool(self, profile: AgentProfile) -> bool:
         if self.skill_catalog is None:
             return False
@@ -195,16 +299,81 @@ class ToolBroker:
         )
         return f"{base} Available skills: {details}"
 
+    def _skill_tool_description_for_run(self, ctx: RunContext) -> str:
+        """为当前 run 构造 skill 工具描述.
+
+        Args:
+            ctx: 当前 run 的执行上下文.
+
+        Returns:
+            str: 当前 run 使用的 skill 工具说明.
+        """
+
+        base = "Use skill(name=...) to read a skill from the current /skills world view."
+        visible = self._visible_skills_for_run(ctx)
+        if not visible:
+            return base
+        details = "; ".join(
+            f"{item.skill_name}: {item.description}" for item in visible
+        )
+        return f"{base} Available skills: {details}"
+
     def _visible_skills(self, profile: AgentProfile):
         if self.skill_catalog is None:
             return []
         return self.skill_catalog.visible_skills(profile)
+
+    def _visible_skills_for_run(self, ctx: RunContext):
+        """按当前 run 的 world 视图过滤可见 skills.
+
+        Args:
+            ctx: 当前 run 的执行上下文.
+
+        Returns:
+            list[object]: 当前 run 真正可见的 skill 摘要对象列表.
+        """
+
+        if self.skill_catalog is None:
+            return []
+        if ctx.world_view is None:
+            return self.skill_catalog.visible_skills(ctx.profile)
+        skills_policy = ctx.world_view.root_policies.get("skills")
+        if skills_policy is None or not skills_policy.visible:
+            return []
+        manifests = []
+        for skill_name in ctx.world_view.visible_skill_names:
+            manifest = self.skill_catalog.get(skill_name)
+            if manifest is None:
+                continue
+            manifests.append(manifest)
+        return manifests
 
     def _visible_skill_summaries(self, profile: AgentProfile) -> list[dict[str, Any]]:
         if self.skill_catalog is None:
             return []
         summaries: list[dict[str, Any]] = []
         for item in self.skill_catalog.visible_skills(profile):
+            summaries.append(
+                {
+                    "skill_name": item.skill_name,
+                    "description": item.description,
+                    "display_name": item.display_name,
+                }
+            )
+        return summaries
+
+    def _visible_skill_summaries_for_run(self, ctx: RunContext) -> list[dict[str, Any]]:
+        """按当前 run 的 world 视图过滤 skill 摘要.
+
+        Args:
+            ctx: 当前 run 的执行上下文.
+
+        Returns:
+            list[dict[str, Any]]: 当前 run 真正可见的 skill 摘要列表.
+        """
+
+        summaries: list[dict[str, Any]] = []
+        for item in self._visible_skills_for_run(ctx):
             summaries.append(
                 {
                     "skill_name": item.skill_name,
@@ -277,13 +446,14 @@ class ToolBroker:
     def build_tool_runtime(self, ctx: RunContext) -> ToolRuntime:
         """按当前 RunContext 解析工具可见性与 tool executor."""
 
-        visible_tools = self.visible_tools(ctx.profile)
+        allowed_tool_names = self._allowed_tool_names_for_run(ctx)
+        visible_tools = self._visible_tools_for_run(ctx, allowed_tool_names)
         state = ToolRuntimeState()
         metadata = {
             "source": "tool_broker",
             "visible_tools": [tool.name for tool in visible_tools],
-            "visible_skills": [skill.skill_name for skill in self._visible_skills(ctx.profile)],
-            "visible_skill_summaries": self._visible_skill_summaries(ctx.profile),
+            "visible_skills": [skill.skill_name for skill in self._visible_skills_for_run(ctx)],
+            "visible_skill_summaries": self._visible_skill_summaries_for_run(ctx),
             "visible_subagent_summaries": self._visible_subagent_summaries(ctx.profile),
         }
         if not visible_tools:
@@ -357,9 +527,13 @@ class ToolBroker:
                 arguments=arguments,
             )
 
-        if tool_name not in self._allowed_tool_names(ctx.profile):
+        if "visible_tools" in ctx.metadata:
+            visible_tools = list(ctx.metadata.get("visible_tools", []))
+        else:
+            visible_tools = self._allowed_tool_names(ctx.profile)
+        if tool_name not in visible_tools:
             return await self._reject(
-                message=f"Tool not enabled for profile: {tool_name}",
+                message=f"Tool not enabled for current run: {tool_name}",
                 audit_record=audit_record,
                 ctx=ctx,
                 tool_name=tool_name,
@@ -444,16 +618,20 @@ class ToolBroker:
                 status="failed",
             )
 
-        if pending.tool_name not in self._allowed_tool_names(ctx.profile):
+        if "visible_tools" in ctx.metadata:
+            visible_tools = list(ctx.metadata.get("visible_tools", []))
+        else:
+            visible_tools = self._allowed_tool_names(ctx.profile)
+        if pending.tool_name not in visible_tools:
             result = self._error_result(
-                f"Tool not enabled for profile: {pending.tool_name}",
+                f"Tool not enabled for current run: {pending.tool_name}",
                 tool_name=pending.tool_name,
                 arguments=dict(pending.tool_arguments),
             )
             if existing_record is not None:
                 existing_record = await self.audit.reject(
                     existing_record,
-                    reason=f"Tool not enabled for profile: {pending.tool_name}",
+                    reason=f"Tool not enabled for current run: {pending.tool_name}",
                     metadata={
                         "approval_replay": True,
                         "approval_id": pending.approval_id,
@@ -581,6 +759,8 @@ class ToolBroker:
     ) -> ToolExecutionContext:
         """把 RunContext 投影成工具执行时使用的最小上下文."""
 
+        visible_tools = self._allowed_tool_names_for_run(ctx)
+        visible_skills = [skill.skill_name for skill in self._visible_skills_for_run(ctx)]
         return ToolExecutionContext(
             run_id=ctx.run.run_id,
             thread_id=ctx.thread.thread_id,
@@ -588,10 +768,13 @@ class ToolBroker:
             agent_id=ctx.profile.agent_id,
             target=ctx.event.source,
             profile=ctx.profile,
+            world_view=ctx.world_view,
             state=state,
             metadata={
                 "backend_bridge": self.backend_bridge,
                 "default_agent_id": self.default_agent_id,
+                "visible_tools": visible_tools,
+                "visible_skills": visible_skills,
                 "channel_scope": ctx.decision.channel_scope,
                 "event_id": ctx.event.event_id,
                 "event_timestamp": ctx.event.timestamp,
@@ -612,16 +795,6 @@ class ToolBroker:
                     ctx.workspace_state.backend_kind
                     if ctx.workspace_state is not None
                     else ""
-                ),
-                "read_only": (
-                    bool(ctx.workspace_state.read_only)
-                    if ctx.workspace_state is not None
-                    else False
-                ),
-                "allow_write": (
-                    bool(ctx.computer_policy_effective.allow_write)
-                    if ctx.computer_policy_effective is not None
-                    else True
                 ),
                 "allow_exec": (
                     bool(ctx.computer_policy_effective.allow_exec)
@@ -656,6 +829,8 @@ class ToolBroker:
                         "original_source": item.original_source,
                         "source_kind": item.source_kind,
                         "staged_path": item.staged_path,
+                        "world_path": item.metadata.get("world_path", ""),
+                        "execution_path": item.metadata.get("execution_path", ""),
                         "size_bytes": item.size_bytes,
                         "download_status": item.download_status,
                         "error": item.error,

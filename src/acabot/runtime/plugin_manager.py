@@ -9,14 +9,13 @@
       |
       `-- run hooks -> ThreadPipeline
 
-- 插件不再依赖旧 Pipeline
-- 让插件可以注册 runtime hook 和 tool
-- 让 lifecycle 进入 RuntimeApp 的 start / stop
+这个模块负责三件事:
+- 让插件注册 runtime hook 和 tool
+- 管理插件的加载、卸载和 reload 生命周期
+- 把插件接进 RuntimeApp 的 start / stop 主线
 
-注意:
-- plugin 是装配层
-- computer 这种基础设施由 bootstrap/runtime 先创建
-- plugin 只负责把这些能力暴露成 hook / tool / executor 等形态接入
+这里管理的是扩展 plugin.
+computer、skill、subagent 这些基础工具表面由 bootstrap 先接到 builtin tool 链路里.
 """
 
 from __future__ import annotations
@@ -402,6 +401,7 @@ class RuntimePluginManager:
             *self._fresh_builtin_plugins(),
             *list(plugins or []),
         ]
+        self.failed_plugin_import_paths: list[str] = []
         self._started = False
         # 防止并发启动的锁
         self._start_lock = asyncio.Lock()
@@ -425,6 +425,30 @@ class RuntimePluginManager:
         for plugin_type in self._builtin_plugin_types:
             fresh.append(plugin_type())
         return fresh
+
+    def configure_builtin_plugins(self, builtin_plugins: list[RuntimePlugin]) -> None:
+        """同步更新当前 manager 持有的 builtin plugin 列表.
+
+        这个方法给 bootstrap 组装阶段用.
+        组装还是同步过程时, 可以先把旧的 builtin pending 队列换成当前真相,
+        这样后面的 `ensure_started()` 就不会再把退役插件装回来.
+
+        Args:
+            builtin_plugins: 当前应该保留的 builtin plugin 实例列表.
+        """
+
+        previous_builtin_names = set(self._builtin_plugin_names)
+        previous_builtin_types = tuple(self._builtin_plugin_types)
+        non_builtin_pending = [
+            plugin
+            for plugin in self._pending
+            if plugin.name not in previous_builtin_names
+            and not (previous_builtin_types and isinstance(plugin, previous_builtin_types))
+        ]
+        self._builtin_plugins = list(builtin_plugins)
+        self._builtin_plugin_names = {plugin.name for plugin in builtin_plugins}
+        self._builtin_plugin_types = [plugin.__class__ for plugin in builtin_plugins]
+        self._pending = [*self._fresh_builtin_plugins(), *non_builtin_pending]
 
     async def replace_builtin_plugins(self, builtin_plugins: list[RuntimePlugin]) -> list[str]:
         """替换当前系统内建插件集合.
@@ -786,12 +810,13 @@ class RuntimePluginManager:
             `(loaded_plugins, missing_plugins)` 元组.
         """
         # 预先构建新配置
-        plugins = load_runtime_plugins_from_config(self.config)
+        plugins, failed_import_paths = load_runtime_plugins_from_config_with_failures(self.config)
+        self.failed_plugin_import_paths = list(failed_import_paths)
         if not plugin_names:
             await self.teardown_all()
             self._pending = [*self._fresh_builtin_plugins(), *plugins]
             await self.ensure_started()
-            return [plugin.name for plugin in self.loaded], []
+            return [plugin.name for plugin in self.loaded], list(failed_import_paths)
 
         requested_names: list[str] = []
         seen: set[str] = set()
@@ -864,16 +889,9 @@ def parse_runtime_plugin_spec(raw: str | dict[str, Any]) -> RuntimePluginSpec | 
         raw: `runtime.plugins` 下的一条配置.
 
     Returns:
-        解析后的 RuntimePluginSpec. 无效或禁用时返回 None.
-
-    Examples:
-        >>> parse_runtime_plugin_spec("my_plugin:MyPlugin")
-        RuntimePluginSpec(import_path="my_plugin:MyPlugin", enabled=True)
-        >>> parse_runtime_plugin_spec({"path": "my_plugin:MyPlugin", "enabled": False})
-        None  # 禁用的插件返回 None
+        RuntimePluginSpec | None: 解析后的配置. 无效或禁用时返回 `None`.
     """
 
-    # 字符串格式
     if isinstance(raw, str):
         return RuntimePluginSpec(import_path=raw)
 
@@ -890,39 +908,29 @@ def parse_runtime_plugin_spec(raw: str | dict[str, Any]) -> RuntimePluginSpec | 
 def load_runtime_plugin(spec: RuntimePluginSpec) -> RuntimePlugin:
     """按 import_path 动态导入并实例化一个 runtime plugin 对象.
 
-    使用 importlib 动态导入模块, 获取指定符号并实例化.
-    支持类(自动实例化)和实例(直接使用)两种形式.
-
     Args:
-        spec: 目标插件配置, 包含 import_path.
+        spec: 目标插件配置.
 
     Returns:
-        实例化后的 RuntimePlugin.
+        RuntimePlugin: 成功实例化后的插件对象.
 
     Raises:
         ValueError: import_path 格式错误或符号不存在.
         TypeError: 导入对象不是 RuntimePlugin 实例.
     """
 
-    # import_path 必须为 "module:Symbol" 形式
     if ":" not in spec.import_path:
         raise ValueError(
             f"Runtime plugin import path must be 'module:Symbol', got '{spec.import_path}'",
         )
     module_path, symbol_name = spec.import_path.split(":", 1)
-    # 动态导入模块文件(返回的是模块对象, 而非插件本身), 模块缓存机制保证同一模块不会重复加载
     module = importlib.import_module(module_path)
-    # 从模块的 __dict__ 命名空间中获取指定符号
     symbol = getattr(module, symbol_name, None)
     if symbol is None:
         raise ValueError(
             f"Runtime plugin symbol '{symbol_name}' not found in module '{module_path}'",
         )
-    # 实例化或直接使用获取的符号
-    # 如果是类: 调用 symbol() 实例化得到对象
-    # 如果不是类 (已是实例): 直接使用该对象
     plugin = symbol() if isinstance(symbol, type) else symbol
-    # 确保最终对象符合 RuntimePlugin 协议
     if not isinstance(plugin, RuntimePlugin):
         raise TypeError(
             f"Runtime plugin '{spec.import_path}' did not resolve to RuntimePlugin instance",
@@ -930,30 +938,50 @@ def load_runtime_plugin(spec: RuntimePluginSpec) -> RuntimePlugin:
     return plugin
 
 
-def load_runtime_plugins_from_config(config: Config) -> list[RuntimePlugin]:
-    """从 Config 批量加载 runtime plugin 列表.
-
-    读取配置中的 runtime.plugins 列表, 逐个解析并加载.
-    跳过无效配置和禁用的插件, 保持配置顺序.
+def load_runtime_plugins_from_config_with_failures(
+    config: Config,
+) -> tuple[list[RuntimePlugin], list[str]]:
+    """从 Config 批量加载 runtime plugin 列表, 并返回失败项.
 
     Args:
-        config: 项目配置对象, 需包含 runtime.plugins 配置项.
+        config: 项目配置对象.
 
     Returns:
-        按配置顺序实例化后的 RuntimePlugin 列表.
-        无效配置会被静默跳过, 不会抛出异常.
+        tuple[list[RuntimePlugin], list[str]]: `(loaded_plugins, failed_import_paths)`.
     """
 
-    # 从配置中读取 runtime.plugins, 默认为空列表
     runtime_conf = config.get("runtime", {})
     raw_plugins = list(runtime_conf.get("plugins", []) or [])
     loaded: list[RuntimePlugin] = []
+    failed: list[str] = []
     for raw in raw_plugins:
         spec = parse_runtime_plugin_spec(raw)
         if spec is None:
             continue
-        loaded.append(load_runtime_plugin(spec))
+        try:
+            loaded.append(load_runtime_plugin(spec))
+        except Exception:
+            failed.append(spec.import_path)
+            logger.exception(
+                "Failed to load runtime plugin from config, skipping: %s",
+                spec.import_path,
+            )
+    return loaded, failed
+
+
+def load_runtime_plugins_from_config(config: Config) -> list[RuntimePlugin]:
+    """从 Config 批量加载 runtime plugin 列表.
+
+    Args:
+        config: 项目配置对象.
+
+    Returns:
+        list[RuntimePlugin]: 成功实例化的插件列表.
+    """
+
+    loaded, _failed = load_runtime_plugins_from_config_with_failures(config)
     return loaded
 
 
+# endregion
 # endregion

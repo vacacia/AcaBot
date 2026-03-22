@@ -473,12 +473,6 @@ runtime:
       default_model: "test-model"
   prompts:
     prompt/default: "hello"
-  binding_rules:
-    - rule_id: "private-default"
-      priority: 10
-      match:
-        channel_scope: "qq:user:10001"
-      agent_id: "aca"
   webui:
     enabled: {str(webui_enabled).lower()}
     host: "127.0.0.1"
@@ -566,7 +560,7 @@ runtime:
     assert components.app.backend_admin_actor_ids == {"qq:private:2"}
 
 
-async def test_runtime_config_control_plane_upserts_profile_prompt_and_rule(tmp_path: Path) -> None:
+async def test_runtime_config_control_plane_upserts_profile_and_prompt(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     _write_config(config_path)
     config = Config.from_file(str(config_path))
@@ -584,12 +578,11 @@ async def test_runtime_config_control_plane_upserts_profile_prompt_and_rule(tmp_
             "prompt_ref": "prompt/worker",
             "default_model": "worker-model",
             "enabled_tools": ["read"],
-            "skill_assignments": [{"skill_name": "sample_configured_skill"}],
+            "skills": ["sample_configured_skill"],
         }
     )
     assert profile["agent_id"] == "worker"
     assert profile["skills"] == ["sample_configured_skill"]
-    assert "skill_assignments" not in profile
     loaded = components.profile_loader.load(
         RouteDecision(
             thread_id="thread:1",
@@ -607,17 +600,6 @@ async def test_runtime_config_control_plane_upserts_profile_prompt_and_rule(tmp_
     )
     assert prompt["prompt_ref"] == "prompt/worker"
     assert components.prompt_loader.load("prompt/worker") == "you are worker"
-
-    rule = await components.control_plane.upsert_binding_rule(
-        {
-            "rule_id": "worker-channel",
-            "agent_id": "worker",
-            "priority": 20,
-            "match": {"channel_scope": "qq:group:42"},
-        }
-    )
-    assert rule["rule_id"] == "worker-channel"
-    assert components.profile_loader.get_rule("worker-channel") is not None
     assert "worker" in config_path.read_text(encoding="utf-8")
 
 
@@ -717,6 +699,7 @@ async def test_runtime_http_api_server_serves_status_and_profile_crud(tmp_path: 
             )
             assert toggled["ok"] is True
             assert any(item["path"] == first["path"] and item["enabled"] is False for item in toggled["data"]["items"])
+            assert first["name"] not in [plugin.name for plugin in components.plugin_manager.loaded]
 
         put_result = await asyncio.to_thread(
             request_json,
@@ -969,6 +952,126 @@ runtime:
         first = plugins_config["data"]["items"][0]
         assert first["name"] == "OpsControlPlugin"
         assert first["display_name"] == "Ops Control"
+        assert first["loadable"] is True
+        assert first["load_error"] == ""
+    finally:
+        await server.stop()
+
+
+async def test_runtime_http_api_server_plugin_config_put_refreshes_live_plugins(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+gateway:
+  host: "127.0.0.1"
+  port: 8080
+
+agent:
+  default_model: "test-model"
+
+runtime:
+  default_agent_id: "aca"
+  profiles:
+    aca:
+      name: "Aca"
+      prompt_ref: "prompt/default"
+      default_model: "test-model"
+  prompts:
+    prompt/default: "hello"
+  plugins:
+    - path: "acabot.runtime.plugins.ops_control:OpsControlPlugin"
+      enabled: true
+  webui:
+    enabled: true
+    host: "127.0.0.1"
+    port: 0
+""".strip(),
+        encoding="utf-8",
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    await components.plugin_manager.ensure_started()
+    assert "ops_control" in [plugin.name for plugin in components.plugin_manager.loaded]
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+
+        toggled = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/system/plugins/config",
+            method="PUT",
+            payload={
+                "items": [
+                    {
+                        "path": "acabot.runtime.plugins.ops_control:OpsControlPlugin",
+                        "enabled": False,
+                    }
+                ]
+            },
+        )
+        assert toggled["ok"] is True
+        assert "ops_control" not in [plugin.name for plugin in components.plugin_manager.loaded]
+    finally:
+        await server.stop()
+
+
+async def test_runtime_http_api_server_marks_broken_plugin_paths_in_config_view(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+gateway:
+  host: "127.0.0.1"
+  port: 8080
+
+agent:
+  default_model: "test-model"
+
+runtime:
+  default_agent_id: "aca"
+  profiles:
+    aca:
+      name: "Aca"
+      prompt_ref: "prompt/default"
+      default_model: "test-model"
+  prompts:
+    prompt/default: "hello"
+  plugins:
+    - path: "acabot.runtime.plugins.computer_tool_adapter:ComputerToolAdapterPlugin"
+      enabled: true
+  webui:
+    enabled: true
+    host: "127.0.0.1"
+    port: 0
+""".strip(),
+        encoding="utf-8",
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+
+        plugins_config = await asyncio.to_thread(request_json, base_url, "/api/system/plugins/config")
+        assert plugins_config["ok"] is True
+        first = plugins_config["data"]["items"][0]
+        assert first["loadable"] is False
+        assert "computer_tool_adapter" in first["path"]
+        assert str(first["load_error"]).strip() != ""
     finally:
         await server.stop()
 
@@ -1041,7 +1144,7 @@ async def test_runtime_http_api_server_serves_product_shaped_bot_settings(tmp_pa
             "agent_id": "aca",
             "name": "Aca",
             "prompt_ref": "prompt/default",
-            "default_model": "legacy-model",
+            "default_model": "main-model",
             "admin_actor_ids": ["qq:private:123456"],
             "enabled_tools": ["read"],
             "skills": ["sample_configured_skill"],
@@ -1119,18 +1222,22 @@ async def test_runtime_http_api_server_serves_product_shaped_bot_settings(tmp_pa
     try:
         port = server._httpd.server_address[1]  # type: ignore[union-attr]
         base_url = f"http://127.0.0.1:{port}"
-        inbound_before = await asyncio.to_thread(request_json, base_url, "/api/rules/inbound")
-        assert inbound_before["ok"] is True
-        assert inbound_before["data"] == []
+        status, inbound_before = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/rules/inbound",
+        )
+        assert status == 404
+        assert inbound_before["ok"] is False
 
-        bot = await asyncio.to_thread(request_json, base_url, "/api/bot")
-        assert bot["ok"] is True
-        default_input_event_types = {
-            item["event_type"]
-            for item in bot["data"]["default_input"]["rules"]
-        }
-        assert "message_mention" not in default_input_event_types
-        assert "message_reply" not in default_input_event_types
+        status, bot = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/bot",
+        )
+        assert status == 501
+        assert bot["ok"] is False
+        assert "redesign pending" in bot["error"]
 
         admins = await asyncio.to_thread(request_json, base_url, "/api/admins")
         assert admins["ok"] is True
@@ -1157,7 +1264,7 @@ async def test_runtime_http_api_server_serves_product_shaped_bot_settings(tmp_pa
         assert profile["admin_actor_ids"] == ["qq:private:123456", "napcat:private:42"]
         assert profile["name"] == "Aca"
         assert profile["prompt_ref"] == "prompt/default"
-        assert profile["default_model"] == "legacy-model"
+        assert profile["default_model"] == "main-model"
         assert "summary_model_preset_id" not in profile
         assert profile["enabled_tools"] == ["read"]
         assert profile["skills"] == ["sample_configured_skill"]
@@ -1166,9 +1273,13 @@ async def test_runtime_http_api_server_serves_product_shaped_bot_settings(tmp_pa
         assert backend_status["ok"] is True
         assert backend_status["data"]["admin_actor_ids"] == ["napcat:private:42", "qq:private:123456"]
 
-        inbound_after = await asyncio.to_thread(request_json, base_url, "/api/rules/inbound")
-        assert inbound_after["ok"] is True
-        assert inbound_after["data"] == []
+        status, inbound_after = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/rules/inbound",
+        )
+        assert status == 404
+        assert inbound_after["ok"] is False
 
         bindings = await components.control_plane.list_model_bindings()
         main_binding = next(item for item in bindings if item.target_type == "agent" and item.target_id == "aca")
@@ -1183,7 +1294,7 @@ async def test_runtime_http_api_server_serves_product_shaped_bot_settings(tmp_pa
         await server.stop()
 
 
-async def test_runtime_http_api_server_serves_product_shaped_sessions(tmp_path: Path) -> None:
+async def test_runtime_http_api_server_reports_unimplemented_or_unknown_shell_endpoints(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     _write_config(config_path, webui_enabled=True, port=0)
     config = Config.from_file(str(config_path))
@@ -1192,84 +1303,6 @@ async def test_runtime_http_api_server_serves_product_shaped_sessions(tmp_path: 
         gateway=FakeGateway(),
         agent=FakeAgent(FakeAgentResponse(text="ok")),
     )
-    await components.control_plane.upsert_prompt(
-        prompt_ref="prompt/session-qa",
-        content="你负责招聘群的说明。",
-    )
-    await components.control_plane.upsert_profile(
-        {
-            "agent_id": "session_qq_group_42",
-            "name": "招聘会话",
-            "prompt_ref": "prompt/session-qa",
-            "default_model": "session-model",
-            "summary_model_preset_id": "summary-preset",
-            "computer": {
-                "backend": "host",
-                "read_only": True,
-                "allow_write": False,
-                "allow_exec": False,
-                "allow_sessions": False,
-                "auto_stage_attachments": False,
-                "network_mode": "disabled",
-            },
-            "context_management": {"strategy": "summarize"},
-            "enabled_tools": ["read", "write"],
-            "skills": ["sample_configured_skill"],
-            "metadata": {
-                "managed_by": "webui_session",
-                "session_key": "qq:group:42",
-            },
-        }
-    )
-    await components.control_plane.upsert_model_binding(
-        ModelBinding(
-            binding_id="session-binding-model",
-            target_type="agent",
-            target_id="session_qq_group_42",
-            preset_id="gpt-4.1",
-        )
-    )
-    await components.control_plane.upsert_binding_rule(
-        {
-            "rule_id": "session-binding",
-            "agent_id": "session_qq_group_42",
-            "priority": 100,
-            "match": {"channel_scope": "qq:group:42"},
-            "metadata": {
-                "display_name": "招聘群",
-                "managed_by": "webui_session",
-                "session_key": "qq:group:42",
-                "tags": ["campus", "internship"],
-            },
-        }
-    )
-    await components.control_plane.upsert_inbound_rule(
-        {
-            "rule_id": "session-inbound-message",
-            "run_mode": "respond",
-            "priority": 100,
-            "match": {
-                "channel_scope": "qq:group:42",
-                "event_type": "message",
-            },
-            "metadata": {"display_name": "招聘群"},
-        }
-    )
-    await components.control_plane.upsert_event_policy(
-        {
-            "policy_id": "session-policy-message",
-            "priority": 100,
-            "match": {
-                "channel_scope": "qq:group:42",
-                "event_type": "message",
-            },
-            "persist_event": True,
-            "extract_to_memory": True,
-            "memory_scopes": ["user", "channel"],
-            "tags": ["internship"],
-            "metadata": {"display_name": "招聘群"},
-        }
-    )
     server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
 
     await server.start()
@@ -1277,240 +1310,48 @@ async def test_runtime_http_api_server_serves_product_shaped_sessions(tmp_path: 
         port = server._httpd.server_address[1]  # type: ignore[union-attr]
         base_url = f"http://127.0.0.1:{port}"
 
-        listed = await asyncio.to_thread(request_json, base_url, "/api/sessions")
-        assert listed["ok"] is True
-        session_item = next(
-            item for item in listed["data"]["items"] if item["channel_scope"] == "qq:group:42"
+        status, sessions = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/sessions",
         )
-        assert session_item["display_name"] == "招聘群"
-        assert session_item["channel_template_id"] == "qq_group"
-        assert session_item["ai"]["prompt_ref"] == "prompt/session-qa"
-        assert session_item["ai"]["summary_model_preset_id"] == "summary-preset"
-        assert session_item["ai"]["context_management"]["strategy"] == "summarize"
-        assert session_item["ai"]["enabled_tools"] == ["read", "write"]
-        assert session_item["ai"]["skills"] == ["sample_configured_skill"]
-        executors = await asyncio.to_thread(request_json, base_url, "/api/subagents/executors")
-        assert executors["ok"] is True
-        assert all(item["agent_id"] != "session_qq_group_42" for item in executors["data"])
-        message_rules = {
-            item["event_type"]: item
-            for item in session_item["message_response"]["rules"]
-        }
-        assert {"message", "message_mention", "message_reply"} <= set(message_rules)
-        message_rule = message_rules["message"]
-        mention_rule = message_rules["message_mention"]
-        reply_rule = message_rules["message_reply"]
-        assert message_rule["enabled"] is True
-        assert message_rule["run_mode"] == "respond"
-        assert message_rule["persist_event"] is True
-        assert message_rule["memory_scopes"] == ["user", "channel"]
-        assert mention_rule["run_mode"] == "respond"
-        assert reply_rule["run_mode"] == "respond"
-        assert "tags" not in message_rule
-        assert session_item["other"] == {}
-        assert "binding_rule_id" not in session_item
-        assert "inbound_rule_id" not in message_rule
-        assert "event_policy_id" not in message_rule
+        assert status == 501
+        assert sessions["ok"] is False
+        assert "redesign pending" in sessions["error"]
 
-        saved = await asyncio.to_thread(
-            request_json,
+        status, session_detail = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/sessions/qq%3Agroup%3A42",
+        )
+        assert status == 501
+        assert session_detail["ok"] is False
+
+        status, session_put = await asyncio.to_thread(
+            request_json_with_status,
             base_url,
             "/api/sessions/qq%3Agroup%3A42",
             method="PUT",
-            payload={
-                "display_name": "招聘群 2026",
-                "channel_scope": "qq:group:42",
-                "channel_template_id": "qq_group",
-                "ai": {
-                    "prompt_ref": "prompt/session-qa",
-                    "model_preset_id": "gpt-4.1",
-                    "summary_model_preset_id": "summary-preset",
-                    "context_management": {"strategy": "truncate"},
-                    "enabled_tools": ["read"],
-                    "skills": ["sample_configured_skill"],
-                },
-                "message_response": {
-                    "rules": [
-                        {
-                            "event_type": "message",
-                            "enabled": False,
-                            "run_mode": "respond",
-                            "persist_event": False,
-                            "memory_scopes": [],
-                        },
-                        {
-                            "event_type": "message_mention",
-                            "enabled": True,
-                            "run_mode": "record_only",
-                            "persist_event": False,
-                            "memory_scopes": ["channel"],
-                        },
-                        {
-                            "event_type": "message_reply",
-                            "enabled": True,
-                            "run_mode": "respond",
-                            "persist_event": True,
-                            "memory_scopes": ["user"],
-                        }
-                    ]
-                },
-                "other": {},
-            },
+            payload={"display_name": "ignored"},
         )
-        assert saved["ok"] is True
-        assert saved["data"]["display_name"] == "招聘群 2026"
-        assert saved["data"]["channel_template_id"] == "qq_group"
-        assert saved["data"]["ai"]["context_management"]["strategy"] == "truncate"
-        assert saved["data"]["ai"]["enabled_tools"] == ["read"]
-        saved_rules = {
-            item["event_type"]: item
-            for item in saved["data"]["message_response"]["rules"]
-        }
-        assert saved_rules["message"]["enabled"] is False
-        assert saved_rules["message"]["run_mode"] == "respond"
-        assert saved_rules["message_mention"]["run_mode"] == "record_only"
-        assert saved_rules["message_mention"]["persist_event"] is False
-        assert saved_rules["message_mention"]["memory_scopes"] == ["channel"]
-        assert saved_rules["message_reply"]["run_mode"] == "respond"
-        assert saved_rules["message_reply"]["persist_event"] is True
-        assert saved_rules["message_reply"]["memory_scopes"] == ["user"]
-        assert "tags" not in saved_rules["message_mention"]
-        assert saved["data"]["other"] == {}
+        assert status == 501
+        assert session_put["ok"] is False
 
-        profile_after_save = await components.control_plane.get_profile("session_qq_group_42")
-        assert profile_after_save is not None
-        assert profile_after_save["computer"] == {
-            "backend": "host",
-            "read_only": True,
-            "allow_write": False,
-            "allow_exec": False,
-            "allow_sessions": False,
-            "auto_stage_attachments": False,
-            "network_mode": "disabled",
-        }
-
-        inbound_rules = await asyncio.to_thread(request_json, base_url, "/api/rules/inbound")
-        message_inbound_rules = [
-            item
-            for item in inbound_rules["data"]
-            if item["match"].get("channel_scope") == "qq:group:42"
-            and item["match"].get("event_type") == "message"
-        ]
-        assert len(message_inbound_rules) == 3
-        assert any(
-            item["run_mode"] == "silent_drop"
-            and item["match"].get("mentions_self") is None
-            and item["match"].get("reply_targets_self") is None
-            for item in message_inbound_rules
-        )
-        assert any(
-            item["run_mode"] == "record_only"
-            and item["match"].get("mentions_self") is True
-            for item in message_inbound_rules
-        )
-        assert any(
-            item["run_mode"] == "respond"
-            and item["match"].get("reply_targets_self") is True
-            for item in message_inbound_rules
-        )
-
-        event_policies = await asyncio.to_thread(request_json, base_url, "/api/rules/event-policies")
-        message_policies = [
-            item
-            for item in event_policies["data"]
-            if item["match"].get("channel_scope") == "qq:group:42"
-            and item["match"].get("event_type") == "message"
-        ]
-        assert len(message_policies) == 3
-        assert any(
-            item["persist_event"] is False
-            and item["memory_scopes"] == ["channel"]
-            and item["match"].get("mentions_self") is True
-            for item in message_policies
-        )
-        assert any(
-            item["persist_event"] is True
-            and item["memory_scopes"] == ["user"]
-            and item["match"].get("reply_targets_self") is True
-            for item in message_policies
-        )
-
-        ambient_group = await components.router.route(
-            _session_event(message_type="group", user_id="10001", group_id="42")
-        )
-        assert ambient_group.run_mode == "silent_drop"
-
-        mentioned_group = await components.router.route(
-            _session_event(
-                message_type="group",
-                user_id="10001",
-                group_id="42",
-                targets_self=True,
-                mentions_self=True,
-            )
-        )
-        assert mentioned_group.run_mode == "record_only"
-        assert mentioned_group.metadata["event_memory_scopes"] == ["channel"]
-
-        replied_group = await components.router.route(
-            _session_event(
-                message_type="group",
-                user_id="10001",
-                group_id="42",
-                targets_self=True,
-                reply_targets_self=True,
-            )
-        )
-        assert replied_group.run_mode == "respond"
-        assert replied_group.metadata["event_memory_scopes"] == ["user"]
-
-        private_saved = await asyncio.to_thread(
-            request_json,
+        status, missing_rules_surface = await asyncio.to_thread(
+            request_json_with_status,
             base_url,
-            "/api/sessions/qq%3Auser%3A10001",
-            method="PUT",
-            payload={
-                "display_name": "管理员私聊",
-                "channel_scope": "qq:user:10001",
-                "channel_template_id": "qq_private",
-                "ai": {
-                    "prompt_ref": "",
-                    "model_preset_id": "",
-                    "summary_model_preset_id": "",
-                    "context_management": {"strategy": ""},
-                    "enabled_tools": [],
-                    "skills": [],
-                },
-                "message_response": {
-                    "rules": [
-                        {
-                            "event_type": "message",
-                            "enabled": True,
-                            "run_mode": "respond",
-                            "persist_event": True,
-                            "memory_scopes": [],
-                        }
-                    ]
-                },
-                "other": {},
-            },
+            "/api/rules/inbound",
         )
-        assert private_saved["ok"] is True
-        assert private_saved["data"]["channel_template_id"] == "qq_private"
-        assert private_saved["data"]["ai"]["context_management"]["strategy"] == ""
-        private_event_types = {
-            item["event_type"]
-            for item in private_saved["data"]["message_response"]["rules"]
-        }
-        assert "member_join" not in private_event_types
-        assert "member_leave" not in private_event_types
-        private_message_rule = next(
-            item
-            for item in private_saved["data"]["message_response"]["rules"]
-            if item["event_type"] == "message"
+        assert status == 404
+        assert missing_rules_surface["ok"] is False
+
+        status, missing_policies_surface = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/rules/event-policies",
         )
-        assert "message_mention" not in private_event_types
-        assert "message_reply" not in private_event_types
+        assert status == 404
+        assert missing_policies_surface["ok"] is False
     finally:
         await server.stop()
 
