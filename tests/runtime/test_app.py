@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from acabot.config import Config
 from acabot.runtime import (
     AgentProfile,
@@ -5,7 +7,6 @@ from acabot.runtime import (
     AgentRuntimeResult,
     ApprovalResumeResult,
     ApprovalResumer,
-    EventPolicyDecision,
     InMemoryChannelEventStore,
     InMemoryRunManager,
     InMemoryThreadManager,
@@ -20,6 +21,8 @@ from acabot.runtime import (
     RuntimePluginContext,
     RuntimePluginManager,
     RuntimeRouter,
+    SessionConfigLoader,
+    SessionRuntime,
     ThreadPipeline,
     ToolBroker,
 )
@@ -59,6 +62,16 @@ def _profile_loader(decision: RouteDecision) -> AgentProfile:
 
 def _broken_profile_loader(decision: RouteDecision) -> AgentProfile:
     raise RuntimeError("profile loader exploded")
+
+
+def _session_router(tmp_path: Path, body: str) -> RuntimeRouter:
+    sessions_dir = tmp_path / "sessions/qq/user"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    (sessions_dir / "10001.yaml").write_text(body.strip(), encoding="utf-8")
+    return RuntimeRouter(
+        default_agent_id="aca",
+        session_runtime=SessionRuntime(SessionConfigLoader(config_root=tmp_path / "sessions")),
+    )
 
 
 class BrokenAgentRuntime(AgentRuntime):
@@ -185,7 +198,7 @@ async def test_runtime_app_installs_handler_and_processes_event() -> None:
     assert saved[0].content_text == "hello"
 
 
-async def test_runtime_app_skips_silent_drop_events() -> None:
+async def test_runtime_app_skips_silent_drop_events(tmp_path: Path) -> None:
     gateway = FakeGateway()
     thread_manager = InMemoryThreadManager()
     run_manager = InMemoryRunManager()
@@ -199,9 +212,23 @@ async def test_runtime_app_skips_silent_drop_events() -> None:
     )
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(
-            default_agent_id="aca",
-            decide_run_mode=lambda event: ("silent_drop", {"inbound_rule_id": "ignore"}),
+        router=_session_router(
+            tmp_path,
+            """
+session:
+  id: qq:user:10001
+  template: qq_user
+frontstage:
+  profile: aca
+surfaces:
+  message.private:
+    routing:
+      default:
+        profile: aca
+    admission:
+      default:
+        mode: silent_drop
+""",
         ),
         thread_manager=thread_manager,
         run_manager=run_manager,
@@ -218,7 +245,7 @@ async def test_runtime_app_skips_silent_drop_events() -> None:
     assert await channel_event_store.get_thread_events("qq:user:10001") == []
 
 
-async def test_runtime_app_records_record_only_event_without_loading_profile() -> None:
+async def test_runtime_app_records_record_only_event_without_loading_profile(tmp_path: Path) -> None:
     gateway = FakeGateway()
     thread_manager = InMemoryThreadManager()
     run_manager = InMemoryRunManager()
@@ -232,9 +259,23 @@ async def test_runtime_app_records_record_only_event_without_loading_profile() -
     )
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(
-            default_agent_id="aca",
-            decide_run_mode=lambda event: ("record_only", {"inbound_rule_id": "record"}),
+        router=_session_router(
+            tmp_path,
+            """
+session:
+  id: qq:user:10001
+  template: qq_user
+frontstage:
+  profile: aca
+surfaces:
+  message.private:
+    routing:
+      default:
+        profile: aca
+    admission:
+      default:
+        mode: record_only
+""",
         ),
         thread_manager=thread_manager,
         run_manager=run_manager,
@@ -253,7 +294,7 @@ async def test_runtime_app_records_record_only_event_without_loading_profile() -
     assert saved[0].metadata["run_mode"] == "record_only"
 
 
-async def test_runtime_app_skips_event_log_when_event_policy_disables_persist() -> None:
+async def test_runtime_app_skips_event_log_when_persistence_is_disabled(tmp_path: Path) -> None:
     gateway = FakeGateway()
     thread_manager = InMemoryThreadManager()
     run_manager = InMemoryRunManager()
@@ -267,16 +308,31 @@ async def test_runtime_app_skips_event_log_when_event_policy_disables_persist() 
     )
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(
-            default_agent_id="aca",
-            decide_run_mode=lambda event: ("respond", {}),
-            resolve_event_policy=lambda event, actor_id, channel_scope: EventPolicyDecision(
-                policy_id="no-log",
-                persist_event=False,
-                extract_to_memory=True,
-                memory_scopes=["episodic"],
-                tags=["ephemeral"],
-            ),
+        router=_session_router(
+            tmp_path,
+            """
+session:
+  id: qq:user:10001
+  template: qq_user
+frontstage:
+  profile: aca
+surfaces:
+  message.private:
+    routing:
+      default:
+        profile: aca
+    admission:
+      default:
+        mode: respond
+    persistence:
+      default:
+        persist_event: false
+    extraction:
+      default:
+        extract_to_memory: true
+        scopes: [episodic]
+        tags: [ephemeral]
+""",
         ),
         thread_manager=thread_manager,
         run_manager=run_manager,
@@ -289,7 +345,6 @@ async def test_runtime_app_skips_event_log_when_event_policy_disables_persist() 
     await gateway.handler(_event())
 
     run = next(iter(run_manager._runs.values()))
-    assert run.metadata["event_policy_id"] == "no-log"
     assert run.metadata["event_extract_to_memory"] is True
     assert run.metadata["event_memory_scopes"] == ["episodic"]
     assert await channel_event_store.get_thread_events("qq:user:10001") == []

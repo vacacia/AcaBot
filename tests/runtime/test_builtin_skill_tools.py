@@ -1,20 +1,11 @@
 from pathlib import Path
 
 from acabot.config import Config
-from acabot.runtime import (
-    AgentProfile,
-    ComputerPolicyDecision,
-    ComputerRuntime,
-    ComputerRuntimeConfig,
-    FileSystemSkillPackageLoader,
-    RuntimePluginManager,
-    SkillCatalog,
-    SkillToolPlugin,
-    ToolBroker,
-)
+from acabot.runtime import AgentProfile, ComputerPolicyDecision, ComputerRuntime, ComputerRuntimeConfig, SkillCatalog, ToolBroker
+from acabot.runtime.builtin_tools.skills import BuiltinSkillToolSurface
+from acabot.runtime.skills import FileSystemSkillPackageLoader
 
 from .test_model_agent_runtime import _context
-from .test_outbox import FakeGateway
 
 
 def _fixtures_root() -> Path:
@@ -36,18 +27,19 @@ def _runtime(tmp_path: Path) -> ComputerRuntime:
     )
 
 
-async def test_skill_tool_visible_when_profile_has_visible_skills(tmp_path: Path) -> None:
+def _broker_with_builtin_skill_tool(tmp_path: Path) -> tuple[ToolBroker, ComputerRuntime]:
     catalog = _catalog()
+    computer_runtime = _runtime(tmp_path)
     broker = ToolBroker(skill_catalog=catalog)
-    manager = RuntimePluginManager(
-        config=Config({}),
-        gateway=FakeGateway(),
-        tool_broker=broker,
-        computer_runtime=_runtime(tmp_path),
+    BuiltinSkillToolSurface(
         skill_catalog=catalog,
-        plugins=[SkillToolPlugin()],
-    )
-    await manager.ensure_started()
+        computer_runtime=computer_runtime,
+    ).register(broker)
+    return broker, computer_runtime
+
+
+async def test_builtin_skill_tool_visible_when_profile_has_visible_skills(tmp_path: Path) -> None:
+    broker, _ = _broker_with_builtin_skill_tool(tmp_path)
 
     visible = broker.visible_tools(
         AgentProfile(
@@ -73,19 +65,8 @@ async def test_skill_tool_visible_when_profile_has_visible_skills(tmp_path: Path
     assert "sample_configured_skill" in visible[0].description
 
 
-async def test_skill_tool_reads_visible_skill_and_marks_loaded(tmp_path: Path) -> None:
-    catalog = _catalog()
-    computer_runtime = _runtime(tmp_path)
-    broker = ToolBroker(skill_catalog=catalog)
-    manager = RuntimePluginManager(
-        config=Config({}),
-        gateway=FakeGateway(),
-        tool_broker=broker,
-        computer_runtime=computer_runtime,
-        skill_catalog=catalog,
-        plugins=[SkillToolPlugin()],
-    )
-    await manager.ensure_started()
+async def test_builtin_skill_tool_reads_visible_skill_and_marks_loaded(tmp_path: Path) -> None:
+    broker, computer_runtime = _broker_with_builtin_skill_tool(tmp_path)
 
     ctx = _context()
     ctx.profile = AgentProfile(
@@ -110,18 +91,8 @@ async def test_skill_tool_reads_visible_skill_and_marks_loaded(tmp_path: Path) -
     ]
 
 
-async def test_skill_tool_rejects_invisible_skill(tmp_path: Path) -> None:
-    catalog = _catalog()
-    broker = ToolBroker(skill_catalog=catalog)
-    manager = RuntimePluginManager(
-        config=Config({}),
-        gateway=FakeGateway(),
-        tool_broker=broker,
-        computer_runtime=_runtime(tmp_path),
-        skill_catalog=catalog,
-        plugins=[SkillToolPlugin()],
-    )
-    await manager.ensure_started()
+async def test_builtin_skill_tool_rejects_invisible_skill(tmp_path: Path) -> None:
+    broker, _ = _broker_with_builtin_skill_tool(tmp_path)
 
     ctx = _context()
     ctx.profile = AgentProfile(
@@ -141,19 +112,8 @@ async def test_skill_tool_rejects_invisible_skill(tmp_path: Path) -> None:
     assert result.raw["reason"] == "skill_not_assigned"
 
 
-async def test_skill_tool_respects_world_visible_skills(tmp_path: Path) -> None:
-    catalog = _catalog()
-    computer_runtime = _runtime(tmp_path)
-    broker = ToolBroker(skill_catalog=catalog)
-    manager = RuntimePluginManager(
-        config=Config({}),
-        gateway=FakeGateway(),
-        tool_broker=broker,
-        computer_runtime=computer_runtime,
-        skill_catalog=catalog,
-        plugins=[SkillToolPlugin()],
-    )
-    await manager.ensure_started()
+async def test_builtin_skill_tool_respects_world_visible_skills(tmp_path: Path) -> None:
+    broker, computer_runtime = _broker_with_builtin_skill_tool(tmp_path)
 
     ctx = _context()
     ctx.profile = AgentProfile(
@@ -194,19 +154,44 @@ async def test_skill_tool_respects_world_visible_skills(tmp_path: Path) -> None:
     assert allowed.raw["skill_name"] == "sample_configured_skill"
 
 
-async def test_skill_tool_disappears_when_skills_root_is_hidden(tmp_path: Path) -> None:
-    catalog = _catalog()
-    computer_runtime = _runtime(tmp_path)
-    broker = ToolBroker(skill_catalog=catalog)
-    manager = RuntimePluginManager(
-        config=Config({}),
-        gateway=FakeGateway(),
-        tool_broker=broker,
-        computer_runtime=computer_runtime,
-        skill_catalog=catalog,
-        plugins=[SkillToolPlugin()],
+async def test_builtin_skill_tool_disappears_when_visible_skills_is_explicitly_empty(tmp_path: Path) -> None:
+    broker, computer_runtime = _broker_with_builtin_skill_tool(tmp_path)
+
+    ctx = _context()
+    ctx.profile = AgentProfile(
+        agent_id="aca",
+        name="Aca",
+        prompt_ref="prompt/default",
+        default_model="test-model",
+        skills=["sample_configured_skill"],
     )
-    await manager.ensure_started()
+    ctx.computer_policy_decision = ComputerPolicyDecision(
+        actor_kind="frontstage_agent",
+        backend="host",
+        allow_exec=True,
+        allow_sessions=True,
+        roots={
+            "workspace": {"visible": True},
+            "skills": {"visible": True},
+            "self": {"visible": True},
+        },
+        visible_skills=[],
+    )
+    await computer_runtime.prepare_run_context(ctx)
+
+    tool_runtime = broker.build_tool_runtime(ctx)
+    result = await broker.execute(
+        tool_name="skill",
+        arguments={"name": "sample_configured_skill"},
+        ctx=broker._build_execution_context(ctx),
+    )
+
+    assert "skill" not in [tool.name for tool in tool_runtime.tools]
+    assert '"error": "Tool not enabled for current run: skill"' in str(result.llm_content)
+
+
+async def test_builtin_skill_tool_disappears_when_skills_root_is_hidden(tmp_path: Path) -> None:
+    broker, computer_runtime = _broker_with_builtin_skill_tool(tmp_path)
 
     ctx = _context()
     ctx.profile = AgentProfile(

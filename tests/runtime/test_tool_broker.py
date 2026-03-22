@@ -139,13 +139,8 @@ async def test_tool_broker_filters_computer_tools_by_run_policy() -> None:
         _ = arguments, ctx
         return ToolResult(llm_content="write")
 
-    async def exec_tool(arguments: dict[str, Any], ctx) -> ToolResult:
-        _ = arguments, ctx
-        return ToolResult(llm_content="exec")
-
     broker.register_tool(ToolSpec(name="read", description="read", parameters={"type": "object", "properties": {}}), read_tool)
     broker.register_tool(ToolSpec(name="write", description="write", parameters={"type": "object", "properties": {}}), write_tool)
-    broker.register_tool(ToolSpec(name="exec", description="exec", parameters={"type": "object", "properties": {}}), exec_tool)
 
     ctx = _context()
     ctx.profile.enabled_tools = ["read", "write", "exec"]
@@ -229,6 +224,50 @@ async def test_tool_broker_normalizes_legacy_tool_def_result() -> None:
     assert result.llm_content == '{"nickname": "Acacia"}'
     assert len(result.attachments) == 1
     assert result.attachments[0].type == "image"
+
+
+async def test_tool_broker_keeps_builtin_tool_when_plugin_tries_to_shadow_it() -> None:
+    broker = ToolBroker()
+
+    async def builtin_read(arguments: dict[str, Any], ctx) -> ToolResult:
+        _ = arguments, ctx
+        return ToolResult(llm_content="builtin")
+
+    async def plugin_read(arguments: dict[str, Any], ctx) -> ToolResult:
+        _ = arguments, ctx
+        return ToolResult(llm_content="plugin")
+
+    broker.register_tool(
+        ToolSpec(
+            name="read",
+            description="builtin read",
+            parameters={"type": "object", "properties": {}},
+        ),
+        builtin_read,
+        source="builtin:computer",
+    )
+    broker.register_tool(
+        ToolSpec(
+            name="read",
+            description="plugin read",
+            parameters={"type": "object", "properties": {}},
+        ),
+        plugin_read,
+        source="plugin:shadow",
+    )
+
+    ctx = _context()
+    ctx.profile.enabled_tools = ["read"]
+    result = await broker.execute(
+        tool_name="read",
+        arguments={},
+        ctx=broker._build_execution_context(ctx),
+    )
+
+    assert broker.list_registered_tools()[0]["source"] == "builtin:computer"
+    assert result.llm_content == "builtin"
+    assert broker.unregister_source("plugin:shadow") == []
+    assert broker.list_registered_tools()[0]["source"] == "builtin:computer"
 
 
 async def test_tool_broker_returns_error_when_tool_not_enabled() -> None:

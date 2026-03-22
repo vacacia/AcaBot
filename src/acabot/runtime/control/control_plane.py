@@ -63,9 +63,7 @@ from ..memory.file_backed import StickyNotesSource
 from ..storage.threads import ThreadManager
 from ..tool_broker import ToolBroker
 from .model_ops import RuntimeModelControlOps
-from .bot_shell import BotShellControlOps
 from .reference_ops import RuntimeReferenceControlOps
-from .session_shell import SessionShellControlOps
 from .snapshots import (
     ActiveRunSnapshot,
     AgentSkillSnapshot,
@@ -90,8 +88,6 @@ class RuntimeControlPlane:
     当前暴露:
     - `get_status`
     - `reload_plugins`
-    - `switch_thread_agent`
-    - `clear_thread_agent_override`
     - `show_memory`
 
     后续 `/status`, `/reload_plugin`, WebUI 都应优先通过这层进入 runtime.
@@ -169,16 +165,6 @@ class RuntimeControlPlane:
             computer_runtime=computer_runtime,
         )
         self.reference_ops = RuntimeReferenceControlOps(reference_backend=reference_backend)
-        self.bot_shell_ops = BotShellControlOps(
-            config_control_plane=config_control_plane,
-            model_ops=self.model_ops,
-            profile_registry=profile_registry,
-        )
-        self.session_shell_ops = SessionShellControlOps(
-            config_control_plane=config_control_plane,
-            model_ops=self.model_ops,
-            profile_registry=profile_registry,
-        )
 
     async def get_status(self) -> RuntimeStatusSnapshot:
         """读取当前 runtime 的最小状态快照.
@@ -245,45 +231,6 @@ class RuntimeControlPlane:
             self_id=str(getattr(gateway, "_self_id", "") or ""),
             supports_call_api=callable(getattr(gateway, "call_api", None)),
             token_configured=bool(str(getattr(gateway, "token", "") or "")),
-        )
-
-    async def switch_thread_agent(
-        self,
-        *,
-        thread_id: str,
-        agent_id: str,
-    ) -> AgentSwitchSnapshot:
-        """返回 thread agent override 已删除的提示.
-
-        Args:
-            thread_id: 目标 thread 标识.
-            agent_id: 请求切换到的 agent 标识.
-
-        Returns:
-            AgentSwitchSnapshot: 固定返回不支持.
-        """
-
-        _ = agent_id
-        return AgentSwitchSnapshot(
-            ok=False,
-            thread_id=thread_id,
-            message="thread agent override removed; edit session config instead",
-        )
-
-    async def clear_thread_agent_override(self, *, thread_id: str) -> AgentSwitchSnapshot:
-        """返回 thread agent override 已删除的提示.
-
-        Args:
-            thread_id: 目标 thread 标识.
-
-        Returns:
-            AgentSwitchSnapshot: 固定返回不支持.
-        """
-
-        return AgentSwitchSnapshot(
-            ok=False,
-            thread_id=thread_id,
-            message="thread agent override removed; edit session config instead",
         )
 
     async def show_memory(
@@ -413,66 +360,6 @@ class RuntimeControlPlane:
                 }
             )
         return items
-
-    async def list_binding_rules(self) -> list[dict[str, object]]:
-        if self.config_control_plane is None:
-            return []
-        return self.config_control_plane.list_binding_rules()
-
-    async def get_binding_rule(self, rule_id: str) -> dict[str, object] | None:
-        if self.config_control_plane is None:
-            return None
-        return self.config_control_plane.get_binding_rule(rule_id)
-
-    async def upsert_binding_rule(self, payload: dict[str, object]) -> dict[str, object]:
-        if self.config_control_plane is None:
-            raise RuntimeError("config control plane unavailable")
-        return await self.config_control_plane.upsert_binding_rule(payload)
-
-    async def delete_binding_rule(self, rule_id: str) -> bool:
-        if self.config_control_plane is None:
-            return False
-        return await self.config_control_plane.delete_binding_rule(rule_id)
-
-    async def list_inbound_rules(self) -> list[dict[str, object]]:
-        if self.config_control_plane is None:
-            return []
-        return self.config_control_plane.list_inbound_rules()
-
-    async def get_inbound_rule(self, rule_id: str) -> dict[str, object] | None:
-        if self.config_control_plane is None:
-            return None
-        return self.config_control_plane.get_inbound_rule(rule_id)
-
-    async def upsert_inbound_rule(self, payload: dict[str, object]) -> dict[str, object]:
-        if self.config_control_plane is None:
-            raise RuntimeError("config control plane unavailable")
-        return await self.config_control_plane.upsert_inbound_rule(payload)
-
-    async def delete_inbound_rule(self, rule_id: str) -> bool:
-        if self.config_control_plane is None:
-            return False
-        return await self.config_control_plane.delete_inbound_rule(rule_id)
-
-    async def list_event_policies(self) -> list[dict[str, object]]:
-        if self.config_control_plane is None:
-            return []
-        return self.config_control_plane.list_event_policies()
-
-    async def get_event_policy(self, policy_id: str) -> dict[str, object] | None:
-        if self.config_control_plane is None:
-            return None
-        return self.config_control_plane.get_event_policy(policy_id)
-
-    async def upsert_event_policy(self, payload: dict[str, object]) -> dict[str, object]:
-        if self.config_control_plane is None:
-            raise RuntimeError("config control plane unavailable")
-        return await self.config_control_plane.upsert_event_policy(payload)
-
-    async def delete_event_policy(self, policy_id: str) -> bool:
-        if self.config_control_plane is None:
-            return False
-        return await self.config_control_plane.delete_event_policy(policy_id)
 
     async def reload_runtime_configuration(self) -> dict[str, object]:
         if self.config_control_plane is None:
@@ -639,7 +526,7 @@ class RuntimeControlPlane:
         return await self.put_soul_file(name=name, content=content)
 
     async def post_self_file(self, *, name: str, content: str = "") -> dict[str, object]:
-        """兼容旧接口: 创建 soul 文件."""
+        """创建 soul 文件."""
 
         return await self.post_soul_file(name=name, content=content)
 
@@ -754,13 +641,13 @@ class RuntimeControlPlane:
         )
 
     async def get_bot(self) -> dict[str, object]:
-        """返回默认 Bot 的产品壳对象.
+        """返回 bot shell 已下线的提示.
 
         Returns:
-            默认 Bot 的产品字段对象.
+            dict[str, object]: 固定抛错, 提示 bot shell 正在重设计.
         """
 
-        return await self.bot_shell_ops.get_bot()
+        raise NotImplementedError("bot shell redesign pending; legacy /api/bot removed")
 
     async def get_admins(self) -> dict[str, object]:
         """返回共享管理员设置.
@@ -769,32 +656,33 @@ class RuntimeControlPlane:
             只包含共享管理员列表的设置对象.
         """
 
-        bot = await self.bot_shell_ops.get_bot()
-        return {
-            "admin_actor_ids": [
-                str(value)
-                for value in list(bot.get("admin_actor_ids", []) or [])
-                if str(value)
-            ]
-        }
+        if self.profile_registry is None:
+            return {"admin_actor_ids": sorted(self.app.backend_admin_actor_ids)}
+        agent_id = str(getattr(self.profile_registry, "default_agent_id", "") or "")
+        profile = self.profile_registry.profiles.get(agent_id)
+        if profile is None:
+            return {"admin_actor_ids": sorted(self.app.backend_admin_actor_ids)}
+        profile_admins = [
+            str(value)
+            for value in list(profile.config.get("admin_actor_ids", []) or [])
+            if str(value)
+        ]
+        if profile_admins:
+            return {"admin_actor_ids": profile_admins}
+        return {"admin_actor_ids": sorted(self.app.backend_admin_actor_ids)}
 
     async def put_bot(self, *, payload: dict[str, object]) -> dict[str, object]:
-        """保存默认 Bot 的产品壳对象.
+        """返回 bot shell 已下线的提示.
 
         Args:
             payload: 前端提交的 Bot 设置.
 
         Returns:
-            保存后的默认 Bot 对象.
+            dict[str, object]: 固定抛错.
         """
 
-        saved = await self.bot_shell_ops.upsert_bot(payload=dict(payload))
-        self.app.backend_admin_actor_ids = {
-            str(value)
-            for value in list(saved.get("admin_actor_ids", []) or [])
-            if str(value)
-        }
-        return saved
+        _ = payload
+        raise NotImplementedError("bot shell redesign pending; legacy /api/bot removed")
 
     async def put_admins(self, *, payload: dict[str, object]) -> dict[str, object]:
         """保存共享管理员设置.
@@ -806,17 +694,23 @@ class RuntimeControlPlane:
             保存后的管理员设置对象.
         """
 
-        saved = await self.bot_shell_ops.upsert_admins(
-            [
-                str(value)
-                for value in list(payload.get("admin_actor_ids", []) or [])
-                if str(value)
-            ]
-        )
-        admin_actor_ids = {str(value) for value in saved if str(value)}
+        if self.profile_registry is None or self.config_control_plane is None:
+            raise RuntimeError("profile/config control plane unavailable")
+        agent_id = str(getattr(self.profile_registry, "default_agent_id", "") or "")
+        profile = self.config_control_plane.get_profile(agent_id)
+        if profile is None:
+            raise RuntimeError("default bot profile unavailable")
+        updated = dict(profile)
+        updated["admin_actor_ids"] = [
+            str(value)
+            for value in list(payload.get("admin_actor_ids", []) or [])
+            if str(value)
+        ]
+        saved = await self.config_control_plane.upsert_profile(updated)
+        admin_actor_ids = {str(value) for value in list(saved.get("admin_actor_ids", []) or []) if str(value)}
         self.app.backend_admin_actor_ids = admin_actor_ids
         return {
-            "admin_actor_ids": [str(value) for value in saved if str(value)],
+            "admin_actor_ids": [str(value) for value in list(saved.get("admin_actor_ids", []) or []) if str(value)],
         }
 
     async def list_sessions(self) -> dict[str, object]:
@@ -829,7 +723,7 @@ class RuntimeControlPlane:
         raise NotImplementedError("session shell redesign pending; legacy /api/sessions removed")
 
     async def get_session(self, *, channel_scope: str) -> dict[str, object] | None:
-        """返回 session shell 已下线的提示.
+        """返回 session shell 的当前状态提示.
 
         Args:
             channel_scope: Session 对应的 channel scope.
@@ -839,10 +733,10 @@ class RuntimeControlPlane:
         """
 
         _ = channel_scope
-        raise NotImplementedError("session shell redesign pending; legacy /api/sessions removed")
+        raise NotImplementedError("session shell redesign pending")
 
     async def put_session(self, *, channel_scope: str, payload: dict[str, object]) -> dict[str, object]:
-        """返回 session shell 已下线的提示.
+        """返回 session shell 的当前状态提示.
 
         Args:
             channel_scope: Session 对应的 channel scope.
@@ -853,7 +747,7 @@ class RuntimeControlPlane:
         """
 
         _ = channel_scope, payload
-        raise NotImplementedError("session shell redesign pending; legacy /api/sessions removed")
+        raise NotImplementedError("session shell redesign pending")
 
     async def get_backend_status(self) -> BackendStatusSnapshot:
         """返回后台维护面的最小状态快照."""
@@ -1103,28 +997,6 @@ class RuntimeControlPlane:
 
     async def list_workspaces(self) -> list[WorkspaceState]:
         return await self.workspace_ops.list_workspaces()
-
-    async def list_workspace_entries(
-        self,
-        *,
-        thread_id: str,
-        relative_path: str = "/",
-    ) -> list[WorkspaceFileEntry]:
-        return await self.workspace_ops.list_workspace_entries(
-            thread_id=thread_id,
-            relative_path=relative_path,
-        )
-
-    async def read_workspace_file(
-        self,
-        *,
-        thread_id: str,
-        relative_path: str,
-    ) -> str:
-        return await self.workspace_ops.read_workspace_file(
-            thread_id=thread_id,
-            relative_path=relative_path,
-        )
 
     async def list_workspace_sessions(self, *, thread_id: str) -> list[str]:
         return await self.workspace_ops.list_workspace_sessions(thread_id=thread_id)

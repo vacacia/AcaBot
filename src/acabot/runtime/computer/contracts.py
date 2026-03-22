@@ -183,6 +183,51 @@ class WorkspaceFileEntry:
 
 
 @dataclass(slots=True)
+class WorldPathReadResult:
+    """一次 world path 读取后返回给前台工具的结果.
+
+    Attributes:
+        world_path (str): 本次读取的 world path.
+        text (str): 文本文件时返回的文字内容. 图片文件时留空.
+        content (str | list[dict[str, Any]]): 真正发回给模型看的内容.
+        mime_type (str): 当前文件识别出来的 MIME 类型. 文本文件时为空.
+    """
+
+    world_path: str
+    text: str
+    content: str | list[dict[str, Any]]
+    mime_type: str = ""
+
+
+@dataclass(slots=True)
+class WorldPathWriteResult:
+    """一次 world path 文本写入后返回给前台工具的结果.
+
+    Attributes:
+        world_path (str): 本次写入的 world path.
+        size_bytes (int): 本次写入的 UTF-8 字节数.
+    """
+
+    world_path: str
+    size_bytes: int
+
+
+@dataclass(slots=True)
+class WorldPathEditResult:
+    """一次 world path 文字替换后返回给前台工具的结果.
+
+    Attributes:
+        world_path (str): 本次编辑的 world path.
+        diff (str): 这次编辑的 diff 文本.
+        first_changed_line (int): 第一处改动所在的行号, 从 1 开始.
+    """
+
+    world_path: str
+    diff: str
+    first_changed_line: int
+
+
+@dataclass(slots=True)
 class AttachmentSnapshot:
     """已经索引或落地的 inbound attachment 状态快照."""
 
@@ -272,36 +317,133 @@ class ComputerBackend(Protocol):
     kind: str
 
     async def ensure_workspace(self, *, host_path: Path, visible_root: str) -> None:
+        """确保当前 workspace 的 backend 承载已经准备好.
+
+        Args:
+            host_path (Path): 当前 workspace 的宿主机根目录.
+            visible_root (str): 当前执行视图里的工作根路径.
+        """
+
         ...
 
-    async def list_entries(self, *, host_path: Path, relative_path: str) -> list[WorkspaceFileEntry]:
+    async def list_entries(self, *, path: Path) -> list[WorkspaceFileEntry]:
+        """列出指定路径下的目录项.
+
+        Args:
+            path (Path): 当前 backend 允许访问的宿主机路径.
+
+        Returns:
+            list[WorkspaceFileEntry]: 当前路径下的目录项.
+        """
+
         ...
 
-    async def read_text(self, *, host_path: Path, relative_path: str) -> str:
+    async def read_text(self, *, path: Path) -> str:
+        """读取一个 UTF-8 文本文件.
+
+        Args:
+            path (Path): 当前 backend 允许访问的宿主机文件路径.
+
+        Returns:
+            str: 文件文本内容.
+        """
+
         ...
 
-    async def write_text(self, *, host_path: Path, relative_path: str, content: str) -> None:
+    async def read_bytes(self, *, path: Path) -> bytes:
+        """读取一个文件的原始字节.
+
+        Args:
+            path (Path): 当前 backend 允许访问的宿主机文件路径.
+
+        Returns:
+            bytes: 文件的原始字节.
+        """
+
         ...
 
-    async def grep_text(self, *, host_path: Path, relative_path: str, pattern: str) -> list[dict[str, Any]]:
+    async def write_text(self, *, path: Path, content: str) -> None:
+        """写入一个 UTF-8 文本文件.
+
+        Args:
+            path (Path): 当前 backend 允许访问的宿主机文件路径.
+            content (str): 要写入的文本.
+        """
+
         ...
 
-    async def exec_once(self, *, host_path: Path, command: str, policy: ComputerPolicy) -> CommandExecutionResult:
+    async def exec_once(
+        self,
+        *,
+        host_path: Path,
+        command: str,
+        policy: ComputerPolicy,
+        timeout: int | None = None,
+    ) -> CommandExecutionResult:
+        """执行一次性 shell 命令.
+
+        Args:
+            host_path (Path): 当前命令的工作目录.
+            command (str): 要执行的命令.
+            policy (ComputerPolicy): 当前有效 computer policy.
+            timeout (int | None): 可选超时秒数.
+
+        Returns:
+            CommandExecutionResult: 执行结果.
+        """
+
         ...
 
     async def open_session(self, *, session: CommandSession, policy: ComputerPolicy) -> None:
+        """打开一个持久 shell session.
+
+        Args:
+            session (CommandSession): 当前 session 对象.
+            policy (ComputerPolicy): 当前有效 computer policy.
+        """
+
         ...
 
     async def write_session(self, session: CommandSession, command: str) -> None:
+        """向现有 shell session 写入输入.
+
+        Args:
+            session (CommandSession): 目标 session.
+            command (str): 要写入的文本.
+        """
+
         ...
 
     async def close_session(self, session: CommandSession) -> None:
+        """关闭一个已存在的 shell session.
+
+        Args:
+            session (CommandSession): 目标 session.
+        """
+
         ...
 
     async def stop_workspace_sandbox(self, *, thread_id: str, host_path: Path) -> None:
+        """停止当前 workspace 对应的 sandbox.
+
+        Args:
+            thread_id (str): 当前 thread ID.
+            host_path (Path): 当前 workspace 根目录.
+        """
+
         ...
 
     async def get_sandbox_status(self, *, thread_id: str, host_path: Path) -> WorkspaceSandboxStatus:
+        """读取当前 workspace 对应的 sandbox 状态.
+
+        Args:
+            thread_id (str): 当前 thread ID.
+            host_path (Path): 当前 workspace 根目录.
+
+        Returns:
+            WorkspaceSandboxStatus: 当前 sandbox 状态摘要.
+        """
+
         ...
 
 
@@ -318,6 +460,20 @@ class AttachmentResolver(Protocol):
         config: ComputerRuntimeConfig,
         gateway: Any | None,
     ) -> AttachmentSnapshot:
+        """把一个附件引用落地成宿主机文件.
+
+        Args:
+            attachment (EventAttachment): 当前附件对象.
+            event_id (str): 当前事件 ID.
+            attachment_index (int): 当前附件在事件里的顺序.
+            target_dir (Path): 附件最终写入目录.
+            config (ComputerRuntimeConfig): computer 运行配置.
+            gateway (Any | None): 当前 gateway, 需要时可用于二次解析.
+
+        Returns:
+            AttachmentSnapshot: 当前附件的落地结果.
+        """
+
         ...
 
 
@@ -326,7 +482,18 @@ def parse_computer_policy(
     *,
     defaults: ComputerPolicy | None = None,
 ) -> ComputerPolicy:
-    """把原始配置归一化成 ComputerPolicy."""
+    """把原始配置归一化成 `ComputerPolicy`.
+
+    Args:
+        raw (object): 原始配置值. 允许为空或 mapping.
+        defaults (ComputerPolicy | None): 为空字段使用的兜底 policy.
+
+    Returns:
+        ComputerPolicy: 归一化后的 computer policy.
+
+    Raises:
+        ValueError: `raw` 既不是空值也不是 mapping 时抛出.
+    """
 
     base = defaults or ComputerPolicy()
     if raw is None or raw == "":
@@ -365,6 +532,9 @@ __all__ = [
     "ExecutionView",
     "ResolvedWorldPath",
     "WorldInputBundle",
+    "WorldPathEditResult",
+    "WorldPathReadResult",
+    "WorldPathWriteResult",
     "WorldRootPolicy",
     "WorldView",
     "WorkspaceFileEntry",

@@ -1,10 +1,9 @@
 """runtime.computer.workspace 管理 Work World 使用的宿主机目录布局.
 
-这个模块专门回答一件事:
 
-- `/workspace`、`/skills`、`/self` 在宿主机上分别落到哪里
+`/workspace`、`/skills`、`/self` 在宿主机上分别落到哪里
 
-它不负责决定当前 actor 能不能看见这些 root, 也不负责做 shell 执行.
+不负责当前 actor 能不能看见这些 root, 不负责做 shell 执行.
 那些事情由 `runtime.computer.world` 和 `runtime.computer.runtime` 负责.
 """
 
@@ -38,15 +37,6 @@ class WorkspaceManager:
         self.config = config
         self.root_dir = Path(config.root_dir).expanduser()
         self.skill_catalog_dir = Path(config.skill_catalog_dir).expanduser()
-
-    def visible_root(self) -> str:
-        """返回旧接口仍在使用的默认可见根.
-
-        Returns:
-            str: 当前默认可见根. 现阶段仍然返回 `/workspace`.
-        """
-
-        return "/workspace"
 
     def workspace_dir_for_thread(self, thread_id: str) -> Path:
         """返回指定 thread 的宿主机 workspace 根目录.
@@ -212,30 +202,6 @@ class WorkspaceManager:
         self_dir = self.self_dir_for_scope(self_scope_id)
         self_dir.mkdir(parents=True, exist_ok=True)
         return self_dir
-
-    def resolve_relative_path(self, thread_id: str, relative_path: str) -> Path:
-        """在当前 thread workspace 内解析相对路径.
-
-        Args:
-            thread_id (str): 目标 thread ID.
-            relative_path (str): workspace 内相对路径.
-
-        Returns:
-            Path: 解析后的宿主机路径.
-
-        Raises:
-            ValueError: 路径越界时抛出.
-        """
-
-        base = self.workspace_dir_for_thread(thread_id).resolve()
-        requested = (base / relative_path.lstrip("/")).resolve()
-        if not is_subpath(requested, base):
-            raise ValueError("path escapes workspace")
-        if requested.is_symlink():
-            real = requested.resolve()
-            if not is_subpath(real, base):
-                raise ValueError("symlink escapes workspace")
-        return requested
 
     def list_workspaces(self) -> list[Path]:
         """列出当前存在的全部 thread workspaces.

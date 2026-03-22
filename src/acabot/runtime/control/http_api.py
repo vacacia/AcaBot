@@ -427,9 +427,9 @@ class RuntimeHttpApiServer:
             return self._ok(self._await(self.control_plane.list_subagent_executors()))
 
         if segments == ["bot"] and method == "GET":
-            return self._ok(self._await(self.control_plane.get_bot()))
+            return 501, {"ok": False, "error": "bot shell redesign pending"}
         if segments == ["bot"] and method == "PUT":
-            return self._ok(self._await(self.control_plane.put_bot(payload=payload)))
+            return 501, {"ok": False, "error": "bot shell redesign pending"}
         if segments == ["admins"] and method == "GET":
             return self._ok(self._await(self.control_plane.get_admins()))
         if segments == ["admins"] and method == "PUT":
@@ -476,9 +476,6 @@ class RuntimeHttpApiServer:
                     return 404, {"ok": False, "error": "prompt not found"}
                 return self._ok({"deleted": True})
 
-        if len(segments) >= 2 and segments[0] == "rules":
-            return 501, {"ok": False, "error": "legacy rule API removed"}
-
         if segments == ["runtime", "reload-config"] and method == "POST":
             return self._ok(self._await(self.control_plane.reload_runtime_configuration()))
         if segments == ["runtime", "threads"] and method == "GET":
@@ -521,18 +518,6 @@ class RuntimeHttpApiServer:
                         )
                     )
                 )
-            if len(segments) == 4 and segments[3] == "agent-override":
-                if method == "POST":
-                    return self._ok(
-                        self._await(
-                            self.control_plane.switch_thread_agent(
-                                thread_id=thread_id,
-                                agent_id=str(payload.get("agent_id", "") or ""),
-                            )
-                        )
-                    )
-                if method == "DELETE":
-                    return self._ok(self._await(self.control_plane.clear_thread_agent_override(thread_id=thread_id)))
 
         if segments == ["runtime", "runs"] and method == "GET":
             statuses = [item for item in query.get("status", []) if item]
@@ -682,28 +667,6 @@ class RuntimeHttpApiServer:
         payload: dict[str, Any],
     ) -> tuple[int, dict[str, Any]]:
         thread_id = segments[0]
-        if len(segments) == 2 and segments[1] == "entries" and method == "GET":
-            return self._ok(
-                self._await(
-                    self.control_plane.list_workspace_entries(
-                        thread_id=thread_id,
-                        relative_path=_query_value(query, "path", "/") or "/",
-                    )
-                )
-            )
-        if len(segments) == 2 and segments[1] == "file" and method == "GET":
-            return self._ok(
-                {
-                    "thread_id": thread_id,
-                    "relative_path": _query_value(query, "path", ""),
-                    "content": self._await(
-                        self.control_plane.read_workspace_file(
-                            thread_id=thread_id,
-                            relative_path=_query_value(query, "path", ""),
-                        )
-                    ),
-                }
-            )
         if len(segments) == 2 and segments[1] == "attachments" and method == "GET":
             return self._ok(self._await(self.control_plane.list_workspace_attachments(thread_id=thread_id)))
         if len(segments) == 2 and segments[1] == "sessions" and method == "GET":
@@ -796,36 +759,6 @@ class RuntimeHttpApiServer:
                 )
             )
         return 404, {"ok": False, "error": "unknown reference endpoint"}
-
-    def _handle_rule_group(
-        self,
-        *,
-        method: str,
-        segments: list[str],
-        list_fn,
-        get_fn,
-        put_fn,
-        delete_fn,
-        id_key: str,
-        payload: dict[str, Any],
-    ) -> tuple[int, dict[str, Any]]:
-        if not segments and method == "GET":
-            return self._ok(self._await(list_fn()))
-        if len(segments) == 1:
-            entry_id = segments[0]
-            if method == "GET":
-                result = self._await(get_fn(entry_id))
-                if result is None:
-                    return 404, {"ok": False, "error": "entry not found"}
-                return self._ok(result)
-            if method == "PUT":
-                return self._ok(self._await(put_fn({**payload, id_key: entry_id})))
-            if method == "DELETE":
-                deleted = self._await(delete_fn(entry_id))
-                if not deleted:
-                    return 404, {"ok": False, "error": "entry not found"}
-                return self._ok({"deleted": True})
-        return 404, {"ok": False, "error": "unknown rules endpoint"}
 
     def _ok(self, data: Any) -> tuple[int, dict[str, Any]]:
         return 200, {"ok": True, "data": _to_jsonable(data)}

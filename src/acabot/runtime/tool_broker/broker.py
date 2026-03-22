@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from inspect import isawaitable
 from typing import Any
@@ -27,6 +28,8 @@ from .contracts import (
     ToolResult,
 )
 from .policy import AllowAllToolPolicy, InMemoryToolAudit, ToolAudit, ToolPolicy
+
+logger = logging.getLogger("acabot.runtime.tool_broker")
 
 
 class ToolBroker:
@@ -69,6 +72,27 @@ class ToolBroker:
         source: str = "runtime",
         metadata: dict[str, Any] | None = None,
     ) -> None:
+        """注册一条工具定义.
+
+        Args:
+            spec: 工具 schema.
+            handler: 工具执行入口.
+            source: 当前工具来源.
+            metadata: 附加元数据.
+        """
+
+        existing = self._tools.get(spec.name)
+        if existing is not None:
+            existing_is_builtin = str(existing.source).startswith("builtin:")
+            new_is_builtin = str(source).startswith("builtin:")
+            if existing_is_builtin and not new_is_builtin:
+                logger.warning(
+                    "Ignore tool registration that would shadow builtin tool: name=%s source=%s existing_source=%s",
+                    spec.name,
+                    source,
+                    existing.source,
+                )
+                return
         self._tools[spec.name] = RegisteredTool(
             spec=spec,
             handler=handler,
@@ -222,7 +246,7 @@ class ToolBroker:
         return tool_names
 
     def _allowed_tool_names_for_run(self, ctx: RunContext) -> list[str]:
-        """按当前 run 的有效 computer policy 过滤工具名列表.
+        """按当前 run 的真实上下文过滤工具名列表.
 
         Args:
             ctx: 当前 run 的执行上下文.
@@ -231,27 +255,32 @@ class ToolBroker:
             list[str]: 当前 run 真正可见的工具名列表.
         """
 
-        tool_names = self._allowed_tool_names(ctx.profile)
-        skills_visible = True
-        if ctx.world_view is not None:
-            skills_policy = ctx.world_view.root_policies.get("skills")
-            skills_visible = bool(skills_policy is not None and skills_policy.visible)
-        if not skills_visible:
+        tool_names: list[str] = []
+        for tool_name in ctx.profile.enabled_tools:
+            if tool_name in tool_names:
+                continue
+            tool_names.append(tool_name)
+
+        run_visible_skills = self._visible_skills_for_run(ctx)
+        if run_visible_skills:
+            if "skill" in self._tools and "skill" not in tool_names:
+                tool_names.append("skill")
+        else:
             tool_names = [tool_name for tool_name in tool_names if tool_name != "skill"]
-        if (
-            skills_visible
-            and ctx.world_view is not None
-            and ctx.world_view.visible_skill_names
-            and "skill" in self._tools
-            and "skill" not in tool_names
-        ):
-            tool_names.append("skill")
+
+        if self._should_expose_delegate_tool(ctx.profile) and "delegate_subagent" not in tool_names:
+            tool_names.append("delegate_subagent")
+        if self._should_expose_backend_bridge_tool(ctx.profile) and "ask_backend" not in tool_names:
+            tool_names.append("ask_backend")
+
         if ctx.workspace_state is None:
             return tool_names
         allowed = set(ctx.workspace_state.available_tools)
-        return [tool_name for tool_name in tool_names if tool_name in allowed or tool_name not in {
-            "read", "write", "ls", "grep", "exec", "bash_open", "bash_write", "bash_read", "bash_close"
-        }]
+        return [
+            tool_name
+            for tool_name in tool_names
+            if tool_name in allowed or tool_name not in {"read", "write", "edit", "bash"}
+        ]
 
     def _should_expose_skill_tool(self, profile: AgentProfile) -> bool:
         if self.skill_catalog is None:

@@ -1,6 +1,6 @@
 """runtime.app 实现新的最小应用组装入口.
 
-RuntimeApp 的职责是把 gateway 事件接到新的 runtime 主线上, 不再让旧 Pipeline 直接暴露
+RuntimeApp 的职责是把 gateway 事件接到正式 runtime 主线上.
 """
 
 from __future__ import annotations
@@ -519,46 +519,6 @@ class RuntimeApp:
         if decision.persistence_decision is not None:
             return decision.persistence_decision.persist_event
         return bool(decision.metadata.get("event_persist", True))
-
-    # region override decision
-    @staticmethod
-    def _apply_thread_agent_override(
-        decision: RouteDecision,
-        thread: ThreadState,
-    ) -> RouteDecision:
-        """把 thread-local agent override 应用到当前 route decision.
-
-        Args:
-            decision: router 产出的原始 RouteDecision.
-            thread: 当前 run 使用的 ThreadState.
-
-        Returns:
-            应用 override 后的 RouteDecision. 未声明 override 时返回原对象.
-        """
-
-        # 有没有手动指定的命令
-        override_agent_id = str(thread.metadata.get("thread_agent_override", "") or "")
-        if not override_agent_id:
-            return decision
-        # override + 留痕
-        logger.debug(
-            "Thread agent override applied: thread=%s original_agent=%s override_agent=%s",
-            thread.thread_id,
-            decision.agent_id,
-            override_agent_id,
-        )
-        return replace(
-            decision,
-            agent_id=override_agent_id,
-            metadata={
-                **dict(decision.metadata),
-                "binding_kind": "thread_override",
-                "binding_rule_id": "",
-                "binding_priority": 1_000_000,
-                "binding_match_keys": ["thread_id"],
-                "binding_override_agent_id": override_agent_id,
-            },
-        )
 
     # region recovery
     async def recover_active_runs(self) -> RecoveryReport:

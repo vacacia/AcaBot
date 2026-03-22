@@ -1,12 +1,10 @@
 from pathlib import Path
+
 import pytest
 
 from acabot.runtime import (
     AgentProfile,
     ChainedPromptLoader,
-    FileSystemBindingLoader,
-    FileSystemEventPolicyLoader,
-    FileSystemInboundRuleLoader,
     FileSystemProfileLoader,
     FileSystemPromptLoader,
     RouteDecision,
@@ -127,54 +125,6 @@ def test_filesystem_profile_loader_loads_yaml_profiles(tmp_path: Path) -> None:
     assert profiles["aca"].skills == ["reference_lookup", "excel_processing"]
 
 
-def test_filesystem_profile_loader_rejects_legacy_skill_assignments_with_delegation_fields(tmp_path: Path) -> None:
-    profiles_dir = tmp_path / "profiles"
-    profiles_dir.mkdir()
-    (profiles_dir / "aca.yaml").write_text(
-        "\n".join(
-            [
-                "name: Aca FS",
-                "skill_assignments:",
-                "  - skill_name: reference_lookup",
-                "    delegate_agent_id: worker",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    loader = FileSystemProfileLoader(
-        profiles_dir,
-        default_model="fallback-model",
-    )
-
-    with pytest.raises(ValueError, match="Legacy skill_assignments"):
-        loader.load_all()
-
-
-def test_filesystem_profile_loader_migrates_legacy_skill_assignments(tmp_path: Path) -> None:
-    profiles_dir = tmp_path / "profiles"
-    profiles_dir.mkdir()
-    (profiles_dir / "aca.yaml").write_text(
-        "\n".join(
-            [
-                "name: Aca FS",
-                "skill_assignments:",
-                "  - skill_name: reference_lookup",
-                "  - excel_processing",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    loader = FileSystemProfileLoader(
-        profiles_dir,
-        default_model="fallback-model",
-    )
-
-    profiles = loader.load_all()
-
-    assert profiles["aca"].skills == ["reference_lookup", "excel_processing"]
-    assert "skill_assignments" not in profiles["aca"].config
-
-
 def test_filesystem_profile_loader_rejects_non_string_skill_entries(tmp_path: Path) -> None:
     profiles_dir = tmp_path / "profiles"
     profiles_dir.mkdir()
@@ -195,108 +145,3 @@ def test_filesystem_profile_loader_rejects_non_string_skill_entries(tmp_path: Pa
 
     with pytest.raises(ValueError, match="Skill must be a string"):
         loader.load_all()
-
-
-def test_filesystem_binding_loader_loads_yaml_rules(tmp_path: Path) -> None:
-    bindings_dir = tmp_path / "bindings"
-    bindings_dir.mkdir()
-    (bindings_dir / "group.yaml").write_text(
-        "\n".join(
-            [
-                "agent_id: group",
-                "priority: 40",
-                "match:",
-                "  channel_scope: qq:group:20002",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (bindings_dir / "notice.yaml").write_text(
-        "\n".join(
-            [
-                "rules:",
-                "  - agent_id: notice",
-                "    priority: 80",
-                "    match:",
-                "      event_type: member_join",
-                "  - rule_id: mention",
-                "    agent_id: group",
-                "    match:",
-                "      targets_self: true",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    loader = FileSystemBindingLoader(bindings_dir)
-
-    rules = loader.load_all()
-
-    assert [rule["rule_id"] for rule in rules] == [
-        "fs:group",
-        "fs:notice:0",
-        "mention",
-    ]
-    assert rules[0]["match"]["channel_scope"] == "qq:group:20002"
-    assert rules[1]["match"]["event_type"] == "member_join"
-    assert rules[2]["match"]["targets_self"] is True
-
-
-def test_filesystem_inbound_rule_loader_loads_rule_files(tmp_path: Path) -> None:
-    inbound_dir = tmp_path / "inbound_rules"
-    inbound_dir.mkdir()
-    (inbound_dir / "mentions.yaml").write_text(
-        "\n".join(
-            [
-                "run_mode: record_only",
-                "match:",
-                "  event_type: message",
-                "  targets_self: true",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    loader = FileSystemInboundRuleLoader(inbound_dir)
-
-    rules = loader.load_all()
-
-    assert rules == [
-        {
-            "rule_id": "fs:mentions",
-            "run_mode": "record_only",
-            "match": {
-                "event_type": "message",
-                "targets_self": True,
-            },
-        }
-    ]
-
-
-def test_filesystem_event_policy_loader_loads_rule_list(tmp_path: Path) -> None:
-    policies_dir = tmp_path / "event_policies"
-    policies_dir.mkdir()
-    (policies_dir / "notice.yaml").write_text(
-        "\n".join(
-            [
-                "rules:",
-                "  - policy_id: poke-memory",
-                "    match:",
-                "      event_type: poke",
-                "    persist_event: false",
-                "    extract_to_memory: true",
-                "  - match:",
-                "      notice_type: member_join",
-                "    tags:",
-                "      - notice",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    loader = FileSystemEventPolicyLoader(policies_dir)
-
-    rules = loader.load_all()
-
-    assert rules[0]["policy_id"] == "poke-memory"
-    assert rules[0]["extract_to_memory"] is True
-    assert rules[1]["policy_id"] == "fs:notice:1"
-    assert rules[1]["match"]["notice_type"] == "member_join"
-    assert rules[1]["tags"] == ["notice"]

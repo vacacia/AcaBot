@@ -35,27 +35,6 @@ class RuntimeWorkspaceControlOps:
             return []
         return await self.computer_runtime.list_workspaces()
 
-    async def list_workspace_entries(
-        self,
-        *,
-        thread_id: str,
-        relative_path: str = "/",
-    ) -> list[WorkspaceFileEntry]:
-        if self.computer_runtime is None:
-            return []
-        return await self.computer_runtime.list_workspace_entries(
-            thread_id=thread_id,
-            relative_path=relative_path,
-        )
-
-    async def read_workspace_file(self, *, thread_id: str, relative_path: str) -> str:
-        if self.computer_runtime is None:
-            raise RuntimeError("computer runtime unavailable")
-        return await self.computer_runtime.read_workspace_file(
-            thread_id=thread_id,
-            relative_path=relative_path,
-        )
-
     async def list_workspace_sessions(self, *, thread_id: str) -> list[str]:
         if self.computer_runtime is None:
             return []

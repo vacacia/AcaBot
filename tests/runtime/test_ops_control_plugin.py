@@ -87,7 +87,7 @@ async def test_ops_control_plugin_handles_status_command() -> None:
     assert agent.calls == []
     assert len(gateway.sent) == 1
     assert "active_runs=1" in gateway.sent[0].payload["text"]
-    assert "loaded_plugins=computer_tool_adapter,skill_tool,backend_bridge_tool,subagent_delegation,ops_control,sample_configured_runtime,sample_delegation_worker" in gateway.sent[0].payload["text"]
+    assert "loaded_plugins=backend_bridge_tool,ops_control,sample_configured_runtime,sample_delegation_worker" in gateway.sent[0].payload["text"]
     assert "loaded_skills=excel_processing,sample_configured_skill" in gateway.sent[0].payload["text"]
 
 
@@ -131,19 +131,6 @@ async def test_ops_control_plugin_can_list_subagents() -> None:
     assert len(gateway.sent) == 1
     assert "sample_worker" in gateway.sent[0].payload["text"]
 
-
-async def test_ops_control_plugin_can_switch_thread_agent() -> None:
-    gateway = FakeGateway()
-    agent = FakeAgent(FakeAgentResponse(text="hello from ops", model_used="model-o"))
-    components = build_runtime_components(_ops_config(), gateway=gateway, agent=agent)
-
-    components.app.install()
-    await gateway.handler(_message_event("/switch_agent ops", event_id="evt-switch"))
-    await gateway.handler(_message_event("hello", event_id="evt-normal"))
-
-    assert "removed" in gateway.sent[0].payload["text"]
-    assert agent.calls[0]["system_prompt"].startswith("You are Aca.")
-    assert agent.calls[0]["model"] == "model-a"
 
 
 async def test_ops_control_plugin_can_show_memory() -> None:

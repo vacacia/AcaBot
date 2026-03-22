@@ -473,12 +473,6 @@ runtime:
       default_model: "test-model"
   prompts:
     prompt/default: "hello"
-  binding_rules:
-    - rule_id: "private-default"
-      priority: 10
-      match:
-        channel_scope: "qq:user:10001"
-      agent_id: "aca"
   webui:
     enabled: {str(webui_enabled).lower()}
     host: "127.0.0.1"
@@ -566,7 +560,7 @@ runtime:
     assert components.app.backend_admin_actor_ids == {"qq:private:2"}
 
 
-async def test_runtime_config_control_plane_upserts_profile_prompt_and_rule(tmp_path: Path) -> None:
+async def test_runtime_config_control_plane_upserts_profile_and_prompt(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     _write_config(config_path)
     config = Config.from_file(str(config_path))
@@ -584,12 +578,11 @@ async def test_runtime_config_control_plane_upserts_profile_prompt_and_rule(tmp_
             "prompt_ref": "prompt/worker",
             "default_model": "worker-model",
             "enabled_tools": ["read"],
-            "skill_assignments": [{"skill_name": "sample_configured_skill"}],
+            "skills": ["sample_configured_skill"],
         }
     )
     assert profile["agent_id"] == "worker"
     assert profile["skills"] == ["sample_configured_skill"]
-    assert "skill_assignments" not in profile
     loaded = components.profile_loader.load(
         RouteDecision(
             thread_id="thread:1",
@@ -607,17 +600,6 @@ async def test_runtime_config_control_plane_upserts_profile_prompt_and_rule(tmp_
     )
     assert prompt["prompt_ref"] == "prompt/worker"
     assert components.prompt_loader.load("prompt/worker") == "you are worker"
-
-    rule = await components.control_plane.upsert_binding_rule(
-        {
-            "rule_id": "worker-channel",
-            "agent_id": "worker",
-            "priority": 20,
-            "match": {"channel_scope": "qq:group:42"},
-        }
-    )
-    assert rule["rule_id"] == "worker-channel"
-    assert components.profile_loader.get_rule("worker-channel") is not None
     assert "worker" in config_path.read_text(encoding="utf-8")
 
 
@@ -717,6 +699,7 @@ async def test_runtime_http_api_server_serves_status_and_profile_crud(tmp_path: 
             )
             assert toggled["ok"] is True
             assert any(item["path"] == first["path"] and item["enabled"] is False for item in toggled["data"]["items"])
+            assert first["name"] not in [plugin.name for plugin in components.plugin_manager.loaded]
 
         put_result = await asyncio.to_thread(
             request_json,
@@ -969,6 +952,126 @@ runtime:
         first = plugins_config["data"]["items"][0]
         assert first["name"] == "OpsControlPlugin"
         assert first["display_name"] == "Ops Control"
+        assert first["loadable"] is True
+        assert first["load_error"] == ""
+    finally:
+        await server.stop()
+
+
+async def test_runtime_http_api_server_plugin_config_put_refreshes_live_plugins(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+gateway:
+  host: "127.0.0.1"
+  port: 8080
+
+agent:
+  default_model: "test-model"
+
+runtime:
+  default_agent_id: "aca"
+  profiles:
+    aca:
+      name: "Aca"
+      prompt_ref: "prompt/default"
+      default_model: "test-model"
+  prompts:
+    prompt/default: "hello"
+  plugins:
+    - path: "acabot.runtime.plugins.ops_control:OpsControlPlugin"
+      enabled: true
+  webui:
+    enabled: true
+    host: "127.0.0.1"
+    port: 0
+""".strip(),
+        encoding="utf-8",
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    await components.plugin_manager.ensure_started()
+    assert "ops_control" in [plugin.name for plugin in components.plugin_manager.loaded]
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+
+        toggled = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/system/plugins/config",
+            method="PUT",
+            payload={
+                "items": [
+                    {
+                        "path": "acabot.runtime.plugins.ops_control:OpsControlPlugin",
+                        "enabled": False,
+                    }
+                ]
+            },
+        )
+        assert toggled["ok"] is True
+        assert "ops_control" not in [plugin.name for plugin in components.plugin_manager.loaded]
+    finally:
+        await server.stop()
+
+
+async def test_runtime_http_api_server_marks_broken_plugin_paths_in_config_view(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+gateway:
+  host: "127.0.0.1"
+  port: 8080
+
+agent:
+  default_model: "test-model"
+
+runtime:
+  default_agent_id: "aca"
+  profiles:
+    aca:
+      name: "Aca"
+      prompt_ref: "prompt/default"
+      default_model: "test-model"
+  prompts:
+    prompt/default: "hello"
+  plugins:
+    - path: "acabot.runtime.plugins.computer_tool_adapter:ComputerToolAdapterPlugin"
+      enabled: true
+  webui:
+    enabled: true
+    host: "127.0.0.1"
+    port: 0
+""".strip(),
+        encoding="utf-8",
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+
+        plugins_config = await asyncio.to_thread(request_json, base_url, "/api/system/plugins/config")
+        assert plugins_config["ok"] is True
+        first = plugins_config["data"]["items"][0]
+        assert first["loadable"] is False
+        assert "computer_tool_adapter" in first["path"]
+        assert str(first["load_error"]).strip() != ""
     finally:
         await server.stop()
 
@@ -1041,7 +1144,7 @@ async def test_runtime_http_api_server_serves_product_shaped_bot_settings(tmp_pa
             "agent_id": "aca",
             "name": "Aca",
             "prompt_ref": "prompt/default",
-            "default_model": "legacy-model",
+            "default_model": "main-model",
             "admin_actor_ids": ["qq:private:123456"],
             "enabled_tools": ["read"],
             "skills": ["sample_configured_skill"],
@@ -1124,17 +1227,17 @@ async def test_runtime_http_api_server_serves_product_shaped_bot_settings(tmp_pa
             base_url,
             "/api/rules/inbound",
         )
-        assert status == 501
+        assert status == 404
         assert inbound_before["ok"] is False
 
-        bot = await asyncio.to_thread(request_json, base_url, "/api/bot")
-        assert bot["ok"] is True
-        default_input_event_types = {
-            item["event_type"]
-            for item in bot["data"]["default_input"]["rules"]
-        }
-        assert "message_mention" not in default_input_event_types
-        assert "message_reply" not in default_input_event_types
+        status, bot = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/bot",
+        )
+        assert status == 501
+        assert bot["ok"] is False
+        assert "redesign pending" in bot["error"]
 
         admins = await asyncio.to_thread(request_json, base_url, "/api/admins")
         assert admins["ok"] is True
@@ -1161,7 +1264,7 @@ async def test_runtime_http_api_server_serves_product_shaped_bot_settings(tmp_pa
         assert profile["admin_actor_ids"] == ["qq:private:123456", "napcat:private:42"]
         assert profile["name"] == "Aca"
         assert profile["prompt_ref"] == "prompt/default"
-        assert profile["default_model"] == "legacy-model"
+        assert profile["default_model"] == "main-model"
         assert "summary_model_preset_id" not in profile
         assert profile["enabled_tools"] == ["read"]
         assert profile["skills"] == ["sample_configured_skill"]
@@ -1175,7 +1278,7 @@ async def test_runtime_http_api_server_serves_product_shaped_bot_settings(tmp_pa
             base_url,
             "/api/rules/inbound",
         )
-        assert status == 501
+        assert status == 404
         assert inbound_after["ok"] is False
 
         bindings = await components.control_plane.list_model_bindings()
@@ -1191,7 +1294,7 @@ async def test_runtime_http_api_server_serves_product_shaped_bot_settings(tmp_pa
         await server.stop()
 
 
-async def test_runtime_http_api_server_marks_legacy_session_and_rule_apis_unimplemented(tmp_path: Path) -> None:
+async def test_runtime_http_api_server_reports_unimplemented_or_unknown_shell_endpoints(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     _write_config(config_path, webui_enabled=True, port=0)
     config = Config.from_file(str(config_path))
@@ -1234,22 +1337,21 @@ async def test_runtime_http_api_server_marks_legacy_session_and_rule_apis_unimpl
         assert status == 501
         assert session_put["ok"] is False
 
-        status, inbound_rules = await asyncio.to_thread(
+        status, missing_rules_surface = await asyncio.to_thread(
             request_json_with_status,
             base_url,
             "/api/rules/inbound",
         )
-        assert status == 501
-        assert inbound_rules["ok"] is False
-        assert "legacy rule API removed" in inbound_rules["error"]
+        assert status == 404
+        assert missing_rules_surface["ok"] is False
 
-        status, event_policies = await asyncio.to_thread(
+        status, missing_policies_surface = await asyncio.to_thread(
             request_json_with_status,
             base_url,
             "/api/rules/event-policies",
         )
-        assert status == 501
-        assert event_policies["ok"] is False
+        assert status == 404
+        assert missing_policies_surface["ok"] is False
     finally:
         await server.stop()
 

@@ -31,10 +31,15 @@ from acabot.runtime import (
     RuntimeComponents,
     RuntimeControlPlane,
     SkillCatalog,
+    SoulSource,
     SQLiteMessageStore,
     StickyNotesService,
+    StickyNotesSource,
     SubagentDelegationBroker,
     SubagentExecutorRegistry,
+    BackendBridge,
+    BackendModeRegistry,
+    BackendSessionService,
 )
 
 
@@ -308,6 +313,7 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
 
     skill_catalog = SkillCatalog()
     executor_registry = SubagentExecutorRegistry()
+    memory_store = InMemoryMemoryStore()
 
     return RuntimeComponents(
         gateway=FakeGateway(),
@@ -316,13 +322,15 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
         run_manager=None,  # type: ignore[arg-type]
         channel_event_store=InMemoryChannelEventStore(),
         message_store=InMemoryMessageStore(),
-        memory_store=InMemoryMemoryStore(),
-        sticky_notes=StickyNotesService(store=InMemoryMemoryStore()),
+        memory_store=memory_store,
+        soul_source=SoulSource(root_dir="/tmp/acabot-test-soul"),
+        sticky_notes_source=StickyNotesSource(root_dir="/tmp/acabot-test-sticky-notes"),
+        sticky_notes=StickyNotesService(store=memory_store),
         skill_catalog=skill_catalog,
         subagent_executor_registry=executor_registry,
         subagent_delegator=SubagentDelegationBroker(
-            skill_catalog=skill_catalog,
             executor_registry=executor_registry,
+            default_agent_id="aca",
         ),
         subagent_execution_service=LocalSubagentExecutionService(
             thread_manager=None,  # type: ignore[arg-type]
@@ -357,6 +365,8 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
         approval_resumer=NoopApprovalResumer(),
         outbox=None,  # type: ignore[arg-type]
         pipeline=None,  # type: ignore[arg-type]
+        backend_bridge=BackendBridge(session=BackendSessionService()),
+        backend_mode_registry=BackendModeRegistry(),
         app=app,
     )
 

@@ -37,14 +37,7 @@ from .records import (
     ThreadRecord,
     ThreadState,
 )
-from .routing import (
-    AgentProfile,
-    BindingRule,
-    EventPolicy,
-    EventPolicyDecision,
-    InboundRule,
-    RouteDecision,
-)
+from .routing import AgentProfile, RouteDecision
 from .session_config import (
     AdmissionDecision,
     AdmissionDomainConfig,
@@ -76,7 +69,6 @@ __all__ = [
     "ApprovalDecision",
     "ApprovalDecisionResult",
     "ApprovalRequired",
-    "BindingRule",
     "ComputerDomainConfig",
     "ComputerPolicyDecision",
     "ContextDecision",
@@ -89,11 +81,8 @@ __all__ = [
     "DomainCase",
     "DomainConfig",
     "EventFacts",
-    "EventPolicy",
-    "EventPolicyDecision",
     "ExtractionDecision",
     "ExtractionDomainConfig",
-    "InboundRule",
     "MatchSpec",
     "MemoryCandidate",
     "MemoryEditMode",

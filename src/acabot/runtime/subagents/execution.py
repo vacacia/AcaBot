@@ -199,7 +199,7 @@ class LocalSubagentExecutionService:
             channel_scope=request.channel_scope,
             metadata={
                 "run_kind": "subagent",
-                "binding_kind": "subagent_child",
+                "route_source": "subagent_child",
                 "subagent_child_run": True,
                 "parent_run_id": request.parent_run_id,
                 "parent_thread_id": request.parent_thread_id,

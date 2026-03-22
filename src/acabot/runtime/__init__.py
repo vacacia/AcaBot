@@ -10,8 +10,9 @@ Runtime 层是将 AcaBot 各大组件拼装起来
 3. 交互与沙箱 (Tools & Compute): `ToolBroker` (工具收发), `ComputerService` (终端执行与工作区隔离)
 4. 身份与委派 (Identity & Delegation): `AgentProfile` (人格设定), `SubagentExecutionService` (主副 Agent 委派)
 
-由于依赖反转, `computer` 作为物理沙箱抽象在此处定义
-而将沙箱暴漏为 LLM 工具的具体适配器逻辑位于 `runtime.plugins.computer_tool_adapter`。
+由于依赖反转, `computer` 作为物理沙箱抽象在此处定义.
+前台基础工具的注册入口位于 `runtime.builtin_tools`.
+runtime 扩展插件位于 `runtime.plugins`.
 """
 
 from .agent_runtime import AgentRuntime
@@ -45,6 +46,9 @@ from .computer import (
     ComputerPolicy,
     ComputerRuntime,
     DockerSandboxBackend,
+    WorldPathEditResult,
+    WorldPathReadResult,
+    WorldPathWriteResult,
     HostComputerBackend,
     RemoteComputerBackend,
     WorkspaceFileEntry,
@@ -74,7 +78,6 @@ from .control.control_plane import (
     SubagentExecutorSnapshot,
 )
 from .control.snapshots import BackendStatusSnapshot
-from .control.event_policy import EventPolicyRegistry
 from .storage.event_store import InMemoryChannelEventStore
 from .memory.memory_broker import (
     MemoryBlock,
@@ -131,7 +134,6 @@ from .contracts import (
     ApprovalRequired,
     ApprovalDecisionResult,
     AgentRuntimeResult,
-    BindingRule,
     ChannelEventRecord,
     ComputerDomainConfig,
     ComputerPolicyDecision,
@@ -142,11 +144,8 @@ from .contracts import (
     DomainCase,
     DomainConfig,
     EventFacts,
-    EventPolicy,
-    EventPolicyDecision,
     ExtractionDecision,
     ExtractionDomainConfig,
-    InboundRule,
     MatchSpec,
     MemoryCandidate,
     MemoryEditMode,
@@ -196,20 +195,14 @@ from .plugin_manager import (
 )
 from .plugins import (
     BackendBridgeToolPlugin,
-    ComputerToolAdapterPlugin,
     NapCatToolsPlugin,
     OpsControlPlugin,
     ReferenceToolsPlugin,
-    SkillToolPlugin,
     StickyNotesPlugin,
-    SubagentDelegationPlugin,
 )
 from .control.profile_loader import (
     AgentProfileRegistry,
     ChainedPromptLoader,
-    FileSystemBindingLoader,
-    FileSystemEventPolicyLoader,
-    FileSystemInboundRuleLoader,
     FileSystemProfileLoader,
     FileSystemPromptLoader,
     ProfileLoader,
@@ -218,7 +211,7 @@ from .control.profile_loader import (
     StaticProfileLoader,
     StaticPromptLoader,
 )
-from .control.session_loader import SessionConfigLoader
+from .control.session_loader import ConfigBackedSessionConfigLoader, SessionConfigLoader, StaticSessionConfigLoader
 from .control.session_runtime import SessionRuntime
 from .references import (
     LocalReferenceBackend,
@@ -235,7 +228,7 @@ from .references import (
     ReferenceSpace,
 )
 from .memory.retrieval_planner import PromptAssemblyConfig, RetrievalPlanner
-from .router import InboundRuleRegistry, RuntimeRouter
+from .router import RuntimeRouter
 from .soul import SoulSource
 from .storage.runs import InMemoryRunManager, RunManager, StoreBackedRunManager
 from .skills import FileSystemSkillPackageLoader
@@ -302,7 +295,6 @@ __all__ = [
     "ApprovalDecisionResult",
     "ApprovalResumeResult",
     "ApprovalResumer",
-    "BindingRule",
     "ChainedPromptLoader",
     "ChannelEventRecord",
     "ChannelEventStore",
@@ -312,6 +304,9 @@ __all__ = [
     "ComputerRuntimeConfig",
     "ComputerPolicy",
     "ComputerRuntime",
+    "WorldPathEditResult",
+    "WorldPathReadResult",
+    "WorldPathWriteResult",
     "RuntimeConfigControlPlane",
     "RuntimeHttpApiServer",
     "ContextCompactionConfig",
@@ -338,14 +333,9 @@ __all__ = [
     "BackendBridgeToolPlugin",
     "build_runtime_components",
     "EventFacts",
-    "EventPolicy",
-    "EventPolicyDecision",
-    "EventPolicyRegistry",
     "ExtractionDecision",
     "ExtractionDomainConfig",
     "SoulSource",
-    "InboundRule",
-    "InboundRuleRegistry",
     "InMemoryChannelEventStore",
     "InMemoryRunManager",
     "InMemoryMessageStore",
@@ -358,9 +348,6 @@ __all__ = [
     "MessageResolutionService",
     "FileSystemProfileLoader",
     "FileSystemPromptLoader",
-    "FileSystemBindingLoader",
-    "FileSystemInboundRuleLoader",
-    "FileSystemEventPolicyLoader",
     "MemoryBlock",
     "MemoryBroker",
     "MemoryCandidate",
@@ -450,13 +437,10 @@ __all__ = [
     "load_runtime_plugins_from_config",
     "parse_runtime_plugin_spec",
     "BackendBridgeToolPlugin",
-    "ComputerToolAdapterPlugin",
     "NapCatToolsPlugin",
     "OpsControlPlugin",
     "ReferenceToolsPlugin",
-    "SkillToolPlugin",
     "StickyNotesPlugin",
-    "SubagentDelegationPlugin",
     "RunContext",
     "RunManager",
     "RunRecord",
@@ -466,6 +450,8 @@ __all__ = [
     "RuntimeRouter",
     "SessionConfig",
     "SessionConfigLoader",
+    "ConfigBackedSessionConfigLoader",
+    "StaticSessionConfigLoader",
     "SessionLocatorResult",
     "SessionRuntime",
     "RetrievalPlan",

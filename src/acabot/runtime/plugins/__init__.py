@@ -1,25 +1,19 @@
-"""runtime.plugins 导出内置 runtime plugins.
+"""runtime.plugins 导出 runtime 的扩展插件集合.
 
-这些对象都是装配层.
-其中 computer 本体在 `runtime.computer`, 这里只导出把它接成工具的 adapter plugin.
+这里放的是会参与 plugin 生命周期的扩展能力.
+基础工具的注册入口位于 `runtime.builtin_tools`.
 """
 
 from .backend_bridge_tool import BackendBridgeToolPlugin
-from .computer_tool_adapter import ComputerToolAdapterPlugin
 from .napcat_tools import NapCatToolsPlugin
 from .ops_control import OpsControlPlugin
 from .reference_tools import ReferenceToolsPlugin
-from ..skills.tool_adapter import SkillToolPlugin
 from .sticky_notes import StickyNotesPlugin
-from .subagent_delegation import SubagentDelegationPlugin
 
 __all__ = [
     "BackendBridgeToolPlugin",
     "NapCatToolsPlugin",
-    "ComputerToolAdapterPlugin",
     "OpsControlPlugin",
     "ReferenceToolsPlugin",
-    "SkillToolPlugin",
     "StickyNotesPlugin",
-    "SubagentDelegationPlugin",
 ]

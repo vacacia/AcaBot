@@ -16,9 +16,9 @@ from ..backend.session import (
     BackendSessionService,
     ConfiguredBackendSessionService,
 )
+from ..builtin_tools import register_core_builtin_tools
 from ..control.config_control_plane import RuntimeConfigControlPlane
 from ..control.control_plane import RuntimeControlPlane
-from ..control.event_policy import EventPolicyRegistry
 from ..gateway_protocol import GatewayProtocol
 from ..inbound.image_context import ImageContextService
 from ..inbound.message_preparation import MessagePreparationService
@@ -30,9 +30,14 @@ from ..soul import SoulSource
 from ..model.model_agent_runtime import ModelAgentRuntime
 from ..outbox import Outbox
 from ..pipeline import ThreadPipeline
-from ..plugin_manager import RuntimePlugin, RuntimePluginManager, load_runtime_plugins_from_config
+from ..plugin_manager import (
+    RuntimePlugin,
+    RuntimePluginManager,
+    load_runtime_plugins_from_config,
+    load_runtime_plugins_from_config_with_failures,
+)
 from ..control.profile_loader import AgentProfileRegistry, ProfileLoader, PromptLoader, ReloadablePromptLoader
-from ..router import InboundRuleRegistry, RuntimeRouter
+from ..router import RuntimeRouter
 from ..subagents import SubagentDelegationBroker, SubagentExecutorRegistry
 from ..subagents.execution import LocalSubagentExecutionService
 from ..tool_broker import ToolBroker
@@ -56,13 +61,7 @@ from .builders import (
 from .config import resolve_runtime_path
 from .components import RuntimeComponents
 from .loaders import (
-    build_binding_rules,
-    build_event_policies,
-    build_filesystem_binding_rules,
-    build_filesystem_event_policies,
-    build_filesystem_inbound_rules,
     build_filesystem_profiles,
-    build_inbound_rules,
     build_profiles,
     build_prompt_loader,
     build_session_runtime,
@@ -79,7 +78,7 @@ def _resolve_shared_admin_actor_ids(
 
     解析顺序:
     1. 默认 Bot profile 里的 `admin_actor_ids`
-    2. legacy `runtime.backend.admin_actor_ids`
+    2. `runtime.backend.admin_actor_ids`
 
     Args:
         profiles: 当前已加载的 profile 映射.
@@ -142,27 +141,15 @@ def build_runtime_components(
     )
     profiles.update(filesystem_profiles)
     prompt_loader = ReloadablePromptLoader(build_prompt_loader(config, profiles))
-    default_agent_id = runtime_conf.get("default_agent_id", next(iter(profiles)))
-    rules = build_binding_rules(config) + build_filesystem_binding_rules(config)
-    inbound_rules = build_inbound_rules(config) + build_filesystem_inbound_rules(config)
-    event_policies = build_event_policies(config) + build_filesystem_event_policies(config)
+    default_agent_id = runtime_conf.get("default_agent_id", next(iter(profiles))) or next(iter(profiles))
 
     profile_registry = AgentProfileRegistry(
         profiles=profiles,
         default_agent_id=default_agent_id,
     )
-    for rule in rules:
-        profile_registry.add_rule(rule)
-    inbound_registry = InboundRuleRegistry(inbound_rules)
-    event_policy_registry = EventPolicyRegistry(event_policies)
-
-    use_session_runtime = bool(config.path) or "sessions_dir" in fs_conf
-    session_runtime = build_session_runtime(config) if use_session_runtime else None
+    session_runtime = build_session_runtime(config)
     runtime_router = router or RuntimeRouter(
         default_agent_id=default_agent_id,
-        decide_run_mode=None if use_session_runtime else inbound_registry.resolve,
-        resolve_agent=None if use_session_runtime else profile_registry.resolve_agent,
-        resolve_event_policy=None if use_session_runtime else event_policy_registry.resolve,
         session_runtime=session_runtime,
     )
     runtime_thread_manager = thread_manager or build_thread_manager(config)
@@ -203,6 +190,7 @@ def build_runtime_components(
         config,
         gateway=gateway,
         run_manager=runtime_run_manager,
+        skill_catalog=runtime_skill_catalog,
     )
     runtime_reference_backend = reference_backend or build_reference_backend(config)
     runtime_model_registry_manager = model_registry_manager or build_model_registry_manager(config)
@@ -210,7 +198,7 @@ def build_runtime_components(
     runtime_backend_mode_registry = BackendModeRegistry()
     backend_session_path = resolve_runtime_path(
         config,
-        backend_conf.get("session_binding_path", ".acabot-runtime/backend/session.json"),
+        backend_conf.get("session_binding_path", "backend/session.json"),
     )
     backend_binding_store = BackendSessionBindingStore(backend_session_path)
     backend_enabled = bool(backend_conf.get("enabled", False))
@@ -258,8 +246,19 @@ def build_runtime_components(
     )
     runtime_tool_broker.skill_catalog = runtime_skill_catalog
     runtime_tool_broker.backend_bridge = runtime_backend_bridge
+    register_core_builtin_tools(
+        tool_broker=runtime_tool_broker,
+        computer_runtime=runtime_computer_runtime,
+        skill_catalog=runtime_skill_catalog,
+        subagent_delegator=runtime_subagent_delegator,
+    )
     builtin_plugins = build_builtin_runtime_plugins(profiles)
-    configured_plugins = plugins if plugins is not None else load_runtime_plugins_from_config(config)
+    failed_plugin_import_paths: list[str] = []
+    configured_plugins = plugins
+    if configured_plugins is None:
+        configured_plugins, failed_plugin_import_paths = load_runtime_plugins_from_config_with_failures(config)
+    if plugin_manager is not None and getattr(plugin_manager, "_started", False):
+        raise ValueError("build_runtime_components() requires a fresh RuntimePluginManager")
     runtime_plugin_manager = plugin_manager or RuntimePluginManager(
         config=config,
         gateway=gateway,
@@ -272,6 +271,16 @@ def build_runtime_components(
         builtin_plugins=builtin_plugins,
         plugins=configured_plugins,
     )
+    runtime_plugin_manager.config = config
+    runtime_plugin_manager.gateway = gateway
+    runtime_plugin_manager.tool_broker = runtime_tool_broker
+    runtime_plugin_manager.reference_backend = runtime_reference_backend
+    runtime_plugin_manager.sticky_notes = runtime_sticky_notes
+    runtime_plugin_manager.computer_runtime = runtime_computer_runtime
+    runtime_plugin_manager.skill_catalog = runtime_skill_catalog
+    runtime_plugin_manager.subagent_delegator = runtime_subagent_delegator
+    runtime_plugin_manager.configure_builtin_plugins(builtin_plugins)
+    runtime_plugin_manager.failed_plugin_import_paths = list(failed_plugin_import_paths)
     runtime_approval_resumer = approval_resumer or ToolApprovalResumer(
         thread_manager=runtime_thread_manager,
         profile_loader=profile_registry.load,
@@ -315,8 +324,6 @@ def build_runtime_components(
         config=config,
         router=runtime_router,
         profile_registry=profile_registry,
-        inbound_registry=inbound_registry,
-        event_policy_registry=event_policy_registry,
         prompt_loader=prompt_loader,
         skill_catalog=runtime_skill_catalog,
         plugin_manager=runtime_plugin_manager,
