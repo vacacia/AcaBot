@@ -113,7 +113,7 @@ backend 这块当前已经这样做了: `http_api.py` 只提供 `/api/backend/*`
 - `snapshots.py` 放 control plane 返回给 WebUI / API 的轻量快照类型
 - `ui_catalog.py` 放 WebUI 表单选项常量和目录选项 helper
 - `model_ops.py` 放模型注册表相关控制面操作
-- `workspace_ops.py` 放 workspace / sandbox / computer override 相关控制面操作
+- `workspace_ops.py` 放 workspace、sandbox、attachments 和 mirrored skills 相关控制面操作
 - `reference_ops.py` 放 reference 检索和写入相关控制面操作
 
 所以如果你只是要改状态返回结构，优先看 `snapshots.py`；如果只是要改 WebUI 下拉框和选项枚举，优先看 `ui_catalog.py`，不要第一反应就去给 `control_plane.py` 继续加体积。
@@ -122,15 +122,14 @@ backend 这块当前已经这样做了: `http_api.py` 只提供 `/api/backend/*`
 
 这个文件才是很多“配置页”背后的真源读写层。
 
-它处理的东西很多:
+它现在真正处理的东西主要是:
 
 - profiles
 - prompts
-- binding rules
-- inbound rules
-- event policies
+- gateway
+- runtime plugins
 - filesystem 配置目录
-- 热刷新相关注册表
+- session-config 驱动的 reload
 
 ### 判断一个 WebUI 功能改哪里
 

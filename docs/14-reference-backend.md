@@ -9,7 +9,9 @@
 - `src/acabot/runtime/references/`
 - `src/acabot/runtime/plugins/reference_tools.py`
 - `src/acabot/runtime/bootstrap/`
+- `src/acabot/runtime/control/reference_ops.py`
 - `src/acabot/runtime/control/control_plane.py`
+- `src/acabot/runtime/control/http_api.py`
 
 ## 先讲边界
 
@@ -123,7 +125,7 @@ reference 这套东西不是一个全局平面表。
 
 ## `ReferenceToolsPlugin` 是怎么接上的
 
-bot 现在主要通过 plugin 暴露这套能力。
+bot 现在主要还是通过 plugin 暴露这套能力。
 
 已有工具包括:
 
@@ -135,6 +137,18 @@ bot 现在主要通过 plugin 暴露这套能力。
 
 - 一个可调用的知识库能力
 - 而不是每轮自动塞给模型的 memory layer
+
+同时这条线现在不只有 plugin 工具入口。
+控制面也已经有一套单独入口：
+
+- `RuntimeReferenceControlOps`
+- `RuntimeControlPlane`
+- `RuntimeHttpApiServer` 里的 `/api/reference/*`
+
+也就是说，现在 reference 至少有两条正式入口：
+
+1. 给模型调的 plugin 工具
+2. 给本地页面和运维用的 control plane / HTTP API
 
 ## 什么时候该用 reference，不该用 memory
 
@@ -187,9 +201,10 @@ reference 更像资料库，memory 更像运行时记忆系统。
 
 这会把 reference 和 memory 的边界冲掉，也会让 prompt 失控。
 
-### 3. 只改 plugin，不看 backend
+### 3. 只改 plugin，不看 backend 和 control plane
 
-reference 工具只是入口，真正行为大多在 backend。
+reference 工具只是一个入口，真正行为大多在 backend。
+控制面和 HTTP API 现在也是正式入口，不能漏看。
 
 ### 4. 不看 tenant / space / mode
 
@@ -220,5 +235,7 @@ reference 工具只是入口，真正行为大多在 backend。
 3. `src/acabot/runtime/references/local.py`
 4. `src/acabot/runtime/references/openviking.py`
 5. `src/acabot/runtime/plugins/reference_tools.py`
-6. `src/acabot/runtime/bootstrap/`
+6. `src/acabot/runtime/control/reference_ops.py`
 7. `src/acabot/runtime/control/control_plane.py`
+8. `src/acabot/runtime/control/http_api.py`
+9. `src/acabot/runtime/bootstrap/`

@@ -1,5 +1,60 @@
 # 当前进展 Handoff
 
+## 2026-03-23 文档同步继续推进
+
+这轮又把六篇还带旧味道或缺少现状入口的活文档对到了当前代码：
+
+- `docs/07-gateway-and-channel-layer.md`
+- `docs/10-change-playbooks.md`
+- `docs/12-computer.md`
+- `docs/13-model-registry.md`
+- `docs/14-reference-backend.md`
+- `docs/16-front-back-agents-and-self-evolution.md`
+
+这次主要修掉的是六类问题：
+
+- `07` 里把 gateway 说得太单，漏了 `gateway/onebot_message.py`、`runtime/gateway_protocol.py`、`runtime/inbound/` 和 `RuntimeApp.handle_event()` 之后的实际主线
+- `10` 里还在给旧入口和旧文件指路，比如 `webui/app.js`、旧 rule 线、旧 frontstage tool 名字，现在已经全部换成当前入口：`SessionRuntime`、`builtin_tools`、`ComputerRuntime`、`runtime/inbound/`、`control_plane / http_api`
+- `12` 虽然大方向是对的，但这轮继续收紧成当前真相：前台只剩 `read / write / edit / bash`，`ComputerRuntime` 的入口、`/skills` 规则、附件 staging、控制面 workspace 能力、backend 分层都按现行代码重写了一遍
+- `13` 里还把人往不存在的 `src/acabot/webui/app.js` 带，这轮已经换成当前真实会碰到的模型控制面入口：`model_ops`、`control_plane`、`http_api`、`config_control_plane`
+- `14` 原来更偏“plugin + backend”两段式说明，这轮补上了现在已经存在的 `reference_ops`、`control_plane` 和 `/api/reference/*` 入口
+- `16` 原来更多在讲方向，这轮补上了当前已经落地的 backend 地基：`BackendBridge`、`ask_backend`、管理员 `/maintain` / `!` 入口、canonical session binding 默认路径和 `PiBackendAdapter`
+
+现在如果后面继续看平台接入、改动落点或 computer，先看这三篇新版本，不要再按旧文档里的入口和旧工具名找代码。
+
+## 2026-03-22 文档同步已经补上
+
+这轮除了代码收口, 还把几篇主文档按当前代码重新对齐了:
+
+- `docs/00-ai-entry.md`
+- `docs/01-system-map.md`
+- `docs/02-runtime-mainline.md`
+- `docs/03-data-contracts.md`
+- `docs/04-routing-and-profiles.md`
+- `docs/05-memory-and-context.md`
+- `docs/06-tools-plugins-and-subagents.md`
+- `docs/08-webui-and-control-plane.md`
+- `docs/09-config-and-runtime-files.md`
+- `docs/11-deployment-reference.md`
+- `docs/15-known-issues-and-design-gaps.md`
+- `docs/20-critical-architecture-issues.md`
+
+这次文档同步主要修了三类过时内容:
+
+- 旧 frontstage 工具面, 现在已经统一写成 `read / write / edit / bash`
+- 旧 rule 系统说法, 现在统一回到 `SessionConfig + SessionRuntime + profile/prompt`
+- 已经删掉的 adapter / plugin 文件路径, 现在都换成还存在的 builtin tool 或 runtime 入口
+
+另外, `docs/02-runtime-mainline.md` 这一篇已经整篇重写, 不再沿用旧的 router + rule 叙事, 现在直接按 `RuntimeApp -> RuntimeRouter -> SessionRuntime -> ThreadPipeline -> AgentRuntime -> Outbox` 这条现行主线来讲。
+
+`docs/03-data-contracts.md` 也已经整篇重写, 现在按“外部输入 / 会话决策 / 执行现场 / 持久化事实”这四层来整理当前契约, 不再把旧 rule 系统当成数据主线。
+
+`docs/06-tools-plugins-and-subagents.md` 也已经整篇重写, 现在优先讲清楚 tool / builtin tool / plugin / skill / subagent 的当前边界, 不再把现状、未来设想和历史包袱揉在一起。
+
+`docs/05-memory-and-context.md` 也已经整篇重写, 现在按“working memory / 事件事实 / 消息事实 / 长期记忆 / sticky notes / soul”这几层来讲, 并且已经改成当前 pipeline、retrieval planner、memory broker、structured memory 的真实链路。
+
+如果后面继续改 WebUI / control plane, 先看现在这几篇文档, 不要再按旧的 `binding / inbound / event policy` 主线理解系统。
+
 ## 2026-03-22 builtin computer tools 和 pi 对齐已经收口
 
 这轮最重要的结果已经稳定下来：

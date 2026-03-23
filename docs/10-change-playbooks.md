@@ -1,225 +1,386 @@
 # 常见改动的落点手册
 
-这一篇是给 AI 实战用的。
+这一篇不讲大原理，只讲一件事：
 
-不是讲原理，是讲“你要改这种功能时，先从哪几处下手比较不容易走偏”。
+> 你要改某类功能时，先看哪些文件，最不容易走偏。
 
-## 先说通用流程
+当前代码已经不是旧的 rule 主线了，所以这篇手册也要完全按现在的代码来。
 
-无论改哪类功能，建议先做这四步:
+## 先做这四步
 
-1. 写一句目标
-2. 列主落点文件
-3. 列会连带影响的层
-4. 确认哪些地方暂时不碰
+无论你改哪一块，先把这四步做了：
 
-很多失控的改动，都是因为上来就开始 patch，而不是先做这四步。
+1. 用一句话说清楚你想改出什么结果
+2. 先找主入口文件，不要全文搜索到哪改哪
+3. 列出会被连带影响的层
+4. 先说清楚这次不碰什么
 
-## 场景一: WebUI 控制面板
+很多失控改动，不是因为代码太复杂，而是第一步就没定边界。
 
-这是当前优先级最高的场景。
+## 场景一：平台事件翻译
+
+这种需求通常长这样：
+
+- NapCat 传来的字段没接住
+- 新 notice 类型没翻进系统
+- reply / mention / attachment 信息不完整
+- 平台原始消息和 `StandardEvent` 对不上
 
 ### 先看哪些文件
 
-- `src/acabot/webui/app.js`
+- `src/acabot/gateway/base.py`
+- `src/acabot/runtime/gateway_protocol.py`
+- `src/acabot/gateway/onebot_message.py`
+- `src/acabot/gateway/napcat.py`
+- `src/acabot/types/event.py`
+- `src/acabot/types/action.py`
+
+### 先判断你改的是哪一层
+
+#### 只改平台 JSON 到标准事件的翻译
+
+重点看：
+
+- `onebot_message.py`
+- `napcat.py`
+
+#### 需要给 runtime 多一个标准字段
+
+除了 gateway，还要一起看：
+
+- `types/event.py`
+- 后面真正消费这个字段的 runtime 模块
+
+### 最容易踩的坑
+
+- 只改 `napcat.py`，忘了 `onebot_message.py`
+- 上游字段有了，但没进 `StandardEvent`
+- 在 gateway 偷偷做业务判断
+
+## 场景二：消息进来后该怎么决定
+
+这种需求通常长这样：
+
+- 为什么这条消息走这个 profile
+- 为什么这条消息被 silent drop
+- 为什么这条消息能 respond / record_only
+- 为什么当前 run 的 computer backend / skill 可见性 / context labels 是这样
+
+### 先看哪些文件
+
+- `src/acabot/runtime/router.py`
+- `src/acabot/runtime/control/session_runtime.py`
+- `src/acabot/runtime/control/session_loader.py`
+- `src/acabot/runtime/contracts/session_config.py`
+- `src/acabot/runtime/contracts/routing.py`
+
+### 先记住当前主线
+
+现在真正的决策主线是：
+
+`StandardEvent -> SessionRuntime -> RouteDecision`
+
+不是：
+
+- binding rule
+- inbound rule
+- event policy
+
+这些旧名字已经不是现行主线了。
+
+### 最容易踩的坑
+
+- 看到“路由问题”就先去 gateway 改
+- 看到“行为不对”就先改 profile，而不是先看 `SessionRuntime`
+- 在多个地方重复发明消息决策逻辑
+
+## 场景三：前台 builtin tools / computer / Work World
+
+这种需求通常长这样：
+
+- `read / write / edit / bash` 行为不对
+- `/workspace /skills /self` 路径不对
+- 图片读取不对
+- `/skills/...` 看不见或写完不刷新
+- shell 行为和当前 world 对不上
+
+### 先看哪些文件
+
+- `src/acabot/runtime/builtin_tools/computer.py`
+- `src/acabot/runtime/computer/runtime.py`
+- `src/acabot/runtime/computer/contracts.py`
+- `src/acabot/runtime/computer/backends.py`
+- `src/acabot/runtime/computer/world.py`
+- `src/acabot/runtime/computer/workspace.py`
+- `src/acabot/runtime/tool_broker/broker.py`
+
+### 先记住现在前台工具面
+
+前台 builtin tools 现在是：
+
+- `read`
+- `write`
+- `edit`
+- `bash`
+
+不要再去找这些旧工具：
+
+- `ls`
+- `grep`
+- `exec`
+- `bash_open`
+- `bash_write`
+- `bash_read`
+- `bash_close`
+
+### 先判断你改的是哪一层
+
+#### 只是模型看到的工具 schema 或返回文案
+
+先看：
+
+- `builtin_tools/computer.py`
+
+#### 真正的读写、编辑、bash 行为
+
+先看：
+
+- `computer/runtime.py`
+
+#### 真正宿主机 / docker 怎么执行
+
+先看：
+
+- `computer/backends.py`
+
+### 最容易踩的坑
+
+- 把 builtin tool 当本体改
+- 只改 backend，不看 `ComputerRuntime`
+- 把 `/skills` 的准备逻辑又塞回 builtin surface
+
+## 场景四：当前轮消息整理、reply 图片、模型输入
+
+这种需求通常长这样：
+
+- reply 文字没进上下文
+- 图片说明没出来
+- 当前模型支持 vision，但最后 user message 没带图
+- memory 候选材料不对
+
+### 先看哪些文件
+
+- `src/acabot/runtime/inbound/message_preparation.py`
+- `src/acabot/runtime/inbound/message_resolution.py`
+- `src/acabot/runtime/inbound/message_projection.py`
+- `src/acabot/runtime/inbound/image_context.py`
+- `src/acabot/runtime/pipeline.py`
+- `src/acabot/runtime/computer/runtime.py`
+
+### 先记住边界
+
+- gateway 只负责平台翻译
+- `runtime/inbound/` 负责把这轮消息真正要用的材料补齐
+- `computer` 负责附件 staging
+- `pipeline` 负责把这些东西接到当前 run 上
+
+### 最容易踩的坑
+
+- 只改 gateway，以为图片已经“进系统了”
+- 只改 prompt，不改消息整理链
+- 直接把图片说明伪装成原始消息事实
+
+## 场景五：长期记忆、working memory、sticky notes、self
+
+这种需求通常长这样：
+
+- 当前线程上下文不对
+- 长期记忆取回不对
+- sticky notes 不生效
+- `/self` 的内容没进入当前轮
+
+### 先看哪些文件
+
+- `src/acabot/runtime/pipeline.py`
+- `src/acabot/runtime/memory/retrieval_planner.py`
+- `src/acabot/runtime/memory/memory_broker.py`
+- `src/acabot/runtime/memory/structured_memory.py`
+- `src/acabot/runtime/memory/sticky_notes.py`
+- `src/acabot/runtime/memory/file_backed/`
+- `src/acabot/runtime/soul.py`
+- `src/acabot/runtime/soul/source.py`
+- `src/acabot/runtime/storage/stores.py`
+- `src/acabot/runtime/storage/sqlite_stores.py`
+
+### 先分清四件事
+
+- `ThreadState.working_messages / working_summary`：当前线程上下文
+- `ChannelEventStore`：外部事件事实
+- `MessageStore`：已经发出去的消息事实
+- `MemoryStore`：长期记忆
+
+### 最容易踩的坑
+
+- 把 working memory 和长期记忆混起来
+- 只管写记忆，不管 retrieval
+- 直接在消息整理层写死长期记忆正文
+
+## 场景六：控制面、WebUI、配置真源
+
+这种需求通常长这样：
+
+- 本地管理页面看不到最新状态
+- 改了 profile / prompt / plugin 配置但没生效
+- workspace 页面数据不对
+- HTTP API 和页面显示不一致
+
+### 先看哪些文件
+
 - `src/acabot/runtime/control/http_api.py`
 - `src/acabot/runtime/control/control_plane.py`
+- `src/acabot/runtime/control/config_control_plane.py`
+- `src/acabot/runtime/control/workspace_ops.py`
 - `src/acabot/runtime/control/snapshots.py`
 - `src/acabot/runtime/control/ui_catalog.py`
-- `src/acabot/runtime/control/model_ops.py`
-- `src/acabot/runtime/control/workspace_ops.py`
-- `src/acabot/runtime/control/reference_ops.py`
-- `src/acabot/runtime/control/config_control_plane.py`
+- `src/acabot/webui/index.html`
+- `src/acabot/webui/assets/`
 
-### 先判断这块面板在改什么
+### 先记住当前事实
 
-#### 只读运行时状态
+- `src/acabot/webui/` 里现在是已经生成好的静态文件
+- 当前仓库里没有旧文档常写的 `src/acabot/webui/app.js`
+- `/api/sessions` 现在是 `501`
+- `/api/bot` 现在也是 `501`
 
-比如:
+所以如果你要改的是这两块，不是去补旧壳，而是要先重设计当前壳应该长什么样。
 
-- 当前连接状态
-- active runs
-- pending approvals
-- thread / memory 查询
+### 先判断你改的是哪一类
 
-这种一般落在 `RuntimeControlPlane`。
+#### 运行时状态
+
+先看：
+
+- `RuntimeControlPlane`
+- `snapshots.py`
 
 #### 持久配置
 
-比如:
+先看：
 
-- profile
-- prompt
-- rule
-- model preset
+- `RuntimeConfigControlPlane`
 
-这种一般要落在 `RuntimeConfigControlPlane`。
+#### workspace / computer 管理
 
-#### 二者混合
+先看：
 
-很多真正的控制面板都属于这种，需要前后都看。
+- `workspace_ops.py`
+- `computer/runtime.py`
 
-### 推荐改法
+### 最容易踩的坑
 
-1. 先补后端接口和数据模型
-2. 再补前端页面状态管理
-3. 最后补导航、提示文案、保存反馈
+- 只改 HTTP API，不看 control plane
+- 只改静态页面，不改配置真源
+- 继续按旧 `/api/sessions` / `/api/bot` 心智做补丁
 
-### 常见坑
+## 场景七：后台入口、`ask_backend`、后台维护模式
 
-- 只改前端，不落盘
-- 只落盘，不热刷新
-- 接口混了“当前状态”和“配置真源”
-- 没写清哪些操作要重启
+这种需求通常长这样：
 
-## 场景二: 图片转述 / VLM 接入
-
-这个需求会跨很多层，别当成“只是加个模型调用”。
+- 前台想把问题转给后台维护者
+- 后台入口消息怎么接住
+- backend session binding / backend status 为什么不对
 
 ### 先看哪些文件
 
-- `src/acabot/types/event.py`
-- `src/acabot/gateway/napcat.py`
-- `src/acabot/runtime/inbound/message_resolution.py`
-- `src/acabot/runtime/inbound/message_projection.py`
-- `src/acabot/runtime/inbound/message_preparation.py`
-- `src/acabot/runtime/inbound/image_context.py`
-- `src/acabot/runtime/pipeline.py`
-- `src/acabot/runtime/computer/`
-- `src/acabot/runtime/model/model_agent_runtime.py`
-- `src/acabot/runtime/model/model_resolution.py`
-- `src/acabot/runtime/memory/memory_broker.py`
-- `src/acabot/webui/app.js`
+- `src/acabot/runtime/plugins/backend_bridge_tool.py`
+- `src/acabot/runtime/backend/`
+- `src/acabot/runtime/app.py`
+- `src/acabot/runtime/control/control_plane.py`
+- `src/acabot/runtime/control/http_api.py`
 
-### 先回答四个设计问题
+### 先记住边界
 
-1. 图片是自动处理，还是模型按需调用
-2. 图片是远程引用直接喂模型，还是先转本地文件
-3. 结果是只用于当前轮，还是也要写入记忆
-4. 需要新增配置项吗
+- `ask_backend` 不是 `builtin:computer`
+- 它是单独的后台桥接工具
+- `RuntimeApp.handle_event()` 里还有后台入口分流
 
-### 当前项目里的实际落法
+### 最容易踩的坑
 
-现在这块已经不是“待设计”状态，而是走这条混合链:
+- 把后台维护逻辑塞进前台 builtin tool
+- 把 `ask_backend` 当成普通文件工具来改
+- 只改 backend bridge，不看 app 入口分流
 
-- `computer` 先把当前消息附件 staging 到本地
-- `MessageResolutionService` 负责把当前消息和 reply 里的可用输入拿全
-- `MessageProjectionService` 负责把这条消息变成 history 版本、model 版本和 memory 候选材料
-- `ImageContextService` 只处理图片说明和 image parts，不再自己决定 reply 拉取或 thread 投影
-- 如果当前 run 会回复，而且主模型支持 vision，再把图片本体应用到最后一条 user message
-- `reply` 图片当前轮重新取消息、重新拿图，不复用历史 caption
-- 会话历史里写的是“原始消息 + 系统补充”，不是把图片说明伪装成原始事实
-- 长期记忆模块自己决定怎样消费 memory 候选材料，不是消息整理层直接写死长期记忆文本
-- WebUI 的 Profiles / Sessions 都能配置 `image_caption.*`
+## 场景八：启动装配和默认真相
 
-如果你改的是 bot 事件响应面板, 还要记住一件事:
+这种需求通常长这样：
 
-- WebUI 里的 `message` 默认行为已经不是单行
-- 现在会拆成 `消息 @bot`、`消息 引用bot`、`消息 普通群聊`、`消息 其他`
-- 这些 UI 行背后对应的就是不同的 inbound rule match 条件
-
-所以如果以后继续改这块，优先看“现有混合链哪里要变”，不要再从零发明另一条路径。
-
-### 常见落法
-
-#### 自动预处理
-
-这就是当前 AcaBot 已经采用的落法。
-
-重点落点:
-
-- event attachments
-- `computer` staging
-- `ImageContextService`
-- pipeline 里的 working memory 投影和当前轮多模态注入
-
-#### 工具化
-
-适合“让模型自己决定要不要看图”。
-
-通常会碰:
-
-- ToolBroker
-- plugin tool 注册
-- model capability
-
-### 必看的影响面
-
-- `StandardEvent.attachments`
-- 当前模型是否支持 vision
-- prompt / messages 里怎样表达图片输入
-- MessageStore 是否要记录转述文本
-- MemoryStore 是否要记录图片摘要
-- WebUI / 配置是否要暴露开关
-
-### 最容易出错的地方
-
-- 只改 Gateway，让图片进来了，但主线根本不用
-- 只改 prompt，不处理本地附件 / URI 可达性
-- 让消息整理层直接决定长期记忆正文，结果只是把 memory policy 挪了个地方
-- 把图片说明直接当原始消息写进上下文，后面分不清什么是事实、什么是系统补充
-- 忘了不同模型对 vision 输入格式的限制
-- 忘了 `record_only` 消息也会影响 working memory，结果群聊图片上下文前后不一致
-
-## 场景三: 长期记忆重构
-
-这类改动不是“换个文案”级别，通常会动结构。
+- 为什么这个组件启动时就有
+- builtin tools 是在哪里注册的
+- plugin manager 为什么拿到这些依赖
+- pipeline、tool broker、computer runtime 是怎么连起来的
 
 ### 先看哪些文件
 
-- `src/acabot/runtime/memory/memory_broker.py`
-- `src/acabot/runtime/memory/structured_memory.py`
-- `src/acabot/runtime/storage/stores.py`
-- `src/acabot/runtime/storage/memory_store.py`
-- `src/acabot/runtime/storage/sqlite_stores.py`
-- `src/acabot/runtime/control/event_policy.py`
-- `src/acabot/runtime/pipeline.py`
+- `src/acabot/runtime/bootstrap/__init__.py`
+- `src/acabot/runtime/bootstrap/builders.py`
+- `src/acabot/runtime/app.py`
 
-### 先确认重构目标
+### 最容易踩的坑
 
-长期记忆重构可能是几种完全不同的事:
+- 只看某个子模块，不看 bootstrap
+- 误把 builtin tool 当 plugin
+- 改了 builder，忘了默认装配链
 
-- 改写入策略
-- 改 retrieval 策略
-- 改 scope 设计
-- 改存储结构
-- 加向量检索
-- 加记忆编辑 / 合并 / 置信度策略
+## 最后给自己一个快速判断
 
-不先定清楚，后面很容易“看起来全都要改”。
+如果你的需求像下面这样，可以这样起手：
 
-### 推荐切入顺序
+### “平台消息长什么样？”
 
-1. 先定 `MemoryItem` 和 retrieval / write request 的契约
-2. 再定 scope 和 scope_key 规则
-3. 再定 extractor / retriever 策略
-4. 最后才改 pipeline 接线
+先看：
 
-### 最容易出错的地方
+- `gateway/`
+- `types/event.py`
 
-- 把 working memory 和长期记忆混起来
-- 只管写，不管取
-- 只改 extractor，不改 event policy
-- 只改内存实现，不改 SQLite / 控制面
+### “系统为什么这么决定？”
 
-## 快速判断“该动哪里”
+先看：
 
-### 需求像“平台事件长什么样”
+- `router.py`
+- `control/session_runtime.py`
+- `contracts/session_config.py`
 
-先看 `gateway + types`
+### “模型这轮到底能看到什么？”
 
-### 需求像“消息进来系统怎么决定”
+先看：
 
-先看 `router + profiles + event policy`
+- `pipeline.py`
+- `runtime/inbound/`
+- `memory/`
 
-### 需求像“这轮 prompt 里该塞什么”
+### “模型能调什么能力？”
 
-先看 `pipeline + retrieval + memory`
+先看：
 
-### 需求像“模型可以用什么能力”
+- `tool_broker/broker.py`
+- `builtin_tools/`
+- `computer/`
+- `plugins/backend_bridge_tool.py`
 
-先看 `tool broker + plugins + subagents`
+### “用户在本地页面上能改什么、看到什么？”
 
-### 需求像“用户怎么改配置和查看状态”
+先看：
 
-先看 `http api + control plane + webui`
+- `control/http_api.py`
+- `control/control_plane.py`
+- `control/config_control_plane.py`
+- `src/acabot/webui/`
+
+如果还是拿不准，就回到：
+
+- `docs/00-ai-entry.md`
+- `docs/01-system-map.md`
+- `docs/02-runtime-mainline.md`
+- `docs/12-computer.md`
+
+先把主线看清楚，再下手。

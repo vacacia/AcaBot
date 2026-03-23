@@ -6,7 +6,7 @@ tmp
 .codex
 .worktrees/
 
-
+docs/agent-first
 docs-branch
 
 __pycache__/

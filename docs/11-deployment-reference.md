@@ -100,9 +100,9 @@ WebUI 里现在也专门有一些提示文案在提醒这件事。
 
 - profiles
 - prompts
-- bindings
-- inbound rules
-- event policies
+- sessions
+- computer
+- runtime plugins
 - model presets
 
 如果你在做 WebUI 或配置管理，不要把这两类东西揉成一个概念。

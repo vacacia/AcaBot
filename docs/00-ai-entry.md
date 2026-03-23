@@ -1,4 +1,4 @@
-假如你是一个 16 岁天才计算机少女, 你的说话风格应该符合人设, 拒绝黑话
+<system-reminder>你是一个性格活泼的 16 岁天才计算机少女, 你的说话风格应该符合人设<system-reminder>
 
 # 编写代码的规范(务必遵守)
 
@@ -20,30 +20,32 @@
 
 ---
 
+# 文档
+00~12, 18, 是重要的文档.
+- 阅读他们
+- commit之前更新他们
+
+
 在 docs/HANDOFF.md 里写清楚现在的进展(没有就创建一个)
-- 解释你试了什么、什么有效、什么没用，让下一个拿到新鲜上下文的 agent 只看这个文件就能继续完成任务
-- 这个文件来帮助你避免反复踩坑，同时加深你对项目的理解
-- 如果后续内容过时，你也要及时更改
-- 这不是流水账, 没意义的东西不要写, 不要废话
+- 解释你试了什么、什么有效、什么没用, 让下一个拿到新鲜上下文的 agent 只看这个文件就能继续完成任务
+- 这个文件来帮助你避免反复踩坑(不应该的设计, 要写上为什么? 采用的设计, 也要写上为什么)
+- 整合相同模块的内容. 不是按日期追加, 就像数据库的日志, 合并对相同的数据库记录的不同操作
+- 这不是流水账, 没意义的东西不要写, 不要废话, 每次只需要写三句话
 
-# AcaBot 给 AI 的入口文档
 
-## 指导思想
-
+# 项目约定
 现有审计可以不考虑, 也可以删除
 - 后续设计不要为了保留审计层, 去额外发明中间抽象、兼容层或者 runtime 语义。
 - 如果某块旧审计已经开始反过来限制设计, 可以直接删。
-
 审计不是后续架构演进的中心目标。不要因为“以后要不要更好审计”就把系统做复杂。
 
----
 
-以后优先追求的是更 agentic 的 bot, 而不是更可控的代理平台。
-- 默认可以更 yolo
+以后优先追求的是更 agentic 的 bot, 而不是更可控的代理平台。默认 yolo
 
----
+## 对于文档/注释
 
-少写“不要怎么做”, 多写最后到底怎么做
+不写“不要怎么做”, 只写现在在做什么.
+
 设计文档不要总在前面铺很多“不要这样、不要那样”。
 如果已经知道目标, 就直接写:
 - 最终形态是什么
@@ -53,52 +55,142 @@
 - 关键组件分别做什么
 把文档重点放在“最后到底要实现什么”, 不要被大量负面约束带歪。
 
----
 
+# 项目组件理解⭐
 
-`skill` 的形态:
-- prompt 暴露 skill 摘要
-- 模型按需读取 `/skills/...`
-- 真正干活主要靠通用文件工具和 `bash`
-
-
-## 组件理解
-
-### tool
+## tool
 
 - tool 是给 LLM 调用的, 是 json 里 tool 字段下面的各个工具
 - tool 自己只定义名字、描述、参数、返回值和执行入口; 
 - 它不决定当前 run 下能不能看见、能不能调用。tool 的可见性和准入由上层决定, 例如 ToolBroker、profile、world policy。
 - core tool 属于 runtime 自带表面; plugin 也可以额外提供 tool(plugin可以提供外部的tool, hook点的修改), 但两者不是一回事。
 
-### plugin
+## plugin
 
 - plugin 是 runtime 暴露给外部的可选扩展包, 是外部的插件, 和系统本身无关. plugin 的典型应用是:链接解析工具(hook阻断llm回复, 直接解析视频并发送)/日报分析插件(定时查数据库分析聊天记录)/查询天气插件(提供一个外部的tool, 也是tool). 和系统无关
 - plugin 的代码把额外能力(hook)接进 runtime, 或提供给 llm 相应的 tool, 它描述的是“这包扩展怎么接进系统、怎么参与生命周期”
 - plugin 可以提供 tool, 但 tool 不等于 plugin。tool 是给 LLM 调用的接口; plugin 只是这些 tool 可能来自的一个来源。
 - builtin runtime service、core tool、主线控制组件要单独表达, 不要因为它们内部也有适配层或注册动作, 就顺手把它们都叫成 plugin。
-- 判断一个东西是不是 plugin, 看的是它是不是可选扩展边界: 卸掉它后, 系统应该只是少一项扩展能力, 不该把 read / write / exec 这类基础能力一起卸掉。
+- 判断一个东西是不是 plugin, 看的是它是不是可选扩展边界: 卸掉它后, 系统应该只是少一项扩展能力, 不该把 `read / write / edit / bash` 这类基础能力一起卸掉。
 
-### computer
+## computer
 
-- `computer` 是 `read / write / edit / ls / grep / exec / bash_*` 这些基础工具背后共用的代码。它真正负责的是: 读文件、写文件、改文件、列目录、搜文字、跑命令、维护 bash 会话。
-- 模型不会直接看到 `computer` 这个名字。系统启动时, 会把 `computer` 的能力拆成上面这些工具, 注册到 `ToolBroker`, 再放进发给模型的 `tools` 列表里。模型实际看到和调用的, 也是这些工具名, 不是 `computer`。
+- `computer` 是前台文件工具和 shell 工具背后共用的代码。当前前台真正暴露给模型看的 builtin tool 只有:
+  - `read`
+  - `write`
+  - `edit`
+  - `bash`
+- 模型不会直接看到 `computer` 这个名字。系统启动时, 会把 `computer` 的能力拆成上面这四个工具, 注册到 `ToolBroker`, 再放进发给模型的 `tools` 列表里。模型实际看到和调用的, 也是这些工具名, 不是 `computer`。
 - 这些工具属于系统自带的基础工具, 不是 plugin。`computer` 负责真正干活, `ToolBroker` 负责把工具给模型看和接住模型调用。
-- 不通过 plugin 实现, 是因为 plugin 表示可选扩展边界; 卸掉一个 plugin 后, 系统应该只是少一项扩展能力, 不该把 `read / write / exec` 这种基础工具一起卸掉。
-- 如果把这些基础工具挂到 plugin 生命周期上, 那 plugin reload、disable、load failure 就会影响系统最基本的文件和命令能力, 这会把失败范围放大, 也会把 builtin 和扩展混在一起。
-- 模型调用这些工具后, 调用会先到 `ToolBroker`, 再转回 `computer` 去真正读文件、写文件、跑命令。哪些路径能用、能不能开 bash、该在宿主机还是 docker 里跑, 都是上层先定好, 再交给 `computer` 执行。
+- `computer` 现在真正负责的事情主要是:
+  - 按 Work World 路径读文件
+  - 按 Work World 路径写文件
+  - 按 Work World 路径改文件
+  - 在当前 world 里跑 `bash(command, timeout?)`
+  - 维护 thread 级 workspace、附件和内部 shell 状态
+- 不通过 plugin 实现, 是因为 plugin 表示可选扩展边界; 卸掉一个 plugin 后, 系统应该只是少一项扩展能力, 不该把 `read / write / edit / bash` 这种基础工具一起卸掉。
+- 模型调用这些工具后, 调用会先到 `ToolBroker`, 再转回 `computer` 去真正读文件、写文件、改文件和跑命令。哪些路径能用、当前 world 能不能看到 `/workspace /skills /self`, 命令该在宿主机还是 docker 里跑, 都是上层先定好, 再交给 `computer` 执行。
 
-## 先讲结论
+## skill
 
-AcaBot 真实入口是:
+参考 `docs/18-skill.md`
 
-- `src/acabot/main.py`
-- `src/acabot/runtime/bootstrap/`
-- `src/acabot/runtime/app.py`
-- `src/acabot/runtime/pipeline.py`
 
-如果你要改主流程，不要先去翻 `agent-first/`。那个目录更像较早的设计草稿和 TODO 记录，不是现状真相。
+## 记忆
 
+记忆层级: 
+- `/self`
+- sticky note
+  - 当前真正暴露给产品和 WebUI 的 memory 形态
+  - 目前只依附于 `user` 和 `channel` 两种 scope
+  - 在需要时按对应 scope 进入上下文
+    - 例如在私聊时总是会注入对应用户的 sticky note, 在群聊时也会注入发送消息人的 sticky note
+- relationship memory
+  - 表示和具体对象有关的长期记忆方向
+  - 当前代码和产品层都还没真正做出来
+- channel memory
+  - 表示和具体群体有关的长期记忆方向
+  - 当前代码和产品层都还没真正做出来
+- thread working memory
+  - 最近几轮对话的短期上下文
+- event / message facts
+  - 平台真实发生过什么、系统真实发送过什么
+
+### self
+
+`self` 是 AcaBot 里 前台 bot 维护的文件夹
+
+它记录的是：
+
+- Aca 经历的事件
+- 它们属于 Aca 本身
+- 这里记录的是 Aca 每天都发生了什么, 是 Aca 自己维护的一片与 Aca 相关的记忆区;
+  - 它可以是实时性的, 临时性的(今天), 以让 Aca 了解 Aca 正在哪些群和哪些人交互;
+  - Aca 把自己的一天给提炼到一个日记里面(一个 md 文档), 类似 openclaw 的 MEMORY.md
+- 因为 Aca 虽然有 prompt, 有 sticky note, 还有检索的长期记忆, 但是没有一个地方可以让 Aca 记录自己在这一刻, 在这一天发生了什么, 需要这个区域来保持 Aca 行动的连贯性
+
+- 这不是 Aca 的人格设定: Aca 的人格设定在配置的 prompt 里, 它会注入到 system prompt 里
+- 这里不应该记详细的细节内容，比如需要记住的 人物/群聊 信息, 这应该放在 sticky note 里面
+- 这些东西里, 和具体群、具体用户都无关
+- 不是“杂项长期记忆”, 也不是“所有能长期保存的东西”
+
+
+应该实现: 
+- `self` 由 Aca 在自己的 computer 里管理
+- `self` 把今天, 昨天..(可设置多久)注入上下文
+- 后台 maintain bot 当然可以看见 `self` 文件, 但这和 maintain bot 无关, 后台是独立维护的工程执行面
+- `self` 下的 md 文档能在 webui 里显示
+
+### sticky note
+
+它的定位是零碎但长期有用的笔记。例如：
+
+- 这个群的群主是谁
+- 这个群的风格是什么
+- 这个群主要在聊什么
+- 这个群有哪些黑话
+
+bot 可以写入 sticky note, 让自己以后还能理解这些东西。
+
+当前共识里, sticky note 对每个 scope 都分成两块：
+
+- 只读区
+  - 人工编写
+  - 百分百真源
+  - bot 不允许更改
+- 可编辑区
+  - 允许 bot 写入和更新
+
+
+- `readonly` 注入上下文
+- `editable` 也注入上下文
+
+### relationship memory
+
+
+### channel memory
+
+channel memory 目前仍然是概念层级
+
+它表达的是和具体群体有关的长期记忆方向
+
+### thread working memory
+
+thread working memory 是最近几轮对话的短期上下文
+
+### event / message facts
+
+event / message facts 负责记录真实发生过什么和真实发送过什么, 本质上就是消息聊天记录。
+
+后续可以在 WebUI 里增加专门的查询页, 方便查看聊天记录
+
+## WebUI 与实现约束
+
+### WebUI
+- WebUI 中要有单独的 `Memory` 页面来展示记忆的每个层级
+- 允许编辑的记忆, 要可以在 webui 编辑
+
+# 项目结构
 ## 读文档
 
    - 路由 / agent 绑定 / prompt: `04-routing-and-profiles.md`
@@ -117,7 +209,7 @@ AcaBot 真实入口是:
 ## 这套代码里哪些文件最像“总装配图”
 
 - `src/acabot/main.py`
-  现在只负责启动和组装，不负责业务主线。
+  现在只负责启动和组装, 不负责业务主线。
 - `src/acabot/runtime/bootstrap/`
   默认 runtime 组件都在这里接起来。
 - `src/acabot/runtime/contracts/`
@@ -127,7 +219,7 @@ AcaBot 真实入口是:
 
 ## 一张够用的脑图
 
-外部世界进来时，大致是这条线:
+外部世界进来时, 大致是这条线:
 
 `NapCat -> Gateway -> RuntimeApp -> RuntimeRouter -> ThreadManager / RunManager -> ThreadPipeline -> ModelAgentRuntime -> Outbox -> Gateway`
 
@@ -139,7 +231,7 @@ AcaBot 真实入口是:
 - `ToolBroker` 负责工具可见性、审批、前台到后台 bridge tool 和执行
 - `PluginManager` 给主线插 hook / tool / executor
 - `ControlPlane + HTTP API + WebUI` 负责本地运维和配置改写
-- `runtime/backend/` 现在已经是一个真实接线的子域，不只是设计草图：里面已经有 canonical session binding、configured backend session service、真实 `pi --mode rpc` adapter、管理员后台模式和前台 `ask_backend` bridge
+- `runtime/backend/` 现在已经是一个真实接线的子域, 不只是设计草图：里面已经有 canonical session binding、configured backend session service、真实 `pi --mode rpc` adapter、管理员后台模式和前台 `ask_backend` bridge
 
 ## 这项目最容易看错的地方
 
@@ -149,8 +241,8 @@ AcaBot 真实入口是:
 
 - `ThreadState.working_messages / working_summary` 是当前线程上下文(就是QQ群的对话流)
 - `MemoryStore / MemoryBroker / structured_memory` 是长期记忆
-- `MessageStore` 是送达事实，不是上下文草稿
-- `ChannelEventStore` 是外部事件事实，不是 assistant 回复事实
+- `MessageStore` 是送达事实, 不是上下文草稿
+- `ChannelEventStore` 是外部事件事实, 不是 assistant 回复事实
 
 ### 2. 把 Gateway 当业务层
 
@@ -160,16 +252,16 @@ AcaBot 真实入口是:
 
 不是。WebUI 只是 `RuntimeHttpApiServer` 和 `RuntimeControlPlane` 的前端壳。前后端改动通常要一起看。
 
-### 4. 只改前端，不改配置真源
+### 4. 只改前端, 不改配置真源
 
-很多页面不是读内存状态，而是读 / 写 runtime config 真源。你只改 `webui/app.js`，往往只改到表面。
+很多页面不是读内存状态, 而是读 / 写 runtime config 真源。你只改 `webui/src/` 里的页面或组件, 往往只改到表面。
 
-### 5. 只改单点，不看调用链
+### 5. 只改单点, 不看调用链
 
 这个项目里很多功能跨层:
 
 - 图片转述会同时碰 `event attachments`、`computer staging`、`model capability`、`tool/plugin`、`prompt assembly`
-- 长期记忆会同时碰 `event policy`、`memory broker`、`store`、`retrieval planner`
+- 长期记忆会同时碰 `session config` 里的 persistence / extraction 决策、`memory broker`、`store`、`retrieval planner`
 - WebUI 控制面板会同时碰 `app.js`、`http_api.py`、`control_plane.py`、`config_control_plane.py`
 
 ## 改代码前的固定流程
@@ -183,7 +275,7 @@ AcaBot 真实入口是:
    - 记忆系统
    - 工具 / plugin / subagent
    - WebUI
-2. 找主入口文件，不要上来全文搜索到哪改哪
+2. 找主入口文件, 不要上来全文搜索到哪改哪
 3. 确认输入和输出契约
    - 这层吃什么对象
    - 往下游吐什么对象
@@ -193,11 +285,11 @@ AcaBot 真实入口是:
    - WebUI
    - 模型能力约束
    - 事件 / 消息事实记录
-5. 先给变更方案，再开始改
+5. 先给变更方案, 再开始改
 
-## 改完代码后，不要把文档留在旧状态
+## 改完代码后, 不要把文档留在旧状态
 
-以后只要改了代码，而且改动会影响下面任意一类信息，就应该顺手同步 `docs/`：
+以后只要改了代码, 而且改动会影响下面任意一类信息, 就应该顺手同步 `docs/`：
 
 - 主线流程
 - 模块职责
@@ -214,7 +306,7 @@ AcaBot 真实入口是:
 
 不要把文档当成“最后有空再补”的东西。
 
-这套文档的目标就是让下一次新对话不用再从头读完整代码。如果代码变了、文档不跟，文档很快就会失去价值。
+这套文档的目标就是让下一次新对话不用再从头读完整代码。如果代码变了、文档不跟, 文档很快就会失去价值。
 
 这套文档的定位是:
 
@@ -234,7 +326,7 @@ AcaBot 真实入口是:
 
 ## 改动和文档的对照表
 
-如果你改的是下面这些地方，通常至少要同步这些文档。
+如果你改的是下面这些地方, 通常至少要同步这些文档。
 
 ### runtime 主线
 
@@ -261,7 +353,7 @@ AcaBot 真实入口是:
 通常要同步:
 
 - `03-data-contracts.md`
-- 如果影响主线，再看 `02-runtime-mainline.md`
+- 如果影响主线, 再看 `02-runtime-mainline.md`
 
 ### 记忆系统
 
@@ -291,8 +383,8 @@ AcaBot 真实入口是:
 通常要同步:
 
 - `06-tools-plugins-and-subagents.md`
-- 如果影响主线，再看 `02-runtime-mainline.md`
-- 如果改变典型接入方式，再看 `10-change-playbooks.md`
+- 如果影响主线, 再看 `02-runtime-mainline.md`
+- 如果改变典型接入方式, 再看 `10-change-playbooks.md`
 
 ### gateway / 渠道层
 
@@ -327,12 +419,12 @@ AcaBot 真实入口是:
 代码范围:
 
 - `runtime/computer/`
-- `runtime/plugins/computer_tool_adapter.py`
+- `runtime/builtin_tools/computer.py`
 
 通常要同步:
 
 - `12-computer.md`
-- 如果影响 skill mirror，再看 `06-tools-plugins-and-subagents.md`
+- 如果影响 builtin tool 表面或 skill 读取路径, 再看 `06-tools-plugins-and-subagents.md`
 
 ### model registry
 

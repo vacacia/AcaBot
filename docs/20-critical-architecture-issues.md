@@ -168,7 +168,7 @@
 
 重点相关范围包括：
 
-- `src/acabot/runtime/plugins/subagent_delegation.py`
+- `src/acabot/runtime/builtin_tools/subagents.py`
 - `src/acabot/runtime/subagents/broker.py`
 - `src/acabot/runtime/skills/catalog.py`
 - `src/acabot/runtime/skills/package.py`
