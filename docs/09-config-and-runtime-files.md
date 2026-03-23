@@ -117,6 +117,25 @@
 - runtime plugins
 - session config 的读取路径
 
+这里有一条和 skill 直接相关的新规则:
+
+- `runtime.filesystem.skill_catalog_dirs`
+
+它表示“runtime 要扫描哪些 skill 根目录”。
+
+当前规则是:
+
+- 相对路径, 例如 `./skills`、`./agent/skills`, 算 `project`
+- `~` 路径和根目录绝对路径, 算 `user`
+- runtime 会递归扫描这些目录下的 `**/SKILL.md`
+- 扫描阶段先保留全部 skill metadata
+- 真正注入 prompt 或执行 `Skill(skill=...)` 时, 再按可见性和 `project > user` 选出最后那一份 skill
+
+如果配置没写这个字段, runtime 默认会扫描:
+
+- `./.agents/skills`
+- `~/.agents/skills`
+
 ### `plugins`
 
 影响 plugin 的加载和插件私有配置。

@@ -41,7 +41,7 @@
 
 ### 修复时通常要同步
 
-- `06-tools-plugins-and-subagents.md`
+- `20-subagent.md`
 - `02-runtime-mainline.md`
 - 如果改变了配置语义，再看 `08-webui-and-control-plane.md`
 
@@ -82,7 +82,7 @@
 
 - `12-computer.md`
 - `02-runtime-mainline.md`
-- 如果影响工具暴露，再看 `06-tools-plugins-and-subagents.md`
+- 如果影响工具暴露，再看 `19-tool.md`
 
 ### 建议状态
 

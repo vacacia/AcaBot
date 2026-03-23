@@ -638,7 +638,7 @@ backend 不做这些事情：
 
 - `docs/00-ai-entry.md`
 - `docs/12-computer.md`
-- `docs/06-tools-plugins-and-subagents.md`
+- `docs/19-tool.md`
 - `docs/HANDOFF.md`
 
 ### 这些文档要改什么

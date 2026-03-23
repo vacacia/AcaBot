@@ -225,7 +225,7 @@ reference 工具只是一个入口，真正行为大多在 backend。
 ## 如果改这里，通常同步哪些文档
 
 - `14-reference-backend.md`
-- `06-tools-plugins-and-subagents.md`
+- `19-tool.md`
 - 如果影响 WebUI / control plane，再看 `08-webui-and-control-plane.md`
 
 ## 读源码顺序建议

@@ -54,27 +54,28 @@
 
 这不是普通实现瑕疵，而是“配置表达的规则”和“执行时真正生效的规则”之间出现了缝。
 
-#### 2. `skill` 还停在“说明书”和“运行时能力单元”的中间态
+#### 2. `skill` 主线已经收口，但能力模型还没有完全统一
 
-当前 skill package 的目录格式已经在向外部 skill 靠拢：
+当前 skill 这条线已经比原来清楚很多了：
 
-- `SKILL.md`
-- `references/`
-- `scripts/`
-- `assets/`
+- runtime 会递归扫描 skill 目录
+- prompt 会先放 `<system-reminder>` skill 摘要
+- 模型调用的是 `Skill(skill=...)`
+- runtime 会返回 `Launching skill: ...` 和 `Base directory for this skill: /skills/...`
+- 后续资料通过 `/skills/...` 继续读
 
-但实际运行时里，bot 真正常用到的核心能力仍然主要是：
+所以这块现在已经有一条稳定主线。
 
-- `skill(name=...)`
-- 读取 `SKILL.md`
+现在真正还没完全收干净的问题，不是 skill 自己不会工作，而是：
 
-这让 `skill` 现在处在一个比较尴尬的位置：
+- skill
+- tool
+- plugin
+- subagent
 
-- 它不是普通 tool
-- 它也不是完整的 runtime capability
-- 它也不只是静态文档
+这几类能力的总模型还分散在多份文档和多层运行时规则里。
 
-于是系统为了管理 skill，已经引入了 catalog、assignment、delegation 这些运行时语义；但 skill 本体的执行面又还比较薄。这样就会出现“管理模型很重，实际能力很轻”的失衡感。
+也就是说，skill 这条主线本身已经清楚了，但系统整体的“能力边界总图”还没有完全压成单一规则面。
 
 #### 3. `tool / plugin / skill / subagent` 这组概念还没有完全收成单一能力模型
 
@@ -175,7 +176,8 @@
 - `src/acabot/runtime/skills/loader.py`
 - `src/acabot/runtime/tool_broker/`
 - `src/acabot/runtime/plugin_manager.py`
-- `docs/06-tools-plugins-and-subagents.md`
+- `docs/19-tool.md`
+- `docs/20-subagent.md`
 - `docs/15-known-issues-and-design-gaps.md`
 
 ### 建议整改方向
@@ -188,10 +190,10 @@
    - 任何 subagent 调用都应该先经过统一的可见性 / assignment / delegation 校验
    - 不要再允许“registry 里有就能直接调”的旁路
 
-2. **明确 `skill` 的最终定位**
-   - 要么明确它就是“可读能力包 / SOP”，运行时管理不要再过度拟人化
-   - 要么继续补齐 references / scripts / 渐进加载 / 触发机制，把它做成真正的一等能力单元
-   - 最怕的是长期停在中间态
+2. **保持 `skill` 继续沿当前主线演进**
+   - 维持它作为“可读能力包 / SOP”的位置
+   - 继续补齐 references / scripts / 渐进加载这些围绕资料包本身的能力
+   - 不要再把它重新扩成别的运行时能力模型
 
 3. **把能力解析收敛到单一权威入口**
    - 谁能看到什么能力
@@ -379,7 +381,7 @@
 建议按这个顺序处理：
 
 1. **先修 subagent / delegation 的边界一致性**
-2. **明确 skill 的最终定位，不再长期停在中间态**
+2. **保持 skill 沿当前主线稳定演进**
 3. **把 capability visibility / resolve / delegation 收敛到单一权威入口**
 4. **为能力边界补回归测试**
 5. **再继续处理 runtime 瘦身和术语统一**
@@ -407,3 +409,4 @@
 当前答案就是：
 
 > **能力边界和抽象边界还没有完全收口。**
+��。**

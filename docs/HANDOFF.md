@@ -1,5 +1,11 @@
 # 当前进展 Handoff
 
+## 2026-03-23 skill 对齐已经完成主线实现
+
+这轮已经把 skill 主线改到和 `docs/18-skill.md` 第 2 节一致：runtime 现在由 `runtime.filesystem.skill_catalog_dirs` 控制扫描哪些 skill 根目录，相对路径算 project、`~` 和绝对路径算 user，扫描阶段先保留全部 metadata，prompt 注入和 `Skill(skill=...)` 真正读取时再按可见性和 `project > user` 选出最后那一份，返回里也会带 `Base directory for this skill: /skills/...`；另外, computer 内部那个容易撞名的单数字段也已经改成 `host_skills_catalog_root_path`，和 runtime 配置层彻底分开了，并且已经同步了 `docs/18-skill.md` 第 2 节后面的现状说明、`docs/19-tool.md`、`docs/01-system-map.md`、`docs/00-ai-entry.md`、`docs/09-config-and-runtime-files.md`、`docs/12-computer.md`、`docs/critical-architecture-issues.md`。
+文档同步时有一个硬边界：`docs/18-skill.md` 的 `## 2. skill 加载机制(以此为准)` 不准再动，后续只能修改这一节后面的现状说明，并让别的活文档去对齐它。
+如果后面继续接着做，先看 `docs/18-skill.md`、`docs/19-tool.md`、`docs/01-system-map.md` 和当前 skill 相关测试，继续沿现在这条主线扩文档或代码。
+
 ## 2026-03-23 文档同步继续推进
 
 这轮又把六篇还带旧味道或缺少现状入口的活文档对到了当前代码：
@@ -32,7 +38,8 @@
 - `docs/03-data-contracts.md`
 - `docs/04-routing-and-profiles.md`
 - `docs/05-memory-and-context.md`
-- `docs/06-tools-plugins-and-subagents.md`
+- `docs/19-tool.md`
+- `docs/20-subagent.md`
 - `docs/08-webui-and-control-plane.md`
 - `docs/09-config-and-runtime-files.md`
 - `docs/11-deployment-reference.md`
@@ -49,7 +56,7 @@
 
 `docs/03-data-contracts.md` 也已经整篇重写, 现在按“外部输入 / 会话决策 / 执行现场 / 持久化事实”这四层来整理当前契约, 不再把旧 rule 系统当成数据主线。
 
-`docs/06-tools-plugins-and-subagents.md` 也已经整篇重写, 现在优先讲清楚 tool / builtin tool / plugin / skill / subagent 的当前边界, 不再把现状、未来设想和历史包袱揉在一起。
+原来的 `docs/06-tools-plugins-and-subagents.md` 现在已经拆成了 `docs/19-tool.md` 和 `docs/20-subagent.md`。`19` 优先讲清 tool / builtin tool / plugin / skill 的当前边界，`20` 单独讲 subagent 的运行方式和边界，不再把这两条线揉在一起。
 
 `docs/05-memory-and-context.md` 也已经整篇重写, 现在按“working memory / 事件事实 / 消息事实 / 长期记忆 / sticky notes / soul”这几层来讲, 并且已经改成当前 pipeline、retrieval planner、memory broker、structured memory 的真实链路。
 
@@ -151,7 +158,8 @@ AcaBot 现在和 **pi 当前版本** 保持一致。
 
 这轮和当前代码对齐的文档主要是：
 
-- `docs/06-tools-plugins-and-subagents.md`
+- `docs/19-tool.md`
+- `docs/20-subagent.md`
 - `docs/12-computer.md`
 - `docs/todo/2026-03-22-builtin-computer-tools-and-pi-alignment.md`
 - `docs/HANDOFF.md`
@@ -161,7 +169,7 @@ AcaBot 现在和 **pi 当前版本** 保持一致。
 建议按这个顺序：
 
 1. `docs/12-computer.md`
-2. `docs/06-tools-plugins-and-subagents.md`
+2. `docs/19-tool.md`
 3. `src/acabot/runtime/computer/runtime.py`
 4. `src/acabot/runtime/builtin_tools/computer.py`
 5. `tests/runtime/test_computer.py`

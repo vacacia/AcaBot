@@ -377,41 +377,27 @@ plugin 现在主要表示：
 - `runtime/skills/loader.py`
 - `runtime/builtin_tools/skills.py`
 
-这里有一个一定要写清楚的点：
-
-> **现在的 skill 还不是最终设计。**
-
-请以：
+请直接以：
 
 - `docs/18-skill.md`
-- 尤其是 `## 2. skill 加载机制(以此为准)`
 
-作为目前这块的设计基准。
+作为目前这块的正式设计基准。
 
 ### skill 现在的真实状态
 
-当前 skill 是一个中间态，不要脑补成“已经完全做成最终版”。
-
 现在真正存在的是这几条线：
 
-1. runtime 会扫描 skill 目录，建立 catalog
-2. profile 决定这个 agent 理论上能看到哪些 skill
-3. 当前 run 里，world 还会再按 `/skills` 可见性过滤一次
-4. 模型会在 system prompt 里看到 skill 摘要
-5. 同时，系统里仍然保留了 builtin `skill(name=...)` 这个入口
-6. 前台 `computer` 也已经支持 `/skills/...` 路径
+1. runtime 会按 `runtime.filesystem.skill_catalog_dirs` 递归扫描每个 skill 根目录里的 `SKILL.md`
+2. 相对路径根目录算 `project`, `~` 和绝对路径根目录算 `user`
+3. `SkillCatalog` 会先保留全部扫描到的 skill metadata
+4. profile 决定这个 agent 理论上能看到哪些 skill
+5. 当前 run 里，world 还会再按 `/skills` 可见性过滤一次
+6. prompt 注入和 `Skill` 真正读取时，才按可见性和 `project > user` 选出最后那一份 skill
+7. 模型会在 system prompt 的 `<system-reminder>` 里看到 skill 摘要
+8. 模型可以调用 builtin `Skill(skill=...)` 读取某个 `SKILL.md`
+9. 前台 `computer` 也支持沿 `/skills/...` 继续读 skill 包里的文件
 
-也就是说，今天的真实情况不是“只剩一种 skill 用法”，而是：
-
-- skill 摘要已经进 system prompt
-- `skill(name=...)` 还活着
-- `/skills/...` 路径也已经能用了
-
-所以这块当前更像：
-
-> **已经在往最终设计靠，但还停在中间态。**
-
-如果你要继续改 skill，先看 `docs/18-skill.md`，不要只看眼前代码猜“最后想做什么”。
+如果你要继续改 skill，先看 `docs/18-skill.md`，不要只看眼前代码猜路径规则和工具契约。
 
 ## 5. `subagents` 子域
 
@@ -561,16 +547,18 @@ plugin 现在主要表示：
 - `builtin_tools/computer.py` 是给模型看的工具表面
 - `runtime/computer/` 才是真正干活的子域
 
-## 4. skill 现在不是最终设计
+## 4. 想改 skill 先看正式规则
 
-这条再说一遍。
+skill 这块现在已经有一条明确主线：
 
-现在 skill 这块还是中间态。不要把当前实现脑补成已经收口完成。
+- runtime 扫 skill
+- prompt 先给 skill 摘要
+- 模型调 `Skill(skill=...)`
+- 后续沿 `/skills/...` 继续读
 
 先看：
 
 - `docs/18-skill.md`
-- 特别是 `## 2. skill 加载机制(以此为准)`
 
 再看代码。
 
