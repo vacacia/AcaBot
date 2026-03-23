@@ -31,7 +31,7 @@ def _ctx(tmp_path: Path) -> tuple[ComputerRuntime, RunContext]:
     service = ComputerRuntime(
         config=ComputerRuntimeConfig(
             root_dir=str(tmp_path / "workspaces"),
-            skill_catalog_dir=str(tmp_path / "workspaces/catalog/skills"),
+            host_skills_catalog_root_path=str(tmp_path / "workspaces/catalog/skills"),
         )
     )
     event = StandardEvent(
@@ -594,7 +594,7 @@ async def test_computer_runtime_read_world_path_can_materialize_visible_skill(tm
         def get(self, skill_name: str):
             if skill_name != "sample_skill":
                 return None
-            return type("Manifest", (), {"root_dir": source_skill})()
+            return type("Manifest", (), {"host_skill_root_path": str(source_skill)})()
 
     service.skill_catalog = Catalog()
     await service.prepare_run_context(ctx)
@@ -619,7 +619,7 @@ async def test_computer_runtime_write_world_path_updates_canonical_skill_file(tm
         def get(self, skill_name: str):
             if skill_name != "sample_skill":
                 return None
-            return type("Manifest", (), {"root_dir": source_skill})()
+            return type("Manifest", (), {"host_skill_root_path": str(source_skill)})()
 
     service.skill_catalog = Catalog()
     await service.prepare_run_context(ctx)
@@ -653,7 +653,7 @@ async def test_computer_runtime_write_world_path_creates_new_file_inside_visible
         def get(self, skill_name: str):
             if skill_name != "sample_skill":
                 return None
-            return type("Manifest", (), {"root_dir": source_skill})()
+            return type("Manifest", (), {"host_skill_root_path": str(source_skill)})()
 
     service.skill_catalog = Catalog()
     await service.prepare_run_context(ctx)
@@ -775,7 +775,7 @@ async def test_computer_runtime_refreshes_skills_world_view_after_mirroring(tmp_
         def get(self, skill_name: str):
             if skill_name != "sample_skill":
                 return None
-            return type("Manifest", (), {"root_dir": source_skill})()
+            return type("Manifest", (), {"host_skill_root_path": str(source_skill)})()
 
     await service.prepare_run_context(ctx)
     assert ctx.world_view is not None

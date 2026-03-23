@@ -288,7 +288,7 @@ class ComputerRuntimeConfig:
 
     Attributes:
         root_dir (str): computer 宿主机根目录.
-        skill_catalog_dir (str): skill catalog 根目录.
+        host_skills_catalog_root_path (str): computer 内部使用的宿主机 skills catalog 根路径.
         max_attachment_size_bytes (int): 单个附件最大尺寸.
         max_total_attachment_bytes_per_run (int): 单次 run 附件总大小上限.
         attachment_download_timeout_sec (int): 附件下载超时.
@@ -300,7 +300,7 @@ class ComputerRuntimeConfig:
     """
 
     root_dir: str
-    skill_catalog_dir: str
+    host_skills_catalog_root_path: str
     max_attachment_size_bytes: int = 64 * 1024 * 1024
     max_total_attachment_bytes_per_run: int = 256 * 1024 * 1024
     attachment_download_timeout_sec: int = 30

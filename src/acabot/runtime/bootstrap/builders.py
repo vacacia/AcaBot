@@ -43,7 +43,13 @@ from ..storage.threads import InMemoryThreadManager, StoreBackedThreadManager, T
 from ..memory.structured_memory import StoreBackedMemoryRetriever, StructuredMemoryExtractor
 from ..subagents import SubagentExecutorRegistry
 from ..subagents.execution import LocalSubagentExecutionService
-from .config import get_persistence_sqlite_path, optional_str, resolve_filesystem_path, resolve_runtime_path
+from .config import (
+    get_persistence_sqlite_path,
+    optional_str,
+    resolve_filesystem_path,
+    resolve_runtime_path,
+    resolve_skill_catalog_dirs,
+)
 
 
 def build_builtin_runtime_plugins(profiles: dict[str, AgentProfile]) -> list[RuntimePlugin]:
@@ -142,15 +148,9 @@ def build_computer_runtime(
         key="computer_root_dir",
         default=str(Path.home() / ".acabot" / "workspaces"),
     )
-    skill_catalog_dir = resolve_filesystem_path(
-        config,
-        fs_conf,
-        key="skill_catalog_dir",
-        default=str(root_dir / "catalog" / "skills"),
-    )
     computer_config = ComputerRuntimeConfig(
         root_dir=str(root_dir),
-        skill_catalog_dir=str(skill_catalog_dir),
+        host_skills_catalog_root_path=str((root_dir / "catalog" / "skills").resolve()),
         max_attachment_size_bytes=int(
             computer_conf.get("max_attachment_size_bytes", 64 * 1024 * 1024)
         ),
@@ -308,21 +308,23 @@ def build_retrieval_planner(config: Config) -> RetrievalPlanner:
 
 
 def build_skill_catalog(config: Config) -> SkillCatalog:
+    """按当前配置构造统一 skill catalog.
+
+    Args:
+        config: 当前 runtime 配置.
+
+    Returns:
+        SkillCatalog: 已经完成一次 reload 的 skill catalog.
+    """
+
     runtime_conf = config.get("runtime", {})
     fs_conf = dict(runtime_conf.get("filesystem", {}))
-    computer_root_dir = resolve_filesystem_path(
+    skill_catalog_dirs = resolve_skill_catalog_dirs(
         config,
         fs_conf,
-        key="computer_root_dir",
-        default=str(Path.home() / ".acabot" / "workspaces"),
+        defaults=["./.agents/skills", "~/.agents/skills"],
     )
-    skill_catalog_dir = resolve_filesystem_path(
-        config,
-        fs_conf,
-        key="skill_catalog_dir",
-        default=str(computer_root_dir / "catalog" / "skills"),
-    )
-    catalog = SkillCatalog(FileSystemSkillPackageLoader(skill_catalog_dir))
+    catalog = SkillCatalog(FileSystemSkillPackageLoader(skill_catalog_dirs))
     catalog.reload()
     return catalog
 

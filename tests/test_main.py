@@ -349,7 +349,7 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
         computer_runtime=ComputerRuntime(
             config=ComputerRuntimeConfig(
                 root_dir="/tmp/acabot-test-computer",
-                skill_catalog_dir="/tmp/acabot-test-computer/catalog/skills",
+                host_skills_catalog_root_path="/tmp/acabot-test-computer/catalog/skills",
             )
         ),
         image_context_service=None,  # type: ignore[arg-type]

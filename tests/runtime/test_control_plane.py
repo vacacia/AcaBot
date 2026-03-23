@@ -100,7 +100,7 @@ def _computer_runtime(tmp_path: Path) -> ComputerRuntime:
     return ComputerRuntime(
         config=ComputerRuntimeConfig(
             root_dir=str(tmp_path / "computer"),
-            skill_catalog_dir=str(_fixtures_root()),
+            host_skills_catalog_root_path=str(_fixtures_root()),
         )
     )
 

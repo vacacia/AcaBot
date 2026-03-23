@@ -1,10 +1,18 @@
-"""runtime.bootstrap.config 定义 bootstrap 期使用的路径辅助函数."""
+"""runtime.bootstrap.config 定义 bootstrap 期使用的路径辅助函数.
+
+这里主要负责两类事情:
+
+- 把配置里的相对路径解析成绝对路径
+- 给 bootstrap 期需要的默认目录约定提供统一 helper
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 from acabot.config import Config
+
+from ..skills.loader import SkillDiscoveryRoot
 
 
 def resolve_filesystem_path(
@@ -56,6 +64,89 @@ def resolve_runtime_path(config: Config, raw_path: object) -> Path:
     return (runtime_root / path).resolve()
 
 
+def resolve_skill_catalog_dirs(
+    config: Config,
+    fs_conf: dict[str, object],
+    *,
+    defaults: list[str],
+) -> list[SkillDiscoveryRoot]:
+    """解析 skill catalog 扫描根目录列表.
+
+    `skill_catalog_dirs` 现在表达的是“要扫描哪些 skill 根目录”。
+
+    规则是:
+
+    - 相对路径算 `project`
+    - `~` 路径和根目录绝对路径算 `user`
+    - 如果配置没写, 就使用传进来的默认常用目录列表
+
+    Args:
+        config: 当前 runtime 配置.
+        fs_conf: `runtime.filesystem` 配置块.
+        defaults: 默认扫描目录列表.
+
+    Returns:
+        list[SkillDiscoveryRoot]: 去重后的扫描根列表.
+    """
+
+    raw_values = fs_conf.get("skill_catalog_dirs")
+    items = _normalize_skill_catalog_dir_values(raw_values, defaults=defaults)
+    base_dir = Path(str(fs_conf.get("base_dir", ".") or "."))
+    if not base_dir.is_absolute():
+        base_dir = config.resolve_path(base_dir)
+
+    resolved: list[SkillDiscoveryRoot] = []
+    seen: set[tuple[str, str]] = set()
+    for raw in items:
+        scope = _scope_for_skill_catalog_dir(raw)
+        path = _resolve_skill_catalog_dir_path(raw=raw, base_dir=base_dir)
+        root = SkillDiscoveryRoot(host_root_path=str(path), scope=scope)
+        key = (str(root.path), root.scope)
+        if key in seen:
+            continue
+        resolved.append(root)
+        seen.add(key)
+    return resolved
+
+
+def _normalize_skill_catalog_dir_values(raw_values: object, *, defaults: list[str]) -> list[str]:
+    """把配置里的 `skill_catalog_dirs` 收成字符串列表."""
+
+    if raw_values in (None, ""):
+        values = list(defaults)
+    elif isinstance(raw_values, str):
+        values = [raw_values]
+    else:
+        values = [str(item) for item in list(raw_values or [])]
+
+    normalized: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        normalized.append(text)
+    return normalized
+
+
+def _scope_for_skill_catalog_dir(raw_value: str) -> str:
+    """按配置写法推断 skill 根目录 scope."""
+
+    if raw_value.startswith("~"):
+        return "user"
+    if Path(raw_value).is_absolute():
+        return "user"
+    return "project"
+
+
+def _resolve_skill_catalog_dir_path(*, raw: str, base_dir: Path) -> Path:
+    """把 skill 扫描目录解析成宿主机绝对路径."""
+
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return path.resolve()
+    return (base_dir / path).resolve()
+
+
 def optional_str(value: object) -> str | None:
     """把可空值转成可选字符串.
 
@@ -94,4 +185,5 @@ __all__ = [
     "optional_str",
     "resolve_filesystem_path",
     "resolve_runtime_path",
+    "resolve_skill_catalog_dirs",
 ]

@@ -1,7 +1,13 @@
 from pathlib import Path
 
-from acabot.config import Config
-from acabot.runtime import AgentProfile, ComputerPolicyDecision, ComputerRuntime, ComputerRuntimeConfig, SkillCatalog, ToolBroker
+from acabot.runtime import (
+    AgentProfile,
+    ComputerPolicyDecision,
+    ComputerRuntime,
+    ComputerRuntimeConfig,
+    SkillCatalog,
+    ToolBroker,
+)
 from acabot.runtime.builtin_tools.skills import BuiltinSkillToolSurface
 from acabot.runtime.skills import FileSystemSkillPackageLoader
 
@@ -22,7 +28,7 @@ def _runtime(tmp_path: Path) -> ComputerRuntime:
     return ComputerRuntime(
         config=ComputerRuntimeConfig(
             root_dir=str(tmp_path / "computer"),
-            skill_catalog_dir=str(_fixtures_root()),
+            host_skills_catalog_root_path=str(_fixtures_root()),
         )
     )
 
@@ -38,10 +44,10 @@ def _broker_with_builtin_skill_tool(tmp_path: Path) -> tuple[ToolBroker, Compute
     return broker, computer_runtime
 
 
-async def test_builtin_skill_tool_visible_when_profile_has_visible_skills(tmp_path: Path) -> None:
+async def test_builtin_skill_tool_uses_doc18_name_schema_and_description(tmp_path: Path) -> None:
     broker, _ = _broker_with_builtin_skill_tool(tmp_path)
 
-    visible = broker.visible_tools(
+    hidden_tools = broker.visible_tools(
         AgentProfile(
             agent_id="aca",
             name="Aca",
@@ -50,9 +56,9 @@ async def test_builtin_skill_tool_visible_when_profile_has_visible_skills(tmp_pa
             skills=[],
         )
     )
-    assert [tool.name for tool in visible] == []
+    assert not any(tool.name == "Skill" for tool in hidden_tools)
 
-    visible = broker.visible_tools(
+    visible_tools = broker.visible_tools(
         AgentProfile(
             agent_id="aca",
             name="Aca",
@@ -61,11 +67,21 @@ async def test_builtin_skill_tool_visible_when_profile_has_visible_skills(tmp_pa
             skills=["sample_configured_skill"],
         )
     )
-    assert [tool.name for tool in visible] == ["skill"]
-    assert "sample_configured_skill" in visible[0].description
+
+    skill_tool = next((tool for tool in visible_tools if tool.name == "Skill"), None)
+    assert skill_tool is not None
+    assert not any(tool.name == "skill" for tool in visible_tools)
+    assert "Skill" in skill_tool.description
+    assert "skill(name=" not in skill_tool.description
+    assert skill_tool.parameters["required"] == ["skill"]
+    assert "skill" in skill_tool.parameters["properties"]
+    assert "name" not in skill_tool.parameters["properties"]
+    assert "sample_configured_skill" in skill_tool.description
 
 
-async def test_builtin_skill_tool_reads_visible_skill_and_marks_loaded(tmp_path: Path) -> None:
+async def test_builtin_skill_tool_returns_launch_message_base_dir_and_marks_loaded(
+    tmp_path: Path,
+) -> None:
     broker, computer_runtime = _broker_with_builtin_skill_tool(tmp_path)
 
     ctx = _context()
@@ -79,12 +95,15 @@ async def test_builtin_skill_tool_reads_visible_skill_and_marks_loaded(tmp_path:
     execution_ctx = broker._build_execution_context(ctx)
 
     result = await broker.execute(
-        tool_name="skill",
-        arguments={"name": "sample_configured_skill"},
+        tool_name="Skill",
+        arguments={"skill": "sample_configured_skill"},
         ctx=execution_ctx,
     )
 
-    assert "Sample Configured Skill" in str(result.llm_content)
+    text = str(result.llm_content)
+    assert "Launching skill: sample_configured_skill" in text
+    assert "Base directory for this skill: /skills/sample_configured_skill" in text
+    assert "Sample Configured Skill" in text
     assert result.raw["skill_name"] == "sample_configured_skill"
     assert computer_runtime.list_loaded_skills(ctx.thread.thread_id) == [
         "sample_configured_skill"
@@ -103,13 +122,13 @@ async def test_builtin_skill_tool_rejects_invisible_skill(tmp_path: Path) -> Non
         skills=["excel_processing"],
     )
     result = await broker.execute(
-        tool_name="skill",
-        arguments={"name": "sample_configured_skill"},
+        tool_name="Skill",
+        arguments={"skill": "sample_configured_skill"},
         ctx=broker._build_execution_context(ctx),
     )
 
-    assert result.raw["ok"] is False
-    assert result.raw["reason"] == "skill_not_assigned"
+    assert result.raw.get("ok") is False
+    assert result.raw.get("reason") == "skill_not_assigned"
 
 
 async def test_builtin_skill_tool_respects_world_visible_skills(tmp_path: Path) -> None:
@@ -138,23 +157,28 @@ async def test_builtin_skill_tool_respects_world_visible_skills(tmp_path: Path) 
     await computer_runtime.prepare_run_context(ctx)
 
     blocked = await broker.execute(
-        tool_name="skill",
-        arguments={"name": "excel_processing"},
+        tool_name="Skill",
+        arguments={"skill": "excel_processing"},
         ctx=broker._build_execution_context(ctx),
     )
     allowed = await broker.execute(
-        tool_name="skill",
-        arguments={"name": "sample_configured_skill"},
+        tool_name="Skill",
+        arguments={"skill": "sample_configured_skill"},
         ctx=broker._build_execution_context(ctx),
     )
 
-    assert blocked.raw["ok"] is False
-    assert blocked.raw["reason"] == "skill_not_assigned"
-    assert allowed.raw["ok"] is True
-    assert allowed.raw["skill_name"] == "sample_configured_skill"
+    assert blocked.raw.get("ok") is False
+    assert blocked.raw.get("reason") == "skill_not_assigned"
+    assert allowed.raw.get("ok") is True
+    assert allowed.raw.get("skill_name") == "sample_configured_skill"
+    assert "Base directory for this skill: /skills/sample_configured_skill" in str(
+        allowed.llm_content
+    )
 
 
-async def test_builtin_skill_tool_disappears_when_visible_skills_is_explicitly_empty(tmp_path: Path) -> None:
+async def test_builtin_skill_tool_disappears_when_visible_skills_is_explicitly_empty(
+    tmp_path: Path,
+) -> None:
     broker, computer_runtime = _broker_with_builtin_skill_tool(tmp_path)
 
     ctx = _context()
@@ -181,13 +205,13 @@ async def test_builtin_skill_tool_disappears_when_visible_skills_is_explicitly_e
 
     tool_runtime = broker.build_tool_runtime(ctx)
     result = await broker.execute(
-        tool_name="skill",
-        arguments={"name": "sample_configured_skill"},
+        tool_name="Skill",
+        arguments={"skill": "sample_configured_skill"},
         ctx=broker._build_execution_context(ctx),
     )
 
-    assert "skill" not in [tool.name for tool in tool_runtime.tools]
-    assert '"error": "Tool not enabled for current run: skill"' in str(result.llm_content)
+    assert not any(tool.name == "Skill" for tool in tool_runtime.tools)
+    assert '"error": "Tool not enabled for current run: Skill"' in str(result.llm_content)
 
 
 async def test_builtin_skill_tool_disappears_when_skills_root_is_hidden(tmp_path: Path) -> None:
@@ -217,10 +241,10 @@ async def test_builtin_skill_tool_disappears_when_skills_root_is_hidden(tmp_path
 
     tool_runtime = broker.build_tool_runtime(ctx)
     result = await broker.execute(
-        tool_name="skill",
-        arguments={"name": "sample_configured_skill"},
+        tool_name="Skill",
+        arguments={"skill": "sample_configured_skill"},
         ctx=broker._build_execution_context(ctx),
     )
 
-    assert "skill" not in [tool.name for tool in tool_runtime.tools]
-    assert '"error": "Tool not enabled for current run: skill"' in str(result.llm_content)
+    assert not any(tool.name == "Skill" for tool in tool_runtime.tools)
+    assert '"error": "Tool not enabled for current run: Skill"' in str(result.llm_content)

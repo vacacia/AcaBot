@@ -318,7 +318,7 @@ async def test_build_runtime_components_registers_core_tools_as_builtin_sources(
     assert "bash_write" not in sources
     assert "bash_read" not in sources
     assert "bash_close" not in sources
-    assert sources["skill"] == "builtin:skills"
+    assert sources["Skill"] == "builtin:skills"
     assert sources["delegate_subagent"] == "builtin:subagents"
 
 
@@ -370,11 +370,11 @@ async def test_runtime_plugin_reload_does_not_remove_builtin_core_tools() -> Non
     assert reloaded_names == ["sample_configured_runtime"]
     assert missing_after == []
     assert sources_before["read"] == "builtin:computer"
-    assert sources_before["skill"] == "builtin:skills"
+    assert sources_before["Skill"] == "builtin:skills"
     assert sources_before["delegate_subagent"] == "builtin:subagents"
     assert sources_before["sample_configured_tool"] == "plugin:sample_configured_runtime"
     assert sources_after["read"] == "builtin:computer"
-    assert sources_after["skill"] == "builtin:skills"
+    assert sources_after["Skill"] == "builtin:skills"
     assert sources_after["delegate_subagent"] == "builtin:subagents"
     assert sources_after["sample_configured_tool"] == "plugin:sample_configured_runtime"
 
@@ -540,10 +540,10 @@ async def test_runtime_config_reload_keeps_builtin_core_tools(tmp_path: Path) ->
 
     assert result["default_agent_id"] == "aca"
     assert before["read"] == "builtin:computer"
-    assert before["skill"] == "builtin:skills"
+    assert before["Skill"] == "builtin:skills"
     assert before["delegate_subagent"] == "builtin:subagents"
     assert after["read"] == "builtin:computer"
-    assert after["skill"] == "builtin:skills"
+    assert after["Skill"] == "builtin:skills"
     assert after["delegate_subagent"] == "builtin:subagents"
 
 

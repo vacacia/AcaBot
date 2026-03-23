@@ -333,6 +333,38 @@ async def test_model_agent_runtime_passes_tools_from_resolver() -> None:
     assert result.metadata["tool_count"] == 1
 
 
+async def test_model_agent_runtime_wraps_visible_skills_in_skill_system_reminder() -> None:
+    agent = FakeAgent(AgentResponse(text="ok", model_used="test-model"))
+
+    async def resolver(ctx: RunContext) -> ToolRuntime:
+        _ = ctx
+        return ToolRuntime(
+            metadata={
+                "visible_skill_summaries": [
+                    {
+                        "skill_name": "sample_configured_skill",
+                        "description": "用于测试 skill-first catalog 的样例 skill.",
+                        "display_name": "Sample Configured Skill",
+                    }
+                ]
+            }
+        )
+
+    runtime = ModelAgentRuntime(
+        agent=agent,
+        prompt_loader=StaticPromptLoader({"prompt/default": "You are Aca."}),
+        tool_runtime_resolver=resolver,
+    )
+    ctx = _context()
+
+    await runtime.execute(ctx)
+
+    system_prompt = agent.calls[0]["system_prompt"]
+    assert "<system-reminder>" in system_prompt
+    assert "The following skills are available for use with the Skill tool:" in system_prompt
+    assert "- sample_configured_skill: 用于测试 skill-first catalog 的样例 skill." in system_prompt
+
+
 async def test_model_agent_runtime_can_use_tool_broker() -> None:
     agent = FakeAgent(AgentResponse(text="ok"))
     broker = ToolBroker()

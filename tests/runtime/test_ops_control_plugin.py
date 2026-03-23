@@ -42,7 +42,7 @@ def _ops_config() -> Config:
                 "default_agent_id": "aca",
                 "filesystem": {
                     "enabled": True,
-                    "skill_catalog_dir": _skills_dir(),
+                    "skill_catalog_dirs": [_skills_dir()],
                 },
                 "profiles": {
                     "aca": {
@@ -86,9 +86,14 @@ async def test_ops_control_plugin_handles_status_command() -> None:
 
     assert agent.calls == []
     assert len(gateway.sent) == 1
-    assert "active_runs=1" in gateway.sent[0].payload["text"]
-    assert "loaded_plugins=backend_bridge_tool,ops_control,sample_configured_runtime,sample_delegation_worker" in gateway.sent[0].payload["text"]
-    assert "loaded_skills=excel_processing,sample_configured_skill" in gateway.sent[0].payload["text"]
+    status_text = gateway.sent[0].payload["text"]
+    assert "active_runs=1" in status_text
+    assert "loaded_plugins=backend_bridge_tool,ops_control,sample_configured_runtime,sample_delegation_worker" in status_text
+    loaded_skills_line = next(
+        line for line in status_text.splitlines() if line.startswith("loaded_skills=")
+    )
+    assert "excel_processing" in loaded_skills_line
+    assert "sample_configured_skill" in loaded_skills_line
 
 
 async def test_ops_control_plugin_can_list_skills() -> None:

@@ -111,7 +111,7 @@ def _ctx(tmp_path: Path, *, run_mode: str = "respond", include_reply: bool = Tru
     computer = ComputerRuntime(
         config=ComputerRuntimeConfig(
             root_dir=str(tmp_path / "workspaces"),
-            skill_catalog_dir=str(tmp_path / "workspaces/catalog/skills"),
+            host_skills_catalog_root_path=str(tmp_path / "workspaces/catalog/skills"),
         )
     )
     current_image = tmp_path / "current.jpg"

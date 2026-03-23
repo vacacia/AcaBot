@@ -534,7 +534,7 @@ class ComputerRuntime:
         await self.ensure_skill_mirrored(
             thread_id=world_view.thread_id,
             skill_name=skill_name,
-            source_dir=manifest.root_dir,
+            source_dir=manifest.host_skill_root_path,
         )
         self.refresh_world_skills_view(world_view)
 
@@ -649,7 +649,7 @@ class ComputerRuntime:
             await self.ensure_skill_mirrored(
                 thread_id=thread_id,
                 skill_name=skill_name,
-                source_dir=manifest.root_dir,
+                source_dir=manifest.host_skill_root_path,
             )
             mirrored.append(skill_name)
         if world_view is not None:

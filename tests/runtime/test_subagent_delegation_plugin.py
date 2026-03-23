@@ -47,7 +47,7 @@ async def test_delegate_subagent_is_auto_loaded_for_delegated_profiles() -> None
                 "default_agent_id": "aca",
                 "filesystem": {
                     "enabled": True,
-                    "skill_catalog_dir": _skills_dir(),
+                    "skill_catalog_dirs": [_skills_dir()],
                 },
                 "profiles": {
                     "aca": {
@@ -92,7 +92,7 @@ async def test_delegate_subagent_tool_calls_subagent_executor() -> None:
                 "default_agent_id": "aca",
                 "filesystem": {
                     "enabled": True,
-                    "skill_catalog_dir": _skills_dir(),
+                    "skill_catalog_dirs": [_skills_dir()],
                 },
                 "profiles": {
                     "aca": {
@@ -148,7 +148,7 @@ async def test_delegate_subagent_is_available_when_subagent_exists_without_skill
                 "default_agent_id": "aca",
                 "filesystem": {
                     "enabled": True,
-                    "skill_catalog_dir": _skills_dir(),
+                    "skill_catalog_dirs": [_skills_dir()],
                 },
                 "profiles": {
                     "aca": {
@@ -195,7 +195,7 @@ async def test_delegate_subagent_tool_can_delegate_directly_to_subagent_id() -> 
                 "default_agent_id": "aca",
                 "filesystem": {
                     "enabled": True,
-                    "skill_catalog_dir": _skills_dir(),
+                    "skill_catalog_dirs": [_skills_dir()],
                 },
                 "profiles": {
                     "aca": {

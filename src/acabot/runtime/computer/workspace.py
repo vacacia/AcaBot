@@ -24,7 +24,7 @@ class WorkspaceManager:
     Attributes:
         config (ComputerRuntimeConfig): computer 子系统配置.
         root_dir (Path): computer 宿主机根目录.
-        skill_catalog_dir (Path): skill catalog 真源目录.
+        host_skills_catalog_root_path (Path): computer 内部使用的宿主机 skills catalog 根路径.
     """
 
     def __init__(self, config: ComputerRuntimeConfig) -> None:
@@ -36,7 +36,7 @@ class WorkspaceManager:
 
         self.config = config
         self.root_dir = Path(config.root_dir).expanduser()
-        self.skill_catalog_dir = Path(config.skill_catalog_dir).expanduser()
+        self.host_skills_catalog_root_path = Path(config.host_skills_catalog_root_path).expanduser()
 
     def workspace_dir_for_thread(self, thread_id: str) -> Path:
         """返回指定 thread 的宿主机 workspace 根目录.

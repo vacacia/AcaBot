@@ -112,7 +112,7 @@ async def test_delegate_subagent_uses_real_local_child_run() -> None:
                 "default_agent_id": "aca",
                 "filesystem": {
                     "enabled": True,
-                    "skill_catalog_dir": _skills_dir(),
+                    "skill_catalog_dirs": [_skills_dir()],
                 },
                 "profiles": {
                     "aca": {
@@ -330,7 +330,7 @@ async def test_delegate_subagent_child_run_uses_delegate_agent_model_binding(
                 "default_agent_id": "aca",
                 "filesystem": {
                     "enabled": True,
-                    "skill_catalog_dir": _skills_dir(),
+                    "skill_catalog_dirs": [_skills_dir()],
                 },
                 "profiles": {
                     "aca": {

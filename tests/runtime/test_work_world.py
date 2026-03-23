@@ -21,7 +21,7 @@ def _manager(tmp_path: Path) -> WorkspaceManager:
     return WorkspaceManager(
         ComputerRuntimeConfig(
             root_dir=str(tmp_path / "computer"),
-            skill_catalog_dir=str(tmp_path / "skills-catalog"),
+            host_skills_catalog_root_path=str(tmp_path / "skills-catalog"),
         )
     )
 

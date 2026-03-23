@@ -180,29 +180,43 @@ class ModelAgentRuntime(AgentRuntime):
         base_prompt: str,
         tool_runtime: ToolRuntime,
     ) -> str:
+        """把基础 prompt 和运行时提醒拼成最终 system prompt.
+
+        Args:
+            base_prompt: 当前 profile 的基础 system prompt.
+            tool_runtime: 当前 run 的工具视图和附加元数据.
+
+        Returns:
+            str: 最终发给模型的 system prompt.
+        """
+
         skill_summaries = list(tool_runtime.metadata.get("visible_skill_summaries", []))
         subagent_summaries = list(tool_runtime.metadata.get("visible_subagent_summaries", []))
         if not skill_summaries and not subagent_summaries:
             return base_prompt
 
-        lines: list[str] = []
+        blocks: list[str] = []
         if skill_summaries:
-            lines.append("Available Skills:")
+            lines = [
+                "<system-reminder>",
+                "The following skills are available for use with the Skill tool:",
+            ]
             for item in skill_summaries:
                 lines.append(
                     f"- {str(item.get('skill_name', '') or '')}: "
                     f"{str(item.get('description', '') or '')}"
                 )
+            lines.append("</system-reminder>")
+            blocks.append("\n".join(lines))
         if subagent_summaries:
-            if lines:
-                lines.append("")
-            lines.append("Available Subagents:")
+            lines = ["Available Subagents:"]
             for item in subagent_summaries:
                 lines.append(
                     f"- {str(item.get('agent_id', '') or '')}: "
                     f"{str(item.get('profile_name', '') or item.get('agent_id', '') or '')}"
                 )
-        return f"{base_prompt.rstrip()}\n\n" + "\n".join(lines)
+            blocks.append("\n".join(lines))
+        return f"{base_prompt.rstrip()}\n\n" + "\n\n".join(blocks)
 
     async def _call_agent(self, ctx: RunContext, tool_runtime: ToolRuntime):
         """调用底层 BaseAgent.

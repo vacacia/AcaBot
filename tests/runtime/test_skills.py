@@ -39,16 +39,16 @@ async def test_tool_broker_exposes_skill_tool_for_visible_skills() -> None:
     broker = ToolBroker(skill_catalog=catalog)
     broker.register_tool(
         ToolSpec(
-            name="skill",
+            name="Skill",
             description="placeholder",
-            parameters={"type": "object", "properties": {"name": {"type": "string"}}},
+            parameters={"type": "object", "properties": {"skill": {"type": "string"}}},
         ),
         lambda arguments, ctx: {"ok": True},  # type: ignore[arg-type]
     )
 
     visible = broker.visible_tools(_profile(skills=["sample_configured_skill"]))
 
-    assert [tool.name for tool in visible] == ["skill"]
+    assert [tool.name for tool in visible] == ["Skill"]
     assert "sample_configured_skill" in visible[0].description
 
 

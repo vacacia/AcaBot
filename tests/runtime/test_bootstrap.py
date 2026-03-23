@@ -288,7 +288,7 @@ async def test_build_runtime_components_exposes_skill_and_delegate_tools_for_ass
                 "default_agent_id": "aca",
                 "filesystem": {
                     "enabled": True,
-                    "skill_catalog_dir": str(skills_dir),
+                    "skill_catalog_dirs": [str(skills_dir)],
                 },
                 "profiles": {
                     "aca": {
@@ -326,12 +326,12 @@ async def test_build_runtime_components_exposes_skill_and_delegate_tools_for_ass
     visible_tools = components.tool_broker.visible_tools(profile)
 
     assert profile.skills == ["sample_configured_skill"]
-    assert [tool.name for tool in visible_tools] == ["skill"]
+    assert [tool.name for tool in visible_tools] == ["Skill"]
     assert "sample_configured_skill" in visible_tools[0].description
     registered_executors = components.subagent_delegator.executor_registry.list_all()
     assert [item.agent_id for item in registered_executors] == ["aca"]
     assert registered_executors[0].source == "runtime:local_profile"
-    assert any(tool.name == "skill" for tool in visible_tools)
+    assert any(tool.name == "Skill" for tool in visible_tools)
 
 
 async def test_build_runtime_components_loads_profiles_and_prompts_from_filesystem(
@@ -1025,9 +1025,9 @@ async def test_build_runtime_components_full_plugin_reload_keeps_builtin_plugins
                 },
                 "filesystem": {
                     "enabled": True,
-                    "skill_catalog_dir": str(
-                        Path(__file__).resolve().parent.parent / "fixtures" / "skills"
-                    ),
+                    "skill_catalog_dirs": [
+                        str(Path(__file__).resolve().parent.parent / "fixtures" / "skills")
+                    ],
                 },
                 "prompts": {
                     "prompt/aca": "You are Aca.",
@@ -1060,8 +1060,8 @@ async def test_build_runtime_components_full_plugin_reload_keeps_builtin_plugins
     assert missing == []
     assert loaded_names == ["backend_bridge_tool"]
     assert sources["read"] == "builtin:computer"
-    assert sources["skill"] == "builtin:skills"
-    assert [tool.name for tool in visible] == ["read", "skill"]
+    assert sources["Skill"] == "builtin:skills"
+    assert [tool.name for tool in visible] == ["read", "Skill"]
 
 
 async def test_build_runtime_components_reload_keeps_conditional_subagent_delegation_builtin() -> None:
@@ -1075,9 +1075,9 @@ async def test_build_runtime_components_reload_keeps_conditional_subagent_delega
                 "default_agent_id": "aca",
                 "filesystem": {
                     "enabled": True,
-                    "skill_catalog_dir": str(
-                        Path(__file__).resolve().parent.parent / "fixtures" / "skills"
-                    ),
+                    "skill_catalog_dirs": [
+                        str(Path(__file__).resolve().parent.parent / "fixtures" / "skills")
+                    ],
                 },
                 "profiles": {
                     "aca": {

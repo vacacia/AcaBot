@@ -196,7 +196,7 @@ class ToolBroker:
             registered = self._tools.get(tool_name)
             if registered is None:
                 continue
-            if registered.spec.name == "skill":
+            if registered.spec.name == "Skill":
                 visible.append(
                     ToolSpec(
                         name=registered.spec.name,
@@ -213,7 +213,7 @@ class ToolBroker:
         profile: AgentProfile,
         registered: RegisteredTool,
     ) -> ToolSpec:
-        if registered.spec.name == "skill":
+        if registered.spec.name == "Skill":
             return ToolSpec(
                 name=registered.spec.name,
                 description=self._skill_tool_description(profile),
@@ -237,8 +237,8 @@ class ToolBroker:
             if tool_name in tool_names:
                 continue
             tool_names.append(tool_name)
-        if self._should_expose_skill_tool(profile) and "skill" not in tool_names:
-            tool_names.append("skill")
+        if self._should_expose_skill_tool(profile) and "Skill" not in tool_names:
+            tool_names.append("Skill")
         if self._should_expose_delegate_tool(profile) and "delegate_subagent" not in tool_names:
             tool_names.append("delegate_subagent")
         if self._should_expose_backend_bridge_tool(profile) and "ask_backend" not in tool_names:
@@ -263,10 +263,10 @@ class ToolBroker:
 
         run_visible_skills = self._visible_skills_for_run(ctx)
         if run_visible_skills:
-            if "skill" in self._tools and "skill" not in tool_names:
-                tool_names.append("skill")
+            if "Skill" in self._tools and "Skill" not in tool_names:
+                tool_names.append("Skill")
         else:
-            tool_names = [tool_name for tool_name in tool_names if tool_name != "skill"]
+            tool_names = [tool_name for tool_name in tool_names if tool_name != "Skill"]
 
         if self._should_expose_delegate_tool(ctx.profile) and "delegate_subagent" not in tool_names:
             tool_names.append("delegate_subagent")
@@ -285,12 +285,24 @@ class ToolBroker:
     def _should_expose_skill_tool(self, profile: AgentProfile) -> bool:
         if self.skill_catalog is None:
             return False
-        if "skill" not in self._tools:
+        if "Skill" not in self._tools:
             return False
         return bool(self.skill_catalog.visible_skills(profile))
 
     def _skill_tool_description(self, profile: AgentProfile) -> str:
-        base = "Use skill(name=...) to read an assigned skill's SKILL.md."
+        """为 profile 视角构造 Skill 工具说明.
+
+        Args:
+            profile: 当前 profile.
+
+        Returns:
+            str: 给模型看的 Skill 工具说明.
+        """
+
+        base = (
+            "Use Skill(skill=...) to load an assigned skill by name. "
+            "The runtime reads SKILL.md and returns the skill base directory under /skills/."
+        )
         visible = self._visible_skills(profile)
         if not visible:
             return base
@@ -300,16 +312,19 @@ class ToolBroker:
         return f"{base} Available skills: {details}"
 
     def _skill_tool_description_for_run(self, ctx: RunContext) -> str:
-        """为当前 run 构造 skill 工具描述.
+        """为当前 run 构造 Skill 工具说明.
 
         Args:
             ctx: 当前 run 的执行上下文.
 
         Returns:
-            str: 当前 run 使用的 skill 工具说明.
+            str: 当前 run 使用的 Skill 工具说明.
         """
 
-        base = "Use skill(name=...) to read a skill from the current /skills world view."
+        base = (
+            "Use Skill(skill=...) to load a skill from the current /skills world view. "
+            "The runtime reads SKILL.md and returns the skill base directory for follow-up reads."
+        )
         visible = self._visible_skills_for_run(ctx)
         if not visible:
             return base

@@ -15,29 +15,61 @@ class SkillPackageFormatError(ValueError):
 
 @dataclass(slots=True)
 class SkillPackageManifest:
-    """一条 skill package 的轻量清单."""
+    """一条 skill package 的核心 metadata.
+
+    Attributes:
+        skill_name (str): 模型和 runtime 使用的 skill 名字.
+        scope (str): 当前 skill 的来源范围, 例如 `project` 或 `user`.
+        description (str): 当前 skill 的简短说明.
+        host_skill_file_path (str): 当前 `SKILL.md` 的宿主机绝对路径.
+        argument_hint (str): 可选的参数提示文本.
+        disable_model_invocation (bool): 是否禁用模型主动调用这个 skill.
+        metadata (dict[str, Any]): 额外 frontmatter 字段.
+    """
 
     skill_name: str
-    display_name: str
+    scope: str
     description: str
-    root_dir: str
-    skill_md_path: str
-    references_dir: str = ""
-    scripts_dir: str = ""
-    assets_dir: str = ""
+    host_skill_file_path: str
+    argument_hint: str = ""
+    disable_model_invocation: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
+    def host_skill_root_path(self) -> str:
+        """返回当前 skill 根目录的宿主机绝对路径."""
+
+        return str(Path(self.host_skill_file_path).resolve().parent)
+
+    @property
+    def display_name(self) -> str:
+        """返回给控制面展示的标题.
+
+        优先取 frontmatter.name, 没有就回退成 `skill_name`.
+        """
+
+        value = str(self.metadata.get("display_name", "") or "").strip()
+        if value:
+            return value
+        return self.skill_name
+
+    @property
     def has_references(self) -> bool:
-        return bool(self.references_dir)
+        """判断 skill 根目录下是否存在 `references/`."""
+
+        return (Path(self.host_skill_root_path) / "references").is_dir()
 
     @property
     def has_scripts(self) -> bool:
-        return bool(self.scripts_dir)
+        """判断 skill 根目录下是否存在 `scripts/`."""
+
+        return (Path(self.host_skill_root_path) / "scripts").is_dir()
 
     @property
     def has_assets(self) -> bool:
-        return bool(self.assets_dir)
+        """判断 skill 根目录下是否存在 `assets/`."""
+
+        return (Path(self.host_skill_root_path) / "assets").is_dir()
 
 
 @dataclass(slots=True)
@@ -52,9 +84,19 @@ class SkillPackageDocument:
 def parse_skill_package(
     *,
     skill_name: str,
+    scope: str,
     root_dir: str | Path,
 ) -> SkillPackageDocument:
-    """从 skill 目录解析出标准 package 文档."""
+    """从 skill 目录解析出标准 package 文档.
+
+    Args:
+        skill_name: 模型和 runtime 使用的 skill 名字.
+        scope: 当前 skill 的来源范围.
+        root_dir: 当前 skill 根目录.
+
+    Returns:
+        SkillPackageDocument: 解析后的 skill 文档.
+    """
 
     root = Path(root_dir).expanduser().resolve()
     skill_md = root / "SKILL.md"
@@ -67,28 +109,25 @@ def parse_skill_package(
     frontmatter, body_markdown = _split_frontmatter(raw_markdown, skill_md)
     display_name = str(frontmatter.get("name", "") or "").strip()
     description = str(frontmatter.get("description", "") or "").strip()
-    if not display_name:
-        raise SkillPackageFormatError(f"SKILL.md missing frontmatter.name: {skill_md}")
+    argument_hint = str(frontmatter.get("argument-hint", "") or "").strip()
+    disable_model_invocation = bool(frontmatter.get("disable-model-invocation", False))
     if not description:
         raise SkillPackageFormatError(f"SKILL.md missing frontmatter.description: {skill_md}")
 
-    references_dir = _existing_dir(root / "references")
-    scripts_dir = _existing_dir(root / "scripts")
-    assets_dir = _existing_dir(root / "assets")
     metadata = {
         key: value
         for key, value in dict(frontmatter).items()
-        if key not in {"name", "description"}
+        if key not in {"name", "description", "argument-hint", "disable-model-invocation"}
     }
+    if display_name:
+        metadata["display_name"] = display_name
     manifest = SkillPackageManifest(
         skill_name=skill_name,
-        display_name=display_name,
+        scope=scope,
         description=description,
-        root_dir=str(root),
-        skill_md_path=str(skill_md),
-        references_dir=references_dir,
-        scripts_dir=scripts_dir,
-        assets_dir=assets_dir,
+        host_skill_file_path=str(skill_md),
+        argument_hint=argument_hint,
+        disable_model_invocation=disable_model_invocation,
         metadata=metadata,
     )
     return SkillPackageDocument(
@@ -99,6 +138,8 @@ def parse_skill_package(
 
 
 def _split_frontmatter(raw_markdown: str, skill_md_path: Path) -> tuple[dict[str, Any], str]:
+    """拆出 frontmatter 和正文."""
+
     if not raw_markdown.startswith("---\n"):
         raise SkillPackageFormatError(f"SKILL.md missing YAML frontmatter: {skill_md_path}")
 
@@ -116,9 +157,3 @@ def _split_frontmatter(raw_markdown: str, skill_md_path: Path) -> tuple[dict[str
     if not isinstance(frontmatter, dict):
         raise SkillPackageFormatError(f"SKILL.md frontmatter must be a mapping: {skill_md_path}")
     return dict(frontmatter), body_markdown
-
-
-def _existing_dir(path: Path) -> str:
-    if path.exists() and path.is_dir():
-        return str(path.resolve())
-    return ""
