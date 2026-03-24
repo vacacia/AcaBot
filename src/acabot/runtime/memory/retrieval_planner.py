@@ -509,6 +509,9 @@ class RetrievalPlanner:
             for slot in plan.prompt_slots
             if slot.position in {"system_message", "history_prefix"}
         ]
+        # TODO: 最近的 m 条原始历史消息在进入最终 messages 前,
+        # 要补上 channel / sender_qq / msg_id / time 这类可操作元信息,
+        # 这样模型面对最近消息时才能做 reply / react emoji.
         return [*slot_messages, *list(plan.compressed_messages)]
     # endregion
 
