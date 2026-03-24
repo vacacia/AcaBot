@@ -16,12 +16,16 @@ from acabot.config import Config
 from acabot.runtime import (
     ApprovalRequired,
     AgentProfile,
+    ContextAssembler,
     InMemoryMemoryStore,
     ContextCompactor,
     ModelContextSummarizer,
     LocalReferenceBackend,
     NullReferenceBackend,
     OpenVikingReferenceBackend,
+    PayloadJsonWriter,
+    RetrievalPlan,
+    RunContext,
     RuntimePlugin,
     RuntimePluginContext,
     RuntimePluginManager,
@@ -37,6 +41,8 @@ from acabot.runtime import (
     build_runtime_components,
 )
 from acabot.runtime.contracts import PendingApproval
+from acabot.runtime.bootstrap.builders import build_payload_json_writer
+from acabot.runtime.bootstrap.config import resolve_runtime_path
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
 from .test_outbox import FakeGateway
@@ -1410,7 +1416,7 @@ def test_build_runtime_components_defaults_to_null_reference_backend() -> None:
     assert isinstance(components.context_compactor.summarizer, ModelContextSummarizer)
 
 
-def test_build_runtime_components_applies_prompt_assembly_config() -> None:
+def test_build_runtime_components_ignores_legacy_prompt_assembly_config() -> None:
     config = Config(
         {
             "agent": {
@@ -1435,9 +1441,119 @@ def test_build_runtime_components_applies_prompt_assembly_config() -> None:
         agent=FakeAgent(FakeAgentResponse(text="ok")),
     )
 
-    assert components.retrieval_planner.config.sticky_intro == "稳定规则如下"
-    assert components.retrieval_planner.config.summary_slot_position == "history_prefix"
-    assert components.retrieval_planner.config.summary_message_role == "system"
+    assert isinstance(components.retrieval_planner, RetrievalPlanner)
+    assert not hasattr(components.retrieval_planner, "config")
+
+
+async def test_build_runtime_components_memory_broker_reads_self_and_sticky_file_sources(
+    tmp_path: Path,
+) -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "runtime-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "default_prompt_ref": "prompt/default",
+                "runtime_root": str(tmp_path / ".acabot-runtime"),
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    components.soul_source.append_today_entry("[qq:group:20002 time=1] 记录了部署任务")
+    components.sticky_notes_source.create_note(
+        scope="user",
+        scope_key="qq:user:10001",
+        key="reply_style",
+        readonly_content="回答要更直接",
+    )
+
+    event = _event()
+    decision = RouteDecision(
+        thread_id="qq:user:10001",
+        actor_id="qq:user:10001",
+        agent_id="aca",
+        channel_scope="qq:user:10001",
+    )
+    thread = await components.thread_manager.get_or_create(
+        thread_id=decision.thread_id,
+        channel_scope=decision.channel_scope,
+        last_event_at=event.timestamp,
+    )
+    run = await components.run_manager.open(event=event, decision=decision)
+    ctx = RunContext(
+        run=run,
+        event=event,
+        decision=decision,
+        thread=thread,
+        profile=components.profile_loader.load(decision),
+        retrieval_plan=RetrievalPlan(
+            requested_scopes=["user"],
+            sticky_note_scopes=["user"],
+            retained_history=[],
+        ),
+    )
+
+    result = await components.memory_broker.retrieve(ctx)
+
+    assert [source_id for source_id, _ in components.memory_broker.registry.items()] == [
+        "self",
+        "sticky_notes",
+        "store_memory",
+    ]
+    assert [block.source for block in result.blocks[:2]] == ["self", "sticky_notes"]
+
+
+async def test_build_runtime_components_wires_context_assembler_and_payload_writer(
+    tmp_path: Path,
+) -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "runtime-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "default_prompt_ref": "prompt/default",
+                "runtime_root": str(tmp_path / ".acabot-runtime"),
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+
+    assert isinstance(components.context_assembler, ContextAssembler)
+    assert isinstance(components.payload_json_writer, PayloadJsonWriter)
+    assert components.payload_json_writer.root_dir == resolve_runtime_path(
+        config,
+        "debug/model-payloads",
+    )
+
+
+def test_build_payload_json_writer_uses_default_payload_json_dir(tmp_path: Path) -> None:
+    config = Config(
+        {
+            "runtime": {
+                "runtime_root": str(tmp_path / ".acabot-runtime"),
+            }
+        }
+    )
+
+    writer = build_payload_json_writer(config)
+
+    assert writer.root_dir == resolve_runtime_path(config, "debug/model-payloads")
 
 
 def test_build_runtime_components_applies_context_compaction_config() -> None:
@@ -1546,7 +1662,3 @@ def test_build_runtime_components_selects_openviking_reference_backend() -> None
     assert components.reference_backend.mode == "embedded"
     assert components.reference_backend.path == "./ref-data"
     assert components.reference_backend.base_uri == "viking://resources/acabot-test"
-
-
-
-

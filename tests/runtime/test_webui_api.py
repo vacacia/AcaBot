@@ -792,26 +792,16 @@ async def test_runtime_http_api_server_serves_soul_and_sticky_notes_routes(tmp_p
         soul_files = await asyncio.to_thread(request_json, base_url, "/api/soul/files")
         assert soul_files["ok"] is True
         names = [str(item["name"]) for item in soul_files["data"]["items"]]
-        assert "identity.md" in names
-        assert "soul.md" in names
-        assert "state.yaml" in names
-        assert "task.md" in names
+        assert names == ["today.md"]
 
-        identity_file = await asyncio.to_thread(
+        today_file = await asyncio.to_thread(
             request_json,
             base_url,
-            "/api/soul/file?name=identity.md",
+            "/api/soul/file?name=today.md",
         )
-        assert identity_file["ok"] is True
-        assert "我是谁" in str(identity_file["data"]["content"])
-
-        task_file = await asyncio.to_thread(
-            request_json,
-            base_url,
-            "/api/soul/file?name=task.md",
-        )
-        assert task_file["ok"] is True
-        assert "正在做" in str(task_file["data"]["content"])
+        assert today_file["ok"] is True
+        assert today_file["data"]["name"] == "today.md"
+        assert str(today_file["data"]["content"]) == ""
 
         self_alias = await asyncio.to_thread(request_json, base_url, "/api/self/files")
         assert self_alias["ok"] is True
@@ -822,30 +812,30 @@ async def test_runtime_http_api_server_serves_soul_and_sticky_notes_routes(tmp_p
             base_url,
             "/api/soul/files",
             method="POST",
-            payload={"name": "persona.md", "content": "Aca 喜欢直接表达。"},
+            payload={"name": "daily/2026-03-23.md", "content": "# 2026-03-23\n- 完成部署"},
         )
         assert created["ok"] is True
-        assert created["data"]["name"] == "persona.md"
+        assert created["data"]["name"] == "daily/2026-03-23.md"
 
         updated = await asyncio.to_thread(
             request_json,
             base_url,
             "/api/soul/file",
             method="PUT",
-            payload={"name": "task.md", "content": "- [ ] 重写 WebUI"},
+            payload={"name": "today.md", "content": "[qq:group:42 time=1] 重写 WebUI"},
         )
         assert updated["ok"] is True
         assert "重写 WebUI" in str(updated["data"]["content"])
 
-        status, invalid_yaml = await asyncio.to_thread(
+        status, invalid_path = await asyncio.to_thread(
             request_json_with_status,
             base_url,
             "/api/soul/file",
             method="PUT",
-            payload={"name": "state.yaml", "content": "bad: [yaml"},
+            payload={"name": "../escape.md", "content": "bad"},
         )
         assert status == 400
-        assert invalid_yaml["ok"] is False
+        assert invalid_path["ok"] is False
 
         created_note = await asyncio.to_thread(
             request_json,

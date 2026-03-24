@@ -5,7 +5,9 @@
 - ToolRuntimeResolver 是否真的把 `tools + tool_executor` 接到底层 agent
 """
 
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from acabot.agent import (
@@ -18,8 +20,11 @@ from acabot.agent import (
 from acabot.runtime import (
     AgentProfile,
     InMemoryToolAudit,
+    MessageProjection,
     ModelAgentRuntime,
+    PayloadJsonWriter,
     PlannedAction,
+    RetrievalPlan,
     RouteDecision,
     RunContext,
     RunRecord,
@@ -206,7 +211,11 @@ def _context() -> RunContext:
             prompt_ref="prompt/default",
             default_model="test-model",
         ),
-        messages=[{"role": "user", "content": "[acacia/10001] hello"}],
+        retrieval_plan=RetrievalPlan(retained_history=[]),
+        message_projection=MessageProjection(
+            history_text="[acacia/10001] hello",
+            model_content="[acacia/10001] hello",
+        ),
     )
 
 
@@ -256,15 +265,13 @@ async def test_model_agent_runtime_passes_multimodal_user_content_through() -> N
         prompt_loader=StaticPromptLoader({"prompt/default": "You are Aca."}),
     )
     ctx = _context()
-    ctx.messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "[acacia/10001] [图片说明: 一只猫]"},
-                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,Y2F0"}},
-            ],
-        }
-    ]
+    ctx.message_projection = MessageProjection(
+        history_text="[acacia/10001] [图片说明: 一只猫]",
+        model_content=[
+            {"type": "text", "text": "[acacia/10001] [图片说明: 一只猫]"},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,Y2F0"}},
+        ],
+    )
 
     await runtime.execute(ctx)
 
@@ -363,6 +370,25 @@ async def test_model_agent_runtime_wraps_visible_skills_in_skill_system_reminder
     assert "<system-reminder>" in system_prompt
     assert "The following skills are available for use with the Skill tool:" in system_prompt
     assert "- sample_configured_skill: 用于测试 skill-first catalog 的样例 skill." in system_prompt
+
+
+async def test_model_agent_runtime_assembles_context_and_writes_payload_json(tmp_path: Path) -> None:
+    agent = FakeAgent(AgentResponse(text="ok", model_used="test-model"))
+    runtime = ModelAgentRuntime(
+        agent=agent,
+        prompt_loader=StaticPromptLoader({"prompt/default": "You are Aca."}),
+        payload_json_writer=PayloadJsonWriter(root_dir=tmp_path),
+    )
+    ctx = _context()
+
+    await runtime.execute(ctx)
+
+    payload_path = tmp_path / "run:1.json"
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    assert ctx.system_prompt == "You are Aca."
+    assert ctx.messages == [{"role": "user", "content": "[acacia/10001] hello"}]
+    assert payload["system_prompt"] == "You are Aca."
+    assert payload["messages"] == [{"role": "user", "content": "[acacia/10001] hello"}]
 
 
 async def test_model_agent_runtime_can_use_tool_broker() -> None:

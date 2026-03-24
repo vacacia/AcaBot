@@ -17,6 +17,7 @@ from ..backend.session import (
     ConfiguredBackendSessionService,
 )
 from ..builtin_tools import register_core_builtin_tools
+from ..context_assembly import ContextAssembler
 from ..control.config_control_plane import RuntimeConfigControlPlane
 from ..control.control_plane import RuntimeControlPlane
 from ..gateway_protocol import GatewayProtocol
@@ -51,6 +52,7 @@ from .builders import (
     build_memory_store,
     build_message_store,
     build_model_registry_manager,
+    build_payload_json_writer,
     build_reference_backend,
     build_retrieval_planner,
     build_run_manager,
@@ -180,6 +182,8 @@ def build_runtime_components(
     runtime_memory_broker = memory_broker or build_memory_broker(
         config,
         memory_store=runtime_memory_store,
+        soul_source=runtime_soul_source,
+        sticky_notes_source=runtime_sticky_notes_source,
     )
     runtime_context_compactor = context_compactor or build_context_compactor(
         config,
@@ -246,6 +250,8 @@ def build_runtime_components(
     )
     runtime_tool_broker.skill_catalog = runtime_skill_catalog
     runtime_tool_broker.backend_bridge = runtime_backend_bridge
+    runtime_context_assembler = ContextAssembler()
+    runtime_payload_json_writer = build_payload_json_writer(config)
     register_core_builtin_tools(
         tool_broker=runtime_tool_broker,
         computer_runtime=runtime_computer_runtime,
@@ -291,6 +297,8 @@ def build_runtime_components(
         agent=agent,
         prompt_loader=prompt_loader,
         tool_runtime_resolver=runtime_tool_broker.build_tool_runtime,
+        context_assembler=runtime_context_assembler,
+        payload_json_writer=runtime_payload_json_writer,
     )
     outbox = Outbox(gateway=gateway, store=runtime_message_store)
     pipeline = ThreadPipeline(
@@ -392,6 +400,8 @@ def build_runtime_components(
         memory_broker=runtime_memory_broker,
         context_compactor=runtime_context_compactor,
         retrieval_planner=runtime_retrieval_planner,
+        context_assembler=runtime_context_assembler,
+        payload_json_writer=runtime_payload_json_writer,
         model_registry_manager=runtime_model_registry_manager,
         computer_runtime=runtime_computer_runtime,
         image_context_service=runtime_image_context_service,

@@ -9,6 +9,7 @@ from ..app import RuntimeApp
 from ..backend.bridge import BackendBridge
 from ..backend.mode_registry import BackendModeRegistry
 from ..computer import ComputerRuntime
+from ..context_assembly import ContextAssembler, PayloadJsonWriter
 from ..control.config_control_plane import RuntimeConfigControlPlane
 from ..control.control_plane import RuntimeControlPlane
 from ..gateway_protocol import GatewayProtocol
@@ -58,6 +59,8 @@ class RuntimeComponents:
     memory_broker: MemoryBroker
     context_compactor: ContextCompactor
     retrieval_planner: RetrievalPlanner
+    context_assembler: ContextAssembler
+    payload_json_writer: PayloadJsonWriter
     model_registry_manager: FileSystemModelRegistryManager
     computer_runtime: ComputerRuntime
     image_context_service: ImageContextService

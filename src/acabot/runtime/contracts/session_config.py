@@ -424,14 +424,12 @@ class ContextDecision:
 
     Attributes:
         sticky_note_scopes (list[str]): 要注入的 sticky note scope.
-        prompt_slots (list[dict[str, Any]]): 要追加的 prompt slot.
         retrieval_tags (list[str]): retrieval tag.
         context_labels (list[str]): 额外上下文标签.
         notes (list[str]): 其他说明.
     """
 
     sticky_note_scopes: list[str] = field(default_factory=list)
-    prompt_slots: list[dict[str, Any]] = field(default_factory=list)
     retrieval_tags: list[str] = field(default_factory=list)
     context_labels: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)

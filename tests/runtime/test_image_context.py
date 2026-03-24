@@ -234,11 +234,7 @@ async def test_message_preparation_service_captions_images_and_builds_model_cont
     assert ctx.message_projection.history_text.endswith(
         "[系统补充-引用文本: 原消息里的图] [系统补充-图片说明: caption-1] [系统补充-引用图片说明: caption-2]"
     )
-
-    ctx.messages = [{"role": "user", "content": ctx.event.working_memory_text}]
-    service.apply_model_message(ctx)
-
-    content = ctx.messages[0]["content"]
+    content = ctx.message_projection.model_content
     assert isinstance(content, list)
     assert content[0]["type"] == "text"
     assert sum(1 for item in content if item["type"] == "image_url") == 2
@@ -267,3 +263,26 @@ async def test_message_preparation_service_record_only_uses_fallback_caption_req
     assert len(ctx.resolved_images) == 1
     assert registry.resolve_run_request_calls[0]["run_mode"] == "respond"
     assert len(agent.calls) == 1
+
+
+async def test_message_preparation_service_still_builds_projection_when_caption_disabled(tmp_path: Path) -> None:
+    computer, ctx, _current_image, _reply_image = _ctx(tmp_path, include_reply=False)
+    ctx.profile.config["image_caption"]["enabled"] = False
+    await computer.prepare_run_context(ctx)
+    agent = FakeCaptionAgent()
+    service = _service(
+        agent,
+        gateway=None,
+        computer=computer,
+        registry=FakeModelRegistry(),
+    )
+
+    await service.prepare(ctx)
+
+    assert ctx.resolved_message is not None
+    assert ctx.message_projection is not None
+    assert ctx.message_projection.history_text == "[acacia/10001] 请看这两张图 [attachments:image]"
+    assert isinstance(ctx.message_projection.model_content, list)
+    assert ctx.message_projection.model_content[0]["type"] == "text"
+    assert ctx.message_projection.model_content[1]["type"] == "image_url"
+    assert agent.calls == []

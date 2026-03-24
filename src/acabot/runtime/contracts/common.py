@@ -18,7 +18,6 @@ RunMode = Literal["respond", "record_only", "silent_drop"]
 CommitWhen = Literal["success", "failure", "waiting_approval", "always"]
 ApprovalDecision = Literal["approved", "rejected"]
 MemoryEditMode = Literal["readonly", "draft", "private"]
-PromptSlotPosition = Literal["system_message", "history_prefix", "tool_result", "private_scratchpad"]
 DelegationMode = Literal["inline", "prefer_delegate", "must_delegate", "manual"]
 
 __all__ = [
@@ -26,7 +25,6 @@ __all__ = [
     "CommitWhen",
     "DelegationMode",
     "MemoryEditMode",
-    "PromptSlotPosition",
     "RunMode",
     "RunStatus",
 ]

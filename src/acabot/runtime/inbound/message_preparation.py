@@ -22,34 +22,30 @@ class MessagePreparationService:
         resolution_service: MessageResolutionService,
         projection_service: MessageProjectionService,
     ) -> None:
+        """初始化消息整理服务.
+
+        Args:
+            resolution_service: 负责补齐消息材料的服务.
+            projection_service: 负责生成 history / model / memory 版本的服务.
+        """
+
         self.resolution_service = resolution_service
         self.projection_service = projection_service
 
     async def prepare(self, ctx: RunContext) -> None:
-        """补齐消息材料, 再生成 history / model / memory 候选."""
+        """补齐消息材料, 再生成 history / model / memory 候选.
+
+        Args:
+            ctx: 当前 run 的执行上下文.
+        """
 
         settings = parse_image_caption_settings(ctx.profile.config.get("image_caption"))
-        if not settings.enabled:
-            return
-
         resolved = await self.resolution_service.resolve(
             ctx,
-            include_reply_images=settings.include_reply_images,
+            include_reply_images=settings.enabled and settings.include_reply_images,
         )
         await self.projection_service.project(
             ctx,
             resolved=resolved,
             image_settings=settings,
         )
-
-    def apply_model_message(self, ctx: RunContext) -> None:
-        """把整理后的当前轮用户输入应用到最后一条 user message."""
-
-        projection = ctx.message_projection
-        if projection is None:
-            return
-        for index in range(len(ctx.messages) - 1, -1, -1):
-            if str(ctx.messages[index].get("role", "")) != "user":
-                continue
-            ctx.messages[index]["content"] = projection.model_content
-            return

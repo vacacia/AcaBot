@@ -57,16 +57,15 @@ daily/: 昨天、前天的整理稿(偏总结)
 2. **运行时有一套 `SoulSource` 文件真源**
    - 代码在 `src/acabot/runtime/soul/source.py`
    - bootstrap 在 `src/acabot/runtime/bootstrap/__init__.py`
-   - 默认维护固定文件：
-     - `identity.md`
-     - `soul.md`
-     - `state.yaml`
-     - `task.md`
+   - 当前真实结构已经是：
+     - `today.md`
+     - `daily/*.md`
 
-3. **pipeline 目前注入的是 soul 文本，不是广义 `/self` 扫描结果**
-   - 代码在 `src/acabot/runtime/pipeline.py`
-   - 当前行为是 `SoulSource.build_prompt_text()` 生成稳定文本，然后写到 `ctx.metadata["soul_prompt_text"]`
-   - `RetrievalPlanner` 再把这段文本作为 `soul_context` prompt slot 注入
+3. **前台主线里，`/self` 已经不再走旧的 soul prompt 注入**
+   - `ThreadPipeline` 不再自己拼 soul 文本
+   - `RetrievalPlanner` 只负责 prepare
+   - `MemoryBroker` 通过 `SelfFileRetriever` 统一读取 `/self`
+   - 最终由 `ContextAssembler` 和 `ModelAgentRuntime` 把它组装进模型输入
 
 此外，控制面和 WebUI 现在已经有 `/api/self/*` 这套接口，但它本质上是 **兼容别名**：
 
@@ -78,4 +77,3 @@ daily/: 昨天、前天的整理稿(偏总结)
 所以这一层的真实现状可以直接概括成一句话：
 
 > 当前代码已经有 `/self` 的文件可见性，也有 soul 文件真源和 prompt 注入，但还没有做成 `00` 里那种“按天维护、自我连续、最近几天自动进上下文”的完整 self memory。
-

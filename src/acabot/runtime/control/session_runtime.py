@@ -243,9 +243,13 @@ class SessionRuntime:
             selectors=session.selectors,
             domain=domain,
         )
+        sticky_note_scopes = (
+            list(payload.get("sticky_note_scopes", []))
+            if "sticky_note_scopes" in payload
+            else self._default_sticky_note_scopes(facts)
+        )
         return ContextDecision(
-            sticky_note_scopes=list(payload.get("sticky_note_scopes", [])),
-            prompt_slots=list(payload.get("prompt_slots", [])),
+            sticky_note_scopes=sticky_note_scopes,
             retrieval_tags=list(payload.get("retrieval_tags", [])),
             context_labels=list(payload.get("context_labels", [])),
             notes=list(payload.get("notes", [])),
@@ -459,6 +463,16 @@ class SessionRuntime:
         """
 
         return session.surfaces.get(surface.surface_id, SurfaceConfig())
+
+    @staticmethod
+    def _default_sticky_note_scopes(facts: EventFacts) -> list[str]:
+        """在没有显式配置时, 给常见消息场景一份默认 sticky note allow-list."""
+
+        if facts.scene == "group":
+            return ["user", "channel"]
+        if facts.scene == "private":
+            return ["user"]
+        return []
 
     def _resolve_single_domain(
         self,

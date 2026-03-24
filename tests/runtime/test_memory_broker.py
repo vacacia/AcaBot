@@ -1,4 +1,13 @@
-from acabot.runtime import ContextDecision, ExtractionDecision, MemoryBlock, MemoryBroker, RunContext
+from acabot.runtime import (
+    ContextDecision,
+    ExtractionDecision,
+    MemoryAssemblySpec,
+    MemoryBlock,
+    MemoryBroker,
+    MemorySourceFailure,
+    MemorySourcePolicy,
+    RunContext,
+)
 from acabot.runtime.contracts import (
     AgentProfile,
     MemoryCandidate,
@@ -19,12 +28,28 @@ class RecordingRetriever:
         self.calls.append(request)
         return [
             MemoryBlock(
-                title="User Profile",
                 content="用户喜欢简洁回答",
+                source="test_source",
                 scope="user",
                 source_ids=["memory:1"],
+                assembly=MemoryAssemblySpec(
+                    target_slot="message_prefix",
+                    priority=300,
+                ),
             )
         ]
+
+
+class FlakyRetriever:
+    async def __call__(self, request):
+        _ = request
+        raise RuntimeError("boom")
+
+
+class MalformedBlockRetriever:
+    async def __call__(self, request):
+        _ = request
+        return [None]
 
 
 class RecordingExtractor:
@@ -33,6 +58,15 @@ class RecordingExtractor:
 
     async def __call__(self, request) -> None:
         self.calls.append(request)
+
+
+def _registry(*items) -> object:
+    from acabot.runtime import MemorySourceRegistry
+
+    registry = MemorySourceRegistry()
+    for source_id, source in items:
+        registry.register(source_id, source)
+    return registry
 
 
 def _ctx() -> RunContext:
@@ -91,29 +125,43 @@ def _ctx() -> RunContext:
         ),
         retrieval_plan=RetrievalPlan(
             requested_scopes=["relationship", "user"],
-            requested_memory_types=["sticky_note", "episodic"],
-            compressed_messages=[{"role": "user", "content": "[acacia/10001] [notice:poke]"}],
+            retained_history=[{"role": "user", "content": "[acacia/10001] [notice:poke]"}],
+            working_summary="群里最近在讨论机器人设定",
         ),
     )
 
 
 async def test_memory_broker_builds_retrieval_request_from_context() -> None:
     retriever = RecordingRetriever()
-    broker = MemoryBroker(retriever=retriever)
+    broker = MemoryBroker(registry=_registry(("retriever:0", retriever)))
     ctx = _ctx()
 
-    blocks = await broker.retrieve(ctx)
+    result = await broker.retrieve(ctx)
 
-    assert blocks[0].title == "User Profile"
+    assert result.blocks[0].source == "test_source"
+    assert result.blocks[0].assembly.target_slot == "message_prefix"
+    assert result.failures == []
     request = retriever.calls[0]
     assert request.event_id == "evt-1"
     assert request.event_type == "poke"
     assert request.event_timestamp == 123
+    assert request.thread_id == "qq:group:20002"
+    assert request.actor_id == "qq:user:10001"
+    assert request.channel_scope == "qq:group:20002"
     assert request.requested_scopes == ["relationship", "user"]
-    assert request.requested_memory_types == ["sticky_note", "episodic"]
+    assert request.working_summary == "群里最近在讨论机器人设定"
+    assert request.retained_history == [{"role": "user", "content": "[acacia/10001] [notice:poke]"}]
     assert request.event_tags == ["notice", "poke"]
     assert request.metadata["event_policy_id"] == "poke-memory"
-    assert request.metadata["prompt_slot_count"] == 0
+    assert request.metadata["sticky_note_scopes"] == []
+
+
+def test_memory_broker_no_longer_accepts_legacy_retriever_argument() -> None:
+    try:
+        MemoryBroker(retriever=RecordingRetriever())  # type: ignore[call-arg]
+    except TypeError:
+        return
+    raise AssertionError("legacy retriever= compatibility should be removed")
 
 
 async def test_memory_broker_builds_write_request_from_context() -> None:
@@ -147,14 +195,101 @@ async def test_memory_broker_prefers_memory_user_content_override() -> None:
 
 async def test_memory_broker_passes_context_retrieval_tags() -> None:
     retriever = RecordingRetriever()
-    broker = MemoryBroker(retriever=retriever)
+    broker = MemoryBroker(registry=_registry(("retriever:0", retriever)))
     ctx = _ctx()
+    ctx.retrieval_plan = None
     ctx.context_decision = ContextDecision(retrieval_tags=["urgent", "project"])
 
     await broker.retrieve(ctx)
 
     request = retriever.calls[0]
     assert request.requested_tags == ["urgent", "project"]
+
+
+async def test_memory_broker_collects_source_failures_without_blocking_other_results() -> None:
+    broker = MemoryBroker(
+        registry=_registry(
+            ("retriever:0", RecordingRetriever()),
+            ("retriever:1", FlakyRetriever()),
+        ),
+    )
+    ctx = _ctx()
+
+    result = await broker.retrieve(ctx)
+
+    assert [block.source for block in result.blocks] == ["test_source"]
+    assert result.failures == [
+        MemorySourceFailure(source="retriever:1", error="boom")
+    ]
+
+
+async def test_memory_broker_isolates_malformed_block_output_from_other_sources() -> None:
+    broker = MemoryBroker(
+        registry=_registry(
+            ("retriever:0", RecordingRetriever()),
+            ("retriever:1", MalformedBlockRetriever()),
+        ),
+    )
+    ctx = _ctx()
+
+    result = await broker.retrieve(ctx)
+
+    assert [block.source for block in result.blocks] == ["test_source"]
+    assert result.failures == [
+        MemorySourceFailure(
+            source="retriever:1",
+            error="source returned non-MemoryBlock item: NoneType",
+        )
+    ]
+
+
+async def test_memory_broker_prefers_explicit_empty_plan_fields_over_legacy_fallbacks() -> None:
+    retriever = RecordingRetriever()
+    broker = MemoryBroker(registry=_registry(("retriever:0", retriever)))
+    ctx = _ctx()
+    ctx.thread.working_summary = "thread summary should not leak"
+    ctx.metadata["effective_working_summary"] = "effective summary should not leak"
+    ctx.metadata["effective_compacted_messages"] = [{"role": "user", "content": "older"}]
+    ctx.context_decision = ContextDecision(retrieval_tags=["urgent"])
+    ctx.extraction_decision = ExtractionDecision(
+        extract_to_memory=True,
+        memory_scopes=["channel"],
+        tags=["typed"],
+    )
+    ctx.retrieval_plan = RetrievalPlan(
+        requested_scopes=[],
+        requested_tags=[],
+        sticky_note_scopes=[],
+        retained_history=[],
+        working_summary="",
+    )
+
+    await broker.retrieve(ctx)
+
+    request = retriever.calls[0]
+    assert request.requested_scopes == []
+    assert request.requested_tags == []
+    assert request.retained_history == []
+    assert request.working_summary == ""
+
+
+async def test_memory_broker_respects_explicit_empty_allowed_target_slots() -> None:
+    retriever = RecordingRetriever()
+    broker = MemoryBroker(
+        registry=_registry(("retriever:0", retriever)),
+        policies={"retriever:0": MemorySourcePolicy(allowed_target_slots=[])},
+    )
+    ctx = _ctx()
+
+    result = await broker.retrieve(ctx)
+
+    assert result.blocks == []
+    assert result.failures == [
+        MemorySourceFailure(
+            source="retriever:0",
+            error="invalid target_slot: message_prefix",
+        )
+    ]
 
 
 async def test_memory_broker_prefers_typed_extraction_decision() -> None:

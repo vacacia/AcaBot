@@ -1,3 +1,4 @@
+import json
 from unittest.mock import AsyncMock, patch
 
 from acabot.agent import ToolSpec
@@ -11,13 +12,16 @@ from acabot.runtime import (
     InMemoryRunManager,
     InMemoryThreadManager,
     InMemoryToolAudit,
+    MemoryAssemblySpec,
     MemoryBlock,
     MemoryBroker,
+    MemoryBrokerResult,
+    MessageProjection,
     ModelAgentRuntime,
     ModelContextSummarizer,
     Outbox,
+    PayloadJsonWriter,
     PlannedAction,
-    PromptAssemblyConfig,
     RouteDecision,
     RunContext,
     RetrievalPlanner,
@@ -116,9 +120,9 @@ class RecordingMemoryBroker(MemoryBroker):
         self.retrieve_calls: list[RunContext] = []
         self.extract_calls: list[RunContext] = []
 
-    async def retrieve(self, ctx: RunContext) -> list[MemoryBlock]:
+    async def retrieve(self, ctx: RunContext) -> MemoryBrokerResult:
         self.retrieve_calls.append(ctx)
-        return list(self.blocks)
+        return MemoryBrokerResult(blocks=list(self.blocks))
 
     async def extract_after_run(self, ctx: RunContext) -> None:
         self.extract_calls.append(ctx)
@@ -134,10 +138,6 @@ class ExplodingRetrievalPlanner:
     def prepare(self, ctx: RunContext):
         _ = ctx
         raise AssertionError("record_only should not build retrieval plan")
-
-    def assemble(self, ctx: RunContext, *, memory_blocks):
-        _ = ctx, memory_blocks
-        raise AssertionError("record_only should not assemble prompt")
 
 
 def _mock_token_counter(model: str = "", messages=None, **kwargs) -> int:
@@ -307,9 +307,13 @@ async def test_thread_pipeline_injects_memory_blocks_before_agent_runtime() -> N
     memory_broker = RecordingMemoryBroker(
         blocks=[
             MemoryBlock(
-                title="User Profile",
                 content="用户喜欢直接回答",
+                source="store_memory",
                 scope="user",
+                assembly=MemoryAssemblySpec(
+                    target_slot="message_prefix",
+                    priority=700,
+                ),
                 metadata={"memory_type": "semantic", "edit_mode": "draft"},
             )
         ]
@@ -321,7 +325,7 @@ async def test_thread_pipeline_injects_memory_blocks_before_agent_runtime() -> N
         run_manager=run_manager,
         thread_manager=thread_manager,
         memory_broker=memory_broker,
-        retrieval_planner=RetrievalPlanner(PromptAssemblyConfig()),
+        retrieval_planner=RetrievalPlanner(),
     )
 
     event = _event()
@@ -343,13 +347,13 @@ async def test_thread_pipeline_injects_memory_blocks_before_agent_runtime() -> N
     await pipeline.execute(ctx)
 
     assert memory_broker.retrieve_calls == [ctx]
-    assert ctx.memory_blocks[0].title == "User Profile"
-    assert ctx.prompt_slots[0].slot_type == "retrieved_memory"
-    assert agent_runtime.captured_messages[0]["role"] == "system"
-    assert "User Profile" in str(agent_runtime.captured_messages[0]["content"])
+    assert ctx.memory_broker_result is not None
+    assert ctx.memory_blocks[0].source == "store_memory"
+    assert ctx.retrieval_plan is not None
+    assert agent_runtime.captured_messages == []
 
 
-async def test_thread_pipeline_assembles_sticky_summary_and_retrieval_slots() -> None:
+async def test_thread_pipeline_keeps_summary_and_memory_blocks_for_runtime_later() -> None:
     class InspectingAgentRuntime(AgentRuntime):
         def __init__(self) -> None:
             self.captured_messages = []
@@ -365,15 +369,23 @@ async def test_thread_pipeline_assembles_sticky_summary_and_retrieval_slots() ->
     memory_broker = RecordingMemoryBroker(
         blocks=[
             MemoryBlock(
-                title="Rule",
                 content="十个月实习只需要成果鉴定",
+                source="sticky_notes",
                 scope="channel",
+                assembly=MemoryAssemblySpec(
+                    target_slot="message_prefix",
+                    priority=800,
+                ),
                 metadata={"memory_type": "sticky_note", "edit_mode": "readonly"},
             ),
             MemoryBlock(
-                title="Relationship Memory",
                 content="用户最近在问实习材料",
+                source="store_memory",
                 scope="relationship",
+                assembly=MemoryAssemblySpec(
+                    target_slot="message_prefix",
+                    priority=700,
+                ),
                 metadata={"memory_type": "episodic", "edit_mode": "draft"},
             ),
         ]
@@ -385,7 +397,7 @@ async def test_thread_pipeline_assembles_sticky_summary_and_retrieval_slots() ->
         run_manager=run_manager,
         thread_manager=thread_manager,
         memory_broker=memory_broker,
-        retrieval_planner=RetrievalPlanner(PromptAssemblyConfig()),
+        retrieval_planner=RetrievalPlanner(),
     )
 
     event = _event()
@@ -407,16 +419,13 @@ async def test_thread_pipeline_assembles_sticky_summary_and_retrieval_slots() ->
 
     await pipeline.execute(ctx)
 
-    slot_types = [slot.slot_type for slot in ctx.prompt_slots]
-    assert slot_types == ["sticky_notes", "thread_summary", "retrieved_memory"]
-    assert "十个月实习只需要成果鉴定" in str(agent_runtime.captured_messages[0]["content"])
-    assert agent_runtime.captured_messages[1]["role"] == "user"
-    assert "<summary>" in str(agent_runtime.captured_messages[1]["content"])
-    assert "群里最近一直在讨论实习材料" in str(agent_runtime.captured_messages[1]["content"])
-    assert "Relationship Memory" in str(agent_runtime.captured_messages[2]["content"])
+    assert ctx.retrieval_plan is not None
+    assert ctx.retrieval_plan.working_summary == "群里最近一直在讨论实习材料"
+    assert [item.source for item in ctx.memory_blocks] == ["sticky_notes", "store_memory"]
+    assert agent_runtime.captured_messages == []
 
 
-async def test_thread_pipeline_applies_context_slots_and_labels() -> None:
+async def test_thread_pipeline_keeps_context_labels_in_retrieval_plan_only() -> None:
     class InspectingAgentRuntime(AgentRuntime):
         def __init__(self) -> None:
             self.captured_messages = []
@@ -435,7 +444,7 @@ async def test_thread_pipeline_applies_context_slots_and_labels() -> None:
         outbox=outbox,
         run_manager=run_manager,
         thread_manager=thread_manager,
-        retrieval_planner=RetrievalPlanner(PromptAssemblyConfig()),
+        retrieval_planner=RetrievalPlanner(),
     )
 
     event = _event()
@@ -454,25 +463,14 @@ async def test_thread_pipeline_applies_context_slots_and_labels() -> None:
         profile=_profile(),
         context_decision=ContextDecision(
             context_labels=["admin_message"],
-            prompt_slots=[
-                {
-                    "slot_id": "slot:session-note",
-                    "slot_type": "session_context",
-                    "title": "Session Note",
-                    "content": "请优先给出可执行步骤。",
-                    "position": "system_message",
-                    "message_role": "system",
-                    "stable": True,
-                }
-            ],
         ),
     )
 
     await pipeline.execute(ctx)
 
-    assert [slot.slot_type for slot in ctx.prompt_slots] == ["context_labels", "session_context"]
-    assert "admin_message" in str(agent_runtime.captured_messages[0]["content"])
-    assert "请优先给出可执行步骤。" in str(agent_runtime.captured_messages[1]["content"])
+    assert ctx.retrieval_plan is not None
+    assert ctx.retrieval_plan.metadata["context_labels"] == ["admin_message"]
+    assert agent_runtime.captured_messages == []
 
 
 async def test_thread_pipeline_compresses_working_memory_before_model_call() -> None:
@@ -500,7 +498,7 @@ async def test_thread_pipeline_compresses_working_memory_before_model_call() -> 
                 preserve_recent_turns=1,
             )
         ),
-        retrieval_planner=RetrievalPlanner(PromptAssemblyConfig()),
+        retrieval_planner=RetrievalPlanner(),
     )
 
     event = _event()
@@ -539,8 +537,8 @@ async def test_thread_pipeline_compresses_working_memory_before_model_call() -> 
             await pipeline.execute(ctx)
 
     assert ctx.thread.working_summary == ""
-    assert len(ctx.retrieval_plan.compressed_messages) == 1
-    assert ctx.retrieval_plan.compressed_messages[0]["content"].endswith("hello")
+    assert len(ctx.retrieval_plan.retained_history) == 1
+    assert ctx.retrieval_plan.retained_history[0]["content"].endswith("hello")
     assert ctx.metadata["token_stats"]["strategy_used"] == "truncate"
 
 
@@ -592,7 +590,7 @@ async def test_thread_pipeline_uses_compaction_override_when_thread_apply_is_ski
         run_manager=run_manager,
         thread_manager=thread_manager,
         context_compactor=compactor,
-        retrieval_planner=RetrievalPlanner(PromptAssemblyConfig()),
+        retrieval_planner=RetrievalPlanner(),
     )
 
     event = _event()
@@ -633,8 +631,94 @@ async def test_thread_pipeline_uses_compaction_override_when_thread_apply_is_ski
 
     assert ctx.metadata["compaction_applied_to_thread"] is False
     assert ctx.thread.working_summary == ""
-    assert ctx.prompt_slots[0].slot_type == "thread_summary"
-    assert "summary override" in str(agent_runtime.captured_messages[0]["content"])
+    assert ctx.retrieval_plan.working_summary == "summary override"
+    assert agent_runtime.captured_messages == []
+
+
+async def test_pipeline_and_model_runtime_produce_final_context_and_payload_json(tmp_path) -> None:
+    class RecordingModelAgent:
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def run(
+            self,
+            system_prompt: str,
+            messages: list[dict[str, object]],
+            model: str | None = None,
+            *,
+            request_options=None,
+            max_tool_rounds=None,
+            tools=None,
+            tool_executor=None,
+        ):
+            _ = request_options, max_tool_rounds, tools, tool_executor
+            self.calls.append(
+                {
+                    "system_prompt": system_prompt,
+                    "messages": list(messages),
+                    "model": model,
+                }
+            )
+            return type(
+                "Response",
+                (),
+                {
+                    "text": "hello back",
+                    "attachments": [],
+                    "error": None,
+                    "usage": {},
+                    "tool_calls_made": [],
+                    "model_used": model or "",
+                    "raw": {"system_prompt": system_prompt, "messages": messages},
+                },
+            )()
+
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    outbox = Outbox(gateway=FakeGateway(), store=FakeMessageStore())
+    agent = RecordingModelAgent()
+    runtime = ModelAgentRuntime(
+        agent=agent,
+        prompt_loader=StaticPromptLoader({"prompt/default": "You are Aca."}),
+        payload_json_writer=PayloadJsonWriter(tmp_path / "payloads"),
+    )
+    pipeline = ThreadPipeline(
+        agent_runtime=runtime,
+        outbox=outbox,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+        retrieval_planner=RetrievalPlanner(),
+    )
+
+    event = _event()
+    decision = _decision()
+    thread = await thread_manager.get_or_create(
+        thread_id=decision.thread_id,
+        channel_scope=decision.channel_scope,
+        last_event_at=event.timestamp,
+    )
+    run = await run_manager.open(event=event, decision=decision)
+    ctx = RunContext(
+        run=run,
+        event=event,
+        decision=decision,
+        thread=thread,
+        profile=_profile(),
+        message_projection=MessageProjection(
+            history_text="[acacia/10001] hello",
+            model_content="[acacia/10001] hello",
+        ),
+    )
+
+    await pipeline.execute(ctx, deliver_actions=False)
+
+    assert ctx.system_prompt == "You are Aca."
+    assert ctx.messages == [{"role": "user", "content": "[acacia/10001] hello"}]
+    payload_files = list((tmp_path / "payloads").glob("*.json"))
+    assert payload_files
+    payload = json.loads(payload_files[0].read_text(encoding="utf-8"))
+    assert payload["system_prompt"] == "You are Aca."
+    assert payload["messages"] == ctx.messages
 
 
 async def test_thread_pipeline_triggers_memory_extraction_after_run() -> None:

@@ -126,6 +126,60 @@ def test_session_runtime_resolves_domain_decisions_from_surface_cases(tmp_path: 
     assert computer.source_case_id == "admin_host"
 
 
+def test_session_runtime_context_decision_no_longer_exposes_prompt_slots(tmp_path: Path) -> None:
+    _write_session(tmp_path)
+    runtime = SessionRuntime(SessionConfigLoader(config_root=tmp_path / "sessions"))
+    facts = runtime.build_facts(_group_mention_event(sender_role="admin"))
+    session = runtime.load_session(facts)
+    surface = runtime.resolve_surface(facts, session)
+
+    decision = runtime.resolve_context(facts, session, surface)
+
+    assert not hasattr(decision, "prompt_slots")
+
+
+def test_session_runtime_defaults_sticky_note_scopes_from_group_scene(tmp_path: Path) -> None:
+    _write_session(tmp_path)
+    runtime = SessionRuntime(SessionConfigLoader(config_root=tmp_path / "sessions"))
+    facts = runtime.build_facts(_group_mention_event(sender_role="admin"))
+    session = runtime.load_session(facts)
+    surface = runtime.resolve_surface(facts, session)
+
+    decision = runtime.resolve_context(facts, session, surface)
+
+    assert decision.sticky_note_scopes == ["user", "channel"]
+
+
+def test_session_runtime_preserves_explicit_empty_sticky_note_scopes(tmp_path: Path) -> None:
+    config_path = tmp_path / "sessions/qq/group/123.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        """
+session:
+  id: qq:group:123
+  template: qq_group
+frontstage:
+  profile: aca.qq.group.default
+surfaces:
+  message.mention:
+    context:
+      default:
+        sticky_note_scopes: []
+    admission:
+      default:
+        mode: respond
+""".strip(),
+        encoding="utf-8",
+    )
+    runtime = SessionRuntime(SessionConfigLoader(config_root=tmp_path / "sessions"))
+    facts = runtime.build_facts(_group_mention_event(sender_role="admin"))
+    session = runtime.load_session(facts)
+    surface = runtime.resolve_surface(facts, session)
+
+    decision = runtime.resolve_context(facts, session, surface)
+
+    assert decision.sticky_note_scopes == []
+
 
 def test_session_runtime_rejects_invalid_admission_mode(tmp_path: Path) -> None:
     _write_session(tmp_path, plain_mode="recordonly")

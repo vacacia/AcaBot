@@ -1,5 +1,11 @@
 # 当前进展 Handoff
 
+## 统一上下文装配与记忆主线
+
+前台 runtime 现在已经把最终模型输入收口到 `ContextAssembler + PayloadJsonWriter`，`ctx.system_prompt` 和 `ctx.messages` 只表示最终结果，`RetrievalPlanner` 也已经收成 prepare-only。
+`MemoryBroker` 现在统一读取 `/self`、sticky notes 和 store-backed 长期记忆，`SoulSource` 实际管理的已经是 `/self/today.md + /self/daily/*.md`，pipeline 不再自己读文件拼上下文。
+如果后面继续做这块，先看 `docs/todo/2026-03-23-unified-context-contribution-and-assembly-design.md`、`src/acabot/runtime/context_assembly/`、`src/acabot/runtime/memory/file_backed/retrievers.py`，旧的 `docs/todo/2026-03-23-context-assembler-source-map-and-final-payload.md` 只当历史讨论稿看。
+
 ## 2026-03-23 skill 对齐已经完成主线实现
 
 这轮已经把 skill 主线改到和 `docs/18-skill.md` 第 2 节一致：runtime 现在由 `runtime.filesystem.skill_catalog_dirs` 控制扫描哪些 skill 根目录，相对路径算 project、`~` 和绝对路径算 user，扫描阶段先保留全部 metadata，prompt 注入和 `Skill(skill=...)` 真正读取时再按可见性和 `project > user` 选出最后那一份，返回里也会带 `Base directory for this skill: /skills/...`；另外, computer 内部那个容易撞名的单数字段也已经改成 `host_skills_catalog_root_path`，和 runtime 配置层彻底分开了，并且已经同步了 `docs/18-skill.md` 第 2 节后面的现状说明、`docs/19-tool.md`、`docs/01-system-map.md`、`docs/00-ai-entry.md`、`docs/09-config-and-runtime-files.md`、`docs/12-computer.md`、`docs/critical-architecture-issues.md`。

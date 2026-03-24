@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from acabot.config import Config
@@ -15,6 +16,7 @@ from acabot.runtime import (
     ComputerRuntime,
     ComputerRuntimeConfig,
     AgentProfile,
+    ContextAssembler,
     ContextCompactionConfig,
     ContextCompactor,
     FileSystemModelRegistryManager,
@@ -25,7 +27,7 @@ from acabot.runtime import (
     MemoryBroker,
     NoopApprovalResumer,
     NullReferenceBackend,
-    PromptAssemblyConfig,
+    PayloadJsonWriter,
     RetrievalPlanner,
     RouteDecision,
     RuntimeComponents,
@@ -340,7 +342,9 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
         ),
         memory_broker=MemoryBroker(),
         context_compactor=ContextCompactor(ContextCompactionConfig()),
-        retrieval_planner=RetrievalPlanner(PromptAssemblyConfig()),
+        retrieval_planner=RetrievalPlanner(),
+        context_assembler=ContextAssembler(),
+        payload_json_writer=PayloadJsonWriter(root_dir=Path("/tmp/acabot-test-payloads")),
         model_registry_manager=FileSystemModelRegistryManager(
             providers_dir="/tmp/acabot-test-models/providers",
             presets_dir="/tmp/acabot-test-models/presets",
@@ -369,6 +373,13 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
         backend_mode_registry=BackendModeRegistry(),
         app=app,
     )
+
+
+def test_runtime_components_fixture_matches_bootstrap_contract() -> None:
+    components = _runtime_components_for_main_test(app=None)
+
+    assert components.context_assembler is not None
+    assert components.payload_json_writer is not None
 
 
 async def test_wait_for_shutdown_signal_returns_when_event_is_set(monkeypatch) -> None:

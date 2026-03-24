@@ -137,6 +137,17 @@
 - event / message facts
   - 平台真实发生过什么、系统真实发送过什么
 
+当前前台正式主线里，这几层是这样接起来的：
+
+- `RetrievalPlanner`
+  - 只决定这一轮的 retrieval 条件、sticky note scopes、retained history 和 working summary
+- `MemoryBroker`
+  - 统一读取 `/self`、sticky note 和普通长期检索记忆
+- `ContextAssembler`
+  - 统一把 base prompt、tool summaries、memory blocks、working summary、retained history、current user 组装成最终模型上下文
+- `ctx.system_prompt / ctx.messages`
+  - 只表示最终给模型的结果，不再表示中间态
+
 ### self
 
 `self` 是 AcaBot 里 前台 bot 维护的文件夹
@@ -161,6 +172,15 @@
 - `self` 把今天, 昨天..(可设置多久)注入上下文
 - 后台 maintain bot 当然可以看见 `self` 文件, 但这和 maintain bot 无关, 后台是独立维护的工程执行面
 - `self` 下的 md 文档能在 webui 里显示
+
+当前代码里 `/self` 的文件结构已经是：
+
+```text
+/self/
+  today.md
+  daily/
+    2026-03-23.md
+```
 
 ### sticky note
 

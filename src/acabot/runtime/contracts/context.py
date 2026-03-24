@@ -7,13 +7,17 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from acabot.types import Action, StandardEvent
 
-from .common import ApprovalDecision, CommitWhen, PromptSlotPosition, RunStatus
+from .common import ApprovalDecision, CommitWhen, RunStatus
 from .records import PendingApprovalRecord, RunRecord, ThreadState
 from .routing import AgentProfile, RouteDecision
 
 if TYPE_CHECKING:
     from ..computer import AttachmentSnapshot, ComputerPolicy, WorkspaceState, WorldView
-    from ..memory.memory_broker import MemoryBlock
+    from ..memory.memory_broker import (
+        MemoryBlock,
+        MemoryBrokerResult,
+        SharedMemoryRetrievalRequest,
+    )
     from ..model.model_registry import RuntimeModelRequest
     from .session_config import (
         AdmissionDecision,
@@ -124,41 +128,25 @@ class ApprovalDecisionResult:
 
 
 @dataclass(slots=True)
-class PromptSlot:
-    """一次 prompt assembly 中的动态槽位."""
-
-    slot_id: str
-    slot_type: str
-    title: str
-    content: str
-    position: PromptSlotPosition = "system_message"
-    message_role: str = "system"
-    stable: bool = False
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(slots=True)
 class RetrievalPlan:
-    """进入模型前的 retrieval 和 prompt assembly 计划.
+    """进入模型前的 retrieval 计划与保留上下文.
 
     Attributes:
         requested_scopes (list[str]): 本次 retrieval 需要读取的 scope 列表.
-        requested_memory_types (list[str]): 本次 retrieval 需要读取的 memory type 列表.
         requested_tags (list[str]): 本次 retrieval 的 tag 过滤条件.
         sticky_note_scopes (list[str]): sticky note 允许注入的 scope 列表.
-        compressed_messages (list[dict[str, Any]]): compaction 后保留下来的消息.
+        retained_history (list[dict[str, Any]]): compaction 后保留下来的消息.
         dropped_messages (list[dict[str, Any]]): 被 compaction 丢弃的消息.
-        prompt_slots (list[PromptSlot]): 最终要注入模型的 prompt slots.
+        working_summary (str): 当前 run 的有效 working summary.
         metadata (dict[str, Any]): 其他 planning 元数据.
     """
 
     requested_scopes: list[str] = field(default_factory=list)
-    requested_memory_types: list[str] = field(default_factory=list)
     requested_tags: list[str] = field(default_factory=list)
     sticky_note_scopes: list[str] = field(default_factory=list)
-    compressed_messages: list[dict[str, Any]] = field(default_factory=list)
+    retained_history: list[dict[str, Any]] = field(default_factory=list)
     dropped_messages: list[dict[str, Any]] = field(default_factory=list)
-    prompt_slots: list[PromptSlot] = field(default_factory=list)
+    working_summary: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -248,8 +236,9 @@ class RunContext:
     computer_policy_effective: "ComputerPolicy | None" = None
     messages: list[dict[str, Any]] = field(default_factory=list)
     retrieval_plan: RetrievalPlan | None = None
+    shared_memory_request: "SharedMemoryRetrievalRequest | None" = None
+    memory_broker_result: "MemoryBrokerResult | None" = None
     memory_blocks: list["MemoryBlock"] = field(default_factory=list)
-    prompt_slots: list[PromptSlot] = field(default_factory=list)
     memory_user_content: str = ""
     system_prompt: str = ""
     response: Any | None = None
@@ -269,7 +258,6 @@ __all__ = [
     "OutboxItem",
     "PendingApproval",
     "PlannedAction",
-    "PromptSlot",
     "ResolvedImageInput",
     "ResolvedMessage",
     "RetrievalPlan",

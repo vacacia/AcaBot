@@ -57,6 +57,12 @@ from .computer import (
     WorkspaceState,
     parse_computer_policy,
 )
+from .context_assembly import (
+    AssembledContext,
+    ContextAssembler,
+    ContextContribution,
+    PayloadJsonWriter,
+)
 from .control.config_control_plane import RuntimeConfigControlPlane
 from .memory.context_compactor import (
     ContextCompactionConfig,
@@ -80,14 +86,21 @@ from .control.control_plane import (
 from .control.snapshots import BackendStatusSnapshot
 from .storage.event_store import InMemoryChannelEventStore
 from .memory.memory_broker import (
+    FORMAL_TARGET_SLOTS,
+    MemoryAssemblySpec,
     MemoryBlock,
     MemoryBroker,
+    MemoryBrokerResult,
     MemoryExtractor,
-    MemoryRetrievalRequest,
     MemoryRetriever,
+    MemorySource,
+    MemorySourceFailure,
+    MemorySourcePolicy,
+    MemorySourceRegistry,
     MemoryWriteRequest,
     NullMemoryExtractor,
     NullMemoryRetriever,
+    SharedMemoryRetrievalRequest,
 )
 from .storage.memory_item_store import InMemoryMemoryStore
 from .storage.memory_store import InMemoryMessageStore
@@ -158,7 +171,6 @@ from .contracts import (
     PersistenceDecision,
     PersistenceDomainConfig,
     PlannedAction,
-    PromptSlot,
     RecoveryReport,
     ResolvedImageInput,
     ResolvedMessage,
@@ -227,7 +239,7 @@ from .references import (
     ReferenceProviderMode,
     ReferenceSpace,
 )
-from .memory.retrieval_planner import PromptAssemblyConfig, RetrievalPlanner
+from .memory.retrieval_planner import RetrievalPlanner
 from .router import RuntimeRouter
 from .soul import SoulSource
 from .storage.runs import InMemoryRunManager, RunManager, StoreBackedRunManager
@@ -295,6 +307,7 @@ __all__ = [
     "ApprovalDecisionResult",
     "ApprovalResumeResult",
     "ApprovalResumer",
+    "AssembledContext",
     "ChainedPromptLoader",
     "ChannelEventRecord",
     "ChannelEventStore",
@@ -312,6 +325,7 @@ __all__ = [
     "ContextCompactionConfig",
     "ContextCompactionResult",
     "ContextCompactor",
+    "ContextAssembler",
     "ActiveRunSnapshot",
     "AgentSkillSnapshot",
     "AgentSwitchSnapshot",
@@ -324,6 +338,7 @@ __all__ = [
     "ContextSummarizer",
     "ModelContextSummarizer",
     "ContextDecision",
+    "ContextContribution",
     "ContextDomainConfig",
     "DeliveryResult",
     "DispatchReport",
@@ -343,6 +358,7 @@ __all__ = [
     "HostComputerBackend",
     "ImageCaptionSettings",
     "ImageContextService",
+    "FORMAL_TARGET_SLOTS",
     "MessagePreparationService",
     "MessageProjectionService",
     "MessageResolutionService",
@@ -350,15 +366,20 @@ __all__ = [
     "FileSystemPromptLoader",
     "MemoryBlock",
     "MemoryBroker",
+    "MemoryBrokerResult",
     "MemoryCandidate",
+    "MemoryAssemblySpec",
     "MemoryEditMode",
     "MemoryExtractor",
     "MemoryItem",
+    "MemorySource",
+    "MemorySourceFailure",
+    "MemorySourcePolicy",
+    "MemorySourceRegistry",
     "MemoryStore",
     "MessageRecord",
     "MessageProjection",
     "MessageStore",
-    "MemoryRetrievalRequest",
     "MemoryRetriever",
     "MemoryWriteRequest",
     "ModelAgentRuntime",
@@ -393,17 +414,17 @@ __all__ = [
     "PendingApprovalRecord",
     "PlannedAction",
     "ProfileLoader",
-    "PromptAssemblyConfig",
     "PromptLoader",
+    "PayloadJsonWriter",
     "ReloadablePromptLoader",
     "PersistenceDecision",
     "PersistenceDomainConfig",
-    "PromptSlot",
     "DEFAULT_IMAGE_CAPTION_PROMPT",
     "parse_image_caption_settings",
     "parse_computer_policy",
     "RouteDecision",
     "RoutingDecision",
+    "SharedMemoryRetrievalRequest",
     "RoutingDomainConfig",
     "RecoveryReport",
     "ResolvedImageInput",

@@ -24,10 +24,10 @@ from .contracts import (
     DispatchReport,
     OutboxItem,
     PlannedAction,
+    RetrievalPlan,
     RunContext,
 )
-from .memory.memory_broker import MemoryBroker
-from .memory.memory_broker import MemoryBlock
+from .memory.memory_broker import MemoryBroker, MemoryBrokerResult
 from .outbox import Outbox
 from .plugin_manager import RuntimeHookPoint, RuntimePluginManager
 from .memory.retrieval_planner import RetrievalPlanner
@@ -190,7 +190,6 @@ class ThreadPipeline:
                 ctx.metadata["effective_working_summary"] = ctx.thread.working_summary
                 ctx.metadata["effective_compacted_messages"] = list(ctx.thread.working_messages)
                 ctx.metadata["effective_dropped_messages"] = []
-            self._prepare_static_context(ctx)
             # -----------------------------------------------------
             # 准备 Retrieval Plan
             # -----------------------------------------------------
@@ -198,10 +197,8 @@ class ThreadPipeline:
                 if self.retrieval_planner is not None:
                     # prepare 会读取 ctx.metadata["effective_*"] 字段
                     ctx.retrieval_plan = self.retrieval_planner.prepare(ctx)
-                    ctx.messages = list(ctx.retrieval_plan.compressed_messages)
                 else:
-                    # 没有 planner, 直接使用 compaction 后的消息
-                    ctx.messages = list(ctx.metadata.get("effective_compacted_messages", ctx.thread.working_messages))
+                    ctx.retrieval_plan = self._build_fallback_retrieval_plan(ctx)
             # -----------------------------------------------------
             # 注入记忆, 调用 Agent
             # -----------------------------------------------------
@@ -212,8 +209,6 @@ class ThreadPipeline:
                 len(ctx.memory_blocks),
                 len(ctx.messages),
             )
-            if self.message_preparation_service is not None:
-                self.message_preparation_service.apply_model_message(ctx)
             pre_agent_result = await self._run_plugin_hooks(RuntimeHookPoint.PRE_AGENT, ctx)
             if pre_agent_result.action == "skip_agent":
                 logger.debug("Agent execution skipped by plugin: run_id=%s", ctx.run.run_id)
@@ -310,28 +305,16 @@ class ThreadPipeline:
         """
 
         if self.memory_broker is None:
+            ctx.memory_broker_result = MemoryBrokerResult()
             ctx.memory_blocks = []
         else:
-            ctx.memory_blocks = await self.memory_broker.retrieve(ctx)
-        file_backed_blocks = self._collect_sticky_blocks_from_files(ctx)
-        if file_backed_blocks:
-            ctx.memory_blocks = [*file_backed_blocks, *ctx.memory_blocks]
+            ctx.memory_broker_result = await self.memory_broker.retrieve(ctx)
+            ctx.memory_blocks = list(ctx.memory_broker_result.blocks)
         logger.debug(
-            "Collected memory blocks: run_id=%s retrieved=%s file_backed=%s",
+            "Collected memory blocks: run_id=%s retrieved=%s",
             ctx.run.run_id,
-            len(ctx.memory_blocks) - len(file_backed_blocks),
-            len(file_backed_blocks),
+            len(ctx.memory_blocks),
         )
-
-        if self.retrieval_planner is not None:
-            ctx.messages = self.retrieval_planner.assemble(
-                ctx,
-                memory_blocks=ctx.memory_blocks,
-            )
-            return
-
-        if ctx.memory_blocks:
-            ctx.messages = self._inject_memory_blocks(ctx.messages, ctx.memory_blocks)
 
     async def _update_thread_after_send(self, ctx: RunContext) -> None:
         """根据实际送达结果更新 thread working memory.
@@ -524,108 +507,39 @@ class ThreadPipeline:
             return str(ctx.message_projection.history_text)
         return str(ctx.memory_user_content or ctx.event.working_memory_text or "")
 
-    def _prepare_static_context(self, ctx: RunContext) -> None:
-        """准备每轮固定上下文材料.
-
-        Args:
-            ctx: 当前 run 的执行上下文.
-        """
-
-        if self.soul_source is not None:
-            ctx.metadata["soul_prompt_text"] = self.soul_source.build_prompt_text()
-
-    def _collect_sticky_blocks_from_files(self, ctx: RunContext) -> list[MemoryBlock]:
-        """从 FS 收集 sticky notes 并转成 memory blocks.
-
-        Args:
-            ctx: 当前 run 的执行上下文.
-
-        Returns:
-            sticky note memory blocks 列表.
-        """
-
-        if self.sticky_notes_source is None:
-            return []
-        pairs: list[tuple[str, str]] = [
-            ("user", str(ctx.decision.actor_id or "")),
-            ("channel", str(ctx.decision.channel_scope or "")),
-        ]
-        blocks: list[MemoryBlock] = []
-        for scope, scope_key in pairs:
-            if not scope_key:
-                continue
-            notes = self.sticky_notes_source.list_notes(
-                scope=scope,
-                scope_key=scope_key,
-            )
-            for note in notes:
-                key = str(note.get("key", "") or "")
-                if not key:
-                    continue
-                try:
-                    pair = self.sticky_notes_source.read_pair(
-                        scope=scope,
-                        scope_key=scope_key,
-                        key=key,
-                    )
-                except FileNotFoundError:
-                    continue
-                readonly = str(pair.get("readonly", {}).get("content", "") or "").strip()
-                editable = str(pair.get("editable", {}).get("content", "") or "").strip()
-                if not readonly and not editable:
-                    continue
-                lines = [f"[{scope}/{scope_key}/{key}]"]
-                if readonly:
-                    lines.append(f"readonly: {readonly}")
-                if editable:
-                    lines.append(f"editable: {editable}")
-                blocks.append(
-                    MemoryBlock(
-                        title=f"sticky_note:{scope}:{key}",
-                        content="\n".join(lines),
-                        scope=scope,
-                        metadata={
-                            "memory_type": "sticky_note",
-                            "edit_mode": "readonly",
-                            "note_key": key,
-                            "source_backend": "file_backed",
-                        },
-                    )
-                )
-        return blocks
-
     @staticmethod
-    def _inject_memory_blocks(
-        messages: list[dict[str, object]],
-        blocks: list[dict[str, object]] | list[object],
-    ) -> list[dict[str, object]]:
-        """兼容旧路径的 memory block 注入 helper.
+    def _build_fallback_retrieval_plan(ctx: RunContext) -> RetrievalPlan:
+        """在没有 RetrievalPlanner 时, 仍然为后续 assembler 准备最小 plan."""
 
-        Args:
-            messages: 原始消息列表.
-            blocks: MemoryBroker 返回的 MemoryBlock 列表.
-
-        Returns:
-            一份带记忆注入的新消息列表.
-        """
-
-        if not blocks:
-            return list(messages)
-        memory_text = "\n\n".join(
-            f"[{getattr(block, 'title', '')}]\n{getattr(block, 'content', '')}"
-            for block in blocks
-        )
-        return [
-            {
-                "role": "system",
-                "content": (
-                    "以下记忆来自系统检索, 可能不完全准确.\n"
-                    "你需要结合当前上下文判断是否采用:\n\n"
-                    f"{memory_text}"
-                ).strip(),
+        summary_text = str(
+            ctx.metadata.get("effective_working_summary", ctx.thread.working_summary) or ""
+        ).strip()
+        return RetrievalPlan(
+            requested_scopes=list(
+                ctx.decision.metadata.get(
+                    "event_memory_scopes",
+                    ["relationship", "user", "channel", "global"],
+                )
+            ),
+            requested_tags=list(
+                ctx.context_decision.retrieval_tags if ctx.context_decision is not None else []
+            ),
+            sticky_note_scopes=list(
+                ctx.context_decision.sticky_note_scopes if ctx.context_decision is not None else []
+            ),
+            retained_history=list(
+                ctx.metadata.get("effective_compacted_messages", ctx.thread.working_messages)
+            ),
+            dropped_messages=list(ctx.metadata.get("effective_dropped_messages", [])),
+            working_summary=summary_text,
+            metadata={
+                "summary_present": bool(summary_text),
+                "token_stats": dict(ctx.metadata.get("token_stats", {}) or {}),
+                "context_labels": list(
+                    ctx.context_decision.context_labels if ctx.context_decision is not None else []
+                ),
             },
-            *list(messages),
-        ]
+        )
 
     # region 内部发送
     @staticmethod

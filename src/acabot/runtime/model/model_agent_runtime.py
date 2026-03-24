@@ -32,6 +32,7 @@ from acabot.agent import Attachment, BaseAgent, ToolExecutor, ToolSpec
 from acabot.types import Action, ActionType
 
 from ..agent_runtime import AgentRuntime
+from ..context_assembly import ContextAssembler, PayloadJsonWriter
 from ..contracts import AgentRuntimeResult, ApprovalRequired, PendingApproval, PlannedAction, RunContext
 from ..control.profile_loader import PromptLoader
 
@@ -112,6 +113,8 @@ class ModelAgentRuntime(AgentRuntime):
         agent: BaseAgent,
         prompt_loader: PromptLoader,
         tool_runtime_resolver: ToolRuntimeResolver | None = None,
+        context_assembler: ContextAssembler | None = None,
+        payload_json_writer: PayloadJsonWriter | None = None,
     ) -> None:
         """初始化 ModelAgentRuntime.
 
@@ -119,11 +122,15 @@ class ModelAgentRuntime(AgentRuntime):
             agent: 满足新 `BaseAgent` 契约的 agent.
             prompt_loader: 根据 `prompt_ref` 加载 system prompt 的 loader.
             tool_runtime_resolver: 可选的 tool runtime 解析器.
+            context_assembler: 可选的正式上下文组装器.
+            payload_json_writer: 可选的 payload json 写入器.
         """
 
         self.agent = agent
         self.prompt_loader = prompt_loader
         self.tool_runtime_resolver = tool_runtime_resolver
+        self.context_assembler = context_assembler or ContextAssembler()
+        self.payload_json_writer = payload_json_writer
 
     async def execute(self, ctx: RunContext) -> AgentRuntimeResult:
         """执行一次正式的 agent runtime.
@@ -141,10 +148,13 @@ class ModelAgentRuntime(AgentRuntime):
         """
 
         tool_runtime = await self._resolve_tool_runtime(ctx)
-        ctx.system_prompt = self._build_system_prompt(
+        assembled = self.context_assembler.assemble(
+            ctx,
             base_prompt=self.prompt_loader.load(ctx.profile.prompt_ref),
             tool_runtime=tool_runtime,
         )
+        ctx.system_prompt = assembled.system_prompt
+        ctx.messages = assembled.messages
         capability_error = self._validate_model_capabilities(ctx, tool_runtime)
         if capability_error is not None:
             return capability_error
@@ -174,50 +184,6 @@ class ModelAgentRuntime(AgentRuntime):
             resolved = await resolved
         return resolved
 
-    @staticmethod
-    def _build_system_prompt(
-        *,
-        base_prompt: str,
-        tool_runtime: ToolRuntime,
-    ) -> str:
-        """把基础 prompt 和运行时提醒拼成最终 system prompt.
-
-        Args:
-            base_prompt: 当前 profile 的基础 system prompt.
-            tool_runtime: 当前 run 的工具视图和附加元数据.
-
-        Returns:
-            str: 最终发给模型的 system prompt.
-        """
-
-        skill_summaries = list(tool_runtime.metadata.get("visible_skill_summaries", []))
-        subagent_summaries = list(tool_runtime.metadata.get("visible_subagent_summaries", []))
-        if not skill_summaries and not subagent_summaries:
-            return base_prompt
-
-        blocks: list[str] = []
-        if skill_summaries:
-            lines = [
-                "<system-reminder>",
-                "The following skills are available for use with the Skill tool:",
-            ]
-            for item in skill_summaries:
-                lines.append(
-                    f"- {str(item.get('skill_name', '') or '')}: "
-                    f"{str(item.get('description', '') or '')}"
-                )
-            lines.append("</system-reminder>")
-            blocks.append("\n".join(lines))
-        if subagent_summaries:
-            lines = ["Available Subagents:"]
-            for item in subagent_summaries:
-                lines.append(
-                    f"- {str(item.get('agent_id', '') or '')}: "
-                    f"{str(item.get('profile_name', '') or item.get('agent_id', '') or '')}"
-                )
-            blocks.append("\n".join(lines))
-        return f"{base_prompt.rstrip()}\n\n" + "\n\n".join(blocks)
-
     async def _call_agent(self, ctx: RunContext, tool_runtime: ToolRuntime):
         """调用底层 BaseAgent.
 
@@ -228,7 +194,7 @@ class ModelAgentRuntime(AgentRuntime):
         Returns:
             底层 agent 返回的 AgentResponse.
         """
-        
+
         # 从 RunContext.model_request 中提取出模型名字符串: model_request -> resolved_model 
         resolved_model = (
             ctx.model_request.model
@@ -241,6 +207,13 @@ class ModelAgentRuntime(AgentRuntime):
             else None
         )
         max_tool_rounds = self._resolve_max_tool_rounds(ctx)
+        self._write_payload_json(
+            ctx,
+            tool_runtime=tool_runtime,
+            resolved_model=resolved_model,
+            request_options=request_options,
+            max_tool_rounds=max_tool_rounds,
+        )
         # 防止幻觉, 适配 API, 省 token
         if not tool_runtime.tools and tool_runtime.tool_executor is None:
             return await self.agent.run(
@@ -260,6 +233,58 @@ class ModelAgentRuntime(AgentRuntime):
             tools=tool_runtime.tools,
             tool_executor=tool_runtime.tool_executor,
         )
+
+    def _write_payload_json(
+        self,
+        ctx: RunContext,
+        *,
+        tool_runtime: ToolRuntime,
+        resolved_model: str,
+        request_options: dict[str, Any] | None,
+        max_tool_rounds: int | None,
+    ) -> None:
+        """在真正调模型前写出最终 payload json.
+
+        Args:
+            ctx: 当前 run 的执行上下文.
+            tool_runtime: 当前 run 的 tool runtime.
+            resolved_model: 当前真正要调用的模型名.
+            request_options: 当前请求选项.
+            max_tool_rounds: 当前 tool loop 上限.
+        """
+
+        if self.payload_json_writer is None:
+            return
+        self.payload_json_writer.write(
+            run_id=ctx.run.run_id,
+            payload={
+                "model": resolved_model,
+                "system_prompt": ctx.system_prompt,
+                "messages": ctx.messages,
+                "tools": [self._serialize_tool_spec(item) for item in tool_runtime.tools],
+                "has_tool_executor": tool_runtime.tool_executor is not None,
+                "tool_executor": tool_runtime.tool_executor,
+                "request_options": dict(request_options or {}),
+                "max_tool_rounds": max_tool_rounds,
+            },
+        )
+
+    @staticmethod
+    def _serialize_tool_spec(spec: ToolSpec) -> dict[str, Any]:
+        """把 ToolSpec 收成可写入 json 的结构.
+
+        Args:
+            spec: 当前 tool schema.
+
+        Returns:
+            一份可写入 json 的工具定义.
+        """
+
+        return {
+            "name": spec.name,
+            "description": spec.description,
+            "parameters": spec.parameters,
+        }
 
     @staticmethod
     def _validate_model_capabilities(

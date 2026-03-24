@@ -7,6 +7,7 @@ from pathlib import Path
 from acabot.agent import BaseAgent
 from acabot.config import Config
 
+from ..context_assembly import PayloadJsonWriter
 from ..computer import ComputerPolicy, ComputerRuntime, ComputerRuntimeConfig, parse_computer_policy
 from ..contracts import AgentProfile
 from ..gateway_protocol import GatewayProtocol
@@ -15,8 +16,9 @@ from ..memory.context_compactor import (
     ContextCompactor,
     ModelContextSummarizer,
 )
-from ..memory.memory_broker import MemoryBroker
-from ..memory.retrieval_planner import PromptAssemblyConfig, RetrievalPlanner
+from ..memory.file_backed import SelfFileRetriever, StickyNotesFileRetriever, StickyNotesSource
+from ..memory.memory_broker import MemoryBroker, MemorySourceRegistry
+from ..memory.retrieval_planner import RetrievalPlanner
 from ..model.model_registry import FileSystemModelRegistryManager
 from ..plugin_manager import RuntimePlugin
 from ..plugins import BackendBridgeToolPlugin
@@ -43,6 +45,7 @@ from ..storage.threads import InMemoryThreadManager, StoreBackedThreadManager, T
 from ..memory.structured_memory import StoreBackedMemoryRetriever, StructuredMemoryExtractor
 from ..subagents import SubagentExecutorRegistry
 from ..subagents.execution import LocalSubagentExecutionService
+from ..soul import SoulSource
 from .config import (
     get_persistence_sqlite_path,
     optional_str,
@@ -220,10 +223,16 @@ def build_memory_broker(
     config: Config,
     *,
     memory_store: MemoryStore,
+    soul_source: SoulSource,
+    sticky_notes_source: StickyNotesSource,
 ) -> MemoryBroker:
     _ = config
+    registry = MemorySourceRegistry()
+    registry.register("self", SelfFileRetriever(soul_source))
+    registry.register("sticky_notes", StickyNotesFileRetriever(sticky_notes_source))
+    registry.register("store_memory", StoreBackedMemoryRetriever(memory_store))
     return MemoryBroker(
-        retriever=StoreBackedMemoryRetriever(memory_store),
+        registry=registry,
         extractor=StructuredMemoryExtractor(memory_store),
     )
 
@@ -257,54 +266,19 @@ def build_reference_backend(config: Config) -> ReferenceBackend:
 
 
 def build_retrieval_planner(config: Config) -> RetrievalPlanner:
+    _ = config
+    return RetrievalPlanner()
+
+
+def build_payload_json_writer(config: Config) -> PayloadJsonWriter:
+    """按当前 runtime 配置构造 payload json writer."""
+
     runtime_conf = config.get("runtime", {})
-    prompt_conf = dict(runtime_conf.get("prompt_assembly", {}))
-    return RetrievalPlanner(
-        PromptAssemblyConfig(
-            sticky_slot_position=str(prompt_conf.get("sticky_slot_position", "system_message")),
-            summary_slot_position=str(prompt_conf.get("summary_slot_position", "history_prefix")),
-            retrieval_slot_position=str(
-                prompt_conf.get("retrieval_slot_position", "system_message")
-            ),
-            sticky_message_role=str(prompt_conf.get("sticky_message_role", "system")),
-            summary_message_role=str(prompt_conf.get("summary_message_role", "user")),
-            retrieval_message_role=str(prompt_conf.get("retrieval_message_role", "system")),
-            sticky_intro=str(
-                prompt_conf.get(
-                    "sticky_intro",
-                    "以下是稳定事实和长期规则. 默认可信, 除非当前上下文明确冲突.",
-                )
-            ),
-            summary_prefix=str(
-                prompt_conf.get(
-                    "summary_prefix",
-                    (
-                        "The conversation history before this point was compacted into the following "
-                        "summary:\n\n<summary>\n"
-                    ),
-                )
-            ),
-            summary_suffix=str(prompt_conf.get("summary_suffix", "\n</summary>")),
-            retrieval_intro=str(
-                prompt_conf.get(
-                    "retrieval_intro",
-                    "以下是按需检索到的记忆. 可能不完全准确, 需要结合当前上下文判断.",
-                )
-            ),
-            default_scopes=[
-                str(value) for value in prompt_conf.get(
-                    "default_scopes",
-                    ["relationship", "user", "channel", "global"],
-                )
-            ],
-            default_memory_types=[
-                str(value) for value in prompt_conf.get(
-                    "default_memory_types",
-                    ["sticky_note", "semantic", "relationship", "episodic"],
-                )
-            ],
-        ),
+    root_dir = resolve_runtime_path(
+        config,
+        runtime_conf.get("payload_json_dir", "debug/model-payloads"),
     )
+    return PayloadJsonWriter(root_dir=root_dir)
 
 
 def build_skill_catalog(config: Config) -> SkillCatalog:
@@ -384,6 +358,7 @@ __all__ = [
     "build_memory_store",
     "build_message_store",
     "build_model_registry_manager",
+    "build_payload_json_writer",
     "build_reference_backend",
     "build_retrieval_planner",
     "build_run_manager",
