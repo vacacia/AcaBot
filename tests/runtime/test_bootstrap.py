@@ -646,8 +646,6 @@ surfaces:
         mode: respond
     extraction:
       default:
-        extract_to_memory: true
-        scopes: [channel]
         tags: [mention]
   message.plain:
     routing:
@@ -717,8 +715,14 @@ runtime:
     assert decision.agent_id == "ops"
     assert decision.run_mode == "respond"
     assert decision.metadata["surface_id"] == "message.mention"
-    assert decision.metadata["event_memory_scopes"] == ["channel"]
-    assert decision.metadata["event_tags"] == ["mention"]
+    assert {
+        key: value
+        for key, value in decision.metadata.items()
+        if key.startswith("event_")
+    } == {
+        "event_persist": True,
+        "event_tags": ["mention"],
+    }
 
 
 
@@ -1495,7 +1499,6 @@ async def test_build_runtime_components_memory_broker_reads_self_and_sticky_file
         thread=thread,
         profile=components.profile_loader.load(decision),
         retrieval_plan=RetrievalPlan(
-            requested_scopes=["user"],
             sticky_note_scopes=["user"],
             retained_history=[],
         ),

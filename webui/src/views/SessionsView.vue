@@ -52,7 +52,6 @@ type SessionRule = {
   enabled: boolean
   run_mode: string
   persist_event: boolean
-  memory_scopes: string[]
 }
 
 type SessionRecord = {
@@ -80,11 +79,6 @@ const responseModeOptions = [
   { value: "respond", label: "直接回复" },
   { value: "record_only", label: "只记不回" },
   { value: "silent_drop", label: "忽略" },
-]
-
-const memoryScopeOptions = [
-  { value: "user", label: "用户" },
-  { value: "channel", label: "会话" },
 ]
 
 const catalog = ref<UiCatalog>(
@@ -147,7 +141,6 @@ function defaultRule(eventType: string, templateId: string): SessionRule {
     enabled: true,
     run_mode: "respond",
     persist_event: true,
-    memory_scopes: [],
   }
 }
 
@@ -157,7 +150,6 @@ function normalizeRule(rule: SessionRule | undefined, eventType: string, templat
     ...base,
     ...rule,
     event_type: eventType,
-    memory_scopes: [...(rule?.memory_scopes || base.memory_scopes)],
   }
 }
 
@@ -260,13 +252,6 @@ function toggleAiItem(kind: "enabled_tools" | "skills", value: string, event: Ev
   if (checked) next.add(value)
   else next.delete(value)
   draft.value.ai[kind] = Array.from(next)
-}
-
-function toggleMemoryScope(rule: SessionRule, scope: string): void {
-  const next = new Set(rule.memory_scopes)
-  if (next.has(scope)) next.delete(scope)
-  else next.add(scope)
-  rule.memory_scopes = Array.from(next)
 }
 
 function changeSessionTemplate(templateId: string): void {
@@ -487,19 +472,6 @@ onMounted(() => {
                   <span>保存事件</span>
                   <input v-model="rule.persist_event" type="checkbox" />
                 </label>
-                <div class="memory-card">
-                  <span>记忆范围</span>
-                  <div class="memory-scopes">
-                    <label v-for="item in memoryScopeOptions" :key="item.value" class="scope-chip">
-                      <input
-                        :checked="rule.memory_scopes.includes(item.value)"
-                        type="checkbox"
-                        @change="toggleMemoryScope(rule, item.value)"
-                      />
-                      <span>{{ item.label }}</span>
-                    </label>
-                  </div>
-                </div>
               </div>
             </details>
           </section>
@@ -660,8 +632,7 @@ label.inline {
 
 .checkbox-panel,
 .note-card,
-.rule-card,
-.memory-card {
+.rule-card {
   border: 1px solid var(--line);
   border-radius: 18px;
   background: var(--panel-strong);
@@ -694,19 +665,6 @@ label.inline {
 
 .rule-body .full {
   grid-column: 1 / -1;
-}
-
-.memory-scopes {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 10px;
-}
-
-.scope-chip {
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
 }
 
 .empty,

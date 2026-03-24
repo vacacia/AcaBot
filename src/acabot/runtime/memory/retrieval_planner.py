@@ -10,13 +10,13 @@ r"""runtime.retrieval_planner 提供 prepare-only retrieval planning.
         |
         `--> RetrievalPlanner.prepare()
                   |
-                  `--> retrieval scope / retained-history planning
+                  `--> retained-history / summary / retrieval-tag planning
 
-这一层解决 3 个问题:
+这一层只整理共享 retrieval 现场:
 
-- 当前 run 到底该检索哪些 memory scopes 和 memory types.
 - 把 compaction 后的 thread state 解释成可消费的 retrieval plan.
-- 把 context labels / sticky note scopes 这些控制面信息收进 plan metadata.
+- 把 retrieval tags / sticky note scopes / context labels 收进 plan.
+- 不替任何 memory source 预先决定内部 scope.
 """
 
 from __future__ import annotations
@@ -25,18 +25,13 @@ from typing import Any
 
 from ..contracts import RetrievalPlan, RunContext
 
-_KNOWN_MEMORY_SCOPES = {"relationship", "user", "channel", "global"}
-
 
 class RetrievalPlanner:
     """retrieval planning 的统一入口."""
 
-    DEFAULT_SCOPES = ["relationship", "user", "channel", "global"]
-
     def prepare(self, ctx: RunContext) -> RetrievalPlan:
         """为当前 run 计算 retrieval plan."""
 
-        requested_scopes = self._requested_scopes(ctx)
         requested_tags = self._requested_tags(ctx)
         sticky_note_scopes = self._sticky_note_scopes(ctx)
         token_stats = dict(ctx.metadata.get("token_stats", {}) or {})
@@ -53,7 +48,6 @@ class RetrievalPlanner:
             ctx.metadata.get("effective_working_summary", ctx.thread.working_summary) or ""
         ).strip()
         return RetrievalPlan(
-            requested_scopes=requested_scopes,
             requested_tags=requested_tags,
             sticky_note_scopes=sticky_note_scopes,
             retained_history=retained_history,
@@ -71,23 +65,6 @@ class RetrievalPlanner:
             },
         )
 
-    def _requested_scopes(self, ctx: RunContext) -> list[str]:
-        """解析当前 run 需要读取的 memory scopes."""
-
-        raw_values = (
-            list(ctx.extraction_decision.memory_scopes)
-            if ctx.extraction_decision is not None
-            else list(ctx.decision.metadata.get("event_memory_scopes", []))
-        )
-        context_scopes = self._sticky_note_scopes(ctx)
-        scopes = [value for value in raw_values if value in _KNOWN_MEMORY_SCOPES]
-        if raw_values and not scopes:
-            return _dedupe(context_scopes)
-        if not raw_values and not scopes:
-            scopes = list(self.DEFAULT_SCOPES)
-        scopes.extend(context_scopes)
-        return _dedupe(scopes)
-
     @staticmethod
     def _requested_tags(ctx: RunContext) -> list[str]:
         """解析当前 run 的 retrieval tag 过滤条件."""
@@ -102,13 +79,7 @@ class RetrievalPlanner:
 
         if ctx.context_decision is None:
             return []
-        return _dedupe(
-            [
-                value
-                for value in ctx.context_decision.sticky_note_scopes
-                if value in _KNOWN_MEMORY_SCOPES
-            ]
-        )
+        return _dedupe([str(value) for value in ctx.context_decision.sticky_note_scopes])
 
 
 def _dedupe(values: list[str]) -> list[str]:

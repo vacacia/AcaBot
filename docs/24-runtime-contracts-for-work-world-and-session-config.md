@@ -130,8 +130,6 @@ surfaces:
 
     extraction:
       default:
-        extract_to_memory: true
-        scopes: [channel]
         tags: []
       cases: []
 
@@ -320,21 +318,15 @@ surfaces:
 
 它回答：
 
-- 这条 event 要不要参与 memory extraction
-- 带哪些 scopes
 - 带哪些 tags
 
 建议字段：
 
-- `extract_to_memory`
-- `memory_scopes`
 - `tags`
 - `reason`
 - `source_case_id`
 - `priority`
 - `specificity`
-
-这里 `extract_to_memory` 本身建议单一胜者，`memory_scopes` / `tags` 可以在明确规则下 merge。
 
 ### 6.6. `ComputerPolicyDecision`
 
@@ -460,8 +452,6 @@ surfaces:
 
     extraction:
       default:
-        extract_to_memory: true
-        scopes: [channel]
         tags: []
       cases: []
 

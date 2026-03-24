@@ -118,14 +118,20 @@ class RecordingMemoryBroker(MemoryBroker):
         super().__init__()
         self.blocks = list(blocks or [])
         self.retrieve_calls: list[RunContext] = []
-        self.extract_calls: list[RunContext] = []
 
     async def retrieve(self, ctx: RunContext) -> MemoryBrokerResult:
         self.retrieve_calls.append(ctx)
         return MemoryBrokerResult(blocks=list(self.blocks))
 
-    async def extract_after_run(self, ctx: RunContext) -> None:
-        self.extract_calls.append(ctx)
+
+class RetrieveOnlyMemoryBroker:
+    def __init__(self, *, blocks: list[MemoryBlock] | None = None) -> None:
+        self.blocks = list(blocks or [])
+        self.retrieve_calls: list[RunContext] = []
+
+    async def retrieve(self, ctx: RunContext) -> MemoryBrokerResult:
+        self.retrieve_calls.append(ctx)
+        return MemoryBrokerResult(blocks=list(self.blocks))
 
 
 class ExplodingCompactor:
@@ -721,13 +727,13 @@ async def test_pipeline_and_model_runtime_produce_final_context_and_payload_json
     assert payload["messages"] == ctx.messages
 
 
-async def test_thread_pipeline_triggers_memory_extraction_after_run() -> None:
+async def test_thread_pipeline_finishes_run_without_memory_writeback_hook() -> None:
     thread_manager = InMemoryThreadManager()
     run_manager = InMemoryRunManager()
     gateway = FakeGateway()
     store = FakeMessageStore()
     outbox = Outbox(gateway=gateway, store=store)
-    memory_broker = RecordingMemoryBroker()
+    memory_broker = RetrieveOnlyMemoryBroker()
     pipeline = ThreadPipeline(
         agent_runtime=FakeAgentRuntime(),
         outbox=outbox,
@@ -752,10 +758,12 @@ async def test_thread_pipeline_triggers_memory_extraction_after_run() -> None:
         profile=_profile(),
     )
 
-    await pipeline.execute(ctx)
+    with patch("acabot.runtime.pipeline.logger.exception") as log_exception:
+        await pipeline.execute(ctx)
 
-    assert memory_broker.extract_calls == [ctx]
+    assert memory_broker.retrieve_calls == [ctx]
     assert ctx.run.status == "completed"
+    log_exception.assert_not_called()
 
 
 async def test_thread_pipeline_marks_run_failed_when_agent_runtime_crashes() -> None:
@@ -1015,7 +1023,7 @@ async def test_thread_pipeline_record_only_skips_compaction_and_retrieval() -> N
     run_manager = InMemoryRunManager()
     gateway = FakeGateway()
     store = FakeMessageStore()
-    memory_broker = RecordingMemoryBroker()
+    memory_broker = RetrieveOnlyMemoryBroker()
     pipeline = ThreadPipeline(
         agent_runtime=FakeAgentRuntime(),
         outbox=Outbox(gateway=gateway, store=store),
@@ -1054,5 +1062,4 @@ async def test_thread_pipeline_record_only_skips_compaction_and_retrieval() -> N
     assert updated_run is not None
     assert updated_run.status == "completed"
     assert memory_broker.retrieve_calls == []
-    assert len(memory_broker.extract_calls) == 1
     assert gateway.sent == []

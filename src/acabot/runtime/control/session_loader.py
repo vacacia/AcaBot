@@ -318,7 +318,7 @@ def _default_surfaces(
             admission=AdmissionDomainConfig(default={"mode": mode}),
             context=ContextDomainConfig(default={}),
             persistence=PersistenceDomainConfig(default={"persist_event": True}),
-            extraction=ExtractionDomainConfig(default={"extract_to_memory": False, "scopes": [], "tags": []}),
+            extraction=ExtractionDomainConfig(default={"tags": []}),
             computer=ComputerDomainConfig(default=dict(computer_default)),
         )
 

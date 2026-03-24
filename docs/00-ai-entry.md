@@ -1,6 +1,10 @@
 
 # 编写代码的规范(务必遵守)
 
+不要考虑任何兼容性, 因为那是之前犯的错误, 不需要为它兼容, 直接强硬的改过去, 甚至把错误的内容全删掉, 不用考虑平滑迁移.
+要改就改彻底, 不要留下以前的任何痕迹, 不要说"不应该怎么样", 就当它没发生过, 然后把错误写在文档里(不是不应该xxx的表面陈述, 回归第一性)
+如果是重构, 不要留下黑名单来断言之前的问题不存在
+
 ## 写代码
 0. 任何注释都要用直白的语言, 正常说人话! 不要出现黑话(落地/落库)
 1. docstring
@@ -9,37 +13,21 @@
   - 方法的 docstring 要写清楚输入输出, 和方法的功能
   - 任何方法都要有 docstring, 哪怕是`__init__` 和 helper 
 2. 用简洁的中文加上 `# region `注释,方便定位
-3. 每次开始修改任何一个文件前, 都要大声说出: 我在做什么?是计划的哪一步?我为什么这样设计?站在设计师的视角解释
-4. 每次完成一点后, 再解释修改完成后行为的变化
-5. 完成一次 commit 之后, 不要提交,立即启动子代理 (gpt5.4) 用 superpowers review 的 skill 去 review 你这次的代码 和 测试文件.
-6. review 多次后确认无误, 开始更新文档. 然后给出 git add 的文件列表, git commit 信息, 和你修改的内容, 你做的决策, 目前的流程...全部直白的解释清楚, 不准 commit!!! 
+3. 每次开始修改任何一个文件前, 都要说出: 我在做什么?是计划的哪一步?我为什么这样设计?站在设计师的视角解释; 完成后, 再解释修改完成后行为的变化
+4. 一组 todo/task 视为一次 commit, 而不是每一个 todo/task 都是一个commit
+5. 在完成了全部 todo/task 后, 先不要 commit, 立即启动子代理 (首次使用 gpt 5.4 mini, 直到 gpt 5.4 mini 找不出问题给出通过后, 再用一次 gpt5.4 来 review) 用 superpowers review 的 skill 去 review 你这次的代码 和 测试文件.
+  - 不要只完成了文件里的一个 todo/task 就去 review, 浪费时间
+6. review 多次后确认无误, 更新文档. 然后给出 commit 信息, 你做的重大决策, 修改后变化的流程...全部解释清楚, 不准 commit 
 7. 发现难以决策的点就停下来, 说清楚现状, 及时讨论
 8. 清晰的代码目录结构, 相关的代码文件放在一个文件夹下面; 明确的代码文件夹命名, 不要用含糊不清的文件夹名; 方法名也含义清晰, 尽量长, 不要用抽象的命名
 
----
 
-你不需要考虑兼容, 如果重构就不要遗漏旧代码的任何痕迹, 就像一开始就是这样设计的
-
-
-## 写完代码后
-1. 在完成了一个todo文件/一个task文件/是一个完整 功能/修改 的结束后: 启动 pi 和 claude 来 review 
-  - 反复 修改/review, 直到通过
-  - 不要在完成了一个 todo/task 就去 review, 浪费时间
-2. 更新文档! 更新文档!
-3. 汇报:
-  - 汇报修改了哪些代码文件
-  - 汇报文档修改记录
-  - 描述实现了哪些功能, 每个功能做了哪些测试?
-  - 从需求出发, 描述你做了哪些设计/决策, 为什么是这样?
-4. 不要 commit, 等待人工 review
-
----
 
 # 文档
+
 00~12, 18, 是重要的文档.
 - 阅读他们
 - commit之前更新他们
-
 
 在 docs/HANDOFF.md 里写清楚现在的进展(没有就创建一个)
 - 解释你试了什么、什么有效、什么没用, 让下一个拿到新鲜上下文的 agent 只看这个文件就能继续完成任务
@@ -49,13 +37,13 @@
 
 
 # 项目约定
+
 现有审计可以不考虑, 也可以删除
 - 后续设计不要为了保留审计层, 去额外发明中间抽象、兼容层或者 runtime 语义。
 - 如果某块旧审计已经开始反过来限制设计, 可以直接删。
 审计不是后续架构演进的中心目标。不要因为“以后要不要更好审计”就把系统做复杂。
 
-
-以后优先追求的是更 agentic 的 bot, 而不是更可控的代理平台。默认 yolo
+默认 yolo
 
 ## 对于文档/注释
 
@@ -137,16 +125,41 @@
 - event / message facts
   - 平台真实发生过什么、系统真实发送过什么
 
-当前前台正式主线里，这几层是这样接起来的：
+当前前台正式主线里, 这几层是这样接起来的：
 
 - `RetrievalPlanner`
-  - 只决定这一轮的 retrieval 条件、sticky note scopes、retained history 和 working summary
+  - 负责整理这一轮 retrieval 要共享给记忆来源的原始现场, 以及 retained history / working summary 这类 thread 侧材料
 - `MemoryBroker`
-  - 统一读取 `/self`、sticky note 和普通长期检索记忆
+  - 统一向已接入的记忆来源发起 retrieval 请求, 收集返回结果, 记录失败, 再把统一结果交给 `ContextAssembler`
+  - 它是 broker / aggregator
 - `ContextAssembler`
   - 统一把 base prompt、tool summaries、memory blocks、working summary、retained history、current user 组装成最终模型上下文
 - `ctx.system_prompt / ctx.messages`
-  - 只表示最终给模型的结果，不再表示中间态
+  - 只表示最终给模型的结果, 不再表示中间态
+
+### RetrievalPlanner、MemoryBroker 和 Retriever 的边界
+
+当前稳定边界可以直接记成:
+
+- `RetrievalPlanner`
+  - 产出这一轮共享 retrieval context
+  - 它携带的是 event / thread / context 这些现场事实
+  - 它产出的 thread 侧材料主要是 retained history 和 working summary
+- `MemoryBroker`
+  - 把 retrieval context 转成统一 request
+  - 把 request 发给各个记忆来源
+  - 收集 `MemoryBlock`、汇总失败、保留可观测性
+- `Retriever` / `MemorySource`
+  - 是真正的记忆来源接缝
+  - 解释 request 里的现场元数据
+  - 决定自己的内部查询方式、命中方式和返回内容
+  - 把结果交回成统一 `MemoryBlock`
+
+这三层之间的数据方向是:
+
+`RetrievalPlanner -> shared retrieval context -> MemoryBroker -> MemorySource -> MemoryBlock -> ContextAssembler`
+
+只要顺着这条数据方向看代码, 边界就很清楚。
 
 ### self
 
@@ -162,7 +175,7 @@
 - 因为 Aca 虽然有 prompt, 有 sticky note, 还有检索的长期记忆, 但是没有一个地方可以让 Aca 记录自己在这一刻, 在这一天发生了什么, 需要这个区域来保持 Aca 行动的连贯性
 
 - 这不是 Aca 的人格设定: Aca 的人格设定在配置的 prompt 里, 它会注入到 system prompt 里
-- 这里不应该记详细的细节内容，比如需要记住的 人物/群聊 信息, 这应该放在 sticky note 里面
+- 具体的人物 / 群聊信息放在 sticky note
 - 这些东西里, 和具体群、具体用户都无关
 - 不是“杂项长期记忆”, 也不是“所有能长期保存的东西”
 
@@ -305,6 +318,16 @@ event / message facts 负责记录真实发生过什么和真实发送过什么,
 - 图片转述会同时碰 `event attachments`、`computer staging`、`model capability`、`tool/plugin`、`prompt assembly`
 - 长期记忆会同时碰 `session config` 里的 persistence / extraction 决策、`memory broker`、`store`、`retrieval planner`
 - WebUI 控制面板会同时碰 `app.js`、`http_api.py`、`control_plane.py`、`config_control_plane.py`
+
+### 6. MemoryBroker 的角色
+
+`MemoryBroker` 在主线里的角色很简单:
+
+- 统一收发 retrieval request
+- 汇总 retrieval 结果和失败
+- 保持记忆来源的可观测性
+
+记忆来源自己的查询方式和写入方式, 仍然留在各自来源内部。
 
 ## 改代码前的固定流程
 

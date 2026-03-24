@@ -688,11 +688,9 @@ Expected: FAIL because the current planner and callers still depend on prompt-as
 ```python
 @dataclass(slots=True)
 class RetrievalPlan:
-    requested_scopes: list[str] = field(default_factory=list)
-    requested_memory_types: list[str] = field(default_factory=list)
     requested_tags: list[str] = field(default_factory=list)
     sticky_note_scopes: list[str] = field(default_factory=list)
-    compressed_messages: list[dict[str, Any]] = field(default_factory=list)
+    retained_history: list[dict[str, Any]] = field(default_factory=list)
     dropped_messages: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 ```

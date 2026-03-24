@@ -42,7 +42,7 @@ from ..storage.sqlite_stores import (
 )
 from ..storage.stores import ChannelEventStore, MemoryStore, MessageStore
 from ..storage.threads import InMemoryThreadManager, StoreBackedThreadManager, ThreadManager
-from ..memory.structured_memory import StoreBackedMemoryRetriever, StructuredMemoryExtractor
+from ..memory.structured_memory import StoreBackedMemoryRetriever
 from ..subagents import SubagentExecutorRegistry
 from ..subagents.execution import LocalSubagentExecutionService
 from ..soul import SoulSource
@@ -231,10 +231,7 @@ def build_memory_broker(
     registry.register("self", SelfFileRetriever(soul_source))
     registry.register("sticky_notes", StickyNotesFileRetriever(sticky_notes_source))
     registry.register("store_memory", StoreBackedMemoryRetriever(memory_store))
-    return MemoryBroker(
-        registry=registry,
-        extractor=StructuredMemoryExtractor(memory_store),
-    )
+    return MemoryBroker(registry=registry)
 
 
 def build_reference_backend(config: Config) -> ReferenceBackend:

@@ -123,7 +123,7 @@
 - `routing`: 交给谁
 - `admission`: 回不回复, 还是只记录, 还是直接丢掉
 - `persistence`: 这条 event 要不要持久化
-- `extraction`: 这条消息要不要参与长期记忆提取
+- `extraction`: 这条 event 带哪些长期记忆 tags
 - `context`: 当前轮上下文怎么补
 - `computer`: 这次 computer / world 怎么配
 

@@ -1,6 +1,5 @@
 from acabot.runtime import (
     ContextDecision,
-    ExtractionDecision,
     MemoryAssemblySpec,
     MemoryBlock,
     MemoryBroker,
@@ -10,8 +9,6 @@ from acabot.runtime import (
 )
 from acabot.runtime.contracts import (
     AgentProfile,
-    MemoryCandidate,
-    MessageProjection,
     RetrievalPlan,
     RouteDecision,
     RunRecord,
@@ -50,14 +47,6 @@ class MalformedBlockRetriever:
     async def __call__(self, request):
         _ = request
         return [None]
-
-
-class RecordingExtractor:
-    def __init__(self) -> None:
-        self.calls = []
-
-    async def __call__(self, request) -> None:
-        self.calls.append(request)
 
 
 def _registry(*items) -> object:
@@ -105,9 +94,7 @@ def _ctx() -> RunContext:
             channel_scope="qq:group:20002",
             metadata={
                 "event_policy_id": "poke-memory",
-                "event_memory_scopes": ["episodic", "relationship"],
                 "event_tags": ["notice", "poke"],
-                "event_extract_to_memory": True,
             },
         ),
         thread=ThreadState(
@@ -124,7 +111,6 @@ def _ctx() -> RunContext:
             default_model="test-model",
         ),
         retrieval_plan=RetrievalPlan(
-            requested_scopes=["relationship", "user"],
             retained_history=[{"role": "user", "content": "[acacia/10001] [notice:poke]"}],
             working_summary="群里最近在讨论机器人设定",
         ),
@@ -148,50 +134,11 @@ async def test_memory_broker_builds_retrieval_request_from_context() -> None:
     assert request.thread_id == "qq:group:20002"
     assert request.actor_id == "qq:user:10001"
     assert request.channel_scope == "qq:group:20002"
-    assert request.requested_scopes == ["relationship", "user"]
     assert request.working_summary == "群里最近在讨论机器人设定"
     assert request.retained_history == [{"role": "user", "content": "[acacia/10001] [notice:poke]"}]
     assert request.event_tags == ["notice", "poke"]
     assert request.metadata["event_policy_id"] == "poke-memory"
     assert request.metadata["sticky_note_scopes"] == []
-
-
-def test_memory_broker_no_longer_accepts_legacy_retriever_argument() -> None:
-    try:
-        MemoryBroker(retriever=RecordingRetriever())  # type: ignore[call-arg]
-    except TypeError:
-        return
-    raise AssertionError("legacy retriever= compatibility should be removed")
-
-
-async def test_memory_broker_builds_write_request_from_context() -> None:
-    extractor = RecordingExtractor()
-    broker = MemoryBroker(extractor=extractor)
-    ctx = _ctx()
-    ctx.delivery_report = None
-
-    await broker.extract_after_run(ctx)
-
-    request = extractor.calls[0]
-    assert request.event_id == "evt-1"
-    assert request.run_status == "completed"
-    assert request.event_timestamp == 123
-    assert request.user_content == "[acacia/10001] [notice:poke]"
-    assert request.requested_scopes == ["episodic", "relationship"]
-    assert request.metadata["extract_to_memory"] is True
-
-
-async def test_memory_broker_prefers_memory_user_content_override() -> None:
-    extractor = RecordingExtractor()
-    broker = MemoryBroker(extractor=extractor)
-    ctx = _ctx()
-    ctx.memory_user_content = "[acacia/10001] [notice:poke] [图片说明: 一张群聊截图]"
-
-    await broker.extract_after_run(ctx)
-
-    request = extractor.calls[0]
-    assert request.user_content == "[acacia/10001] [notice:poke] [图片说明: 一张群聊截图]"
-
 
 async def test_memory_broker_passes_context_retrieval_tags() -> None:
     retriever = RecordingRetriever()
@@ -243,7 +190,7 @@ async def test_memory_broker_isolates_malformed_block_output_from_other_sources(
     ]
 
 
-async def test_memory_broker_prefers_explicit_empty_plan_fields_over_legacy_fallbacks() -> None:
+async def test_memory_broker_uses_retrieval_plan_fields_as_shared_request_shape() -> None:
     retriever = RecordingRetriever()
     broker = MemoryBroker(registry=_registry(("retriever:0", retriever)))
     ctx = _ctx()
@@ -251,13 +198,7 @@ async def test_memory_broker_prefers_explicit_empty_plan_fields_over_legacy_fall
     ctx.metadata["effective_working_summary"] = "effective summary should not leak"
     ctx.metadata["effective_compacted_messages"] = [{"role": "user", "content": "older"}]
     ctx.context_decision = ContextDecision(retrieval_tags=["urgent"])
-    ctx.extraction_decision = ExtractionDecision(
-        extract_to_memory=True,
-        memory_scopes=["channel"],
-        tags=["typed"],
-    )
     ctx.retrieval_plan = RetrievalPlan(
-        requested_scopes=[],
         requested_tags=[],
         sticky_note_scopes=[],
         retained_history=[],
@@ -267,7 +208,6 @@ async def test_memory_broker_prefers_explicit_empty_plan_fields_over_legacy_fall
     await broker.retrieve(ctx)
 
     request = retriever.calls[0]
-    assert request.requested_scopes == []
     assert request.requested_tags == []
     assert request.retained_history == []
     assert request.working_summary == ""
@@ -292,44 +232,9 @@ async def test_memory_broker_respects_explicit_empty_allowed_target_slots() -> N
     ]
 
 
-async def test_memory_broker_prefers_typed_extraction_decision() -> None:
-    extractor = RecordingExtractor()
-    broker = MemoryBroker(extractor=extractor)
-    ctx = _ctx()
-    ctx.decision.metadata.clear()
-    ctx.extraction_decision = ExtractionDecision(
-        extract_to_memory=True,
-        memory_scopes=["channel"],
-        tags=["typed", "project"],
-    )
+def test_runtime_facade_only_exports_memory_source_contracts() -> None:
+    import acabot.runtime as runtime
 
-    await broker.extract_after_run(ctx)
-
-    request = extractor.calls[0]
-    assert request.requested_scopes == ["channel"]
-    assert request.event_tags == ["typed", "project"]
-    assert request.metadata["extract_to_memory"] is True
-
-
-async def test_memory_broker_formats_message_projection_candidates() -> None:
-    extractor = RecordingExtractor()
-    broker = MemoryBroker(extractor=extractor)
-    ctx = _ctx()
-    ctx.message_projection = MessageProjection(
-        history_text="[acacia/10001] 请看图 [系统补充-图片说明: 一只橘猫]",
-        model_content="[acacia/10001] 请看图 [系统补充-图片说明: 一只橘猫]",
-        memory_candidates=[
-            MemoryCandidate(kind="base_text", text="[acacia/10001] 请看图"),
-            MemoryCandidate(
-                kind="image_caption",
-                text="一只橘猫",
-                generated=True,
-                metadata={"label": "图片说明"},
-            ),
-        ],
-    )
-
-    await broker.extract_after_run(ctx)
-
-    request = extractor.calls[0]
-    assert request.user_content == "[acacia/10001] 请看图 [系统补充-图片说明: 一只橘猫]"
+    assert hasattr(runtime, "MemorySource")
+    assert not hasattr(runtime, "MemoryRetriever")
+    assert not hasattr(runtime, "NullMemoryRetriever")

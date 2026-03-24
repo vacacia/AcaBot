@@ -157,29 +157,7 @@ class MemoryRetrievalRequest:
     event_timestamp: int
     query_text: str
     working_summary: str
-    requested_scopes: list[str]
-    requested_memory_types: list[str]
     requested_tags: list[str]
-    event_tags: list[str]
-    metadata: dict[str, Any]
-```
-
-```python
-@dataclass(slots=True)
-class MemoryWriteRequest:
-    run_id: str
-    thread_id: str
-    actor_id: str
-    agent_id: str
-    channel_scope: str
-    event_id: str
-    event_type: str
-    event_timestamp: int
-    run_mode: str
-    run_status: str
-    user_content: str
-    delivered_messages: list[str]
-    requested_scopes: list[str]
     event_tags: list[str]
     metadata: dict[str, Any]
 ```
@@ -202,15 +180,15 @@ class MemoryBlock:
 ThreadPipeline
   -> RetrievalPlanner.prepare()
   -> MemoryBroker._build_retrieval_request(ctx)
-  -> LongTermMemoryRetriever.__call__(request)
+  -> LongTermMemorySource.__call__(request)
   -> list[MemoryBlock]
   -> ContextAssembler
 ```
 
 这里面它真正要依赖的是两件事：
 
-1. `RetrievalPlanner.prepare()` 决定本轮“该不该查长期记忆、带什么条件查”
-2. `MemoryBroker` 把这些选择结果整理成 `MemoryRetrievalRequest`
+1. `RetrievalPlanner.prepare()` 整理共享 retrieval 现场
+2. `MemoryBroker` 把这些共享现场规范成 `SharedMemoryRetrievalRequest`
 
 所以长期记忆 agent 不应该直接依赖：
 
@@ -220,23 +198,22 @@ ThreadPipeline
 
 它应该只依赖：
 
-- `MemoryRetrievalRequest`
-- `MemoryWriteRequest`
+- `SharedMemoryRetrievalRequest`
 - `MemoryBlock`
 
 ### 检索侧的正式接口
 
-长期记忆检索的职责是：
+长期记忆 source 的职责是：
 
-- 收到 `MemoryRetrievalRequest`
-- 按 request 中的 query / scope / tags / actor 等条件去长期库检索
+- 收到 `SharedMemoryRetrievalRequest`
+- 按 request 中的 query / actor / channel / event / tags 等事实自己决定怎么查
 - 返回统一的 `MemoryBlock[]`
 
 推荐的最小实现形状：
 
 ```python
-class LongTermMemoryRetriever:
-    async def __call__(self, request: MemoryRetrievalRequest) -> list[MemoryBlock]:
+class LongTermMemorySource:
+    async def __call__(self, request: SharedMemoryRetrievalRequest) -> list[MemoryBlock]:
         ...
 ```
 
@@ -246,8 +223,6 @@ class LongTermMemoryRetriever:
 - `actor_id`
 - `channel_scope`
 - `thread_id`
-- `requested_scopes`
-- `requested_memory_types`
 - `requested_tags`
 - `event_tags`
 - `working_summary`
@@ -277,32 +252,11 @@ class LongTermMemoryRetriever:
 
 向量数据库、embedding、索引切分策略、rerank 策略都属于长期记忆 agent 自己的任务，这份协作文档不限制。
 
-### 写回侧的正式接口
-
-如果长期记忆 agent 要做 write-back，也必须通过 `MemoryExtractor` 语义接入，而不是去改 pipeline 主线。
-
-推荐形状：
-
-```python
-class LongTermMemoryExtractor:
-    async def __call__(self, request: MemoryWriteRequest) -> None:
-        ...
-```
-
-它可以自己决定写回策略，例如：
-
-- 每个 session / thread 攒够一定数量消息后触发
-- 让 LLM 做抽取和归纳
-- 再写入数据库
-
-底层怎么提取、写到哪种 DB、怎样分桶，都由长期记忆 agent 自己决定。
-
 ### 这次主线改动会不会影响长期记忆 agent
 
-如果长期记忆 agent 只依赖上面那 3 个契约：
+如果长期记忆 agent 只依赖上面这 2 个契约：
 
-- `MemoryRetrievalRequest`
-- `MemoryWriteRequest`
+- `SharedMemoryRetrievalRequest`
 - `MemoryBlock`
 
 那这次上下文主线重构对它的影响是可控的。
@@ -339,7 +293,7 @@ class LongTermMemoryExtractor:
 - 最多只声明一个清晰的构造入口，例如：
 
 ```python
-def build_long_term_memory_retriever(...) -> MemoryRetriever:
+def build_long_term_memory_source(...) -> MemorySource:
     ...
 ```
 
@@ -396,7 +350,7 @@ type SessionRecord = {
       enabled: boolean
       run_mode: string
       persist_event: boolean
-      memory_scopes: string[]
+      tags: string[]
     }>
   }
   other: Record<string, never>
@@ -427,14 +381,12 @@ class ContextDecision:
 
 前端如果要理解 memory 相关的 session 概念，只需要先理解：
 
-- `memory_scopes`
 - `sticky_note_scopes`
 - `retrieval_tags`
 - `context_labels`
 
 其中：
 
-- `memory_scopes` 更偏“事件写入 / 提取”的 session 侧控制
 - `sticky_note_scopes` 和 `retrieval_tags` 更偏“本轮上下文检索”的控制
 - `context_labels` 是控制面 / 调试标签，不是模型正文
 
@@ -565,9 +517,9 @@ Memory UI 现在展示的是“记忆层”和“配置层”，不是“最终 
 推荐的集成顺序是：
 
 1. 主线 agent 先把 `ContextAssembler` 主线和 `RetrievalPlanner.prepare()` 收稳
-2. 长期记忆 agent 基于 `MemoryRetriever / MemoryExtractor` 契约提供长期记忆来源
+2. 长期记忆 agent 基于 `MemorySource` 契约提供长期记忆来源
 3. 前端 agent 独立完成 Memory UI 的三层结构，不阻塞后端
-4. 最后由主线集成 owner 把长期记忆 retriever 接进 broker wiring，并把前端真实接口名对齐
+4. 最后由主线集成 owner 把长期记忆 source 接进 broker wiring，并把前端真实接口名对齐
 
 这里的关键原则是：
 

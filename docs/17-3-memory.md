@@ -36,14 +36,12 @@
 - `MemoryStore`
 - `MemoryBroker`
 - `StoreBackedMemoryRetriever`
-- `StructuredMemoryExtractor`
 
 但这些层目前提供的主要是：
 
 - scope 路由
 - memory item 存取
 - 最小 retrieval
-- 最小 extraction
 
 它们还没有长出 relationship memory 自己的专用结构，比如：
 
@@ -52,17 +50,7 @@
 - 独立的展示页
 - 独立的合并策略
 
-#### 3. 当前会写进去的内容还是最小 episodic memory
-
-`StructuredMemoryExtractor` 现在会在 run 收尾后写入一条最小 `episodic` 记忆。
-
-代码在：
-
-- `src/acabot/runtime/memory/structured_memory.py`
-
-它会根据 hint 选一个 scope，默认很容易落到 `relationship`。但写进去的内容仍然只是最小事件摘要，不是“关系记忆专用格式”。
-
-#### 4. sticky note 的默认 scope 也偏向 relationship
+#### 3. sticky note 的默认 scope 也偏向 relationship
 
 `StickyNotesService` 和 `StickyNotesPlugin` 当前默认 scope 都是 `relationship`。
 
@@ -70,7 +58,7 @@
 
 所以这层的真实现状可以概括成一句话：
 
-> relationship memory 在代码里已经是正式 scope，也是很多默认长期写入的第一落点，但它现在更像通用 `MemoryStore` 上的一种归属方式，还不是独立成型的关系记忆模块。
+> relationship memory 在代码里已经是正式 scope，但它当前更像通用 `MemoryStore` 上的一种归属方式，还不是独立成型的关系记忆模块。
 
 ## Channel Memory
 
@@ -122,9 +110,9 @@
 
 #### 3. 通用长期记忆也支持 channel scope
 
-`MemoryBroker.retrieve(...)` 和 `StructuredMemoryExtractor` 也都能读写 `channel` scope 下的长期记忆项。
+`MemoryBroker.retrieve(...)` 背后的通用长期记忆检索也支持 `channel` scope。
 
-但和 relationship memory 一样，这里当前仍然是“通用记忆项 + 通用检索写回”，还没有做出 channel memory 专用模块。
+但和 relationship memory 一样，这里当前仍然还是“通用记忆项 + 通用检索”，还没有做出 channel memory 专用模块。
 
 所以这层的真实现状可以概括成一句话：
 

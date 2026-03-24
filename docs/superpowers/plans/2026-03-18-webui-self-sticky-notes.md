@@ -544,7 +544,7 @@ Cover:
 - list sessions/threads
 - show current `channel_scope` / `thread_id`
 - show Session AI values (prompt/model/tools/skills)
-- show Session 输入处理 values (enabled/run_mode/persist/memory_scopes/tags)
+- show Session 输入处理 values (enabled/run_mode/persist/tags)
 - save Session AI values
 - save Session 输入处理 values
 - save Session 其他 values

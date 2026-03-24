@@ -5,7 +5,6 @@ from acabot.runtime.memory.file_backed import SelfFileRetriever, StickyNotesFile
 def _request(
     *,
     sticky_note_scopes: list[str] | None = None,
-    requested_scopes: list[str] | None = None,
 ) -> SharedMemoryRetrievalRequest:
     return SharedMemoryRetrievalRequest(
         run_id="run:1",
@@ -20,7 +19,6 @@ def _request(
         query_text="hello",
         working_summary="",
         retained_history=[],
-        requested_scopes=list(requested_scopes or ["relationship", "user", "channel", "global"]),
         requested_tags=[],
         metadata={"sticky_note_scopes": list(sticky_note_scopes or [])},
     )
@@ -69,7 +67,7 @@ async def test_sticky_notes_file_retriever_returns_scoped_blocks(tmp_path) -> No
     )
 
 
-async def test_sticky_notes_file_retriever_respects_requested_scopes(tmp_path) -> None:
+async def test_sticky_notes_file_retriever_returns_notes_from_every_allowed_scope(tmp_path) -> None:
     source = StickyNotesSource(root_dir=tmp_path)
     source.create_note(
         scope="user",
@@ -77,16 +75,17 @@ async def test_sticky_notes_file_retriever_respects_requested_scopes(tmp_path) -
         key="reply_style",
         readonly_content="回答要更直接",
     )
+    source.create_note(
+        scope="channel",
+        scope_key="qq:group:20002",
+        key="group_rule",
+        readonly_content="不要刷屏",
+    )
     retriever = StickyNotesFileRetriever(source)
 
-    blocks = await retriever(
-        _request(
-            sticky_note_scopes=["user"],
-            requested_scopes=["relationship", "channel"],
-        )
-    )
+    blocks = await retriever(_request(sticky_note_scopes=["user", "channel"]))
 
-    assert blocks == []
+    assert [block.scope for block in blocks] == ["user", "channel"]
 
 
 async def test_sticky_notes_file_retriever_requires_explicit_sticky_note_scope_allowlist(tmp_path) -> None:

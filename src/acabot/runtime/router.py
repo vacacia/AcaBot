@@ -82,8 +82,6 @@ class RuntimeRouter:
                 "routing_actor_lane": routing.actor_lane,
                 "admission_mode": admission.mode,
                 "event_persist": persistence.persist_event,
-                "event_extract_to_memory": extraction.extract_to_memory,
-                "event_memory_scopes": list(extraction.memory_scopes),
                 "event_tags": list(extraction.tags),
                 "computer_backend": computer.backend,
                 "computer_allow_exec": computer.allow_exec,
@@ -160,7 +158,7 @@ def _default_session_config(default_agent_id: str) -> SessionConfig:
             admission=AdmissionDomainConfig(default={"mode": "respond"}),
             context=ContextDomainConfig(default={}),
             persistence=PersistenceDomainConfig(default={"persist_event": True}),
-            extraction=ExtractionDomainConfig(default={"extract_to_memory": False, "scopes": [], "tags": []}),
+            extraction=ExtractionDomainConfig(default={"tags": []}),
             computer=ComputerDomainConfig(default={"backend": "host", "allow_exec": True, "allow_sessions": True}),
         )
 

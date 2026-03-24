@@ -165,7 +165,6 @@ when:
 - `profile`
 - `mode`
 - `persist_event`
-- `extract_to_memory`
 - `backend`
 
 因为这些不是“匹配什么”，而是“命中后做什么”。
@@ -266,8 +265,6 @@ surfaces:
         persist_event: true
     extraction:
       default:
-        extract_to_memory: true
-        scopes: [channel]
         tags: []
     computer:
       default:
@@ -488,8 +485,6 @@ computer:
 
 ### `ExtractionDecision`
 
-- `extract_to_memory`
-- `memory_scopes`
 - `tags`
 - `reason`
 - `source_case_id`

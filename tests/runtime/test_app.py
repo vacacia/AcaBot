@@ -329,8 +329,6 @@ surfaces:
         persist_event: false
     extraction:
       default:
-        extract_to_memory: true
-        scopes: [episodic]
         tags: [ephemeral]
 """,
         ),
@@ -345,8 +343,14 @@ surfaces:
     await gateway.handler(_event())
 
     run = next(iter(run_manager._runs.values()))
-    assert run.metadata["event_extract_to_memory"] is True
-    assert run.metadata["event_memory_scopes"] == ["episodic"]
+    assert {
+        key: value
+        for key, value in run.metadata.items()
+        if key.startswith("event_")
+    } == {
+        "event_persist": False,
+        "event_tags": ["ephemeral"],
+    }
     assert await channel_event_store.get_thread_events("qq:user:10001") == []
 
 

@@ -301,8 +301,6 @@ class AssembledContext:
 
 它负责：
 
-- 计算 `requested_scopes`
-- 计算 `requested_memory_types`
 - 计算 `requested_tags`
 - 计算 sticky note 的读取范围
 - 把 compaction 结果收成 retrieval plan

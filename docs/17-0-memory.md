@@ -1,17 +1,25 @@
 ## 目前记忆层级
 
-message facts / event facts 就是 gateway 进来的一条消息
+1. message facts / event facts 就是 gateway 进来的一条消息
 
-thread working memory 就是对话的上下文流
+2. thread working memory 就是对话的上下文流
 
-人格设定是配置文件层次的, 固定注入system prompt 
+不要再把上面两个层级当做记忆 不要再把上面两个层级当做记忆 不要再把上面两个层级当做记忆 不要再把上面两个层级当做记忆
+上面两个是消息事实
 
-/self 是自我连续性的文件形式的记忆
 
-sticky note 是长期稳定知识
+人格设定: 是配置文件层次的, 固定注入system prompt 
 
-需要长期检索记忆, 按需检索记忆
-- 是从 message facts / event facts / 消息数据库 里提炼出来的结构化记忆
+---
+
+实际的记忆:
+
+1. /self 是自我连续性的文件形式的记忆
+
+2. sticky note 是长期稳定知识
+
+3. 需要长期检索记忆, 按需检索记忆
+    - 是从 message facts / event facts / 消息数据库 里提炼出来的结构化记忆
 
 
 ---

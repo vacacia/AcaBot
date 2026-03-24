@@ -2,9 +2,6 @@
 
 组件关系:
 
-    StructuredMemoryExtractor
-        |
-        v
     MemoryStore
         ^
         |

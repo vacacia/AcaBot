@@ -292,7 +292,7 @@ class SessionRuntime:
         session: SessionConfig,
         surface: SurfaceResolution,
     ) -> ExtractionDecision:
-        """解析长期记忆提取决策.
+        """解析长期记忆标签决策.
 
         Args:
             facts (EventFacts): 当前事件事实.
@@ -300,7 +300,7 @@ class SessionRuntime:
             surface (SurfaceResolution): 当前消息命中的 surface.
 
         Returns:
-            ExtractionDecision: 当前消息的记忆提取结果.
+            ExtractionDecision: 当前消息的长期记忆标签结果.
         """
 
         domain = self._surface_config(session, surface).extraction
@@ -310,8 +310,6 @@ class SessionRuntime:
             domain=domain,
         )
         return ExtractionDecision(
-            extract_to_memory=bool(payload.get("extract_to_memory", False)),
-            memory_scopes=list(payload.get("scopes", payload.get("memory_scopes", []))),
             tags=list(payload.get("tags", [])),
             reason="surface case" if case_id else "surface default",
             source_case_id=case_id,

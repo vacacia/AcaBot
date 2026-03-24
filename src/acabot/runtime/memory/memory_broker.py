@@ -5,7 +5,6 @@
 - 把 RunContext 规范成共享 retrieval request
 - 调用已注册的 memory source
 - 合并成功结果并记录失败
-- 在 run 收尾时触发 write-back
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from inspect import isawaitable
 from typing import Any, Protocol
 
-from ..contracts import DispatchReport, RunContext
+from ..contracts import RunContext
 
 FORMAL_TARGET_SLOTS = (
     "system_prompt",
@@ -63,31 +62,9 @@ class SharedMemoryRetrievalRequest:
     event_timestamp: int
     event_tags: list[str] = field(default_factory=list)
     query_text: str = ""
-    requested_scopes: list[str] = field(default_factory=list)
     requested_tags: list[str] = field(default_factory=list)
     working_summary: str = ""
     retained_history: list[dict[str, Any]] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(slots=True)
-class MemoryWriteRequest:
-    """一次 memory write-back 的标准输入."""
-
-    run_id: str
-    thread_id: str
-    actor_id: str
-    agent_id: str
-    channel_scope: str
-    event_id: str
-    event_type: str
-    event_timestamp: int
-    run_mode: str
-    run_status: str
-    user_content: str
-    delivered_messages: list[str] = field(default_factory=list)
-    requested_scopes: list[str] = field(default_factory=list)
-    event_tags: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -124,20 +101,6 @@ class MemorySource(Protocol):
         ...
 
 
-class MemoryRetriever(Protocol):
-    """兼容旧命名的 retrieval 协议."""
-
-    async def __call__(self, request: SharedMemoryRetrievalRequest) -> list[MemoryBlock]:
-        ...
-
-
-class MemoryExtractor(Protocol):
-    """MemoryExtractor 协议."""
-
-    async def __call__(self, request: MemoryWriteRequest) -> None:
-        ...
-
-
 @dataclass(slots=True)
 class NullMemorySource:
     """默认空 source."""
@@ -145,20 +108,6 @@ class NullMemorySource:
     async def __call__(self, request: SharedMemoryRetrievalRequest) -> list[MemoryBlock]:
         _ = request
         return []
-
-
-@dataclass(slots=True)
-class NullMemoryRetriever(NullMemorySource):
-    """兼容旧命名的空 retriever."""
-
-
-@dataclass(slots=True)
-class NullMemoryExtractor:
-    """默认空 extractor."""
-
-    async def __call__(self, request: MemoryWriteRequest) -> None:
-        _ = request
-        return None
 
 
 @dataclass(slots=True)
@@ -186,13 +135,11 @@ class MemoryBroker:
     def __init__(
         self,
         *,
-        extractor: MemoryExtractor | None = None,
         registry: MemorySourceRegistry | None = None,
         policies: dict[str, MemorySourcePolicy] | None = None,
     ) -> None:
         self.registry = registry or MemorySourceRegistry()
         self.policies = dict(policies or {})
-        self.extractor = extractor or NullMemoryExtractor()
 
     async def retrieve(self, ctx: RunContext) -> MemoryBrokerResult:
         """为当前 run 检索长期记忆."""
@@ -233,14 +180,6 @@ class MemoryBroker:
             attempted_sources=attempted_sources,
             skipped_sources=skipped_sources,
         )
-
-    async def extract_after_run(self, ctx: RunContext) -> None:
-        """在一次 run 结束后触发 memory write-back."""
-
-        request = self._build_write_request(ctx)
-        result = self.extractor(request)
-        if isawaitable(result):
-            await result
 
     def _normalize_blocks(
         self,
@@ -302,15 +241,6 @@ class MemoryBroker:
                 else list(ctx.decision.metadata.get("event_tags", []))
             ),
             query_text=self._user_content(ctx),
-            requested_scopes=(
-                list(retrieval_plan.requested_scopes)
-                if retrieval_plan is not None
-                else (
-                    list(ctx.extraction_decision.memory_scopes)
-                    if ctx.extraction_decision is not None
-                    else list(ctx.decision.metadata.get("event_memory_scopes", []))
-                )
-            ),
             requested_tags=(
                 list(retrieval_plan.requested_tags)
                 if retrieval_plan is not None
@@ -341,53 +271,6 @@ class MemoryBroker:
                 ),
             },
         )
-
-    def _build_write_request(self, ctx: RunContext) -> MemoryWriteRequest:
-        """把 RunContext 规范成 write-back request."""
-
-        return MemoryWriteRequest(
-            run_id=ctx.run.run_id,
-            thread_id=ctx.thread.thread_id,
-            actor_id=ctx.decision.actor_id,
-            agent_id=ctx.decision.agent_id,
-            channel_scope=ctx.decision.channel_scope,
-            event_id=ctx.event.event_id,
-            event_type=ctx.event.event_type,
-            event_timestamp=ctx.event.timestamp,
-            run_mode=ctx.decision.run_mode,
-            run_status=str(ctx.run.status),
-            user_content=self._user_content(ctx),
-            delivered_messages=self._delivered_messages(ctx.delivery_report),
-            requested_scopes=(
-                list(ctx.extraction_decision.memory_scopes)
-                if ctx.extraction_decision is not None
-                else list(ctx.decision.metadata.get("event_memory_scopes", []))
-            ),
-            event_tags=(
-                list(ctx.extraction_decision.tags)
-                if ctx.extraction_decision is not None
-                else list(ctx.decision.metadata.get("event_tags", []))
-            ),
-            metadata={
-                "event_policy_id": ctx.decision.metadata.get("event_policy_id", ""),
-                "extract_to_memory": (
-                    ctx.extraction_decision.extract_to_memory
-                    if ctx.extraction_decision is not None
-                    else ctx.decision.metadata.get("event_extract_to_memory", False)
-                ),
-                "thread_summary": self._working_summary(ctx),
-            },
-        )
-
-    @staticmethod
-    def _delivered_messages(report: DispatchReport | None) -> list[str]:
-        if report is None:
-            return []
-        delivered: list[str] = []
-        for item in report.delivered_items:
-            if item.plan.thread_content:
-                delivered.append(item.plan.thread_content)
-        return delivered
 
     @staticmethod
     def _user_content(ctx: RunContext) -> str:
@@ -438,15 +321,10 @@ __all__ = [
     "MemoryBlock",
     "MemoryBroker",
     "MemoryBrokerResult",
-    "MemoryExtractor",
-    "MemoryRetriever",
     "MemorySource",
     "MemorySourceFailure",
     "MemorySourcePolicy",
     "MemorySourceRegistry",
-    "MemoryWriteRequest",
-    "NullMemoryExtractor",
-    "NullMemoryRetriever",
     "NullMemorySource",
     "SharedMemoryRetrievalRequest",
 ]

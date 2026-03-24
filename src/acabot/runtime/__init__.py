@@ -91,15 +91,10 @@ from .memory.memory_broker import (
     MemoryBlock,
     MemoryBroker,
     MemoryBrokerResult,
-    MemoryExtractor,
-    MemoryRetriever,
     MemorySource,
     MemorySourceFailure,
     MemorySourcePolicy,
     MemorySourceRegistry,
-    MemoryWriteRequest,
-    NullMemoryExtractor,
-    NullMemoryRetriever,
     SharedMemoryRetrievalRequest,
 )
 from .storage.memory_item_store import InMemoryMemoryStore
@@ -270,7 +265,7 @@ from .storage.sqlite_stores import (
 from .memory.sticky_notes import StickyNotesService
 from .memory.file_backed import StickyNotesSource
 from .storage.stores import ChannelEventStore, MemoryStore, MessageStore, RunStore, ThreadStore
-from .memory.structured_memory import StoreBackedMemoryRetriever, StructuredMemoryExtractor
+from .memory.structured_memory import StoreBackedMemoryRetriever
 from .tool_broker import (
     AllowAllToolPolicy,
     InMemoryToolAudit,
@@ -370,7 +365,6 @@ __all__ = [
     "MemoryCandidate",
     "MemoryAssemblySpec",
     "MemoryEditMode",
-    "MemoryExtractor",
     "MemoryItem",
     "MemorySource",
     "MemorySourceFailure",
@@ -380,8 +374,6 @@ __all__ = [
     "MessageRecord",
     "MessageProjection",
     "MessageStore",
-    "MemoryRetriever",
-    "MemoryWriteRequest",
     "ModelAgentRuntime",
     "ModelBinding",
     "ModelHealthCheckResult",
@@ -405,8 +397,6 @@ __all__ = [
     "NoopApprovalResumer",
     "ToolApprovalResumer",
     "NullContextSummarizer",
-    "NullMemoryExtractor",
-    "NullMemoryRetriever",
     "NullReferenceBackend",
     "OutboxItem",
     "OpenVikingReferenceBackend",
@@ -500,7 +490,6 @@ __all__ = [
     "StoreBackedMemoryRetriever",
     "StoreBackedRunManager",
     "StoreBackedThreadManager",
-    "StructuredMemoryExtractor",
     "SurfaceConfig",
     "SurfaceResolution",
     "ThreadPipeline",

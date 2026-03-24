@@ -4,9 +4,7 @@ from acabot.runtime import (
     MemoryAssemblySpec,
     SharedMemoryRetrievalRequest,
     StoreBackedMemoryRetriever,
-    StructuredMemoryExtractor,
 )
-from acabot.runtime.memory.memory_broker import MemoryWriteRequest
 
 
 def _retrieval_request() -> SharedMemoryRetrievalRequest:
@@ -23,68 +21,9 @@ def _retrieval_request() -> SharedMemoryRetrievalRequest:
         query_text="你好",
         working_summary="群里最近在讨论机器人",
         retained_history=[],
-        requested_scopes=["relationship"],
         requested_tags=[],
         metadata={"sticky_note_scopes": ["relationship"]},
     )
-
-
-def _write_request() -> MemoryWriteRequest:
-    return MemoryWriteRequest(
-        run_id="run:1",
-        thread_id="qq:group:20002",
-        actor_id="qq:user:10001",
-        agent_id="aca",
-        channel_scope="qq:group:20002",
-        event_id="evt-1",
-        event_type="message",
-        event_timestamp=123,
-        run_mode="respond",
-        run_status="completed",
-        user_content="[acacia/10001] 你好",
-        delivered_messages=["你好, 今天继续讨论 agent 架构"],
-        requested_scopes=["episodic", "relationship"],
-        event_tags=["chat"],
-        metadata={
-            "extract_to_memory": True,
-            "thread_summary": "群里最近在讨论机器人",
-            "event_policy_id": "message-memory",
-        },
-    )
-
-
-async def test_structured_memory_extractor_persists_draft_episodic_item() -> None:
-    store = InMemoryMemoryStore()
-    extractor = StructuredMemoryExtractor(store)
-
-    await extractor(_write_request())
-
-    items = await store.find(
-        scope="relationship",
-        scope_key="qq:user:10001|qq:group:20002",
-    )
-
-    assert len(items) == 1
-    assert items[0].memory_type == "episodic"
-    assert items[0].edit_mode == "draft"
-    assert items[0].source_run_id == "run:1"
-    assert items[0].source_event_id == "evt-1"
-    assert "assistant_1: 你好, 今天继续讨论 agent 架构" in items[0].content
-
-
-async def test_structured_memory_extractor_skips_when_event_policy_disables_it() -> None:
-    store = InMemoryMemoryStore()
-    extractor = StructuredMemoryExtractor(store)
-    request = _write_request()
-    request.metadata["extract_to_memory"] = False
-
-    await extractor(request)
-
-    items = await store.find(
-        scope="relationship",
-        scope_key="qq:user:10001|qq:group:20002",
-    )
-    assert items == []
 
 
 async def test_store_backed_memory_retriever_converts_memory_items_to_blocks() -> None:

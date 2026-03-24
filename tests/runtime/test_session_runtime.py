@@ -1,6 +1,9 @@
 from dataclasses import replace
 from pathlib import Path
 
+from acabot.config import Config
+from acabot.runtime import RuntimeRouter
+from acabot.runtime.control.session_loader import ConfigBackedSessionConfigLoader
 from acabot.runtime.control.session_loader import SessionConfigLoader
 from acabot.runtime.control.session_runtime import SessionRuntime
 from acabot.types import EventSource, MsgSegment, StandardEvent
@@ -95,6 +98,25 @@ def test_session_loader_reads_surface_matrix_and_selectors(tmp_path: Path) -> No
     assert session.surfaces["message.mention"].computer.cases[0].use["backend"] == "host"
 
 
+def test_config_backed_session_loader_default_extraction_only_keeps_tags() -> None:
+    loader = ConfigBackedSessionConfigLoader(Config({"runtime": {"default_agent_id": "aca"}}))
+
+    session = loader.load_by_session_id("qq:group:123")
+
+    assert {
+        surface_id: dict(surface.extraction.default)
+        for surface_id, surface in session.surfaces.items()
+        if surface.extraction is not None
+    } == {
+        "message.mention": {"tags": []},
+        "message.reply_to_bot": {"tags": []},
+        "message.command": {"tags": []},
+        "message.private": {"tags": []},
+        "message.plain": {"tags": []},
+        "notice.default": {"tags": []},
+    }
+
+
 def test_session_runtime_builds_facts_and_resolves_surface(tmp_path: Path) -> None:
     _write_session(tmp_path)
     runtime = SessionRuntime(SessionConfigLoader(config_root=tmp_path / "sessions"))
@@ -107,6 +129,26 @@ def test_session_runtime_builds_facts_and_resolves_surface(tmp_path: Path) -> No
     assert facts.channel_scope == "qq:group:123"
     assert facts.sender_roles == ["admin"]
     assert surface.surface_id == "message.mention"
+
+
+def test_runtime_router_inline_default_session_extraction_only_keeps_tags() -> None:
+    router = RuntimeRouter(default_agent_id="aca")
+    facts = router.session_runtime.build_facts(_group_mention_event(sender_role="admin"))
+
+    session = router.session_runtime.load_session(facts)
+
+    assert {
+        surface_id: dict(surface.extraction.default)
+        for surface_id, surface in session.surfaces.items()
+        if surface.extraction is not None
+    } == {
+        "message.mention": {"tags": []},
+        "message.reply_to_bot": {"tags": []},
+        "message.command": {"tags": []},
+        "message.private": {"tags": []},
+        "message.plain": {"tags": []},
+        "notice.default": {"tags": []},
+    }
 
 
 def test_session_runtime_resolves_domain_decisions_from_surface_cases(tmp_path: Path) -> None:

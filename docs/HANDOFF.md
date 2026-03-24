@@ -4,7 +4,7 @@
 
 前台 runtime 现在已经把最终模型输入收口到 `ContextAssembler + PayloadJsonWriter`，`ctx.system_prompt` 和 `ctx.messages` 只表示最终结果，`RetrievalPlanner` 也已经收成 prepare-only。
 `MemoryBroker` 现在统一读取 `/self`、sticky notes 和 store-backed 长期记忆，`SoulSource` 实际管理的已经是 `/self/today.md + /self/daily/*.md`，pipeline 不再自己读文件拼上下文。
-如果后面继续做这块，先看 `docs/todo/2026-03-23-unified-context-contribution-and-assembly-design.md`、`src/acabot/runtime/context_assembly/`、`src/acabot/runtime/memory/file_backed/retrievers.py`，旧的 `docs/todo/2026-03-23-context-assembler-source-map-and-final-payload.md` 只当历史讨论稿看。
+这轮又重写了 `docs/17-3-memory-long-term-memory.md`，把边界纠正成你现在要的形状：长期记忆组件自己消费消息记录、自己决定保留和写入，前台 runtime 只在 retrieval 时通过统一入口向它取内容，`SessionRuntime` 和 `MemoryBroker` 都不替长期记忆下写入判断；如果后面继续做这块，先看 `docs/17-3-memory-long-term-memory.md`、`docs/todo/2026-03-23-unified-context-contribution-and-assembly-design.md`、`src/acabot/runtime/context_assembly/`、`src/acabot/runtime/memory/file_backed/retrievers.py`，旧的 “session 决定 extraction、broker 负责 write-back” 那套说法不要继续扩。
 
 ## 2026-03-23 skill 对齐已经完成主线实现
 

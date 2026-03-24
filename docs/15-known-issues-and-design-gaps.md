@@ -156,3 +156,117 @@
 
 `open`
 
+## 7. bootstrap 命名和入口还带着新旧交替痕迹
+
+### 现象
+
+这轮读 runtime 时，一个直接感受到的现象是：
+
+- `bootstrap/` 目录已经收成新的入口形状
+- 但历史命名和旧猜测路径还容易误导阅读
+- 如果按旧习惯去猜文件名，很容易先撞到不存在的入口
+
+这说明这块最近确实在收边界，但收口还没完全把“旧入口印象”清干净。
+
+### 为什么这是问题
+
+这会带来两个成本：
+
+- 阅读成本
+  - 新人很容易先按旧命名找入口
+- 文档成本
+  - 文档如果没持续对齐，很容易继续把人带到历史路径上
+
+### 相关代码
+
+- `src/acabot/runtime/bootstrap/`
+- `src/acabot/runtime/app.py`
+- `src/acabot/runtime/bootstrap/__init__.py`
+
+### 修复时通常要同步
+
+- `01-system-map.md`
+- `02-runtime-mainline.md`
+- `09-config-and-runtime-files.md`
+
+### 建议状态
+
+`open`
+
+## 8. sticky notes 当前是双真源混合态
+
+### 现象
+
+当前 sticky notes 在实现上已经分成两种真源:
+
+- `user / channel`
+  - 走 file-backed 真源
+- `relationship / global`
+  - 仍然会走 `MemoryStore`
+
+也就是说，这一层已经明显在往“分层真源”走，但还没有完全收敛成统一产品表达。
+
+### 为什么这是问题
+
+这会带来两个直接后果：
+
+- 语义理解成本
+  - 同样叫 sticky notes，不同 scope 背后其实不是一套真源
+- 产品表达成本
+  - WebUI、control plane、后续记忆设计都需要一直意识到这层差异
+
+### 相关代码
+
+- `src/acabot/runtime/memory/file_backed/sticky_notes.py`
+- `src/acabot/runtime/memory/file_backed/retrievers.py`
+- `src/acabot/runtime/memory/sticky_notes.py`
+
+### 修复时通常要同步
+
+- `05-memory-and-context.md`
+- `17-2-memory-stickynotes.md`
+- `08-webui-and-control-plane.md`
+
+### 建议状态
+
+`open`
+
+## 9. `scope` 和 `memory_type` 这两个维度的语义还没完全摆正
+
+### 现象
+
+当前代码里：
+
+- `scope`
+  - 已经比较清楚地表示归属空间
+- `memory_type`
+  - 还更像一个存储标签
+
+这两个维度都存在，但它们在设计上的地位还没有完全收清楚。
+
+### 为什么这是问题
+
+这会影响后面三条线的表达稳定性：
+
+- retrieval 规划
+- memory 存储形状
+- WebUI / control plane 的产品语义
+
+如果这两个维度继续混着用，后面很容易让“归属空间”和“内容类型”在不同模块里承担不同含义。
+
+### 相关代码
+
+- `src/acabot/runtime/memory/structured_memory.py`
+- `src/acabot/runtime/contracts/records.py`
+- `src/acabot/runtime/control/control_plane.py`
+
+### 修复时通常要同步
+
+- `03-data-contracts.md`
+- `05-memory-and-context.md`
+- `17-0-memory.md`
+- `17-3-memory-long-term-memory.md`
+
+### 建议状态
+
+`open`

@@ -132,7 +132,6 @@ class RetrievalPlan:
     """进入模型前的 retrieval 计划与保留上下文.
 
     Attributes:
-        requested_scopes (list[str]): 本次 retrieval 需要读取的 scope 列表.
         requested_tags (list[str]): 本次 retrieval 的 tag 过滤条件.
         sticky_note_scopes (list[str]): sticky note 允许注入的 scope 列表.
         retained_history (list[dict[str, Any]]): compaction 后保留下来的消息.
@@ -141,7 +140,6 @@ class RetrievalPlan:
         metadata (dict[str, Any]): 其他 planning 元数据.
     """
 
-    requested_scopes: list[str] = field(default_factory=list)
     requested_tags: list[str] = field(default_factory=list)
     sticky_note_scopes: list[str] = field(default_factory=list)
     retained_history: list[dict[str, Any]] = field(default_factory=list)

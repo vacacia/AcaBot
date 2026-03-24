@@ -105,7 +105,6 @@ assembler 不再推断来源意图，只做校验、排序、裁剪和落地。
 `RetrievalPlanner` 后面应该负责：
 
 - 产出 `query_text`
-- 产出 `requested_scopes`
 - 产出 `requested_tags`
 - 产出 `working_summary`
 - 产出 `retained_history`
@@ -221,7 +220,6 @@ RunContext
 - `event_timestamp`
 - `event_tags`
 - `query_text`
-- `requested_scopes`
 - `requested_tags`
 - `working_summary`
 - `retained_history`
@@ -385,7 +383,6 @@ class SharedMemoryRetrievalRequest:
     event_tags: list[str] = field(default_factory=list)
 
     query_text: str = ""
-    requested_scopes: list[str] = field(default_factory=list)
     requested_tags: list[str] = field(default_factory=list)
     working_summary: str = ""
     retained_history: list[dict[str, Any]] = field(default_factory=list)

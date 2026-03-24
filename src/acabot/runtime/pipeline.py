@@ -43,7 +43,7 @@ class ThreadPipeline:
     """一次 run 的最小执行器.
 
     当前版本已经接入:
-    - MemoryBroker retrieval / extraction skeleton
+    - MemoryBroker retrieval skeleton
     - ToolBroker approval audit 回写
     - RuntimePluginManager hooks
     """
@@ -72,7 +72,7 @@ class ThreadPipeline:
             outbox: 统一出站组件.
             run_manager: run 生命周期管理器.
             thread_manager: thread 状态管理器.
-            memory_broker: 可选的 MemoryBroker. 用于 retrieval 和 extraction.
+            memory_broker: 可选的 MemoryBroker. 用于 retrieval.
             retrieval_planner: 可选的 RetrievalPlanner. 用于 planning 和 prompt assembly.
             context_compactor: 可选的 ContextCompactor. 用于 working memory compaction.
             computer_runtime: 可选的 ComputerRuntime. 用于 workspace 准备和附件 staging.
@@ -140,7 +140,6 @@ class ThreadPipeline:
                 )
                 await self.thread_manager.save(ctx.thread)
                 await self.run_manager.mark_completed(ctx.run.run_id)
-                await self._extract_memory_safely(ctx)
                 return  # 不进入 compaction / retrieval / prompt assembly / LLM
             async with ctx.thread.lock:
                 if self.context_compactor is not None:
@@ -253,7 +252,6 @@ class ThreadPipeline:
             # -----------------------------------------------------
             await self._update_thread_after_send(ctx)
             await self._finish_run(ctx)
-            await self._extract_memory_safely(ctx)
         except Exception as exc:
             logger.exception("ThreadPipeline crashed: run_id=%s", ctx.run.run_id)
             await self._run_error_hooks(ctx)
@@ -416,26 +414,6 @@ class ThreadPipeline:
         logger.info("Run completed cleanly: run_id=%s", ctx.run.run_id)
         await self.run_manager.mark_completed(ctx.run.run_id)
 
-    async def _extract_memory_safely(self, ctx: RunContext) -> None:
-        """尽力触发一次 memory write-back.
-
-        Args:
-            ctx: 当前 run 的执行上下文.
-        """
-
-        if self.memory_broker is None:
-            return
-        if ctx.response is not None and ctx.response.status == "waiting_approval":
-            return
-
-        try:
-            await self.memory_broker.extract_after_run(ctx)
-        except Exception:
-            logger.exception(
-                "Failed to extract memory after run: run_id=%s",
-                ctx.run.run_id,
-            )
-
     async def _mark_failed_safely(self, run_id: str, error: str) -> None:
         """尽力把 run 收尾为 failed.
 
@@ -515,12 +493,6 @@ class ThreadPipeline:
             ctx.metadata.get("effective_working_summary", ctx.thread.working_summary) or ""
         ).strip()
         return RetrievalPlan(
-            requested_scopes=list(
-                ctx.decision.metadata.get(
-                    "event_memory_scopes",
-                    ["relationship", "user", "channel", "global"],
-                )
-            ),
             requested_tags=list(
                 ctx.context_decision.retrieval_tags if ctx.context_decision is not None else []
             ),

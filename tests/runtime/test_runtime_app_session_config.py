@@ -80,9 +80,7 @@ surfaces:
       default:
         persist_event: true
     extraction:
-      default:
-        extract_to_memory: true
-        scopes: [channel]
+      default: {}
     computer:
       default:
         backend: docker
@@ -207,6 +205,14 @@ async def test_runtime_app_uses_session_config_for_profile_and_run_mode(tmp_path
     assert run.metadata["surface_id"] == "message.mention"
     assert run.metadata["admission_mode"] == "respond"
     assert run.metadata["computer_backend"] == "host"
+    assert {
+        key: value
+        for key, value in run.metadata.items()
+        if key.startswith("event_")
+    } == {
+        "event_persist": True,
+        "event_tags": [],
+    }
     assert agent_runtime.last_ctx is not None
     assert agent_runtime.last_ctx.computer_policy_decision is not None
     assert agent_runtime.last_ctx.computer_policy_decision.backend == "host"

@@ -60,11 +60,6 @@ class StickyNotesFileRetriever:
         ]
         if not allowed_scopes:
             return []
-        requested_scopes = {str(scope) for scope in list(request.requested_scopes or [])}
-        if requested_scopes:
-            allowed_scopes = [scope for scope in allowed_scopes if scope in requested_scopes]
-        if not allowed_scopes:
-            return []
 
         blocks: list[MemoryBlock] = []
         for scope in allowed_scopes:

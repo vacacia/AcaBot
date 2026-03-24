@@ -295,11 +295,11 @@ class PersistenceDomainConfig(DomainConfig):
 
 @dataclass(slots=True)
 class ExtractionDomainConfig(DomainConfig):
-    """长期记忆提取域配置.
+    """长期记忆标签域配置.
 
     Attributes:
-        default (dict[str, Any]): 默认提取配置.
-        cases (list[DomainCase]): 提取域下的局部 case.
+        default (dict[str, Any]): 默认标签配置.
+        cases (list[DomainCase]): 标签域下的局部 case.
     """
 
 
@@ -456,20 +456,16 @@ class PersistenceDecision:
 
 @dataclass(slots=True)
 class ExtractionDecision:
-    """长期记忆提取结果.
+    """长期记忆标签结果.
 
     Attributes:
-        extract_to_memory (bool): 当前事件是否参与长期记忆提取.
-        memory_scopes (list[str]): 提取时使用的 scope.
-        tags (list[str]): 提取时附带的标签.
+        tags (list[str]): 当前 event 附带的长期记忆标签.
         reason (str): 这次决策为什么是这个结果.
         source_case_id (str): 命中的 case ID. 没命中时为空.
         priority (int): 命中 case 的优先级.
         specificity (int): 命中条件的特异性.
     """
 
-    extract_to_memory: bool = False
-    memory_scopes: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     reason: str = ""
     source_case_id: str = ""

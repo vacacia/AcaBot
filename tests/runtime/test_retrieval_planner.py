@@ -1,3 +1,5 @@
+from dataclasses import asdict
+
 from acabot.runtime import (
     AgentProfile,
     ContextDecision,
@@ -66,12 +68,31 @@ def _ctx() -> RunContext:
     )
 
 
-def test_retrieval_planner_defaults_keep_requested_scopes_only() -> None:
+def test_retrieval_planner_returns_current_plan_shape() -> None:
     planner = RetrievalPlanner()
     plan = planner.prepare(_ctx())
 
-    assert plan.requested_scopes == ["relationship", "user", "channel", "global"]
-    assert plan.requested_tags == []
+    assert asdict(plan) == {
+        "requested_tags": [],
+        "sticky_note_scopes": [],
+        "retained_history": [
+            {"role": "user", "content": "u1"},
+            {"role": "assistant", "content": "a1"},
+            {"role": "user", "content": "u2"},
+            {"role": "assistant", "content": "a2"},
+            {"role": "user", "content": "u3"},
+        ],
+        "dropped_messages": [],
+        "working_summary": "",
+        "metadata": {
+            "history_before": 5,
+            "history_after": 5,
+            "dropped_count": 0,
+            "summary_present": False,
+            "token_stats": {},
+            "context_labels": [],
+        },
+    }
 
 
 def test_retrieval_planner_prepare_keeps_summary_and_retained_history() -> None:
@@ -89,37 +110,16 @@ def test_retrieval_planner_prepare_keeps_summary_and_retained_history() -> None:
     assert plan.working_summary == "summary"
     assert not hasattr(planner, "assemble")
 
+def test_extraction_decision_has_current_runtime_shape() -> None:
+    decision = ExtractionDecision()
 
-
-def test_retrieval_planner_uses_typed_extraction_decision_scopes() -> None:
-    planner = RetrievalPlanner()
-    ctx = _ctx()
-    ctx.extraction_decision = ExtractionDecision(
-        extract_to_memory=True,
-        memory_scopes=["channel"],
-        tags=["project"],
-    )
-    ctx.decision.metadata.clear()
-
-    plan = planner.prepare(ctx)
-
-    assert plan.requested_scopes == ["channel"]
-    assert plan.requested_tags == []
-
-
-def test_retrieval_planner_does_not_widen_invalid_legacy_scope_values() -> None:
-    planner = RetrievalPlanner()
-    ctx = _ctx()
-    ctx.extraction_decision = ExtractionDecision(
-        extract_to_memory=True,
-        memory_scopes=["episodic"],
-        tags=[],
-    )
-    ctx.decision.metadata.clear()
-
-    plan = planner.prepare(ctx)
-
-    assert plan.requested_scopes == []
+    assert asdict(decision) == {
+        "tags": [],
+        "reason": "",
+        "source_case_id": "",
+        "priority": 100,
+        "specificity": 0,
+    }
 
 
 def test_retrieval_planner_keeps_context_labels_in_metadata() -> None:
