@@ -32,6 +32,8 @@ from .records import (
     PendingApprovalRecord,
     RecoveryReport,
     RunRecord,
+    SequencedChannelEventRecord,
+    SequencedMessageRecord,
     ThreadRecord,
     ThreadState,
 )
@@ -105,6 +107,8 @@ __all__ = [
     "RunRecord",
     "RunStatus",
     "RunStep",
+    "SequencedChannelEventRecord",
+    "SequencedMessageRecord",
     "SessionConfig",
     "SessionLocatorResult",
     "SurfaceConfig",

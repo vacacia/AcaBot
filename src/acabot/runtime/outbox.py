@@ -18,6 +18,7 @@ from typing import Any
 from acabot.types import Action, ActionType
 
 from .gateway_protocol import GatewayProtocol
+from .memory.long_term_ingestor import LongTermMemoryIngestor
 from .contracts import (
     DispatchReport,
     DeliveryResult,
@@ -36,16 +37,24 @@ class Outbox:
     接收 ThreadPipeline 规划好的动作, 调用 gateway 发送, 并把成功送达的 assistant 消息写入 MessageStore.
     """
 
-    def __init__(self, *, gateway: GatewayProtocol, store: MessageStore) -> None:
+    def __init__(
+        self,
+        *,
+        gateway: GatewayProtocol,
+        store: MessageStore,
+        long_term_memory_ingestor: LongTermMemoryIngestor | None = None,
+    ) -> None:
         """初始化 Outbox.
 
         Args:
             gateway: 实际执行发送动作的网关.
             store: 用于保存成功出站消息的消息存储.
+            long_term_memory_ingestor: 长期记忆写入线入口.
         """
 
         self.gateway = gateway
         self.store = store
+        self.long_term_memory_ingestor = long_term_memory_ingestor
 
     async def dispatch(self, ctx: RunContext) -> DispatchReport:
         """发送一个 RunContext 中已经规划好的动作.
@@ -148,6 +157,7 @@ class Outbox:
                 run_id=ctx.run.run_id,
                 agent_id=ctx.profile.agent_id,
                 plan=plan,
+                metadata={"channel_scope": ctx.thread.channel_scope},
             )
             for plan in ctx.actions
         ]
@@ -178,10 +188,19 @@ class Outbox:
                 metadata={
                     **item.metadata,
                     "action_type": str(action.action_type),
+                    "actor_display_name": item.agent_id,
                     "thread_content": item.plan.thread_content,
                 },
             )
         )
+        try:
+            if self.long_term_memory_ingestor is not None:
+                self.long_term_memory_ingestor.mark_dirty(item.thread_id)
+        except Exception:
+            logger.exception(
+                "Failed to mark long-term memory dirty after message persist: thread=%s",
+                item.thread_id,
+            )
         logger.debug(
             "Outbox persisted assistant message: run_id=%s action_id=%s thread=%s",
             item.run_id,

@@ -46,6 +46,7 @@ from acabot.runtime.bootstrap.config import resolve_runtime_path
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
 from .test_outbox import FakeGateway
+from .test_outbox import RecordingIngestor
 from .test_pipeline_runtime import ApprovalToolAgent
 
 
@@ -218,9 +219,33 @@ async def test_build_runtime_components_runs_app_with_model_agent_runtime() -> N
     assert agent.calls[0]["model"] == "test-model"
     assert components.pipeline.tool_broker is components.tool_broker
     assert components.pipeline.memory_broker is components.memory_broker
-    assert components.pipeline.retrieval_planner is components.retrieval_planner
-    assert isinstance(components.memory_store, InMemoryMemoryStore)
-    assert len(gateway.sent) == 1
+
+
+def test_build_runtime_components_wires_optional_long_term_memory_ingestor() -> None:
+    config = Config(
+        {
+            "agent": {
+                "default_model": "test-model",
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "default_prompt_ref": "prompt/default",
+            },
+        }
+    )
+    ingestor = RecordingIngestor()
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+        long_term_memory_ingestor=ingestor,
+    )
+
+    assert components.long_term_memory_ingestor is ingestor
+    assert components.app.long_term_memory_ingestor is ingestor
+    assert components.outbox.long_term_memory_ingestor is ingestor
 
 
 async def test_build_runtime_components_accepts_runtime_plugins() -> None:

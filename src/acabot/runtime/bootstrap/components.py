@@ -17,6 +17,7 @@ from ..inbound.image_context import ImageContextService
 from ..inbound.message_preparation import MessagePreparationService
 from ..memory.context_compactor import ContextCompactor
 from ..memory.file_backed import StickyNotesSource
+from ..memory.long_term_ingestor import LongTermMemoryIngestor
 from ..memory.memory_broker import MemoryBroker
 from ..memory.retrieval_planner import RetrievalPlanner
 from ..memory.sticky_notes import StickyNotesService
@@ -79,6 +80,7 @@ class RuntimeComponents:
     backend_bridge: BackendBridge
     backend_mode_registry: BackendModeRegistry
     app: RuntimeApp
+    long_term_memory_ingestor: LongTermMemoryIngestor | None = None
 
 
 __all__ = ["RuntimeComponents"]

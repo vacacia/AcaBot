@@ -22,6 +22,8 @@ from ..contracts import (
     MessageRecord,
     RunRecord,
     RunStep,
+    SequencedChannelEventRecord,
+    SequencedMessageRecord,
     ThreadRecord,
 )
 from .stores import ChannelEventStore, MemoryStore, MessageStore, RunStore, ThreadStore
@@ -258,6 +260,11 @@ class SQLiteChannelEventStore(_SQLiteStoreBase, ChannelEventStore):
         """
 
         async with self._lock:
+            existing = self._load_existing_event(event.event_uid)
+            if existing is not None:
+                if existing != event:
+                    raise ValueError(f"channel event '{event.event_uid}' already exists with different content")
+                return
             self._conn.execute(
                 """
                 INSERT INTO channel_events (
@@ -278,22 +285,6 @@ class SQLiteChannelEventStore(_SQLiteStoreBase, ChannelEventStore):
                     metadata_json,
                     raw_event_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(event_uid) DO UPDATE SET
-                    thread_id = excluded.thread_id,
-                    actor_id = excluded.actor_id,
-                    channel_scope = excluded.channel_scope,
-                    platform = excluded.platform,
-                    event_type = excluded.event_type,
-                    message_type = excluded.message_type,
-                    content_text = excluded.content_text,
-                    payload_json = excluded.payload_json,
-                    timestamp = excluded.timestamp,
-                    run_id = excluded.run_id,
-                    raw_message_id = excluded.raw_message_id,
-                    operator_id = excluded.operator_id,
-                    target_message_id = excluded.target_message_id,
-                    metadata_json = excluded.metadata_json,
-                    raw_event_json = excluded.raw_event_json
                 """,
                 (
                     event.event_uid,
@@ -365,7 +356,9 @@ class SQLiteChannelEventStore(_SQLiteStoreBase, ChannelEventStore):
             query.append("AND timestamp > ?")
             params.append(since)
 
-        if event_types:
+        if event_types is not None:
+            if not event_types:
+                return []
             placeholders = ", ".join("?" for _ in event_types)
             query.append(f"AND event_type IN ({placeholders})")
             params.extend(event_types)
@@ -383,6 +376,72 @@ class SQLiteChannelEventStore(_SQLiteStoreBase, ChannelEventStore):
             rows = self._conn.execute("\n".join(query), tuple(params)).fetchall()
         rows.reverse()
         return [self._row_to_event(row) for row in rows]
+
+    async def get_thread_events_after_sequence(
+        self,
+        thread_id: str,
+        *,
+        after_sequence: int | None = None,
+        limit: int | None = None,
+        event_types: list[str] | None = None,
+    ) -> list[SequencedChannelEventRecord]:
+        """按 sequence 查询 thread 的事件增量.
+
+        Args:
+            thread_id: 目标 thread_id.
+            after_sequence: 只返回大于该 sequence 的事件.
+            limit: 最多返回多少条事件.
+            event_types: 可选事件类型过滤列表.
+
+        Returns:
+            满足条件的带 sequence 事件列表.
+        """
+
+        query = [
+            """
+            SELECT
+                rowid AS sequence_id,
+                event_uid,
+                thread_id,
+                actor_id,
+                channel_scope,
+                platform,
+                event_type,
+                message_type,
+                content_text,
+                payload_json,
+                timestamp,
+                run_id,
+                raw_message_id,
+                operator_id,
+                target_message_id,
+                metadata_json,
+                raw_event_json
+            FROM channel_events
+            WHERE thread_id = ?
+            """
+        ]
+        params: list[object] = [thread_id]
+
+        if after_sequence is not None:
+            query.append("AND rowid > ?")
+            params.append(after_sequence)
+
+        if event_types is not None:
+            if not event_types:
+                return []
+            placeholders = ", ".join("?" for _ in event_types)
+            query.append(f"AND event_type IN ({placeholders})")
+            params.extend(event_types)
+
+        query.append("ORDER BY rowid ASC")
+        if limit is not None:
+            query.append("LIMIT ?")
+            params.append(limit)
+
+        async with self._lock:
+            rows = self._conn.execute("\n".join(query), tuple(params)).fetchall()
+        return [self._row_to_sequenced_event(row) for row in rows]
 
     def _ensure_schema(self) -> None:
         """初始化 channel_events 表结构."""
@@ -446,6 +505,59 @@ class SQLiteChannelEventStore(_SQLiteStoreBase, ChannelEventStore):
             ),
             metadata=dict(self._decode_json(row["metadata_json"])),
             raw_event=dict(self._decode_json(row["raw_event_json"])),
+        )
+
+    def _load_existing_event(self, event_uid: str) -> ChannelEventRecord | None:
+        """读取一个已有的事件事实.
+
+        Args:
+            event_uid: 事件主键.
+
+        Returns:
+            已存在的事件记录; 如果还没有则返回 None.
+        """
+
+        row = self._conn.execute(
+            """
+            SELECT
+                event_uid,
+                thread_id,
+                actor_id,
+                channel_scope,
+                platform,
+                event_type,
+                message_type,
+                content_text,
+                payload_json,
+                timestamp,
+                run_id,
+                raw_message_id,
+                operator_id,
+                target_message_id,
+                metadata_json,
+                raw_event_json
+            FROM channel_events
+            WHERE event_uid = ?
+            """,
+            (event_uid,),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_event(row)
+
+    def _row_to_sequenced_event(self, row: sqlite3.Row) -> SequencedChannelEventRecord:
+        """把 SQLite 行对象转换成带 sequence 的事件记录.
+
+        Args:
+            row: SQLite 查询返回的行对象.
+
+        Returns:
+            对应的带 sequence 事件记录.
+        """
+
+        return SequencedChannelEventRecord(
+            sequence_id=int(row["sequence_id"]),
+            record=self._row_to_event(row),
         )
 
 
@@ -693,6 +805,11 @@ class SQLiteMessageStore(_SQLiteStoreBase, MessageStore):
         """
 
         async with self._lock:
+            existing = self._load_existing_message(msg.message_uid)
+            if existing is not None:
+                if existing != msg:
+                    raise ValueError(f"message '{msg.message_uid}' already exists with different content")
+                return
             self._conn.execute(
                 """
                 INSERT INTO messages (
@@ -708,17 +825,6 @@ class SQLiteMessageStore(_SQLiteStoreBase, MessageStore):
                     platform_message_id,
                     metadata_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(message_uid) DO UPDATE SET
-                    thread_id = excluded.thread_id,
-                    actor_id = excluded.actor_id,
-                    platform = excluded.platform,
-                    role = excluded.role,
-                    content_text = excluded.content_text,
-                    content_json = excluded.content_json,
-                    timestamp = excluded.timestamp,
-                    run_id = excluded.run_id,
-                    platform_message_id = excluded.platform_message_id,
-                    metadata_json = excluded.metadata_json
                 """,
                 (
                     msg.message_uid,
@@ -798,6 +904,58 @@ class SQLiteMessageStore(_SQLiteStoreBase, MessageStore):
         rows.reverse()
         return [self._row_to_message(row) for row in rows]
 
+    async def get_thread_messages_after_sequence(
+        self,
+        thread_id: str,
+        *,
+        after_sequence: int | None = None,
+        limit: int | None = None,
+    ) -> list[SequencedMessageRecord]:
+        """按 sequence 查询 thread 的消息增量.
+
+        Args:
+            thread_id: 目标 thread_id.
+            after_sequence: 只返回大于该 sequence 的消息.
+            limit: 最多返回多少条消息.
+
+        Returns:
+            满足条件的带 sequence 消息列表.
+        """
+
+        query = [
+            """
+            SELECT
+                rowid AS sequence_id,
+                message_uid,
+                thread_id,
+                actor_id,
+                platform,
+                role,
+                content_text,
+                content_json,
+                timestamp,
+                run_id,
+                platform_message_id,
+                metadata_json
+            FROM messages
+            WHERE thread_id = ?
+            """
+        ]
+        params: list[object] = [thread_id]
+
+        if after_sequence is not None:
+            query.append("AND rowid > ?")
+            params.append(after_sequence)
+
+        query.append("ORDER BY rowid ASC")
+        if limit is not None:
+            query.append("LIMIT ?")
+            params.append(limit)
+
+        async with self._lock:
+            rows = self._conn.execute("\n".join(query), tuple(params)).fetchall()
+        return [self._row_to_sequenced_message(row) for row in rows]
+
     def _ensure_schema(self) -> None:
         """初始化 messages 表结构."""
 
@@ -848,6 +1006,54 @@ class SQLiteMessageStore(_SQLiteStoreBase, MessageStore):
             run_id=None if row["run_id"] is None else str(row["run_id"]),
             platform_message_id=str(row["platform_message_id"]),
             metadata=dict(self._decode_json(row["metadata_json"])),
+        )
+
+    def _load_existing_message(self, message_uid: str) -> MessageRecord | None:
+        """读取一个已有的消息事实.
+
+        Args:
+            message_uid: 消息主键.
+
+        Returns:
+            已存在的消息记录; 如果还没有则返回 None.
+        """
+
+        row = self._conn.execute(
+            """
+            SELECT
+                message_uid,
+                thread_id,
+                actor_id,
+                platform,
+                role,
+                content_text,
+                content_json,
+                timestamp,
+                run_id,
+                platform_message_id,
+                metadata_json
+            FROM messages
+            WHERE message_uid = ?
+            """,
+            (message_uid,),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_message(row)
+
+    def _row_to_sequenced_message(self, row: sqlite3.Row) -> SequencedMessageRecord:
+        """把 SQLite 行对象转换成带 sequence 的消息记录.
+
+        Args:
+            row: SQLite 查询返回的行对象.
+
+        Returns:
+            对应的带 sequence 消息记录.
+        """
+
+        return SequencedMessageRecord(
+            sequence_id=int(row["sequence_id"]),
+            record=self._row_to_message(row),
         )
 
 

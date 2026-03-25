@@ -26,6 +26,7 @@ from ..inbound.message_preparation import MessagePreparationService
 from ..inbound.message_projection import MessageProjectionService
 from ..inbound.message_resolution import MessageResolutionService
 from ..memory.file_backed import StickyNotesSource
+from ..memory.long_term_ingestor import LongTermMemoryIngestor
 from ..memory.sticky_notes import StickyNotesService
 from ..soul import SoulSource
 from ..model.model_agent_runtime import ModelAgentRuntime
@@ -127,6 +128,7 @@ def build_runtime_components(
     skill_catalog=None,
     subagent_executor_registry=None,
     subagent_delegator=None,
+    long_term_memory_ingestor: LongTermMemoryIngestor | None = None,
     approval_resumer: ApprovalResumer | None = None,
     plugins: list[RuntimePlugin] | None = None,
     log_buffer=None,
@@ -300,7 +302,11 @@ def build_runtime_components(
         context_assembler=runtime_context_assembler,
         payload_json_writer=runtime_payload_json_writer,
     )
-    outbox = Outbox(gateway=gateway, store=runtime_message_store)
+    outbox = Outbox(
+        gateway=gateway,
+        store=runtime_message_store,
+        long_term_memory_ingestor=long_term_memory_ingestor,
+    )
     pipeline = ThreadPipeline(
         agent_runtime=agent_runtime,
         outbox=outbox,
@@ -354,6 +360,7 @@ def build_runtime_components(
         plugin_manager=runtime_plugin_manager,
         model_registry_manager=runtime_model_registry_manager,
         computer_runtime=runtime_computer_runtime,
+        long_term_memory_ingestor=long_term_memory_ingestor,
         backend_bridge=runtime_backend_bridge,
         backend_mode_registry=runtime_backend_mode_registry,
         backend_admin_actor_ids=runtime_backend_admin_actor_ids,
@@ -420,6 +427,7 @@ def build_runtime_components(
         backend_bridge=runtime_backend_bridge,
         backend_mode_registry=runtime_backend_mode_registry,
         app=app,
+        long_term_memory_ingestor=long_term_memory_ingestor,
     )
 
 

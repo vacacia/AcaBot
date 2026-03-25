@@ -28,7 +28,7 @@ from acabot.runtime import (
 )
 from acabot.types import Action, ActionType, EventSource, MsgSegment, StandardEvent
 
-from .test_outbox import FakeGateway, FakeMessageStore
+from .test_outbox import ExplodingIngestor, FakeGateway, FakeMessageStore, RecordingIngestor
 from .test_pipeline_runtime import FakeAgentRuntime
 
 
@@ -86,6 +86,11 @@ class TrackingGateway(FakeGateway):
 
     async def start(self) -> None:
         self.started = True
+
+
+class BrokenStartGateway(FakeGateway):
+    async def start(self) -> None:
+        raise RuntimeError("gateway start exploded")
 
 
 class FakeApprovalResumer(ApprovalResumer):
@@ -164,6 +169,37 @@ class TrackingRuntimePlugin(RuntimePlugin):
         self.teardown_calls += 1
 
 
+class ExplodingTeardownRuntimePlugin(TrackingRuntimePlugin):
+    async def teardown(self) -> None:
+        await super().teardown()
+        raise RuntimeError("plugin teardown exploded")
+
+
+class ExplodingPluginManager(RuntimePluginManager):
+    async def teardown_all(self) -> None:
+        raise RuntimeError("plugin manager teardown exploded")
+
+
+class BrokenEnsureStartedPluginManager(RuntimePluginManager):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.ensure_started_calls = 0
+        self.teardown_calls = 0
+
+    async def ensure_started(self) -> None:
+        self.ensure_started_calls += 1
+        raise RuntimeError("plugin ensure_started exploded")
+
+    async def teardown_all(self) -> None:
+        self.teardown_calls += 1
+
+
+class ExplodingStartIngestor(RecordingIngestor):
+    async def start(self) -> None:
+        await super().start()
+        raise RuntimeError("ltm ingestor start exploded")
+
+
 async def test_runtime_app_installs_handler_and_processes_event() -> None:
     gateway = FakeGateway()
     thread_manager = InMemoryThreadManager()
@@ -195,6 +231,71 @@ async def test_runtime_app_installs_handler_and_processes_event() -> None:
     assert len(gateway.sent) == 1
     saved = await channel_event_store.get_thread_events("qq:user:10001")
     assert saved[0].event_type == "message"
+    assert saved[0].content_text == "hello"
+
+
+async def test_runtime_app_marks_ltm_dirty_after_channel_event_persist() -> None:
+    gateway = FakeGateway()
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    channel_event_store = InMemoryChannelEventStore()
+    outbox = Outbox(gateway=gateway, store=FakeMessageStore())
+    pipeline = ThreadPipeline(
+        agent_runtime=FakeAgentRuntime(),
+        outbox=outbox,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+    )
+    ltm = RecordingIngestor()
+    app = RuntimeApp(
+        gateway=gateway,
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=thread_manager,
+        run_manager=run_manager,
+        channel_event_store=channel_event_store,
+        pipeline=pipeline,
+        profile_loader=_profile_loader,
+        long_term_memory_ingestor=ltm,
+    )
+
+    app.install()
+    await gateway.handler(_event())
+
+    saved = await channel_event_store.get_thread_events("qq:user:10001")
+
+    assert saved[0].metadata["actor_display_name"] == "acacia"
+    assert ltm.marked_threads == ["qq:user:10001"]
+
+
+async def test_runtime_app_mark_dirty_failure_does_not_break_event_processing() -> None:
+    gateway = FakeGateway()
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    channel_event_store = InMemoryChannelEventStore()
+    outbox = Outbox(gateway=gateway, store=FakeMessageStore())
+    pipeline = ThreadPipeline(
+        agent_runtime=FakeAgentRuntime(),
+        outbox=outbox,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+    )
+    app = RuntimeApp(
+        gateway=gateway,
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=thread_manager,
+        run_manager=run_manager,
+        channel_event_store=channel_event_store,
+        pipeline=pipeline,
+        profile_loader=_profile_loader,
+        long_term_memory_ingestor=ExplodingIngestor(),
+    )
+
+    app.install()
+    await gateway.handler(_event())
+
+    saved = await channel_event_store.get_thread_events("qq:user:10001")
+
+    assert len(saved) == 1
     assert saved[0].content_text == "hello"
 
 
@@ -382,6 +483,183 @@ async def test_runtime_app_marks_run_failed_when_profile_loader_crashes() -> Non
     run = next(iter(run_manager._runs.values()))
     assert run.status == "failed"
     assert "runtime app crashed" in (run.error or "")
+
+
+async def test_runtime_app_marks_ltm_dirty_when_profile_loader_crashes_after_event_persist() -> None:
+    gateway = FakeGateway()
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    channel_event_store = InMemoryChannelEventStore()
+    outbox = Outbox(gateway=gateway, store=FakeMessageStore())
+    pipeline = ThreadPipeline(
+        agent_runtime=FakeAgentRuntime(),
+        outbox=outbox,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+    )
+    ltm = RecordingIngestor()
+    app = RuntimeApp(
+        gateway=gateway,
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=thread_manager,
+        run_manager=run_manager,
+        channel_event_store=channel_event_store,
+        pipeline=pipeline,
+        profile_loader=_broken_profile_loader,
+        long_term_memory_ingestor=ltm,
+    )
+
+    app.install()
+    await gateway.handler(_event())
+
+    saved = await channel_event_store.get_thread_events("qq:user:10001")
+
+    assert len(saved) == 1
+    assert ltm.marked_threads == ["qq:user:10001"]
+
+
+async def test_runtime_app_stops_ltm_ingestor_when_gateway_start_crashes() -> None:
+    gateway = BrokenStartGateway()
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    channel_event_store = InMemoryChannelEventStore()
+    outbox = Outbox(gateway=gateway, store=FakeMessageStore())
+    pipeline = ThreadPipeline(
+        agent_runtime=FakeAgentRuntime(),
+        outbox=outbox,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+    )
+    ltm = RecordingIngestor()
+    app = RuntimeApp(
+        gateway=gateway,
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=thread_manager,
+        run_manager=run_manager,
+        channel_event_store=channel_event_store,
+        pipeline=pipeline,
+        profile_loader=_profile_loader,
+        long_term_memory_ingestor=ltm,
+    )
+
+    try:
+        await app.start()
+    except RuntimeError as exc:
+        assert str(exc) == "gateway start exploded"
+    else:
+        raise AssertionError("expected gateway start failure")
+
+    assert ltm.started == 1
+    assert ltm.stopped == 1
+
+
+async def test_runtime_app_tears_down_plugins_when_gateway_start_crashes() -> None:
+    gateway = BrokenStartGateway()
+    plugin = TrackingRuntimePlugin()
+    plugin_manager = RuntimePluginManager(
+        config=Config({}),
+        gateway=gateway,
+        tool_broker=ToolBroker(),
+        plugins=[plugin],
+    )
+    app = RuntimeApp(
+        gateway=gateway,
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=InMemoryThreadManager(),
+        run_manager=InMemoryRunManager(),
+        channel_event_store=InMemoryChannelEventStore(),
+        pipeline=ThreadPipeline(
+            agent_runtime=FakeAgentRuntime(),
+            outbox=Outbox(gateway=gateway, store=FakeMessageStore()),
+            run_manager=InMemoryRunManager(),
+            thread_manager=InMemoryThreadManager(),
+            plugin_manager=plugin_manager,
+        ),
+        profile_loader=_profile_loader,
+        plugin_manager=plugin_manager,
+    )
+
+    try:
+        await app.start()
+    except RuntimeError as exc:
+        assert str(exc) == "gateway start exploded"
+    else:
+        raise AssertionError("expected gateway start failure")
+
+    assert plugin.setup_calls == 1
+    assert plugin.teardown_calls == 1
+
+
+async def test_runtime_app_tears_down_plugins_when_plugin_start_fails() -> None:
+    gateway = TrackingGateway()
+    plugin_manager = BrokenEnsureStartedPluginManager(
+        config=Config({}),
+        gateway=gateway,
+        tool_broker=ToolBroker(),
+    )
+    app = RuntimeApp(
+        gateway=gateway,
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=InMemoryThreadManager(),
+        run_manager=InMemoryRunManager(),
+        channel_event_store=InMemoryChannelEventStore(),
+        pipeline=ThreadPipeline(
+            agent_runtime=FakeAgentRuntime(),
+            outbox=Outbox(gateway=gateway, store=FakeMessageStore()),
+            run_manager=InMemoryRunManager(),
+            thread_manager=InMemoryThreadManager(),
+        ),
+        profile_loader=_profile_loader,
+        plugin_manager=plugin_manager,
+    )
+
+    try:
+        await app.start()
+    except RuntimeError as exc:
+        assert str(exc) == "plugin ensure_started exploded"
+    else:
+        raise AssertionError("expected plugin startup failure")
+
+    assert plugin_manager.ensure_started_calls == 1
+    assert plugin_manager.teardown_calls == 1
+
+
+async def test_runtime_app_tears_down_plugins_when_ltm_start_fails() -> None:
+    gateway = TrackingGateway()
+    plugin = TrackingRuntimePlugin()
+    plugin_manager = RuntimePluginManager(
+        config=Config({}),
+        gateway=gateway,
+        tool_broker=ToolBroker(),
+        plugins=[plugin],
+    )
+    app = RuntimeApp(
+        gateway=gateway,
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=InMemoryThreadManager(),
+        run_manager=InMemoryRunManager(),
+        channel_event_store=InMemoryChannelEventStore(),
+        pipeline=ThreadPipeline(
+            agent_runtime=FakeAgentRuntime(),
+            outbox=Outbox(gateway=gateway, store=FakeMessageStore()),
+            run_manager=InMemoryRunManager(),
+            thread_manager=InMemoryThreadManager(),
+            plugin_manager=plugin_manager,
+        ),
+        profile_loader=_profile_loader,
+        plugin_manager=plugin_manager,
+        long_term_memory_ingestor=ExplodingStartIngestor(),
+    )
+
+    try:
+        await app.start()
+    except RuntimeError as exc:
+        assert str(exc) == "ltm ingestor start exploded"
+    else:
+        raise AssertionError("expected ltm start failure")
+
+    assert plugin.setup_calls == 1
+    assert plugin.teardown_calls == 1
 
 
 async def test_runtime_app_keeps_failed_run_terminal_when_pipeline_crashes() -> None:
@@ -761,6 +1039,79 @@ async def test_runtime_app_stop_tears_down_runtime_plugins() -> None:
 
     assert plugin.setup_calls == 1
     assert plugin.teardown_calls == 1
+
+
+async def test_runtime_app_stop_still_stops_ltm_after_plugin_teardown_failure() -> None:
+    gateway = TrackingGateway()
+    plugin_manager = ExplodingPluginManager(
+        config=Config({}),
+        gateway=gateway,
+        tool_broker=ToolBroker(),
+    )
+    ltm = RecordingIngestor()
+    app = RuntimeApp(
+        gateway=gateway,
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=InMemoryThreadManager(),
+        run_manager=InMemoryRunManager(),
+        channel_event_store=InMemoryChannelEventStore(),
+        pipeline=ThreadPipeline(
+            agent_runtime=FakeAgentRuntime(),
+            outbox=Outbox(gateway=gateway, store=FakeMessageStore()),
+            run_manager=InMemoryRunManager(),
+            thread_manager=InMemoryThreadManager(),
+            plugin_manager=plugin_manager,
+        ),
+        profile_loader=_profile_loader,
+        plugin_manager=plugin_manager,
+        long_term_memory_ingestor=ltm,
+    )
+
+    await app.start()
+
+    try:
+        await app.stop()
+    except RuntimeError as exc:
+        assert str(exc) == "plugin manager teardown exploded"
+    else:
+        raise AssertionError("expected plugin teardown failure")
+
+    assert ltm.stopped == 1
+
+
+async def test_runtime_app_tears_down_plugins_when_lazy_plugin_start_fails_on_event() -> None:
+    gateway = FakeGateway()
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    channel_event_store = InMemoryChannelEventStore()
+    outbox = Outbox(gateway=gateway, store=FakeMessageStore())
+    pipeline = ThreadPipeline(
+        agent_runtime=FakeAgentRuntime(),
+        outbox=outbox,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+    )
+    plugin_manager = BrokenEnsureStartedPluginManager(
+        config=Config({}),
+        gateway=gateway,
+        tool_broker=ToolBroker(),
+    )
+    app = RuntimeApp(
+        gateway=gateway,
+        router=RuntimeRouter(default_agent_id="aca"),
+        thread_manager=thread_manager,
+        run_manager=run_manager,
+        channel_event_store=channel_event_store,
+        pipeline=pipeline,
+        profile_loader=_profile_loader,
+        plugin_manager=plugin_manager,
+    )
+
+    app.install()
+    await gateway.handler(_event())
+
+    assert plugin_manager.ensure_started_calls == 1
+    assert plugin_manager.teardown_calls == 1
 
 
 async def test_runtime_app_can_reload_plugins_from_config() -> None:

@@ -19,6 +19,7 @@ from .backend.contracts import BackendRequest, BackendSourceRef
 from .backend.mode_registry import BackendModeRegistry
 from .computer import ComputerRuntime
 from .gateway_protocol import GatewayProtocol
+from .memory.long_term_ingestor import LongTermMemoryIngestor
 from .model.model_resolution import resolve_model_requests_for_profile
 from .model.model_registry import FileSystemModelRegistryManager, PersistedModelSnapshot, RuntimeModelRequest
 from .contracts import (
@@ -66,6 +67,7 @@ class RuntimeApp:
         plugin_manager: RuntimePluginManager | None = None,
         model_registry_manager: FileSystemModelRegistryManager | None = None,
         computer_runtime: ComputerRuntime | None = None,
+        long_term_memory_ingestor: LongTermMemoryIngestor | None = None,
         backend_bridge: BackendBridge | None = None,
         backend_mode_registry: BackendModeRegistry | None = None,
         backend_admin_actor_ids: set[str] | None = None,
@@ -85,6 +87,7 @@ class RuntimeApp:
             plugin_manager: runtime world 的插件管理器.
             model_registry_manager: 运行时模型注册表管理器.
             computer_runtime: 运行时 computer 基础设施入口.
+            long_term_memory_ingestor: 长期记忆写入线入口.
             backend_bridge: 可选的后台桥接入口.
             backend_mode_registry: 可选的管理员后台模式注册表.
             backend_admin_actor_ids: 可直接进入后台入口的管理员 actor 集合.
@@ -102,6 +105,7 @@ class RuntimeApp:
         self.plugin_manager = plugin_manager
         self.model_registry_manager = model_registry_manager
         self.computer_runtime = computer_runtime
+        self.long_term_memory_ingestor = long_term_memory_ingestor
         self.backend_bridge = backend_bridge
         self.backend_mode_registry = backend_mode_registry
         self.backend_admin_actor_ids = set(backend_admin_actor_ids or set())
@@ -117,10 +121,24 @@ class RuntimeApp:
         """安装事件处理器并启动 gateway."""
 
         await self.recover_active_runs()
-        if self.plugin_manager is not None:
-            await self.plugin_manager.ensure_started()
-        self.install()
-        await self.gateway.start()
+        await self._ensure_plugins_started()
+        try:
+            if self.long_term_memory_ingestor is not None:
+                await self.long_term_memory_ingestor.start()
+            self.install()
+            await self.gateway.start()
+        except Exception:
+            if self.long_term_memory_ingestor is not None:
+                try:
+                    await self.long_term_memory_ingestor.stop()
+                except Exception:
+                    logger.exception("Failed to stop long-term memory ingestor after gateway start failure")
+            if self.plugin_manager is not None:
+                try:
+                    await self.plugin_manager.teardown_all()
+                except Exception:
+                    logger.exception("Failed to teardown runtime plugins after gateway start failure")
+            raise
 
     async def stop(self) -> None:
         """停止 gateway."""
@@ -132,17 +150,24 @@ class RuntimeApp:
         if self.plugin_manager is not None:
             try:
                 await self.plugin_manager.teardown_all()
-            except Exception:
+            except Exception as exc:
                 logger.exception("Failed to teardown runtime plugins during shutdown")
                 if stop_error is None:
-                    raise
+                    stop_error = exc
         if self.reference_backend is not None:
             try:
                 await self.reference_backend.close()
-            except Exception:
+            except Exception as exc:
                 logger.exception("Failed to close reference backend during shutdown")
                 if stop_error is None:
-                    raise
+                    stop_error = exc
+        if self.long_term_memory_ingestor is not None:
+            try:
+                await self.long_term_memory_ingestor.stop()
+            except Exception as exc:
+                logger.exception("Failed to stop long-term memory ingestor during shutdown")
+                if stop_error is None:
+                    stop_error = exc
         if stop_error is not None:
             raise stop_error
 
@@ -180,8 +205,7 @@ class RuntimeApp:
             )
             if await self._handle_backend_entrypoint(event):
                 return
-            if self.plugin_manager is not None:
-                await self.plugin_manager.ensure_started()
+            await self._ensure_plugins_started()
             decision = await self.router.route(event)
             logger.debug(
                 "Route resolved: event_id=%s agent=%s run_mode=%s thread=%s channel=%s",
@@ -226,6 +250,7 @@ class RuntimeApp:
                             run_id=run.run_id,
                         )
                     )
+                    self._mark_long_term_memory_dirty(decision.thread_id)
                 await self._mark_failed_safely(run.run_id, f"runtime app crashed: {exc}")
                 logger.exception("Failed before run setup completed: event_id=%s", event.event_id)
                 return
@@ -245,6 +270,7 @@ class RuntimeApp:
                     )
                 )
                 logger.debug("Channel event persisted: event_id=%s run_id=%s", event.event_id, run.run_id)
+                self._mark_long_term_memory_dirty(decision.thread_id)
             
             ctx = RunContext(
                 run=run,
@@ -460,6 +486,42 @@ class RuntimeApp:
             profile=profile,
         )
 
+    def _mark_long_term_memory_dirty(self, thread_id: str) -> None:
+        """在事件事实落盘成功后通知长期记忆写入线.
+
+        Args:
+            thread_id: 对应的 thread 标识.
+        """
+
+        try:
+            if self.long_term_memory_ingestor is not None:
+                self.long_term_memory_ingestor.mark_dirty(thread_id)
+        except Exception:
+            logger.exception(
+                "Failed to mark long-term memory dirty after event persist: thread=%s",
+                thread_id,
+            )
+
+    async def _ensure_plugins_started(self) -> None:
+        """确保 runtime plugins 已经完成启动.
+
+        合并 启动 plugins + 启动失败时清理现场, 不把 runtime 留在“plugin 半启动”的脏状态
+        
+        Returns:
+            None.
+        """
+
+        if self.plugin_manager is None:
+            return
+        try:
+            await self.plugin_manager.ensure_started()
+        except Exception:
+            try:
+                await self.plugin_manager.teardown_all()
+            except Exception:
+                logger.exception("Failed to teardown runtime plugins after startup failure")
+            raise
+
     @staticmethod
     def _build_channel_event_record(
         *,
@@ -496,6 +558,7 @@ class RuntimeApp:
             metadata={
                 "run_mode": decision.run_mode,
                 "agent_id": decision.agent_id,
+                "actor_display_name": event.sender_nickname or None,
                 "bot_relation": event.bot_relation,
                 "target_reasons": list(event.target_reasons),
                 "mentions_self": event.mentions_self,
