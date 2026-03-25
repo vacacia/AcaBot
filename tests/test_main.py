@@ -21,7 +21,6 @@ from acabot.runtime import (
     ContextCompactor,
     FileSystemModelRegistryManager,
     InMemoryChannelEventStore,
-    InMemoryMemoryStore,
     InMemoryMessageStore,
     LocalSubagentExecutionService,
     MemoryBroker,
@@ -35,8 +34,9 @@ from acabot.runtime import (
     SkillCatalog,
     SoulSource,
     SQLiteMessageStore,
-    StickyNotesService,
-    StickyNotesSource,
+    StickyNoteFileStore,
+    StickyNoteRenderer,
+    StickyNoteService,
     SubagentDelegationBroker,
     SubagentExecutorRegistry,
     BackendBridge,
@@ -315,7 +315,7 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
 
     skill_catalog = SkillCatalog()
     executor_registry = SubagentExecutorRegistry()
-    memory_store = InMemoryMemoryStore()
+    sticky_note_store = StickyNoteFileStore(root_dir="/tmp/acabot-test-sticky-notes")
 
     return RuntimeComponents(
         gateway=FakeGateway(),
@@ -324,10 +324,12 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
         run_manager=None,  # type: ignore[arg-type]
         channel_event_store=InMemoryChannelEventStore(),
         message_store=InMemoryMessageStore(),
-        memory_store=memory_store,
         soul_source=SoulSource(root_dir="/tmp/acabot-test-soul"),
-        sticky_notes_source=StickyNotesSource(root_dir="/tmp/acabot-test-sticky-notes"),
-        sticky_notes=StickyNotesService(store=memory_store),
+        sticky_notes_source=sticky_note_store,
+        sticky_notes=StickyNoteService(
+            store=sticky_note_store,
+            renderer=StickyNoteRenderer(),
+        ),
         skill_catalog=skill_catalog,
         subagent_executor_registry=executor_registry,
         subagent_delegator=SubagentDelegationBroker(

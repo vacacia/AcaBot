@@ -423,13 +423,13 @@ class ContextDecision:
     """上下文补充结果.
 
     Attributes:
-        sticky_note_scopes (list[str]): 要注入的 sticky note scope.
+        sticky_note_targets (list[str]): 要注入的 sticky note 实体引用列表.
         retrieval_tags (list[str]): retrieval tag.
         context_labels (list[str]): 额外上下文标签.
         notes (list[str]): 其他说明.
     """
 
-    sticky_note_scopes: list[str] = field(default_factory=list)
+    sticky_note_targets: list[str] = field(default_factory=list)
     retrieval_tags: list[str] = field(default_factory=list)
     context_labels: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)

@@ -36,7 +36,7 @@ from .gateway_protocol import GatewayProtocol
 from .contracts import RunContext
 from .references import ReferenceBackend
 from .skills import SkillCatalog
-from .memory.sticky_notes import StickyNotesService
+from .memory.sticky_notes import StickyNoteService
 from .subagents import (
     SubagentDelegationBroker,
     SubagentExecutorRegistration,
@@ -203,7 +203,7 @@ class RuntimePluginContext:
         gateway (GatewayProtocol): 当前 gateway, 用于发送主动消息.
         tool_broker (ToolBroker): runtime 统一工具入口.
         reference_backend (ReferenceBackend | None): reference provider.
-        sticky_notes (StickyNotesService | None): sticky note 的受控服务层.
+        sticky_notes (StickyNoteService | None): sticky note 的受控服务层.
         computer_runtime (ComputerRuntime | None): computer 基础设施入口.
         skill_catalog (SkillCatalog | None): 统一 skill catalog.
         control_plane (RuntimeControlPlane | None): 本地 control plane 入口.
@@ -214,7 +214,7 @@ class RuntimePluginContext:
     gateway: GatewayProtocol
     tool_broker: ToolBroker
     reference_backend: ReferenceBackend | None = None
-    sticky_notes: StickyNotesService | None = None
+    sticky_notes: StickyNoteService | None = None
     computer_runtime: ComputerRuntime | None = None
     skill_catalog: SkillCatalog | None = None
     control_plane: RuntimeControlPlane | None = None
@@ -326,7 +326,7 @@ class RuntimePluginManager:
         gateway (GatewayProtocol): 当前 gateway.
         tool_broker (ToolBroker): runtime 工具入口.
         reference_backend (ReferenceBackend | None): reference provider.
-        sticky_notes (StickyNotesService | None): sticky note 服务.
+        sticky_notes (StickyNoteService | None): sticky note 服务.
         skill_catalog (SkillCatalog | None): 统一 skill catalog.
         control_plane (RuntimeControlPlane | None): 本地 control plane 入口.
         subagent_delegator (SubagentDelegationBroker | None): subagent delegation 编排入口.
@@ -345,7 +345,7 @@ class RuntimePluginManager:
         gateway: GatewayProtocol,
         tool_broker: ToolBroker,
         reference_backend: ReferenceBackend | None = None,
-        sticky_notes: StickyNotesService | None = None,
+        sticky_notes: StickyNoteService | None = None,
         computer_runtime: ComputerRuntime | None = None,
         skill_catalog: SkillCatalog | None = None,
         control_plane: RuntimeControlPlane | None = None,

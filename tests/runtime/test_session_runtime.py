@@ -180,7 +180,7 @@ def test_session_runtime_context_decision_no_longer_exposes_prompt_slots(tmp_pat
     assert not hasattr(decision, "prompt_slots")
 
 
-def test_session_runtime_defaults_sticky_note_scopes_from_group_scene(tmp_path: Path) -> None:
+def test_session_runtime_defaults_sticky_note_targets_from_group_scene(tmp_path: Path) -> None:
     _write_session(tmp_path)
     runtime = SessionRuntime(SessionConfigLoader(config_root=tmp_path / "sessions"))
     facts = runtime.build_facts(_group_mention_event(sender_role="admin"))
@@ -189,10 +189,10 @@ def test_session_runtime_defaults_sticky_note_scopes_from_group_scene(tmp_path: 
 
     decision = runtime.resolve_context(facts, session, surface)
 
-    assert decision.sticky_note_scopes == ["user", "channel"]
+    assert decision.sticky_note_targets == [facts.actor_id, facts.channel_scope]
 
 
-def test_session_runtime_preserves_explicit_empty_sticky_note_scopes(tmp_path: Path) -> None:
+def test_session_runtime_preserves_explicit_empty_sticky_note_targets(tmp_path: Path) -> None:
     config_path = tmp_path / "sessions/qq/group/123.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
@@ -206,7 +206,7 @@ surfaces:
   message.mention:
     context:
       default:
-        sticky_note_scopes: []
+        sticky_note_targets: []
     admission:
       default:
         mode: respond
@@ -220,7 +220,7 @@ surfaces:
 
     decision = runtime.resolve_context(facts, session, surface)
 
-    assert decision.sticky_note_scopes == []
+    assert decision.sticky_note_targets == []
 
 
 def test_session_runtime_rejects_invalid_admission_mode(tmp_path: Path) -> None:

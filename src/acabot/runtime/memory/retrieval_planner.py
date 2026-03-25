@@ -33,7 +33,7 @@ class RetrievalPlanner:
         """为当前 run 计算 retrieval plan."""
 
         requested_tags = self._requested_tags(ctx)
-        sticky_note_scopes = self._sticky_note_scopes(ctx)
+        sticky_note_targets = self._sticky_note_targets(ctx)
         token_stats = dict(ctx.metadata.get("token_stats", {}) or {})
         retained_history = [
             dict(message)
@@ -49,7 +49,7 @@ class RetrievalPlanner:
         ).strip()
         return RetrievalPlan(
             requested_tags=requested_tags,
-            sticky_note_scopes=sticky_note_scopes,
+            sticky_note_targets=sticky_note_targets,
             retained_history=retained_history,
             dropped_messages=dropped_messages,
             working_summary=summary_text,
@@ -74,12 +74,12 @@ class RetrievalPlanner:
         return _dedupe(list(ctx.context_decision.retrieval_tags))
 
     @staticmethod
-    def _sticky_note_scopes(ctx: RunContext) -> list[str]:
-        """解析 sticky note 允许注入的 scope 列表."""
+    def _sticky_note_targets(ctx: RunContext) -> list[str]:
+        """解析 sticky note 允许注入的实体引用列表."""
 
         if ctx.context_decision is None:
             return []
-        return _dedupe([str(value) for value in ctx.context_decision.sticky_note_scopes])
+        return _dedupe([str(value) for value in ctx.context_decision.sticky_note_targets])
 
 
 def _dedupe(values: list[str]) -> list[str]:

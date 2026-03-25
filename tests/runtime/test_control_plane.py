@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from acabot.config import Config
 from acabot.runtime import (
     AgentProfile,
@@ -14,10 +16,8 @@ from acabot.runtime import (
     FileSystemSkillPackageLoader,
     HostComputerBackend,
     InMemoryChannelEventStore,
-    InMemoryMemoryStore,
     InMemoryRunManager,
     InMemoryThreadManager,
-    MemoryItem,
     Outbox,
     RouteDecision,
     RuntimeApp,
@@ -29,6 +29,7 @@ from acabot.runtime import (
     SkillCatalog,
     ThreadPipeline,
     ToolBroker,
+    build_runtime_components,
 )
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
@@ -277,7 +278,6 @@ async def test_runtime_control_plane_lists_mirrored_skills(tmp_path: Path) -> No
         run_manager=InMemoryRunManager(),
         skill_catalog=skill_catalog,
         computer_runtime=computer_runtime,
-        memory_store=InMemoryMemoryStore(),
     )
 
     mirrored = await control_plane.list_mirrored_skills(thread_id="thread:1")
@@ -336,39 +336,63 @@ async def test_runtime_control_plane_reports_backend_status(tmp_path: Path) -> N
     assert (await control_plane.get_backend_session_binding())["backend_id"] == "main"
 
 
-async def test_runtime_control_plane_show_memory_returns_items() -> None:
-    store = InMemoryMemoryStore()
-    item = MemoryItem(
-        memory_id="mem:1",
-        scope="channel",
-        scope_key="qq:group:1",
-        memory_type="sticky_note",
-        content="群规",
-    )
-    await store.upsert(item)
-    control_plane = RuntimeControlPlane(
-        app=RuntimeApp(
-            gateway=FakeGateway(),
-            router=RuntimeRouter(default_agent_id="aca"),
-            thread_manager=InMemoryThreadManager(),
-            run_manager=InMemoryRunManager(),
-            channel_event_store=InMemoryChannelEventStore(),
-            pipeline=ThreadPipeline(
-                agent_runtime=FakeAgentRuntime(),
-                outbox=Outbox(gateway=FakeGateway(), store=FakeMessageStore()),
-                run_manager=InMemoryRunManager(),
-                thread_manager=InMemoryThreadManager(),
-            ),
-            profile_loader=_profile_loader,
+async def test_runtime_control_plane_manages_sticky_note_records(tmp_path: Path) -> None:
+    components = build_runtime_components(
+        Config(
+            {
+                "agent": {
+                    "default_model": "test-model",
+                    "system_prompt": "You are Aca.",
+                },
+                "runtime": {
+                    "default_agent_id": "aca",
+                    "runtime_root": str(tmp_path / ".acabot-runtime"),
+                },
+            }
         ),
-        run_manager=InMemoryRunManager(),
-        memory_store=store,
+        gateway=FakeGateway(),
+        agent=FakeAgentRuntime(),
+    )
+    control_plane = components.control_plane
+
+    created = await control_plane.create_sticky_note(entity_ref="qq:user:10001")
+    saved = await control_plane.save_sticky_note_record(
+        entity_ref="qq:user:10001",
+        readonly="用户名字叫阿卡西亚",
+        editable="喜欢直接结论",
+    )
+    listed = await control_plane.list_sticky_notes(entity_kind="user")
+    loaded = await control_plane.get_sticky_note_record(entity_ref="qq:user:10001")
+    deleted = await control_plane.delete_sticky_note(entity_ref="qq:user:10001")
+
+    assert created["entity_ref"] == "qq:user:10001"
+    assert saved["readonly"] == "用户名字叫阿卡西亚"
+    assert listed["items"][0]["entity_ref"] == "qq:user:10001"
+    assert loaded is not None
+    assert loaded["editable"] == "喜欢直接结论"
+    assert deleted is True
+
+
+async def test_runtime_control_plane_rejects_invalid_entity_kind_for_sticky_note_list(tmp_path: Path) -> None:
+    components = build_runtime_components(
+        Config(
+            {
+                "agent": {
+                    "default_model": "test-model",
+                    "system_prompt": "You are Aca.",
+                },
+                "runtime": {
+                    "default_agent_id": "aca",
+                    "runtime_root": str(tmp_path / ".acabot-runtime"),
+                },
+            }
+        ),
+        gateway=FakeGateway(),
+        agent=FakeAgentRuntime(),
     )
 
-    result = await control_plane.show_memory(scope="channel", scope_key="qq:group:1")
-
-    assert len(result.items) == 1
-    assert result.items[0].content == "群规"
+    with pytest.raises(ValueError, match="entity_kind"):
+        await components.control_plane.list_sticky_notes(entity_kind="thread")
 
 
 async def test_computer_runtime_one_shot_exec_persists_backend_state(tmp_path: Path) -> None:

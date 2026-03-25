@@ -8,10 +8,9 @@
 
 ## Sticky Note 重构设计
 
-sticky note 这一轮的正式设计已经单独收成 [17-2-memory-stickynotes-refactor.md](/home/acacia/AcaBot/docs/17-2-memory-stickynotes-refactor.md)：它现在被定义成 runtime 内建的实体便签 memory layer，正式主契约统一用 `entity_ref`，派生分类只保留 `entity_kind = user | conversation`，数据对象收成 `StickyNoteRecord`，组件边界是 `StickyNoteFileStore / StickyNoteService / StickyNoteRenderer / StickyNoteRetriever`，并且 bot 工具面正式只剩 `sticky_note_read(entity_ref)` 和 `sticky_note_append(entity_ref, text)`。
-这次最重要的纠偏是把 sticky note 从 `MemoryItem / MemoryStore / structured_memory` 这整条旧链路里彻底抽离出来，不做 legacy 兼容；retrieval 继续走主线，但 bot tools 虽然是 builtin adapter，也不享受工具特权，还是按 `enabled_tools` 控制，而 retrieval 开关和 tool 开关彼此独立。
-如果后面接着做 sticky note，先读 [17-2-memory-stickynotes-refactor.md](/home/acacia/AcaBot/docs/17-2-memory-stickynotes-refactor.md)，再读 [tmp-sticky-note-refactor-decisions.md](/home/acacia/AcaBot/docs/tmp-sticky-note-refactor-decisions.md) 和 [17-2-memory-stickynotes.md](/home/acacia/AcaBot/docs/17-2-memory-stickynotes.md)；前者讲正式设计，第二篇保留完整拍板过程，第三篇继续记录当前旧代码现状。
-
+sticky note backend 这一轮已经真正落到代码里了：主对象统一成 `StickyNoteRecord(entity_ref, readonly, editable, updated_at)`，文件真源是 `StickyNoteFileStore`，服务层是 `StickyNoteService`，统一文本出口是 `StickyNoteRenderer`，retrieval 入口是 `StickyNoteRetriever`，bot 工具面已经只剩 builtin `sticky_note_read(entity_ref)` / `sticky_note_append(entity_ref, text)`，control plane / HTTP API 也已经围绕 `entity_ref` 和整张 record 工作。
+这次真正删干净的是旧 sticky note 主线：`MemoryItem / MemoryStore / structured_memory / sticky notes plugin / sticky_note_put|get|list|delete` 已经退出 runtime 主线，planner/broker/retriever 现在统一走 `sticky_note_targets`，群聊默认 target 是发言人和当前对话容器，私聊默认 target 是发言人；当前 runtime 里还没一起全局改名的 `channel_scope`，在这条 sticky note 主线上暂时承担 `conversation_id` 的现实现达成。
+如果后面继续接 sticky note，先读 [17-2-memory-stickynotes-refactor.md](/home/acacia/AcaBot/docs/17-2-memory-stickynotes-refactor.md)、[17-2-memory-stickynotes.md](/home/acacia/AcaBot/docs/17-2-memory-stickynotes.md)、[tmp-sticky-note-refactor-decisions.md](/home/acacia/AcaBot/docs/tmp-sticky-note-refactor-decisions.md)；第一篇讲目标形态，第二篇讲当前已落地代码现状，第三篇保留拍板细节。
 ## 2026-03-23 skill 对齐已经完成主线实现
 
 这轮已经把 skill 主线改到和 `docs/18-skill.md` 第 2 节一致：runtime 现在由 `runtime.filesystem.skill_catalog_dirs` 控制扫描哪些 skill 根目录，相对路径算 project、`~` 和绝对路径算 user，扫描阶段先保留全部 metadata，prompt 注入和 `Skill(skill=...)` 真正读取时再按可见性和 `project > user` 选出最后那一份，返回里也会带 `Base directory for this skill: /skills/...`；另外, computer 内部那个容易撞名的单数字段也已经改成 `host_skills_catalog_root_path`，和 runtime 配置层彻底分开了，并且已经同步了 `docs/18-skill.md` 第 2 节后面的现状说明、`docs/19-tool.md`、`docs/01-system-map.md`、`docs/00-ai-entry.md`、`docs/09-config-and-runtime-files.md`、`docs/12-computer.md`、`docs/critical-architecture-issues.md`。

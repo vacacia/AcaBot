@@ -16,11 +16,11 @@ from ..gateway_protocol import GatewayProtocol
 from ..inbound.image_context import ImageContextService
 from ..inbound.message_preparation import MessagePreparationService
 from ..memory.context_compactor import ContextCompactor
-from ..memory.file_backed import StickyNotesSource
+from ..memory.file_backed import StickyNoteFileStore
 from ..memory.long_term_ingestor import LongTermMemoryIngestor
 from ..memory.memory_broker import MemoryBroker
 from ..memory.retrieval_planner import RetrievalPlanner
-from ..memory.sticky_notes import StickyNotesService
+from ..memory.sticky_notes import StickyNoteService
 from ..model.model_registry import FileSystemModelRegistryManager
 from ..outbox import Outbox
 from ..pipeline import ThreadPipeline
@@ -31,7 +31,7 @@ from ..router import RuntimeRouter
 from ..skills import SkillCatalog
 from ..soul import SoulSource
 from ..storage.runs import RunManager
-from ..storage.stores import ChannelEventStore, MemoryStore, MessageStore
+from ..storage.stores import ChannelEventStore, MessageStore
 from ..storage.threads import ThreadManager
 from ..subagents import SubagentDelegationBroker, SubagentExecutorRegistry
 from ..subagents.execution import LocalSubagentExecutionService
@@ -49,10 +49,9 @@ class RuntimeComponents:
     run_manager: RunManager
     channel_event_store: ChannelEventStore
     message_store: MessageStore
-    memory_store: MemoryStore
     soul_source: SoulSource
-    sticky_notes_source: StickyNotesSource
-    sticky_notes: StickyNotesService
+    sticky_notes_source: StickyNoteFileStore
+    sticky_notes: StickyNoteService
     skill_catalog: SkillCatalog
     subagent_executor_registry: SubagentExecutorRegistry
     subagent_delegator: SubagentDelegationBroker

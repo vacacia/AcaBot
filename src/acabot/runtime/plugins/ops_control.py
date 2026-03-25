@@ -192,26 +192,6 @@ class OpsControlPlugin(RuntimePlugin):
             result = await self._control_plane.reload_plugins(arguments)
             return self._format_reload_result(result)
 
-        if command == "memory" and arguments[:1] == ["show"]:
-            if len(arguments) < 3:
-                return "usage: /memory show <scope> <scope_key> [memory_type1,memory_type2]"
-            memory_types = None
-            if len(arguments) >= 4 and arguments[3].strip():
-                memory_types = [item for item in arguments[3].split(",") if item]
-            result = await self._control_plane.show_memory(
-                scope=arguments[1],
-                scope_key=arguments[2],
-                memory_types=memory_types,
-            )
-            if not result.items:
-                return f"memory: no items for {result.scope}:{result.scope_key}"
-            return "\n".join(
-                [
-                    f"{item.memory_type}/{item.edit_mode}: {item.content}"
-                    for item in result.items
-                ]
-            )
-
         return f"unknown ops command: {command}"
 
     def build_reply_action(self, ctx: RunContext, text: str) -> PlannedAction:

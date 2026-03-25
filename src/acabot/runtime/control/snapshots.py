@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..backend.mode_registry import BackendModeState
-from ..contracts import MemoryItem, PendingApprovalRecord
+from ..contracts import PendingApprovalRecord
 
 
 @dataclass(slots=True)
@@ -75,15 +75,6 @@ class AgentSwitchSnapshot:
     thread_id: str
     agent_id: str = ""
     message: str = ""
-
-
-@dataclass(slots=True)
-class MemoryQuerySnapshot:
-    """一次 memory show 查询结果."""
-
-    scope: str
-    scope_key: str
-    items: list[MemoryItem] = field(default_factory=list)
 
 
 @dataclass(slots=True)

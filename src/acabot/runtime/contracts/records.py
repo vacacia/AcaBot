@@ -21,44 +21,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
-from .common import MemoryEditMode, RunStatus
-
-# TODO: remove this legacy code
-@dataclass(slots=True)
-class MemoryItem:
-    """MemoryItem, 对应持久化层的 memory_items 表.
-
-    Attributes:
-        memory_id (str): 记忆主键.
-        scope (str): 记忆作用域类型.
-        scope_key (str): 作用域对应的稳定键.
-        memory_type (str): 记忆类别.
-        content (str): 记忆正文.
-        edit_mode (MemoryEditMode): 编辑状态.
-        author (str): 写入来源.
-        confidence (float): 置信度.
-        source_run_id (str | None): 来源 run.
-        source_event_id (str | None): 来源事件.
-        tags (list[str]): 标签列表.
-        metadata (dict[str, Any]): 附加信息.
-        created_at (int): 创建时间.
-        updated_at (int): 更新时间.
-    """
-
-    memory_id: str
-    scope: str
-    scope_key: str
-    memory_type: str
-    content: str
-    edit_mode: MemoryEditMode = "draft"
-    author: str = "extractor"
-    confidence: float = 0.0
-    source_run_id: str | None = None
-    source_event_id: str | None = None
-    tags: list[str] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
-    created_at: int = 0
-    updated_at: int = 0
+from .common import RunStatus
 
 
 @dataclass(slots=True)
@@ -274,7 +237,6 @@ class RecoveryReport:
 
 __all__ = [
     "ChannelEventRecord",
-    "MemoryItem",
     "MessageRecord",
     "PendingApprovalRecord",
     "RecoveryReport",

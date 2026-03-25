@@ -256,8 +256,8 @@ class MemoryBroker:
                 "run_mode": ctx.decision.run_mode,
                 "sender_role": ctx.event.sender_role,
                 "event_policy_id": ctx.decision.metadata.get("event_policy_id", ""),
-                "sticky_note_scopes": list(
-                    retrieval_plan.sticky_note_scopes if retrieval_plan is not None else []
+                "sticky_note_targets": list(
+                    retrieval_plan.sticky_note_targets if retrieval_plan is not None else []
                 ),
                 "context_labels": list(
                     retrieval_plan.metadata.get("context_labels", [])

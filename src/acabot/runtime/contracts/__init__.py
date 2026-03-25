@@ -27,7 +27,6 @@ from .context import (
 )
 from .records import (
     ChannelEventRecord,
-    MemoryItem,
     MessageRecord,
     PendingApprovalRecord,
     RecoveryReport,
@@ -86,7 +85,6 @@ __all__ = [
     "MatchSpec",
     "MemoryCandidate",
     "MemoryEditMode",
-    "MemoryItem",
     "MessageProjection",
     "MessageRecord",
     "OutboxItem",

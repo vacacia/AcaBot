@@ -138,7 +138,7 @@ async def test_memory_broker_builds_retrieval_request_from_context() -> None:
     assert request.retained_history == [{"role": "user", "content": "[acacia/10001] [notice:poke]"}]
     assert request.event_tags == ["notice", "poke"]
     assert request.metadata["event_policy_id"] == "poke-memory"
-    assert request.metadata["sticky_note_scopes"] == []
+    assert request.metadata["sticky_note_targets"] == []
 
 async def test_memory_broker_passes_context_retrieval_tags() -> None:
     retriever = RecordingRetriever()
@@ -200,7 +200,7 @@ async def test_memory_broker_uses_retrieval_plan_fields_as_shared_request_shape(
     ctx.context_decision = ContextDecision(retrieval_tags=["urgent"])
     ctx.retrieval_plan = RetrievalPlan(
         requested_tags=[],
-        sticky_note_scopes=[],
+        sticky_note_targets=[],
         retained_history=[],
         working_summary="",
     )
@@ -211,6 +211,7 @@ async def test_memory_broker_uses_retrieval_plan_fields_as_shared_request_shape(
     assert request.requested_tags == []
     assert request.retained_history == []
     assert request.working_summary == ""
+    assert request.metadata["sticky_note_targets"] == []
 
 
 async def test_memory_broker_respects_explicit_empty_allowed_target_slots() -> None:

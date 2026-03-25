@@ -842,53 +842,42 @@ async def test_runtime_http_api_server_serves_soul_and_sticky_notes_routes(tmp_p
             base_url,
             "/api/memory/sticky-notes/item",
             method="POST",
-            payload={"scope": "channel", "scope_key": "qq:group:42", "key": "internship_rule"},
+            payload={"entity_ref": "qq:group:42"},
         )
         assert created_note["ok"] is True
-        assert created_note["data"]["key"] == "internship_rule"
+        assert created_note["data"]["entity_ref"] == "qq:group:42"
 
-        put_readonly = await asyncio.to_thread(
-            request_json,
-            base_url,
-            "/api/memory/sticky-notes/readonly",
-            method="PUT",
-            payload={
-                "scope": "channel",
-                "scope_key": "qq:group:42",
-                "key": "internship_rule",
-                "content": "十个月只需要成果鉴定。",
-            },
-        )
-        assert put_readonly["ok"] is True
-
-        put_editable = await asyncio.to_thread(
+        saved_note = await asyncio.to_thread(
             request_json,
             base_url,
             "/api/memory/sticky-notes/item",
             method="PUT",
             payload={
-                "scope": "channel",
-                "scope_key": "qq:group:42",
-                "key": "internship_rule",
-                "content": "补充：不用额外证明。",
+                "entity_ref": "qq:group:42",
+                "readonly": "十个月只需要成果鉴定。",
+                "editable": "补充：不用额外证明。",
             },
         )
-        assert put_editable["ok"] is True
+        assert saved_note["ok"] is True
 
         sticky_item = await asyncio.to_thread(
             request_json,
             base_url,
-            "/api/memory/sticky-notes/item?scope=channel&scope_key=qq:group:42&key=internship_rule",
+            "/api/memory/sticky-notes/item?entity_ref=qq:group:42",
         )
         assert sticky_item["ok"] is True
-        assert sticky_item["data"]["readonly"]["content"] == "十个月只需要成果鉴定。"
-        assert sticky_item["data"]["editable"]["content"] == "补充：不用额外证明。"
+        assert sticky_item["data"]["readonly"] == "十个月只需要成果鉴定。"
+        assert sticky_item["data"]["editable"] == "补充：不用额外证明。"
 
-        scopes = await asyncio.to_thread(request_json, base_url, "/api/memory/sticky-notes/scopes")
-        assert scopes["ok"] is True
+        listed = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/memory/sticky-notes?entity_kind=conversation",
+        )
+        assert listed["ok"] is True
         assert any(
-            item["scope"] == "channel" and item["scope_key"] == "qq:group:42"
-            for item in scopes["data"]["items"]
+            item["entity_ref"] == "qq:group:42"
+            for item in listed["data"]["items"]
         )
     finally:
         await server.stop()
@@ -1443,11 +1432,7 @@ async def test_memory_page_does_not_overflow_on_narrow_width(tmp_path: Path) -> 
             base_url,
             "/api/memory/sticky-notes/item",
             method="POST",
-            payload={
-                "scope": "channel",
-                "scope_key": "qq:group:42",
-                "key": "test-note",
-            },
+            payload={"entity_ref": "qq:group:42"},
         )
 
         metrics = await asyncio.to_thread(
@@ -1463,7 +1448,7 @@ async def test_memory_page_does_not_overflow_on_narrow_width(tmp_path: Path) -> 
         await server.stop()
 
 
-async def test_memory_page_shows_validation_when_creating_note_without_scope_key(tmp_path: Path) -> None:
+async def test_memory_page_shows_validation_when_creating_note_with_invalid_entity_ref(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     _write_config(config_path, webui_enabled=True, port=0)
     config = Config.from_file(str(config_path))
@@ -1500,7 +1485,7 @@ async def test_memory_page_shows_validation_when_creating_note_without_scope_key
             """,
         )
 
-        assert "scope key" in result["errorText"]
+        assert result["errorText"]
     finally:
         await server.stop()
 
@@ -1553,11 +1538,7 @@ async def test_memory_page_uses_search_list_create_layout_for_notes_panel(tmp_pa
         agent=FakeAgent(FakeAgentResponse(text="ok")),
         log_buffer=InMemoryLogBuffer(),
     )
-    await components.control_plane.create_sticky_note(
-        scope="channel",
-        scope_key="qq:group:42",
-        key="default",
-    )
+    await components.control_plane.create_sticky_note(entity_ref="qq:group:42")
     server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
 
     await server.start()
@@ -1641,11 +1622,7 @@ async def test_memory_page_preserves_state_when_navigating_away_and_back(tmp_pat
         agent=FakeAgent(FakeAgentResponse(text="ok")),
         log_buffer=InMemoryLogBuffer(),
     )
-    await components.control_plane.create_sticky_note(
-        scope="channel",
-        scope_key="qq:group:42",
-        key="default",
-    )
+    await components.control_plane.create_sticky_note(entity_ref="qq:group:42")
     server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
 
     await server.start()

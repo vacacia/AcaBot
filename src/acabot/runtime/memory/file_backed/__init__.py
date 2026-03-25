@@ -1,6 +1,11 @@
-"""runtime.memory.file_backed 子域导出."""
+"""file-backed memory adapters."""
 
-from .retrievers import SelfFileRetriever, StickyNotesFileRetriever
-from .sticky_notes import StickyNotesSource
+from .retrievers import SelfFileRetriever, StickyNoteRetriever
+from .sticky_notes import StickyNoteFileStore, StickyNoteRecord
 
-__all__ = ["SelfFileRetriever", "StickyNotesFileRetriever", "StickyNotesSource"]
+__all__ = [
+    "SelfFileRetriever",
+    "StickyNoteFileStore",
+    "StickyNoteRecord",
+    "StickyNoteRetriever",
+]

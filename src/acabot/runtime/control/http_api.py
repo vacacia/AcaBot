@@ -360,46 +360,30 @@ class RuntimeHttpApiServer:
                     )
                 )
             )
-        if segments == ["memory", "sticky-notes", "scopes"] and method == "GET":
-            return self._ok(self._await(self.control_plane.list_sticky_note_scopes()))
         if segments == ["memory", "sticky-notes"] and method == "GET":
             return self._ok(
                 self._await(
                     self.control_plane.list_sticky_notes(
-                        scope=_query_value(query, "scope", ""),
-                        scope_key=_query_value(query, "scope_key", ""),
+                        entity_kind=_query_value(query, "entity_kind", ""),
                     )
                 )
             )
         if segments == ["memory", "sticky-notes", "item"] and method == "GET":
-            return self._ok(
-                self._await(
-                    self.control_plane.get_sticky_note_item(
-                        scope=_query_value(query, "scope", ""),
-                        scope_key=_query_value(query, "scope_key", ""),
-                        key=_query_value(query, "key", ""),
-                    )
+            result = self._await(
+                self.control_plane.get_sticky_note_record(
+                    entity_ref=_query_value(query, "entity_ref", ""),
                 )
             )
+            if result is None:
+                return 404, {"ok": False, "error": "sticky note not found"}
+            return self._ok(result)
         if segments == ["memory", "sticky-notes", "item"] and method == "PUT":
             return self._ok(
                 self._await(
-                    self.control_plane.put_sticky_note_editable(
-                        scope=str(payload.get("scope", "") or ""),
-                        scope_key=str(payload.get("scope_key", "") or ""),
-                        key=str(payload.get("key", "") or ""),
-                        content=str(payload.get("content", "") or ""),
-                    )
-                )
-            )
-        if segments == ["memory", "sticky-notes", "readonly"] and method == "PUT":
-            return self._ok(
-                self._await(
-                    self.control_plane.put_sticky_note_readonly(
-                        scope=str(payload.get("scope", "") or ""),
-                        scope_key=str(payload.get("scope_key", "") or ""),
-                        key=str(payload.get("key", "") or ""),
-                        content=str(payload.get("content", "") or ""),
+                    self.control_plane.save_sticky_note_record(
+                        entity_ref=str(payload.get("entity_ref", "") or ""),
+                        readonly=str(payload.get("readonly", "") or ""),
+                        editable=str(payload.get("editable", "") or ""),
                     )
                 )
             )
@@ -407,12 +391,19 @@ class RuntimeHttpApiServer:
             return self._ok(
                 self._await(
                     self.control_plane.create_sticky_note(
-                        scope=str(payload.get("scope", "") or ""),
-                        scope_key=str(payload.get("scope_key", "") or ""),
-                        key=str(payload.get("key", "") or ""),
+                        entity_ref=str(payload.get("entity_ref", "") or ""),
                     )
                 )
             )
+        if segments == ["memory", "sticky-notes", "item"] and method == "DELETE":
+            deleted = self._await(
+                self.control_plane.delete_sticky_note(
+                    entity_ref=_query_value(query, "entity_ref", ""),
+                )
+            )
+            if not deleted:
+                return 404, {"ok": False, "error": "sticky note not found"}
+            return self._ok({"deleted": True})
         if segments == ["sessions"] and method == "GET":
             return 501, {"ok": False, "error": "session shell redesign pending"}
         if len(segments) == 2 and segments[0] == "sessions" and method == "GET":

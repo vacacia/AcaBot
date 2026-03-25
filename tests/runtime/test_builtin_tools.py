@@ -319,7 +319,13 @@ async def test_build_runtime_components_registers_core_tools_as_builtin_sources(
     assert "bash_read" not in sources
     assert "bash_close" not in sources
     assert sources["Skill"] == "builtin:skills"
+    assert sources["sticky_note_read"] == "builtin:sticky_notes"
+    assert sources["sticky_note_append"] == "builtin:sticky_notes"
     assert sources["delegate_subagent"] == "builtin:subagents"
+    assert "sticky_note_put" not in sources
+    assert "sticky_note_get" not in sources
+    assert "sticky_note_list" not in sources
+    assert "sticky_note_delete" not in sources
 
 
 async def test_runtime_plugin_reload_does_not_remove_builtin_core_tools() -> None:

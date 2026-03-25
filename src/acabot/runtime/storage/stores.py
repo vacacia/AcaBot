@@ -2,9 +2,8 @@
 
 只声明协议, 不绑定具体数据库实现.
 
-当前覆盖五类持久化:
+当前覆盖四类持久化:
 - ChannelEventStore
-- MemoryStore
 - MessageStore
 - ThreadStore
 - RunStore
@@ -16,7 +15,6 @@ from abc import ABC, abstractmethod
 
 from ..contracts import (
     ChannelEventRecord,
-    MemoryItem,
     MessageRecord,
     RunRecord,
     RunStep,
@@ -147,60 +145,6 @@ class MessageStore(ABC):
         """
 
         ...
-
-
-# region memory store
-class MemoryStore(ABC):
-    """长期记忆项的持久化接口."""
-
-    @abstractmethod
-    async def upsert(self, item: MemoryItem) -> None:
-        """插入或更新一条长期记忆项.
-
-        Args:
-            item: 待写入的 MemoryItem.
-        """
-
-        ...
-
-    @abstractmethod
-    async def find(
-        self,
-        *,
-        scope: str,
-        scope_key: str,
-        memory_types: list[str] | None = None,
-        limit: int | None = None,
-    ) -> list[MemoryItem]:
-        """按 scope 查询长期记忆项.
-
-        Args:
-            scope: 当前查询的 scope.
-            scope_key: 当前 scope 对应的 key.
-            memory_types: 可选的记忆类型过滤列表.
-            limit: 最多返回多少条记忆项.
-
-        Returns:
-            满足条件的 MemoryItem 列表.
-        """
-
-        ...
-
-    @abstractmethod
-    async def delete(self, memory_id: str) -> bool:
-        """按 memory_id 删除一条长期记忆项.
-
-        Args:
-            memory_id: 目标 memory_id.
-
-        Returns:
-            当前记忆是否存在并已删除.
-        """
-
-        ...
-
-
-# endregion
 
 
 class ThreadStore(ABC):

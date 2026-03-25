@@ -15,6 +15,7 @@ from ..subagents import SubagentDelegationBroker
 from ..tool_broker import ToolBroker
 from .computer import BUILTIN_COMPUTER_TOOL_SOURCE, BuiltinComputerToolSurface
 from .skills import BUILTIN_SKILL_TOOL_SOURCE, BuiltinSkillToolSurface
+from .sticky_notes import BUILTIN_STICKY_NOTE_TOOL_SOURCE, BuiltinStickyNoteToolSurface
 from .subagents import BUILTIN_SUBAGENT_TOOL_SOURCE, BuiltinSubagentToolSurface
 
 
@@ -37,6 +38,7 @@ def register_core_builtin_tools(
     tool_broker: ToolBroker,
     computer_runtime: ComputerRuntime | None,
     skill_catalog: SkillCatalog | None,
+    sticky_note_service,
     subagent_delegator: SubagentDelegationBroker | None,
 ) -> dict[str, list[str]]:
     """把 core builtin tool 注册到 ToolBroker.
@@ -45,6 +47,7 @@ def register_core_builtin_tools(
         tool_broker: 当前 runtime 使用的 ToolBroker.
         computer_runtime: 真实 computer runtime.
         skill_catalog: 统一 skill catalog.
+        sticky_note_service: sticky note 服务层.
         subagent_delegator: subagent delegation 编排入口.
 
     Returns:
@@ -59,12 +62,16 @@ def register_core_builtin_tools(
         skill_catalog=skill_catalog,
         computer_runtime=computer_runtime,
     )
+    sticky_note_surface = BuiltinStickyNoteToolSurface(
+        sticky_note_service=sticky_note_service,
+    )
     subagent_surface = BuiltinSubagentToolSurface(
         delegator=subagent_delegator,
     )
     return {
         BUILTIN_COMPUTER_TOOL_SOURCE: computer_surface.register(tool_broker),
         BUILTIN_SKILL_TOOL_SOURCE: skill_surface.register(tool_broker),
+        BUILTIN_STICKY_NOTE_TOOL_SOURCE: sticky_note_surface.register(tool_broker),
         BUILTIN_SUBAGENT_TOOL_SOURCE: subagent_surface.register(tool_broker),
     }
 
@@ -75,9 +82,11 @@ def register_core_builtin_tools(
 __all__ = [
     "BUILTIN_COMPUTER_TOOL_SOURCE",
     "BUILTIN_SKILL_TOOL_SOURCE",
+    "BUILTIN_STICKY_NOTE_TOOL_SOURCE",
     "BUILTIN_SUBAGENT_TOOL_SOURCE",
     "BuiltinComputerToolSurface",
     "BuiltinSkillToolSurface",
+    "BuiltinStickyNoteToolSurface",
     "BuiltinSubagentToolSurface",
     "remove_stale_core_tool_adapter_sources",
     "register_core_builtin_tools",

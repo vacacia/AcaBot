@@ -1,5 +1,5 @@
 from acabot.config import Config
-from acabot.runtime import MemoryItem, build_runtime_components
+from acabot.runtime import build_runtime_components
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
 from .test_bootstrap import FakeAgent, FakeAgentResponse
@@ -138,27 +138,17 @@ async def test_ops_control_plugin_can_list_subagents() -> None:
 
 
 
-async def test_ops_control_plugin_can_show_memory() -> None:
+async def test_ops_control_plugin_reports_unknown_memory_command() -> None:
     gateway = FakeGateway()
     agent = FakeAgent(FakeAgentResponse(text="should not be used"))
     components = build_runtime_components(_ops_config(), gateway=gateway, agent=agent)
-    await components.memory_store.upsert(
-        MemoryItem(
-            memory_id="mem:1",
-            scope="user",
-            scope_key="qq:user:10001",
-            memory_type="sticky_note",
-            content="用户名字叫阿卡西亚",
-            edit_mode="readonly",
-        )
-    )
 
     components.app.install()
     await gateway.handler(_message_event("/memory show user qq:user:10001 sticky_note"))
 
     assert agent.calls == []
     assert len(gateway.sent) == 1
-    assert "sticky_note/readonly: 用户名字叫阿卡西亚" in gateway.sent[0].payload["text"]
+    assert "unknown ops command: memory" in gateway.sent[0].payload["text"]
 
 
 async def test_ops_control_plugin_can_reload_selected_plugin() -> None:

@@ -56,10 +56,13 @@ from ..references import (
 from ..storage.runs import RunManager
 from ..skills import SkillPackageManifest
 from ..skills import SkillCatalog
-from ..storage.stores import ChannelEventStore, MemoryStore, MessageStore
+from ..storage.stores import ChannelEventStore, MessageStore
+from ..memory.file_backed.sticky_notes import StickyNoteRecord
 from ..subagents import RegisteredSubagentExecutor, SubagentExecutorRegistry
 from ..soul import SoulSource
-from ..memory.file_backed import StickyNotesSource
+from ..memory.file_backed import StickyNoteFileStore
+from ..memory.sticky_note_entities import normalize_sticky_note_entity_kind
+from ..memory.sticky_notes import StickyNoteService
 from ..storage.threads import ThreadManager
 from ..tool_broker import ToolBroker
 from .model_ops import RuntimeModelControlOps
@@ -70,7 +73,6 @@ from .snapshots import (
     AgentSwitchSnapshot,
     BackendStatusSnapshot,
     GatewayStatusSnapshot,
-    MemoryQuerySnapshot,
     PluginReloadSnapshot,
     RuntimeStatusSnapshot,
     SkillSnapshot,
@@ -99,11 +101,11 @@ class RuntimeControlPlane:
         app: RuntimeApp,
         run_manager: RunManager,
         thread_manager: ThreadManager | None = None,
-        memory_store: MemoryStore | None = None,
         message_store: MessageStore | None = None,
         channel_event_store: ChannelEventStore | None = None,
         soul_source: SoulSource | None = None,
-        sticky_notes_source: StickyNotesSource | None = None,
+        sticky_notes_source: StickyNoteFileStore | None = None,
+        sticky_notes: StickyNoteService | None = None,
         profile_registry: AgentProfileRegistry | None = None,
         plugin_manager: RuntimePluginManager | None = None,
         skill_catalog: SkillCatalog | None = None,
@@ -121,11 +123,11 @@ class RuntimeControlPlane:
             app: 当前 runtime app.
             run_manager: run 生命周期管理器.
             thread_manager: 可选的 thread 状态管理器.
-            memory_store: 可选的长期记忆存储.
             message_store: 可选的 delivered message store.
             channel_event_store: 可选的 inbound event store.
             soul_source: 可选的 soul 文件真源服务.
             sticky_notes_source: 可选的 sticky note 文件真源服务.
+            sticky_notes: 可选的 sticky note 服务层.
             profile_registry: 可选的 profile registry, 用于校验 agent 是否存在.
             plugin_manager: 可选的 runtime plugin manager.
             skill_catalog: 可选的统一 skill catalog.
@@ -140,11 +142,11 @@ class RuntimeControlPlane:
         self.app = app
         self.run_manager = run_manager
         self.thread_manager = thread_manager
-        self.memory_store = memory_store
         self.message_store = message_store
         self.channel_event_store = channel_event_store
         self.soul_source = soul_source
         self.sticky_notes_source = sticky_notes_source
+        self.sticky_notes = sticky_notes
         self.profile_registry = profile_registry
         self.plugin_manager = plugin_manager
         self.skill_catalog = skill_catalog
@@ -231,41 +233,6 @@ class RuntimeControlPlane:
             self_id=str(getattr(gateway, "_self_id", "") or ""),
             supports_call_api=callable(getattr(gateway, "call_api", None)),
             token_configured=bool(str(getattr(gateway, "token", "") or "")),
-        )
-
-    async def show_memory(
-        self,
-        *,
-        scope: str,
-        scope_key: str,
-        memory_types: list[str] | None = None,
-        limit: int = 20,
-    ) -> MemoryQuerySnapshot:
-        """按 scope 查询长期记忆.
-
-        Args:
-            scope: 当前查询的 scope.
-            scope_key: 当前 scope 对应的 key.
-            memory_types: 可选的 memory_type 过滤列表.
-            limit: 最多返回多少条记忆.
-
-        Returns:
-            一份 MemoryQuerySnapshot.
-        """
-
-        if self.memory_store is None:
-            return MemoryQuerySnapshot(scope=scope, scope_key=scope_key)
-
-        items = await self.memory_store.find(
-            scope=scope,
-            scope_key=scope_key,
-            memory_types=memory_types,
-            limit=limit,
-        )
-        return MemoryQuerySnapshot(
-            scope=scope,
-            scope_key=scope_key,
-            items=items,
         )
 
     async def approve_pending_approval(
@@ -530,115 +497,132 @@ class RuntimeControlPlane:
 
         return await self.post_soul_file(name=name, content=content)
 
-    async def list_sticky_note_scopes(self) -> dict[str, object]:
-        """列出 sticky note 的 scope 列表."""
-
-        if self.sticky_notes_source is None:
-            raise RuntimeError("sticky notes source unavailable")
-        return {"items": self.sticky_notes_source.list_scopes()}
-
-    async def list_sticky_notes(self, *, scope: str, scope_key: str) -> dict[str, object]:
-        """列出 sticky note 列表.
+    async def list_sticky_notes(self, *, entity_kind: str) -> dict[str, object]:
+        """按实体分类列出 sticky note 记录.
 
         Args:
-            scope: scope 名称.
-            scope_key: scope 键.
+            entity_kind: 目标实体分类, 只能是 `user` 或 `conversation`.
 
         Returns:
-            note 列表.
+            dict[str, object]: 当前分类下的列表结果.
         """
 
-        if self.sticky_notes_source is None:
-            raise RuntimeError("sticky notes source unavailable")
+        normalized_entity_kind = normalize_sticky_note_entity_kind(entity_kind)
+        service = self._require_sticky_notes()
+        records = await service.list_records(entity_kind=normalized_entity_kind)
         return {
-            "scope": scope,
-            "scope_key": scope_key,
-            "items": self.sticky_notes_source.list_notes(scope=scope, scope_key=scope_key),
+            "entity_kind": normalized_entity_kind,
+            "items": [
+                {
+                    "entity_ref": record.entity_ref,
+                    "updated_at": record.updated_at,
+                }
+                for record in records
+            ],
         }
 
-    async def get_sticky_note_item(self, *, scope: str, scope_key: str, key: str) -> dict[str, object]:
-        """读取一个 sticky note 双区对象.
+    async def get_sticky_note_record(self, *, entity_ref: str) -> dict[str, object] | None:
+        """读取一张完整的 sticky note record.
 
         Args:
-            scope: scope 名称.
-            scope_key: scope 键.
-            key: note 键.
+            entity_ref: 目标实体引用.
 
         Returns:
-            sticky note 双区对象.
+            dict[str, object] | None: 命中的记录. 不存在时返回 `None`.
         """
 
-        if self.sticky_notes_source is None:
-            raise RuntimeError("sticky notes source unavailable")
-        return self.sticky_notes_source.read_pair(
-            scope=scope,
-            scope_key=scope_key,
-            key=key,
-        )
+        service = self._require_sticky_notes()
+        record = await service.load_record(entity_ref)
+        if record is None:
+            return None
+        return self._sticky_note_record_payload(record)
 
-    async def put_sticky_note_editable(
+    async def save_sticky_note_record(
         self,
         *,
-        scope: str,
-        scope_key: str,
-        key: str,
-        content: str,
+        entity_ref: str,
+        readonly: str,
+        editable: str,
     ) -> dict[str, object]:
-        """写入 sticky note 可编辑区."""
-
-        if self.sticky_notes_source is None:
-            raise RuntimeError("sticky notes source unavailable")
-        return self.sticky_notes_source.write_editable(
-            scope=scope,
-            scope_key=scope_key,
-            key=key,
-            content=content,
-        )
-
-    async def put_sticky_note_readonly(
-        self,
-        *,
-        scope: str,
-        scope_key: str,
-        key: str,
-        content: str,
-    ) -> dict[str, object]:
-        """写入 sticky note 只读区."""
-
-        if self.sticky_notes_source is None:
-            raise RuntimeError("sticky notes source unavailable")
-        return self.sticky_notes_source.write_readonly(
-            scope=scope,
-            scope_key=scope_key,
-            key=key,
-            content=content,
-        )
-
-    async def create_sticky_note(
-        self,
-        *,
-        scope: str,
-        scope_key: str,
-        key: str,
-    ) -> dict[str, object]:
-        """创建 sticky note.
+        """保存一张完整的 sticky note record.
 
         Args:
-            scope: scope 名称.
-            scope_key: scope 键.
-            key: note 键.
+            entity_ref: 目标实体引用.
+            readonly: 高可信内容.
+            editable: 可编辑观察内容.
 
         Returns:
-            新建后的 sticky note 双区对象.
+            dict[str, object]: 保存后的记录对象.
         """
 
-        if self.sticky_notes_source is None:
-            raise RuntimeError("sticky notes source unavailable")
-        return self.sticky_notes_source.create_note(
-            scope=scope,
-            scope_key=scope_key,
-            key=key,
+        service = self._require_sticky_notes()
+        record = await service.save_record(
+            StickyNoteRecord(
+                entity_ref=entity_ref,
+                readonly=readonly,
+                editable=editable,
+            )
         )
+        return self._sticky_note_record_payload(record)
+
+    async def create_sticky_note(self, *, entity_ref: str) -> dict[str, object]:
+        """创建一张空的 sticky note record.
+
+        Args:
+            entity_ref: 目标实体引用.
+
+        Returns:
+            dict[str, object]: 新建后的记录对象.
+        """
+
+        service = self._require_sticky_notes()
+        record = await service.create_record(entity_ref)
+        return self._sticky_note_record_payload(record)
+
+    async def delete_sticky_note(self, *, entity_ref: str) -> bool:
+        """删除一张 sticky note record.
+
+        Args:
+            entity_ref: 目标实体引用.
+
+        Returns:
+            bool: 目标存在并已删除时返回 `True`.
+        """
+
+        service = self._require_sticky_notes()
+        return await service.delete_record(entity_ref)
+
+    def _require_sticky_notes(self) -> StickyNoteService:
+        """返回当前必需的 sticky note 服务层.
+
+        Returns:
+            StickyNoteService: 当前 sticky note 服务层.
+
+        Raises:
+            RuntimeError: sticky note 服务层不可用时抛错.
+        """
+
+        if self.sticky_notes is None:
+            raise RuntimeError("sticky notes service unavailable")
+        return self.sticky_notes
+
+    @staticmethod
+    def _sticky_note_record_payload(record: StickyNoteRecord) -> dict[str, object]:
+        """把 `StickyNoteRecord` 转成 control plane 返回对象.
+
+        Args:
+            record: 待序列化的 sticky note record.
+
+        Returns:
+            dict[str, object]: 对应的返回对象.
+        """
+
+        return {
+            "entity_ref": record.entity_ref,
+            "readonly": record.readonly,
+            "editable": record.editable,
+            "updated_at": record.updated_at,
+        }
 
     async def get_bot(self) -> dict[str, object]:
         """返回 bot shell 已下线的提示.

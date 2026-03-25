@@ -314,7 +314,7 @@ async def test_thread_pipeline_injects_memory_blocks_before_agent_runtime() -> N
         blocks=[
             MemoryBlock(
                 content="用户喜欢直接回答",
-                source="store_memory",
+                source="long_term_memory",
                 scope="user",
                 assembly=MemoryAssemblySpec(
                     target_slot="message_prefix",
@@ -354,7 +354,7 @@ async def test_thread_pipeline_injects_memory_blocks_before_agent_runtime() -> N
 
     assert memory_broker.retrieve_calls == [ctx]
     assert ctx.memory_broker_result is not None
-    assert ctx.memory_blocks[0].source == "store_memory"
+    assert ctx.memory_blocks[0].source == "long_term_memory"
     assert ctx.retrieval_plan is not None
     assert agent_runtime.captured_messages == []
 
@@ -386,7 +386,7 @@ async def test_thread_pipeline_keeps_summary_and_memory_blocks_for_runtime_later
             ),
             MemoryBlock(
                 content="用户最近在问实习材料",
-                source="store_memory",
+                source="long_term_memory",
                 scope="relationship",
                 assembly=MemoryAssemblySpec(
                     target_slot="message_prefix",
@@ -427,7 +427,7 @@ async def test_thread_pipeline_keeps_summary_and_memory_blocks_for_runtime_later
 
     assert ctx.retrieval_plan is not None
     assert ctx.retrieval_plan.working_summary == "群里最近一直在讨论实习材料"
-    assert [item.source for item in ctx.memory_blocks] == ["sticky_notes", "store_memory"]
+    assert [item.source for item in ctx.memory_blocks] == ["sticky_notes", "long_term_memory"]
     assert agent_runtime.captured_messages == []
 
 

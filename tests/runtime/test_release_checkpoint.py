@@ -261,7 +261,6 @@ def _close_runtime_components(components: Any) -> None:
         getattr(getattr(components, "run_manager", None), "store", None),
         getattr(components, "channel_event_store", None),
         getattr(components, "message_store", None),
-        getattr(components, "memory_store", None),
     ]
     seen_ids: set[int] = set()
     for item in closables:

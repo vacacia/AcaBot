@@ -17,7 +17,7 @@ from .agent_runtime import AgentRuntime
 from .computer import ComputerRuntime
 from .memory.context_compactor import ContextCompactor
 from .inbound.message_preparation import MessagePreparationService
-from .memory.file_backed import StickyNotesSource
+from .memory.file_backed import StickyNoteFileStore
 from .contracts import (
     AgentRuntimeResult,
     DeliveryResult,
@@ -63,7 +63,7 @@ class ThreadPipeline:
         tool_broker: ToolBroker | None = None,
         plugin_manager: RuntimePluginManager | None = None,
         soul_source: SoulSource | None = None,
-        sticky_notes_source: StickyNotesSource | None = None,
+        sticky_notes_source: StickyNoteFileStore | None = None,
     ) -> None:
         """初始化 ThreadPipeline.
 
@@ -496,8 +496,8 @@ class ThreadPipeline:
             requested_tags=list(
                 ctx.context_decision.retrieval_tags if ctx.context_decision is not None else []
             ),
-            sticky_note_scopes=list(
-                ctx.context_decision.sticky_note_scopes if ctx.context_decision is not None else []
+            sticky_note_targets=list(
+                ctx.context_decision.sticky_note_targets if ctx.context_decision is not None else []
             ),
             retained_history=list(
                 ctx.metadata.get("effective_compacted_messages", ctx.thread.working_messages)

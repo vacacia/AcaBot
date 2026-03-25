@@ -16,9 +16,10 @@ from ..memory.context_compactor import (
     ContextCompactor,
     ModelContextSummarizer,
 )
-from ..memory.file_backed import SelfFileRetriever, StickyNotesFileRetriever, StickyNotesSource
+from ..memory.file_backed import SelfFileRetriever, StickyNoteFileStore, StickyNoteRetriever
 from ..memory.memory_broker import MemoryBroker, MemorySourceRegistry
 from ..memory.retrieval_planner import RetrievalPlanner
+from ..memory.sticky_note_renderer import StickyNoteRenderer
 from ..model.model_registry import FileSystemModelRegistryManager
 from ..plugin_manager import RuntimePlugin
 from ..plugins import BackendBridgeToolPlugin
@@ -30,19 +31,16 @@ from ..references import (
 )
 from ..skills import FileSystemSkillPackageLoader, SkillCatalog
 from ..storage.event_store import InMemoryChannelEventStore
-from ..storage.memory_item_store import InMemoryMemoryStore
 from ..storage.memory_store import InMemoryMessageStore
 from ..storage.runs import InMemoryRunManager, RunManager, StoreBackedRunManager
 from ..storage.sqlite_stores import (
     SQLiteChannelEventStore,
-    SQLiteMemoryStore,
     SQLiteMessageStore,
     SQLiteRunStore,
     SQLiteThreadStore,
 )
-from ..storage.stores import ChannelEventStore, MemoryStore, MessageStore
+from ..storage.stores import ChannelEventStore, MessageStore
 from ..storage.threads import InMemoryThreadManager, StoreBackedThreadManager, ThreadManager
-from ..memory.structured_memory import StoreBackedMemoryRetriever
 from ..subagents import SubagentExecutorRegistry
 from ..subagents.execution import LocalSubagentExecutionService
 from ..soul import SoulSource
@@ -212,25 +210,22 @@ def build_channel_event_store(config: Config) -> ChannelEventStore:
     return SQLiteChannelEventStore(sqlite_path)
 
 
-def build_memory_store(config: Config) -> MemoryStore:
-    sqlite_path = get_persistence_sqlite_path(config)
-    if sqlite_path is None:
-        return InMemoryMemoryStore()
-    return SQLiteMemoryStore(sqlite_path)
-
-
 def build_memory_broker(
     config: Config,
     *,
-    memory_store: MemoryStore,
     soul_source: SoulSource,
-    sticky_notes_source: StickyNotesSource,
+    sticky_notes_source: StickyNoteFileStore,
 ) -> MemoryBroker:
     _ = config
     registry = MemorySourceRegistry()
     registry.register("self", SelfFileRetriever(soul_source))
-    registry.register("sticky_notes", StickyNotesFileRetriever(sticky_notes_source))
-    registry.register("store_memory", StoreBackedMemoryRetriever(memory_store))
+    registry.register(
+        "sticky_notes",
+        StickyNoteRetriever(
+            store=sticky_notes_source,
+            renderer=StickyNoteRenderer(),
+        ),
+    )
     return MemoryBroker(registry=registry)
 
 
@@ -352,7 +347,6 @@ __all__ = [
     "build_context_compactor",
     "build_default_computer_policy",
     "build_memory_broker",
-    "build_memory_store",
     "build_message_store",
     "build_model_registry_manager",
     "build_payload_json_writer",

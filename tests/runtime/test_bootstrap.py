@@ -17,7 +17,6 @@ from acabot.runtime import (
     ApprovalRequired,
     AgentProfile,
     ContextAssembler,
-    InMemoryMemoryStore,
     ContextCompactor,
     ModelContextSummarizer,
     LocalReferenceBackend,
@@ -32,7 +31,7 @@ from acabot.runtime import (
     RetrievalPlanner,
     RouteDecision,
     SQLiteChannelEventStore,
-    SQLiteMemoryStore,
+    StickyNoteRecord,
     SQLiteMessageStore,
     StoreBackedRunManager,
     StoreBackedThreadManager,
@@ -858,6 +857,8 @@ async def test_build_runtime_components_registers_builtin_computer_tools() -> No
 
     assert [plugin.name for plugin in components.plugin_manager.loaded] == ["backend_bridge_tool"]
     assert sources["read"] == "builtin:computer"
+    assert sources["sticky_note_read"] == "builtin:sticky_notes"
+    assert sources["sticky_note_append"] == "builtin:sticky_notes"
     assert "exec" not in sources
     assert [tool.name for tool in visible] == ["read"]
 
@@ -1397,7 +1398,6 @@ async def test_build_runtime_components_uses_sqlite_persistence_when_configured(
     assert isinstance(components1.run_manager, StoreBackedRunManager)
     assert isinstance(components1.message_store, SQLiteMessageStore)
     assert isinstance(components1.channel_event_store, SQLiteChannelEventStore)
-    assert isinstance(components1.memory_store, SQLiteMemoryStore)
 
     components1.app.install()
     await gateway1.handler(_event())
@@ -1497,11 +1497,11 @@ async def test_build_runtime_components_memory_broker_reads_self_and_sticky_file
         agent=FakeAgent(FakeAgentResponse(text="ok")),
     )
     components.soul_source.append_today_entry("[qq:group:20002 time=1] 记录了部署任务")
-    components.sticky_notes_source.create_note(
-        scope="user",
-        scope_key="qq:user:10001",
-        key="reply_style",
-        readonly_content="回答要更直接",
+    components.sticky_notes_source.save_record(
+        StickyNoteRecord(
+            entity_ref="qq:user:10001",
+            readonly="回答要更直接",
+        )
     )
 
     event = _event()
@@ -1524,7 +1524,7 @@ async def test_build_runtime_components_memory_broker_reads_self_and_sticky_file
         thread=thread,
         profile=components.profile_loader.load(decision),
         retrieval_plan=RetrievalPlan(
-            sticky_note_scopes=["user"],
+            sticky_note_targets=["qq:user:10001"],
             retained_history=[],
         ),
     )
@@ -1534,7 +1534,6 @@ async def test_build_runtime_components_memory_broker_reads_self_and_sticky_file
     assert [source_id for source_id, _ in components.memory_broker.registry.items()] == [
         "self",
         "sticky_notes",
-        "store_memory",
     ]
     assert [block.source for block in result.blocks[:2]] == ["self", "sticky_notes"]
 

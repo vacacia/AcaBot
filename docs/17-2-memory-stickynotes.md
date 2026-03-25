@@ -1,4 +1,3 @@
-
 ## Sticky Note
 
 ### 设计理念(不准修改)
@@ -20,99 +19,150 @@
 
 ### 当前代码现状
 
-#### 1. 文件
+#### 1. 文件真源已经收成实体便签
 
 代码在：
 
 - `src/acabot/runtime/memory/file_backed/sticky_notes.py`
+- `src/acabot/runtime/memory/sticky_note_entities.py`
 
-当前 sticky note 的物理形态是：
+当前 sticky note 的正式主键已经统一成：
 
-- `.acabot-runtime/sticky-notes/<scope>/<scope_key>/<note_key>/readonly.md`
-- `.acabot-runtime/sticky-notes/<scope>/<scope_key>/<note_key>/editable.md`
+- `entity_ref`
 
-这个文件真源已经负责：
+当前 sticky note 的正式分类只保留：
 
-- scope 和 key 校验
+- `entity_kind = user | conversation`
+
+`entity_kind` 只从 `entity_ref` 派生，不再作为并列主入参传来传去。
+
+当前物理形态已经收成：
+
+- `.acabot-runtime/sticky-notes/user/<entity_ref>/readonly.md`
+- `.acabot-runtime/sticky-notes/user/<entity_ref>/editable.md`
+- `.acabot-runtime/sticky-notes/conversation/<entity_ref>/readonly.md`
+- `.acabot-runtime/sticky-notes/conversation/<entity_ref>/editable.md`
+
+文件真源现在负责：
+
+- `entity_ref` 白名单校验
+- 从 `entity_ref` 派生 `entity_kind`
+- 拒绝 `thread:` / `session:` 这类非法对象引用
 - 双区读写
-- scope 浏览
-- note 列表
-- 路径安全
+- `editable` 追加
+- 记录列表
+- `updated_at = max(readonly, editable)`
 
-当前产品化 scope 只有：
-
-- `user`
-- `channel`
-
-#### 2. 受控服务层已经存在
+#### 2. 服务层已经改成新模型
 
 代码在：
 
 - `src/acabot/runtime/memory/sticky_notes.py`
+- `src/acabot/runtime/memory/sticky_note_renderer.py`
 
-`StickyNotesService` 现在已经把 sticky note 收成受控操作：
+当前正式服务层已经收成：
 
-- `put_note`
-- `get_note`
-- `list_notes`
-- `delete_note`
+- `StickyNoteService`
+- `StickyNoteRenderer`
 
-这里有一个很关键的现状：
+当前 bot 面只保留两种动作：
 
-- `user` / `channel` scope 优先走文件真源
-- `relationship` / `global` scope 仍然可以回落到通用 `MemoryStore`
+- `read_note(entity_ref)`
+- `append_note(entity_ref, text)`
 
-所以 sticky note 在当前代码里其实是“两套后端并存”的形态：
+其中：
 
-- 产品主线：file-backed `user` / `channel`
-- 通用兜底：`MemoryStore` 上的 `sticky_note` item
+- `read_note(...)` 返回完整 XML 视图，目标不存在时返回 `exists = false`
+- `append_note(...)` 只允许追加单行文本，只写 `editable`，目标不存在时自动创建
 
-#### 3. 插件工具已经存在
+当前人类控制面动作已经收成：
 
-代码在：
+- `load_record(entity_ref)`
+- `save_record(StickyNoteRecord)`
+- `create_record(entity_ref)`
+- `delete_record(entity_ref)`
+- `list_records(entity_kind)`
 
-- `src/acabot/runtime/plugins/sticky_notes.py`
-
-当前已经暴露的工具有：
-
-- `sticky_note_put`
-- `sticky_note_get`
-- `sticky_note_list`
-- `sticky_note_delete`
-
-也就是说，sticky note 现在不只是 WebUI 能编辑，模型本身也已经能通过受控工具读写它。
-
-#### 4. WebUI 已经有第一版页面
+#### 3. bot 工具已经改成 builtin tool
 
 代码在：
 
-- `webui/src/views/MemoryView.vue`
+- `src/acabot/runtime/builtin_tools/sticky_notes.py`
+- `src/acabot/runtime/builtin_tools/__init__.py`
+
+当前 bot 侧正式工具面已经只剩：
+
+- `sticky_note_read(entity_ref)`
+- `sticky_note_append(entity_ref, text)`
+
+这两个工具现在属于 runtime builtin tool surface：
+
+- 直接由 bootstrap 注册
+- 仍然受 `enabled_tools` 控制
+- 不再经过 sticky notes plugin 生命周期
+
+#### 4. control plane / HTTP API 已经围绕 `StickyNoteRecord`
+
+代码在：
+
 - `src/acabot/runtime/control/control_plane.py`
 - `src/acabot/runtime/control/http_api.py`
 
-当前 Memory 页面只暴露 sticky note，不是完整记忆总览页。现在能用的接口主要是：
+当前 sticky note 的 backend 接口已经围绕：
+
+- `StickyNoteRecord`
+- `entity_ref`
+
+当前 HTTP API 形状是：
+
+- `GET /api/memory/sticky-notes?entity_kind=user|conversation`
+- `GET /api/memory/sticky-notes/item?entity_ref=...`
+- `POST /api/memory/sticky-notes/item`
+- `PUT /api/memory/sticky-notes/item`
+- `DELETE /api/memory/sticky-notes/item?entity_ref=...`
+
+这里已经不再使用：
 
 - `/api/memory/sticky-notes/scopes`
-- `/api/memory/sticky-notes`
-- `/api/memory/sticky-notes/item`
 - `/api/memory/sticky-notes/readonly`
+- `scope + scope_key + key`
 
-#### 5. prompt 注入已经接通
+#### 5. retrieval 已经接到 `sticky_note_targets`
 
 代码在：
 
-- `src/acabot/runtime/pipeline.py`
+- `src/acabot/runtime/control/session_runtime.py`
 - `src/acabot/runtime/memory/retrieval_planner.py`
+- `src/acabot/runtime/memory/memory_broker.py`
+- `src/acabot/runtime/memory/file_backed/retrievers.py`
 
-当前 pipeline 会直接从文件真源读取：
+当前 retrieval 主线已经统一围绕：
 
-- 当前用户的 sticky notes
-- 当前 channel 的 sticky notes
+- `sticky_note_targets: list[str]`
 
-然后转成 `MemoryBlock`，再交给 `RetrievalPlanner` 组装成 `sticky_notes` prompt slot。
+默认策略是：
 
-这意味着 sticky note 现在已经是主线的一部分，不是只存在于 WebUI 的静态资料。
+- 群聊：`[actor_id, conversation_id]` 在现代码里暂时由 `facts.actor_id` 和 `facts.channel_scope` 表达
+- 私聊：`[actor_id]`
 
-所以这层的真实现状可以概括成一句话：
+当前 sticky note retriever 只会：
 
-> Sticky note 已经是当前代码里最完整的长期记忆产品形态，尤其是 `user/channel + readonly/editable + WebUI + tool + prompt 注入` 这一套已经成形。
+- 读取 planner 直接给出的 `entity_ref`
+- 不做全量扫描
+- 不存在就安静跳过
+- 每张 note 产出一个完整 `MemoryBlock`
+- 统一复用 `StickyNoteRenderer`
+
+#### 6. 旧链路已经退出主线
+
+这一轮 sticky note 已经不再依赖：
+
+- `MemoryItem`
+- `MemoryStore`
+- `structured_memory`
+- sticky note plugin
+- `sticky_note_put/get/list/delete`
+
+现在 sticky note backend 的真实主线可以直接记成：
+
+> `StickyNoteFileStore -> StickyNoteService / StickyNoteRenderer -> StickyNoteRetriever / builtin sticky note tools / control plane / HTTP API`

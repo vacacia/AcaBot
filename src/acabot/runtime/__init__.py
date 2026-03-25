@@ -87,7 +87,6 @@ from .control.control_plane import (
     ActiveRunSnapshot,
     AgentSkillSnapshot,
     AgentSwitchSnapshot,
-    MemoryQuerySnapshot,
     PluginReloadSnapshot,
     RuntimeControlPlane,
     RuntimeStatusSnapshot,
@@ -108,7 +107,6 @@ from .memory.memory_broker import (
     MemorySourceRegistry,
     SharedMemoryRetrievalRequest,
 )
-from .storage.memory_item_store import InMemoryMemoryStore
 from .storage.memory_store import InMemoryMessageStore
 from .control.http_api import RuntimeHttpApiServer
 from .inbound.image_context import (
@@ -168,7 +166,6 @@ from .contracts import (
     MatchSpec,
     MemoryCandidate,
     MemoryEditMode,
-    MemoryItem,
     MessageProjection,
     MessageRecord,
     OutboxItem,
@@ -218,7 +215,6 @@ from .plugins import (
     NapCatToolsPlugin,
     OpsControlPlugin,
     ReferenceToolsPlugin,
-    StickyNotesPlugin,
 )
 from .control.profile_loader import (
     AgentProfileRegistry,
@@ -270,15 +266,14 @@ from .subagents import (
 from .subagents.execution import LocalSubagentExecutionService
 from .storage.sqlite_stores import (
     SQLiteChannelEventStore,
-    SQLiteMemoryStore,
     SQLiteMessageStore,
     SQLiteRunStore,
     SQLiteThreadStore,
 )
-from .memory.sticky_notes import StickyNotesService
-from .memory.file_backed import StickyNotesSource
-from .storage.stores import ChannelEventStore, MemoryStore, MessageStore, RunStore, ThreadStore
-from .memory.structured_memory import StoreBackedMemoryRetriever
+from .memory.sticky_note_renderer import StickyNoteRenderer
+from .memory.sticky_notes import StickyNoteService
+from .memory.file_backed import StickyNoteFileStore, StickyNoteRecord
+from .storage.stores import ChannelEventStore, MessageStore, RunStore, ThreadStore
 from .tool_broker import (
     AllowAllToolPolicy,
     InMemoryToolAudit,
@@ -341,7 +336,6 @@ __all__ = [
     "ActiveRunSnapshot",
     "AgentSkillSnapshot",
     "AgentSwitchSnapshot",
-    "MemoryQuerySnapshot",
     "PluginReloadSnapshot",
     "RuntimeControlPlane",
     "RuntimeStatusSnapshot",
@@ -385,12 +379,10 @@ __all__ = [
     "MemoryCandidate",
     "MemoryAssemblySpec",
     "MemoryEditMode",
-    "MemoryItem",
     "MemorySource",
     "MemorySourceFailure",
     "MemorySourcePolicy",
     "MemorySourceRegistry",
-    "MemoryStore",
     "MessageRecord",
     "SequencedMessageRecord",
     "MessageProjection",
@@ -413,7 +405,6 @@ __all__ = [
     "GoogleGeminiProviderConfig",
     "EffectiveModelSnapshot",
     "FileSystemModelRegistryManager",
-    "InMemoryMemoryStore",
     "MatchSpec",
     "NoopApprovalResumer",
     "ToolApprovalResumer",
@@ -472,7 +463,6 @@ __all__ = [
     "NapCatToolsPlugin",
     "OpsControlPlugin",
     "ReferenceToolsPlugin",
-    "StickyNotesPlugin",
     "RunContext",
     "RunManager",
     "RunRecord",
@@ -490,12 +480,13 @@ __all__ = [
     "RetrievalPlanner",
     "Outbox",
     "SQLiteChannelEventStore",
-    "SQLiteMemoryStore",
     "SQLiteMessageStore",
     "SQLiteRunStore",
     "SQLiteThreadStore",
-    "StickyNotesService",
-    "StickyNotesSource",
+    "StickyNoteService",
+    "StickyNoteFileStore",
+    "StickyNoteRecord",
+    "StickyNoteRenderer",
     "ReferenceBackend",
     "ReferenceBodyLevel",
     "ReferenceDocument",
@@ -508,7 +499,6 @@ __all__ = [
     "LocalReferenceBackend",
     "StaticProfileLoader",
     "StaticPromptLoader",
-    "StoreBackedMemoryRetriever",
     "StoreBackedRunManager",
     "StoreBackedThreadManager",
     "SurfaceConfig",

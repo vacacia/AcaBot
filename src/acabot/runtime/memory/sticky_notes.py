@@ -1,545 +1,175 @@
-"""runtime.sticky_notes 提供 sticky note 的窄版服务层.
+"""sticky note 受控服务层.
 
-组件关系:
+这个文件把 sticky note 文件真源收成稳定的业务动作.
 
-    RuntimePlugin
-        |
-        v
-    StickyNotesService
-        |
-        v
-     MemoryStore
+关系图:
 
-这一层只暴露 sticky note 的受控操作:
-- put
-- get
-- list
-- delete
+    builtin sticky note tools
+              |
+              v
+       StickyNoteService
+          |        |
+          |        +--> StickyNoteRenderer
+          |
+          +-----------> StickyNoteFileStore
 
-它不暴露整个 MemoryStore, 避免 runtime plugin 绕过 control plane
-直接乱写 `semantic / relationship / episodic` 等内部记忆层.
+这里不负责决定 retrieval target.
+它只负责:
+- bot 的 `read + append`
+- 人类控制面的整张 record 读写和删除
+- 统一输入校验
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
-from typing import TYPE_CHECKING, Any, Literal
-
-from .file_backed import StickyNotesSource
-from ..contracts import MemoryEditMode, MemoryItem
-from ..storage.stores import MemoryStore
-
-if TYPE_CHECKING:
-    from ..tool_broker import ToolExecutionContext
-
-StickyScope = Literal["relationship", "user", "channel", "global"]
-_KNOWN_SCOPES: tuple[StickyScope, ...] = ("relationship", "user", "channel", "global")
+from .sticky_note_entities import StickyNoteEntityKind, normalize_sticky_note_entity_kind
+from .file_backed.sticky_notes import StickyNoteFileStore, StickyNoteRecord
+from .sticky_note_renderer import StickyNoteRenderer
 
 
 # region service
 @dataclass(slots=True)
-class StickyNotesService:
-    """Sticky note 的受控服务层.
+class StickyNoteService:
+    """sticky note 的正式服务层.
 
     Attributes:
-        store (MemoryStore | None): 长期记忆项持久化后端.
-        source (StickyNotesSource | None): sticky note 文件真源.
-        default_scope (StickyScope): 未显式声明时默认写入的 scope.
+        store (StickyNoteFileStore): sticky note 文件真源.
+        renderer (StickyNoteRenderer): 完整文本渲染器.
     """
 
-    store: MemoryStore | None = None
-    source: StickyNotesSource | None = None
-    default_scope: StickyScope = "relationship"
+    store: StickyNoteFileStore
+    renderer: StickyNoteRenderer
 
-    async def put_note(
+    async def read_note(self, entity_ref: str) -> dict[str, object]:
+        """读取一张实体便签的完整文本视图.
+
+        Args:
+            entity_ref: 目标实体引用.
+
+        Returns:
+            dict[str, object]: 目标不存在时返回 `{"exists": False}`,
+            存在时返回 `{"exists": True, "combined_text": ...}`.
+        """
+
+        record = self.store.load_record(entity_ref)
+        if record is None:
+            return {"exists": False}
+        return {
+            "exists": True,
+            "combined_text": self.renderer.render_combined_text(record),
+        }
+
+    async def append_note(self, entity_ref: str, text: str) -> dict[str, object]:
+        """向实体便签的 editable 区追加一条观察.
+
+        Args:
+            entity_ref: 目标实体引用.
+            text: 待追加的单行文本.
+
+        Returns:
+            dict[str, object]: 简洁成功结果.
+
+        Raises:
+            ValueError: 当 `text` 为空、纯空白或包含换行时抛出.
+        """
+
+        normalized_text = self._normalize_append_text(text)
+        self.store.append_editable_text(entity_ref, normalized_text)
+        return {"ok": True}
+
+    async def load_record(self, entity_ref: str) -> StickyNoteRecord | None:
+        """读取一张完整的 sticky note record.
+
+        Args:
+            entity_ref: 目标实体引用.
+
+        Returns:
+            StickyNoteRecord | None: 不存在时返回 `None`.
+        """
+
+        return self.store.load_record(entity_ref)
+
+    async def save_record(self, record: StickyNoteRecord) -> StickyNoteRecord:
+        """保存一张完整的 sticky note record.
+
+        Args:
+            record: 待保存的记录对象.
+
+        Returns:
+            StickyNoteRecord: 保存后的最新记录.
+        """
+
+        return self.store.save_record(record)
+
+    async def create_record(self, entity_ref: str) -> StickyNoteRecord:
+        """创建一张空的实体便签.
+
+        Args:
+            entity_ref: 目标实体引用.
+
+        Returns:
+            StickyNoteRecord: 新建后的空记录.
+        """
+
+        return self.store.create_record(entity_ref)
+
+    async def delete_record(self, entity_ref: str) -> bool:
+        """删除一张实体便签.
+
+        Args:
+            entity_ref: 目标实体引用.
+
+        Returns:
+            bool: 目标存在并已删除时返回 `True`.
+        """
+
+        return self.store.delete_record(entity_ref)
+
+    async def list_records(
         self,
         *,
-        ctx: ToolExecutionContext,
-        key: str,
-        content: str,
-        scope: StickyScope | None = None,
-        scope_key: str | None = None,
-        edit_mode: MemoryEditMode = "readonly",
-        tags: list[str] | None = None,
-        author: str = "user",
-        metadata: dict[str, Any] | None = None,
-    ) -> MemoryItem:
-        """插入或更新一条 sticky note.
+        entity_kind: StickyNoteEntityKind | None = None,
+    ) -> list[StickyNoteRecord]:
+        """按实体分类列出 sticky note records.
 
         Args:
-            ctx: 当前工具执行上下文.
-            key: 这条 sticky note 的稳定键.
-            content: sticky note 正文.
-            scope: 可选 scope. 缺省时按上下文推断.
-            scope_key: 可选 scope_key. 缺省时按上下文推断.
-            edit_mode: 当前 sticky note 的编辑模式.
-            tags: 附加标签列表.
-            author: 写入者标识.
-            metadata: 附加元数据.
+            entity_kind: 可选分类过滤.
 
         Returns:
-            已写入的 MemoryItem.
+            list[StickyNoteRecord]: 命中的记录列表.
         """
 
-        normalized_key = self._normalize_key(key)
-        note_scope = self._resolve_scope(ctx=ctx, scope=scope)
-        note_scope_key = self._resolve_scope_key(
-            ctx=ctx,
-            scope=note_scope,
-            scope_key=scope_key,
+        normalized_entity_kind = (
+            normalize_sticky_note_entity_kind(entity_kind)
+            if entity_kind is not None
+            else None
         )
-        normalized_content = self._normalize_content(content)
-        if self._use_file_source(note_scope):
-            if edit_mode == "readonly":
-                raise PermissionError("sticky note readonly 区只允许人工维护")
-            if self.source is None:
-                raise RuntimeError("sticky notes file source is unavailable")
-            pair = self.source.write_editable(
-                scope=note_scope,
-                scope_key=note_scope_key,
-                key=normalized_key,
-                content=normalized_content,
-            )
-            return self._item_from_source_pair(
-                ctx=ctx,
-                scope=note_scope,
-                scope_key=note_scope_key,
-                key=normalized_key,
-                pair=pair,
-                tags=tags,
-                author=author,
-                metadata=metadata,
-            )
-
-        if self.store is None:
-            raise RuntimeError("sticky note store is unavailable")
-
-        now = self._timestamp(ctx)
-        item = MemoryItem(
-            memory_id=self._build_memory_id(
-                scope=note_scope,
-                scope_key=note_scope_key,
-                key=normalized_key,
-            ),
-            scope=note_scope,
-            scope_key=note_scope_key,
-            memory_type="sticky_note",
-            content=normalized_content,
-            edit_mode=edit_mode,
-            author=str(author).strip() or "user",
-            confidence=1.0 if edit_mode == "readonly" else 0.7,
-            source_run_id=ctx.run_id,
-            source_event_id=str(ctx.metadata.get("event_id", "") or "") or None,
-            tags=self._normalize_tags(tags),
-            metadata={
-                "note_key": normalized_key,
-                "platform": str(ctx.metadata.get("platform", "") or ""),
-                **dict(metadata or {}),
-            },
-            created_at=now,
-            updated_at=now,
-        )
-        existing = await self.get_note(
-            ctx=ctx,
-            key=normalized_key,
-            scope=note_scope,
-            scope_key=note_scope_key,
-        )
-        if existing is not None:
-            item.created_at = existing.created_at
-            item.updated_at = now
-        await self.store.upsert(item)
-        return item
-
-    async def get_note(
-        self,
-        *,
-        ctx: ToolExecutionContext,
-        key: str,
-        scope: StickyScope | None = None,
-        scope_key: str | None = None,
-    ) -> MemoryItem | None:
-        """读取一条 sticky note.
-
-        Args:
-            ctx: 当前工具执行上下文.
-            key: 目标 note_key.
-            scope: 可选 scope. 缺省时按上下文推断.
-            scope_key: 可选 scope_key. 缺省时按上下文推断.
-
-        Returns:
-            命中的 MemoryItem. 不存在时返回 None.
-        """
-
-        normalized_key = self._normalize_key(key)
-        note_scope = self._resolve_scope(ctx=ctx, scope=scope)
-        note_scope_key = self._resolve_scope_key(
-            ctx=ctx,
-            scope=note_scope,
-            scope_key=scope_key,
-        )
-        if self._use_file_source(note_scope):
-            if self.source is None:
-                return None
-            try:
-                pair = self.source.read_pair(
-                    scope=note_scope,
-                    scope_key=note_scope_key,
-                    key=normalized_key,
-                )
-            except FileNotFoundError:
-                return None
-            return self._item_from_source_pair(
-                ctx=ctx,
-                scope=note_scope,
-                scope_key=note_scope_key,
-                key=normalized_key,
-                pair=pair,
-                tags=[],
-                author="source",
-                metadata={},
-            )
-
-        if self.store is None:
-            return None
-        items = await self.store.find(
-            scope=note_scope,
-            scope_key=note_scope_key,
-            memory_types=["sticky_note"],
-        )
-        for item in items:
-            if str(item.metadata.get("note_key", "") or "") == normalized_key:
-                return item
-        return None
-
-    async def list_notes(
-        self,
-        *,
-        ctx: ToolExecutionContext,
-        scope: StickyScope | None = None,
-        scope_key: str | None = None,
-        edit_modes: list[MemoryEditMode] | None = None,
-        limit: int = 20,
-    ) -> list[MemoryItem]:
-        """列出当前 scope 下的 sticky notes.
-
-        Args:
-            ctx: 当前工具执行上下文.
-            scope: 可选 scope. 缺省时按上下文推断.
-            scope_key: 可选 scope_key. 缺省时按上下文推断.
-            edit_modes: 可选 edit_mode 过滤列表.
-            limit: 最多返回多少条.
-
-        Returns:
-            满足条件的 MemoryItem 列表.
-        """
-
-        note_scope = self._resolve_scope(ctx=ctx, scope=scope)
-        note_scope_key = self._resolve_scope_key(
-            ctx=ctx,
-            scope=note_scope,
-            scope_key=scope_key,
-        )
-        if self._use_file_source(note_scope):
-            if self.source is None:
-                return []
-            listed = self.source.list_notes(
-                scope=note_scope,
-                scope_key=note_scope_key,
-            )
-            items: list[MemoryItem] = []
-            for item in listed[: max(1, int(limit))]:
-                loaded = await self.get_note(
-                    ctx=ctx,
-                    key=str(item.get("key", "") or ""),
-                    scope=note_scope,
-                    scope_key=note_scope_key,
-                )
-                if loaded is None:
-                    continue
-                items.append(loaded)
-        else:
-            if self.store is None:
-                return []
-            items = await self.store.find(
-                scope=note_scope,
-                scope_key=note_scope_key,
-                memory_types=["sticky_note"],
-                limit=max(1, int(limit)),
-            )
-        if not edit_modes:
-            return items
-        allowed = {str(mode) for mode in edit_modes}
-        return [item for item in items if item.edit_mode in allowed]
-
-    async def delete_note(
-        self,
-        *,
-        ctx: ToolExecutionContext,
-        key: str,
-        scope: StickyScope | None = None,
-        scope_key: str | None = None,
-    ) -> bool:
-        """删除一条 sticky note.
-
-        Args:
-            ctx: 当前工具执行上下文.
-            key: 目标 note_key.
-            scope: 可选 scope. 缺省时按上下文推断.
-            scope_key: 可选 scope_key. 缺省时按上下文推断.
-
-        Returns:
-            当前 sticky note 是否存在并已删除.
-        """
-
-        note_scope = self._resolve_scope(ctx=ctx, scope=scope)
-        note_scope_key = self._resolve_scope_key(
-            ctx=ctx,
-            scope=note_scope,
-            scope_key=scope_key,
-        )
-        normalized_key = self._normalize_key(key)
-        if self._use_file_source(note_scope):
-            if self.source is None:
-                return False
-            return self.source.delete_note(
-                scope=note_scope,
-                scope_key=note_scope_key,
-                key=normalized_key,
-            )
-        item = await self.get_note(
-            ctx=ctx,
-            key=normalized_key,
-            scope=note_scope,
-            scope_key=note_scope_key,
-        )
-        if item is None or self.store is None:
-            return False
-        return await self.store.delete(item.memory_id)
-
-    # region helper
-    def _resolve_scope(
-        self,
-        *,
-        ctx: ToolExecutionContext,
-        scope: StickyScope | None,
-    ) -> StickyScope:
-        """解析当前操作使用的 scope.
-
-        Args:
-            ctx: 当前工具执行上下文.
-            scope: 显式传入的 scope.
-
-        Returns:
-            规范化后的 StickyScope.
-        """
-
-        value = str(scope or self.default_scope or "relationship").strip()
-        if scope is None and value == "relationship":
-            message_type = str(ctx.metadata.get("message_type", "") or "")
-            if message_type == "private":
-                return "user"
-        if value in _KNOWN_SCOPES:
-            return value  # type: ignore[return-value]
-        return self.default_scope
-
-    def _resolve_scope_key(
-        self,
-        *,
-        ctx: ToolExecutionContext,
-        scope: StickyScope,
-        scope_key: str | None,
-    ) -> str:
-        """解析当前操作使用的 scope_key.
-
-        Args:
-            ctx: 当前工具执行上下文.
-            scope: 已解析出的 scope.
-            scope_key: 显式传入的 scope_key.
-
-        Returns:
-            对应的 scope_key.
-        """
-
-        if scope_key:
-            return str(scope_key).strip()
-        channel_scope = str(ctx.metadata.get("channel_scope", "") or "")
-        if scope == "relationship":
-            return f"{ctx.actor_id}|{channel_scope}"
-        if scope == "user":
-            return ctx.actor_id
-        if scope == "channel":
-            return channel_scope
-        return "global"
-
-    def _use_file_source(self, scope: StickyScope) -> bool:
-        """判断当前 scope 是否走文件真源.
-
-        Args:
-            scope: 当前 sticky scope.
-
-        Returns:
-            是否使用文件真源.
-        """
-
-        return self.source is not None and scope in {"user", "channel"}
-
-    def _item_from_source_pair(
-        self,
-        *,
-        ctx: ToolExecutionContext,
-        scope: StickyScope,
-        scope_key: str,
-        key: str,
-        pair: dict[str, Any],
-        tags: list[str] | None,
-        author: str,
-        metadata: dict[str, Any] | None,
-    ) -> MemoryItem:
-        """把文件真源双区数据转成 MemoryItem.
-
-        Args:
-            ctx: 当前工具执行上下文.
-            scope: sticky scope.
-            scope_key: sticky scope_key.
-            key: note key.
-            pair: 文件真源双区对象.
-            tags: 标签列表.
-            author: 作者标识.
-            metadata: 附加元数据.
-
-        Returns:
-            统一 MemoryItem.
-        """
-
-        readonly_content = str(pair.get("readonly", {}).get("content", "") or "").strip()
-        editable_content = str(pair.get("editable", {}).get("content", "") or "").strip()
-        content = editable_content or readonly_content
-        mode: MemoryEditMode = "draft" if editable_content else "readonly"
-        updated_at = int(pair.get("updated_at", 0) or 0)
-        if updated_at <= 0:
-            updated_at = self._timestamp(ctx)
-        return MemoryItem(
-            memory_id=self._build_memory_id(
-                scope=scope,
-                scope_key=scope_key,
-                key=key,
-            ),
-            scope=scope,
-            scope_key=scope_key,
-            memory_type="sticky_note",
-            content=content,
-            edit_mode=mode,
-            author=str(author).strip() or "source",
-            confidence=1.0 if mode == "readonly" else 0.7,
-            source_run_id=ctx.run_id,
-            source_event_id=str(ctx.metadata.get("event_id", "") or "") or None,
-            tags=self._normalize_tags(tags),
-            metadata={
-                "note_key": key,
-                "readonly_content": readonly_content,
-                "editable_content": editable_content,
-                "source_backend": "file_backed",
-                **dict(metadata or {}),
-            },
-            created_at=updated_at,
-            updated_at=updated_at,
-        )
+        return self.store.list_records(entity_kind=normalized_entity_kind)
 
     @staticmethod
-    def _normalize_key(key: str) -> str:
-        """规范化 sticky note 键.
+    def _normalize_append_text(text: str) -> str:
+        """校验 bot 追加文本.
 
         Args:
-            key: 原始 note_key.
+            text: 原始追加文本.
 
         Returns:
-            去首尾空白后的稳定键.
+            str: 规范化后的单行文本.
+
+        Raises:
+            ValueError: 当文本为空、纯空白或包含换行时抛出.
         """
 
-        normalized = str(key).strip()
-        if not normalized:
-            raise ValueError("sticky note key cannot be empty")
-        return normalized
-
-    @staticmethod
-    def _normalize_content(content: str) -> str:
-        """规范化 sticky note 正文.
-
-        Args:
-            content: 原始正文.
-
-        Returns:
-            去首尾空白后的正文.
-        """
-
-        normalized = str(content).strip()
-        if not normalized:
-            raise ValueError("sticky note content cannot be empty")
-        return normalized
-
-    @staticmethod
-    def _normalize_tags(tags: list[str] | None) -> list[str]:
-        """规范化标签列表.
-
-        Args:
-            tags: 原始标签列表.
-
-        Returns:
-            去重后的标签列表.
-        """
-
-        normalized: list[str] = []
-        for value in list(tags or []):
-            text = str(value).strip()
-            if not text or text in normalized:
-                continue
-            normalized.append(text)
-        return normalized
-
-    @staticmethod
-    def _build_memory_id(
-        *,
-        scope: StickyScope,
-        scope_key: str,
-        key: str,
-    ) -> str:
-        """构造稳定的 sticky note memory_id.
-
-        Args:
-            scope: 当前 sticky note scope.
-            scope_key: 当前 sticky note scope_key.
-            key: 当前 sticky note 的逻辑键.
-
-        Returns:
-            一条稳定的 memory_id.
-        """
-
-        digest = hashlib.sha1(
-            f"{scope}|{scope_key}|{key}".encode("utf-8"),
-            usedforsecurity=False,
-        ).hexdigest()[:16]
-        return f"memory:sticky:{digest}"
-
-    @staticmethod
-    def _timestamp(ctx: ToolExecutionContext) -> int:
-        """从工具执行上下文中提取当前事件时间戳.
-
-        Args:
-            ctx: 当前工具执行上下文.
-
-        Returns:
-            当前事件时间戳. 不存在时返回 0.
-        """
-
-        value = ctx.metadata.get("event_timestamp", 0)
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return 0
-
-    # endregion
+        normalized_text = str(text or "").strip()
+        if not normalized_text:
+            raise ValueError("sticky note append text cannot be blank")
+        if "\n" in normalized_text or "\r" in normalized_text:
+            raise ValueError("sticky note append text must be single-line")
+        return normalized_text
 
 
 # endregion
+
+
+__all__ = ["StickyNoteService", "StickyNoteRecord"]

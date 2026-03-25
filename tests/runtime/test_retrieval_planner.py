@@ -74,7 +74,7 @@ def test_retrieval_planner_returns_current_plan_shape() -> None:
 
     assert asdict(plan) == {
         "requested_tags": [],
-        "sticky_note_scopes": [],
+        "sticky_note_targets": [],
         "retained_history": [
             {"role": "user", "content": "u1"},
             {"role": "assistant", "content": "a1"},
@@ -132,10 +132,12 @@ def test_retrieval_planner_keeps_context_labels_in_metadata() -> None:
 
     assert plan.metadata["context_labels"] == ["admin_message", "high_priority"]
 
-def test_retrieval_planner_filters_sticky_note_scopes_from_context() -> None:
+def test_retrieval_planner_keeps_sticky_note_targets_from_context() -> None:
     planner = RetrievalPlanner()
     ctx = _ctx()
-    ctx.context_decision = ContextDecision(sticky_note_scopes=["user"])
+    ctx.context_decision = ContextDecision(
+        sticky_note_targets=["qq:user:10001", "qq:group:20002"],
+    )
     plan = planner.prepare(ctx)
 
-    assert plan.sticky_note_scopes == ["user"]
+    assert plan.sticky_note_targets == ["qq:user:10001", "qq:group:20002"]

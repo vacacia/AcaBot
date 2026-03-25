@@ -25,9 +25,10 @@ from ..inbound.image_context import ImageContextService
 from ..inbound.message_preparation import MessagePreparationService
 from ..inbound.message_projection import MessageProjectionService
 from ..inbound.message_resolution import MessageResolutionService
-from ..memory.file_backed import StickyNotesSource
+from ..memory.file_backed import StickyNoteFileStore
 from ..memory.long_term_ingestor import LongTermMemoryIngestor
-from ..memory.sticky_notes import StickyNotesService
+from ..memory.sticky_note_renderer import StickyNoteRenderer
+from ..memory.sticky_notes import StickyNoteService
 from ..soul import SoulSource
 from ..model.model_agent_runtime import ModelAgentRuntime
 from ..outbox import Outbox
@@ -50,7 +51,6 @@ from .builders import (
     build_context_compactor,
     build_default_computer_policy,
     build_memory_broker,
-    build_memory_store,
     build_message_store,
     build_model_registry_manager,
     build_payload_json_writer,
@@ -113,7 +113,6 @@ def build_runtime_components(
     gateway: GatewayProtocol,
     agent: BaseAgent,
     message_store=None,
-    memory_store=None,
     router=None,
     thread_manager=None,
     run_manager=None,
@@ -160,7 +159,6 @@ def build_runtime_components(
     runtime_run_manager = run_manager or build_run_manager(config)
     runtime_channel_event_store = channel_event_store or build_channel_event_store(config)
     runtime_message_store = message_store or build_message_store(config)
-    runtime_memory_store = memory_store or build_memory_store(config)
     runtime_soul_dir = resolve_runtime_path(
         config,
         runtime_conf.get("soul_dir", runtime_conf.get("self_dir", "soul")),
@@ -170,10 +168,10 @@ def build_runtime_components(
         runtime_conf.get("sticky_notes_dir", "sticky-notes"),
     )
     runtime_soul_source = SoulSource(root_dir=runtime_soul_dir)
-    runtime_sticky_notes_source = StickyNotesSource(root_dir=runtime_sticky_notes_dir)
-    runtime_sticky_notes = StickyNotesService(
-        store=runtime_memory_store,
-        source=runtime_sticky_notes_source,
+    runtime_sticky_notes_source = StickyNoteFileStore(root_dir=runtime_sticky_notes_dir)
+    runtime_sticky_notes = StickyNoteService(
+        store=runtime_sticky_notes_source,
+        renderer=StickyNoteRenderer(),
     )
     runtime_skill_catalog = skill_catalog or build_skill_catalog(config)
     runtime_subagent_executor_registry = subagent_executor_registry or SubagentExecutorRegistry()
@@ -183,7 +181,6 @@ def build_runtime_components(
     )
     runtime_memory_broker = memory_broker or build_memory_broker(
         config,
-        memory_store=runtime_memory_store,
         soul_source=runtime_soul_source,
         sticky_notes_source=runtime_sticky_notes_source,
     )
@@ -258,6 +255,7 @@ def build_runtime_components(
         tool_broker=runtime_tool_broker,
         computer_runtime=runtime_computer_runtime,
         skill_catalog=runtime_skill_catalog,
+        sticky_note_service=runtime_sticky_notes,
         subagent_delegator=runtime_subagent_delegator,
     )
     builtin_plugins = build_builtin_runtime_plugins(profiles)
@@ -369,11 +367,11 @@ def build_runtime_components(
         app=app,
         run_manager=runtime_run_manager,
         thread_manager=runtime_thread_manager,
-        memory_store=runtime_memory_store,
         message_store=runtime_message_store,
         channel_event_store=runtime_channel_event_store,
         soul_source=runtime_soul_source,
         sticky_notes_source=runtime_sticky_notes_source,
+        sticky_notes=runtime_sticky_notes,
         profile_registry=profile_registry,
         plugin_manager=runtime_plugin_manager,
         skill_catalog=runtime_skill_catalog,
@@ -396,7 +394,6 @@ def build_runtime_components(
         run_manager=runtime_run_manager,
         channel_event_store=runtime_channel_event_store,
         message_store=runtime_message_store,
-        memory_store=runtime_memory_store,
         soul_source=runtime_soul_source,
         sticky_notes_source=runtime_sticky_notes_source,
         sticky_notes=runtime_sticky_notes,

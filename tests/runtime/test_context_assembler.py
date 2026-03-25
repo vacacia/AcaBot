@@ -107,7 +107,7 @@ def test_context_assembler_orders_system_prompt_and_message_slots() -> None:
         memory_blocks=[
             MemoryBlock(
                 content="retrieved",
-                source="store_memory",
+                source="long_term_memory",
                 scope="relationship",
                 assembly=MemoryAssemblySpec(
                     target_slot="message_prefix",
