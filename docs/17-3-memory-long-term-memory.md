@@ -122,7 +122,7 @@
 - `RuntimeApp` 成功写入 `ChannelEventStore` 后，调用一次 `LongTermMemoryIngestor.mark_dirty(thread_id)`
 - `Outbox` 成功写入 `MessageStore` 后，调用一次 `LongTermMemoryIngestor.mark_dirty(thread_id)`
 
-这里 `Outbox` 写入 assistant message 事实时，还要把真实的 `channel_scope` 一起带上，不能在后面再用 `thread_id` 去猜。
+这里 `Outbox` 写入 assistant message 事实时，还要把真实的 `conversation_id` 一起带上，不能在后面再用 `thread_id` 去猜。
 
 前台主线到这里就结束了。
 
@@ -407,7 +407,7 @@ async def get_thread_delta(
 - `payload`
 - `actor_id`
 - `actor_display_name | None`
-- `channel_scope`
+- `conversation_id`
 - `run_id | None`
 
 这里有两个字段的边界要写死：
@@ -478,7 +478,7 @@ async def get_thread_delta(
 - 当前 run 的 query text
 - `thread_id`
 - `actor_id`
-- `channel_scope`
+- `conversation_id`
 - retained history
 - working summary
 - 其他 retrieval 相关的上下文信息

@@ -58,6 +58,262 @@
 - 关键组件分别做什么
 把文档重点放在“最后到底要实现什么”, 不要被大量负面约束带歪。
 
+## 全局命名约束⭐
+
+后续 runtime、memory、tool、WebUI、control plane 相关设计, 统一使用下面这组主契约命名。
+
+### 正式词典
+
+- `actor_id`
+  - 只表示“这条消息是谁发的 / 当前谁在发言”
+  - 例子: `qq:user:12345`
+- `conversation_id`
+  - 表示“这条消息发生在哪个对话容器里”
+  - 它是现在很多地方 `channel_scope` 的正式收束名
+  - 例子: `qq:group:67890`
+- `thread_id`
+  - 表示 runtime 内部 thread 主线
+  - 它是运行时对象, 不是平台对象
+- `session_id`
+  - 表示命中的 session config
+  - 它是配置对象 id, 不是聊天容器 id
+- `entity_ref`
+  - 表示“当前被引用的实体对象”
+  - sticky note、retrieval target、WebUI 新建便签、bot 工具参数统一用它
+  - 它只能指向实体对象或对话容器对象
+  - 它可以指向用户, 也可以指向群/频道/房间/私聊容器
+  - 它不能指向 `thread_id`
+  - 它不能指向 `session_id`
+
+### 派生分类
+
+- `entity_kind`
+  - 只表示分类, 例如 `user` / `conversation`
+  - 它只用于 UI 分组、局部枚举或人类阅读辅助
+  - 它必须从 `entity_ref` 派生, 不是一个和 `entity_ref` 并列传来传去的主字段
+- `scope`
+  - 以后尽量退出主契约层
+  - 它只保留在局部分类语义里, 不再承担身份主键或正式对象引用
+
+### `entity_kind` 的正式派生规则
+
+对于 sticky note、retrieval target、WebUI 新建便签这一类正式对象引用:
+
+- `qq:user:12345` -> `entity_kind = user`
+- `qq:group:67890` -> `entity_kind = conversation`
+- `discord:channel:987654321` -> `entity_kind = conversation`
+- `matrix:room:!roomid:example.org` -> `entity_kind = conversation`
+
+也就是说:
+
+- 指向“人”的 `entity_ref` 派生为 `user`
+- 指向“群 / 频道 / 房间 / 私聊容器”这类对话容器的 `entity_ref` 派生为 `conversation`
+
+如果某个 `entity_ref` 不能被稳定派生到 `user` 或 `conversation`, 那它对 sticky note 来说就是无效对象:
+
+- 不能静默猜测
+- 不能临时发明第三种 `entity_kind`
+- 应该在 sticky note 边界直接拒绝
+
+`entity_ref` 的合法性校验和 `entity_kind` 的派生必须复用同一个共享解析 helper, 不能让 file store、service、retriever、control plane、WebUI 各自写一套判断。
+
+第一版这个共享规则至少要允许这些会出现在 canonical ref 里的字符:
+
+- 字母和数字
+- `:`
+- `-`
+- `_`
+- `.`
+- `@`
+- `!`
+
+除此之外, 路径分隔符和 `..` 这种会破坏目录边界的内容一律直接拒绝。
+
+### 固定规则
+
+- 同一个东西只保留一个主名字, 不要在不同对象之间来回换词
+- sticky note / retrieval / WebUI 如果是在说“这次要引用哪个对象”, 一律用 `entity_ref`
+- 消息事实如果是在说“谁在发言”, 一律用 `actor_id`
+- 当前发言人是 A, 但工具或检索想看 B 的信息时:
+  - `actor_id` 仍然是 A
+  - B 只能写成 `entity_ref`
+  - 不准把 B 也叫 `actor_id`
+- 消息事实如果是在说“消息发生在哪个聊天容器里”, 一律用 `conversation_id`
+- runtime 内部执行主线如果是在说“这次 run 落在哪条线程”, 一律用 `thread_id`
+- 会话配置如果是在说“命中了哪份 session config”, 一律用 `session_id`
+- `session_id` 和 `conversation_id` 在某些场景下值可以相同, 但语义永远不同
+- 文档和代码里不要写成“`session_id` 或 `conversation_id`”, 也不要把两者混成一个概念
+
+### 固定案例
+
+#### 群聊里张三发消息
+
+- `actor_id = qq:user:12345`
+- `conversation_id = qq:group:67890`
+- `thread_id = runtime 内部某条 thread`
+- `session_id = 命中的 session config`
+
+如果 sticky note 要读取相关便签:
+
+- 当前发言人的 user note:
+  - `entity_ref = actor_id`
+- 当前对话容器的 note:
+  - `entity_ref = conversation_id`
+
+#### 私聊里和某个用户对话
+
+- `actor_id = qq:user:12345`
+- `conversation_id = qq:private:12345` 或当前系统定义的私聊容器 id
+- `thread_id = runtime 内部某条 thread`
+- `session_id = session:qq:private:12345`
+
+如果 sticky note 要读取相关便签:
+
+- 当前对话对象的 note:
+  - `entity_ref = actor_id`
+
+#### 同一个语义, 不同平台都按同一套名字表达
+
+这些例子不是在声明“现在已经支持这些平台”, 而是在固定命名规则:
+
+- QQ 群聊
+  - `actor_id = qq:user:12345`
+  - `conversation_id = qq:group:67890`
+  - 当前对话容器 note:
+    - `entity_ref = qq:group:67890`
+  - 当前发言人 note:
+    - `entity_ref = qq:user:12345`
+
+- Telegram 群组
+  - `actor_id = telegram:user:12345`
+  - `conversation_id = telegram:group:-100987654321`
+  - 当前对话容器 note:
+    - `entity_ref = telegram:group:-100987654321`
+  - 当前发言人 note:
+    - `entity_ref = telegram:user:12345`
+
+- Discord 频道
+  - `actor_id = discord:user:abc123`
+  - `conversation_id = discord:channel:987654321`
+  - 当前对话容器 note:
+    - `entity_ref = discord:channel:987654321`
+  - 当前发言人 note:
+    - `entity_ref = discord:user:abc123`
+
+- Matrix 房间
+  - `actor_id = matrix:user:@alice:example.org`
+  - `conversation_id = matrix:room:!roomid:example.org`
+  - 当前对话容器 note:
+    - `entity_ref = matrix:room:!roomid:example.org`
+  - 当前发言人 note:
+    - `entity_ref = matrix:user:@alice:example.org`
+
+#### 同一个对象在不同层里的名字必须固定
+
+例子 1: 群聊事件进入系统
+
+- 平台事实层:
+  - `actor_id = qq:user:12345`
+  - `conversation_id = qq:group:67890`
+- session config 层:
+  - `session_id = session:qq:group:67890:default`
+- runtime 执行层:
+  - `thread_id = thread:front:qq:group:67890`
+- sticky note / retrieval 层:
+  - 发言人 note: `entity_ref = qq:user:12345`
+  - 对话容器 note: `entity_ref = qq:group:67890`
+
+这里要注意:
+
+- `conversation_id` 表示聊天容器
+- `session_id` 表示命中的配置
+- 它们在某些场景下值可以相同, 但永远不是一个概念
+
+例子 2: bot 主动去看另一个人的便签
+
+- 当前事件:
+  - `actor_id = qq:user:11111`
+  - `conversation_id = qq:group:67890`
+- bot 想读取李四的便签:
+  - `entity_ref = qq:user:22222`
+
+这里要注意:
+
+- `actor_id` 仍然表示当前谁在发言
+- `entity_ref` 表示这次工具/检索真正引用的是谁
+- 两者可以相同, 也可以不同
+- `qq:user:22222` 绝对不能因为“当前要查询他”就被改叫成 `actor_id`
+
+例子 3: 私聊里读取当前对话对象
+
+- 当前事件:
+  - `actor_id = telegram:user:55555`
+  - `conversation_id = telegram:private:55555`
+- sticky note:
+  - `entity_ref = actor_id`
+
+#### 名字的使用边界
+
+- 如果你想表达“谁在发言”, 用 `actor_id`
+- 如果你想表达“消息在哪个聊天容器里发生”, 用 `conversation_id`
+- 如果你想表达“runtime 内部哪条执行主线”, 用 `thread_id`
+- 如果你想表达“命中了哪份配置”, 用 `session_id`
+- 如果你想表达“这次要引用哪个用户/群/频道/房间/私聊容器对象”, 用 `entity_ref`
+
+#### 常见错误和正确收束
+
+- 旧写法:
+  - `channel_scope = qq:group:67890`
+- 新写法:
+  - `conversation_id = qq:group:67890`
+
+- 旧写法:
+  - `sticky_note_read(scope="user", entity_id="qq:user:12345")`
+- 新写法:
+  - `sticky_note_read(entity_ref="qq:user:12345")`
+
+- 旧写法:
+  - planner 产出 `sticky_note_scopes = ["user", "channel"]`
+- 新写法:
+  - planner 产出具体 `entity_ref`
+  - 例如:
+    - `qq:user:12345`
+    - `qq:group:67890`
+
+- 旧写法:
+  - `scope + scope_key`
+- 新写法:
+  - 先问它是不是其实想表达一个正式对象
+  - 如果是, 直接收成 `entity_ref`
+
+### 收束规则
+
+- 以后在代码和文档里看见旧命名, 例如:
+  - `channel_scope`
+  - `scope_key`
+  - `sticky_note_scopes`
+  - `scope + entity_id` 这种旧组合写法
+- 只要正在修改那一层代码或文档, 就顺手把它收束到这套正式命名
+- 不保留“旧名字也行”的双轨表达
+- 发现一个对象同时带着两套同义字段时, 直接删掉重复表达, 回到这份词典
+
+### 对 sticky note 的直接要求
+
+- sticky note 的正式主对象引用统一用 `entity_ref`
+- `entity_kind` 只用于 `user/conversation` 这种分组显示
+- `entity_kind` 必须从 `entity_ref` 派生, 不是 sticky note file store / service 的外部入参
+- sticky note retrieval 的正式字段形状统一收成:
+  - `sticky_note_targets: list[str]`
+  - 其中每个元素都必须是一个合法的 `entity_ref`
+- prompt 注入、retrieval target、bot 工具、WebUI 新建便签, 统一围绕 `entity_ref` 说话
+- `scope + entity_id` 不再作为 sticky note 的正式主契约
+
+### 对旧字段的理解
+
+- 看到 `channel_scope`, 直接把它理解成 `conversation_id`
+- 看到 sticky note 里的 `scope`, 优先把它理解成局部分类词; 如果它在表达对象主语义, 就顺手收成 `entity_ref` 或 `entity_kind`
+- 看到 `scope + scope_key`, 优先思考它真正想表达的是不是某种 `entity_ref`
+
 
 # 项目组件理解⭐
 

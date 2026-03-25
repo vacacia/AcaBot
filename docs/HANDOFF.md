@@ -2,9 +2,15 @@
 
 ## 统一上下文装配与记忆主线
 
-前台 runtime 现在已经把最终模型输入收口到 `ContextAssembler + PayloadJsonWriter`，`ctx.system_prompt` 和 `ctx.messages` 只表示最终结果，`RetrievalPlanner` 也已经收成 prepare-only；在这条主线上，这轮把长期记忆写入线真的接进来了：事实存储新增了 sequence-aware 增量读取，runtime 新增 `StoreBackedConversationFactReader` 和 `LongTermMemoryIngestor`，前台写入路径现在是 `RuntimeApp / Outbox -> mark_dirty(thread_id) -> ConversationFactReader -> LongTermMemoryWritePort`，而且 assistant message 事实会显式带上真实 `channel_scope`。
+前台 runtime 现在已经把最终模型输入收口到 `ContextAssembler + PayloadJsonWriter`，`ctx.system_prompt` 和 `ctx.messages` 只表示最终结果，`RetrievalPlanner` 也已经收成 prepare-only；在这条主线上，这轮把长期记忆写入线真的接进来了：事实存储新增了 sequence-aware 增量读取，runtime 新增 `StoreBackedConversationFactReader` 和 `LongTermMemoryIngestor`，前台写入路径现在是 `RuntimeApp / Outbox -> mark_dirty(thread_id) -> ConversationFactReader -> LongTermMemoryWritePort`，而且 assistant message 事实会显式带上真实 `conversation_id`。
 这次真正证明有效的是 `dirty_threads + 单 worker + 双游标 + 启动扫库补 dirty` 这一套，`mark_dirty()` 保持同步、best-effort，不拖垮前台主线；另外 worker 循环已经补掉了 `asyncio.Event` 的丢唤醒竞态，失败时也不会推进游标，`save_cursor()` 失败会被收成“允许下次重复 ingest、交给 LTM 自己去重”的受控分支。
 事实层这次也顺手钉成了更硬的契约：`ChannelEventStore / MessageStore` 对同 UID 只接受幂等重复写入，不再允许静默改写既有事实，这样 sequence 游标语义才站得住；`MemoryBroker` 现在继续统一读取 `/self`、sticky notes 和 store-backed 长期记忆，`SoulSource` 实际管理的已经是 `/self/today.md + /self/daily/*.md`，pipeline 不再自己读文件拼上下文；当前 bootstrap 只支持可选注入 `LongTermMemoryIngestor`，还没有默认 LTM backend，所以后面继续做这块时，先看 `docs/17-3-memory-long-term-memory.md`、`src/acabot/runtime/memory/conversation_facts.py`、`src/acabot/runtime/memory/long_term_ingestor.py`，不要把长期记忆写入重新挂回 `ThreadPipeline` 收尾，也不要发明持久化 dirty 表。
+
+## Sticky Note 重构设计
+
+sticky note 这一轮的正式设计已经单独收成 [17-2-memory-stickynotes-refactor.md](/home/acacia/AcaBot/docs/17-2-memory-stickynotes-refactor.md)：它现在被定义成 runtime 内建的实体便签 memory layer，正式主契约统一用 `entity_ref`，派生分类只保留 `entity_kind = user | conversation`，数据对象收成 `StickyNoteRecord`，组件边界是 `StickyNoteFileStore / StickyNoteService / StickyNoteRenderer / StickyNoteRetriever`，并且 bot 工具面正式只剩 `sticky_note_read(entity_ref)` 和 `sticky_note_append(entity_ref, text)`。
+这次最重要的纠偏是把 sticky note 从 `MemoryItem / MemoryStore / structured_memory` 这整条旧链路里彻底抽离出来，不做 legacy 兼容；retrieval 继续走主线，但 bot tools 虽然是 builtin adapter，也不享受工具特权，还是按 `enabled_tools` 控制，而 retrieval 开关和 tool 开关彼此独立。
+如果后面接着做 sticky note，先读 [17-2-memory-stickynotes-refactor.md](/home/acacia/AcaBot/docs/17-2-memory-stickynotes-refactor.md)，再读 [tmp-sticky-note-refactor-decisions.md](/home/acacia/AcaBot/docs/tmp-sticky-note-refactor-decisions.md) 和 [17-2-memory-stickynotes.md](/home/acacia/AcaBot/docs/17-2-memory-stickynotes.md)；前者讲正式设计，第二篇保留完整拍板过程，第三篇继续记录当前旧代码现状。
 
 ## 2026-03-23 skill 对齐已经完成主线实现
 

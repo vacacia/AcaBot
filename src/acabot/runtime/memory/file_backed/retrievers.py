@@ -90,6 +90,7 @@ class StickyNotesFileRetriever:
                         scope=scope,
                         source_ids=[f"sticky:{scope}:{scope_key}:{key}"],
                         assembly=MemoryAssemblySpec(
+                            # TODO: 后续支持按记忆类型配置 target slot; 当前统一靠近 user message。
                             target_slot="message_prefix",
                             priority=800,
                         ),
