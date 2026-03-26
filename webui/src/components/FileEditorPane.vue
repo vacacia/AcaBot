@@ -27,8 +27,8 @@ watch(
 </script>
 
 <template>
-  <div class="layout">
-    <aside class="list">
+  <div class="layout ds-two-column">
+    <aside class="list ds-panel ds-card-padding-sm">
       <button
         v-for="file in files"
         :key="file.name"
@@ -40,9 +40,9 @@ watch(
         {{ file.name }}<span v-if="file.is_core"> (core)</span>
       </button>
     </aside>
-    <section class="editor">
-      <textarea v-model="draft" rows="24"></textarea>
-      <button class="save" type="button" @click="emit('save', { name: selectedName, content: draft })">
+    <section class="editor ds-panel ds-card-padding-sm">
+      <textarea class="ds-textarea ds-mono" v-model="draft" rows="24"></textarea>
+      <button class="ds-primary-button save" type="button" @click="emit('save', { name: selectedName, content: draft })">
         保存
       </button>
     </section>
@@ -51,16 +51,10 @@ watch(
 
 <style scoped>
 .layout {
-  display: grid;
-  grid-template-columns: 260px 1fr;
-  gap: 12px;
+  align-items: start;
 }
 
 .list {
-  border: 1px solid var(--panel-line-strong);
-  border-radius: 10px;
-  padding: 8px;
-  background: var(--panel-white);
   max-height: 70vh;
   overflow: auto;
 }
@@ -69,47 +63,37 @@ watch(
   width: 100%;
   text-align: left;
   border: 0;
-  border-radius: 8px;
+  border-radius: 12px;
   background: transparent;
-  padding: 8px;
+  padding: 10px 12px;
   cursor: pointer;
+  color: var(--text);
 }
 
 .file-item.active {
-  background: var(--panel-blue-soft);
-  color: var(--panel-blue-soft-text);
-  font-weight: 600;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 700;
 }
 
 .editor {
-  border: 1px solid var(--panel-line-strong);
-  border-radius: 10px;
-  padding: 10px;
-  background: var(--panel-white);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
-textarea {
-  width: 100%;
-  resize: vertical;
-  min-height: 400px;
-  border: 1px solid var(--panel-line-soft);
-  border-radius: 8px;
-  padding: 8px;
-  font-family: monospace;
-  background: var(--panel-strong);
-  color: var(--text);
+.ds-textarea {
+  min-height: 420px;
 }
 
 .save {
   align-self: flex-end;
-  border: 0;
-  border-radius: 8px;
-  background: linear-gradient(135deg, var(--button-primary-start) 0%, var(--button-primary-end) 100%);
-  color: #fff;
-  padding: 8px 14px;
-  cursor: pointer;
+}
+
+@media (max-width: 900px) {
+  .save {
+    width: 100%;
+    align-self: stretch;
+  }
 }
 </style>

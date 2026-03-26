@@ -9,59 +9,45 @@ type SkillItem = {
   description?: string
 }
 
-const items = ref<SkillItem[]>(peekCachedGet<SkillItem[]>("/api/skills") ?? [])
+const items = ref<SkillItem[]>(peekCachedGet<SkillItem[]>('/api/skills') ?? [])
 
 onMounted(() => {
-  void apiGet<SkillItem[]>("/api/skills").then((payload) => {
+  void apiGet<SkillItem[]>('/api/skills').then((payload) => {
     items.value = payload
   })
 })
 </script>
 
 <template>
-  <section class="panel">
-    <p class="eyebrow">Skills</p>
-    <h1>已安装 Skills</h1>
-    <article v-for="item in items" :key="item.skill_name" class="card">
-      <h2>{{ item.display_name || item.skill_name }}</h2>
-      <p>{{ item.description || "暂无说明" }}</p>
+  <section class="ds-page">
+    <article class="ds-panel ds-panel-padding">
+      <div class="ds-section-head compact-head">
+        <div class="ds-section-title">
+          <div>
+            <p class="ds-eyebrow">Skills</p>
+            <h2>已安装 Skills</h2>
+            <p class="ds-summary">统一展示技能名称、说明和当前安装状态，先把目录页和设计系统对齐。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="ds-list">
+        <article v-for="item in items" :key="item.skill_name" class="ds-list-item ds-list-item-padding skill-item">
+          <strong>{{ item.display_name || item.skill_name }}</strong>
+          <p class="ds-summary compact">{{ item.description || '暂无说明' }}</p>
+        </article>
+      </div>
     </article>
   </section>
 </template>
 
 <style scoped>
-.panel,
-.card {
-  border: 1px solid var(--line);
-  border-radius: 24px;
-  background: var(--panel);
-  box-shadow: var(--shadow);
+.compact-head {
+  margin-bottom: 14px;
 }
 
-.panel {
-  padding: 22px 24px;
-}
-
-.card {
-  padding: 16px;
-  margin-top: 14px;
-}
-
-.eyebrow {
-  margin: 0 0 8px;
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-h1,
-h2 {
-  margin: 0;
-}
-
-p {
-  color: var(--muted);
+.skill-item {
+  display: grid;
+  gap: 6px;
 }
 </style>

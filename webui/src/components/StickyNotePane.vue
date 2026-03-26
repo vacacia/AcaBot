@@ -30,72 +30,43 @@ watch(
 </script>
 
 <template>
-  <div class="layout">
-    <section>
-      <header>Readonly</header>
-      <textarea v-model="readonlyDraft" rows="16"></textarea>
-      <button type="button" @click="emit('save-readonly', readonlyDraft)">保存只读区</button>
+  <div class="layout ds-two-column">
+    <section class="note-section ds-panel ds-card-padding-sm">
+      <header class="section-title">Readonly</header>
+      <textarea class="ds-textarea ds-mono" v-model="readonlyDraft" rows="16"></textarea>
+      <button class="ds-primary-button note-save" type="button" @click="emit('save-readonly', readonlyDraft)">保存只读区</button>
     </section>
-    <section>
-      <header>Editable</header>
-      <textarea v-model="editableDraft" rows="16"></textarea>
-      <button type="button" @click="emit('save-editable', editableDraft)">保存可编辑区</button>
+    <section class="note-section ds-panel ds-card-padding-sm">
+      <header class="section-title">Editable</header>
+      <textarea class="ds-textarea ds-mono" v-model="editableDraft" rows="16"></textarea>
+      <button class="ds-primary-button note-save" type="button" @click="emit('save-editable', editableDraft)">保存可编辑区</button>
     </section>
   </div>
 </template>
 
 <style scoped>
-.layout {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-section {
-  border: 1px solid var(--panel-line-strong);
-  border-radius: 10px;
-  padding: 10px;
-  background: var(--panel-white);
+.note-section {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
 }
 
-header {
-  font-weight: 700;
+.section-title {
+  font-weight: 800;
   color: var(--heading-strong);
 }
 
-textarea {
-  width: 100%;
-  resize: vertical;
-  border: 1px solid var(--panel-line-soft);
-  border-radius: 8px;
-  padding: 8px;
-  font-family: monospace;
-  box-sizing: border-box;
+.ds-textarea {
   min-height: 320px;
-  background: var(--panel-strong);
-  color: var(--text);
 }
 
-button {
+.note-save {
   align-self: flex-end;
-  border: 0;
-  border-radius: 8px;
-  background: linear-gradient(135deg, var(--button-primary-start) 0%, var(--button-primary-end) 100%);
-  color: #fff;
-  padding: 8px 14px;
-  cursor: pointer;
 }
 
 @media (max-width: 900px) {
-  .layout {
-    grid-template-columns: 1fr;
-  }
-
-  button {
+  .note-save {
     width: 100%;
     align-self: stretch;
   }

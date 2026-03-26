@@ -13,7 +13,7 @@ const draft = ref<AdminsPayload | null>(
     ? {
         admin_actor_ids: [...cachedAdmins.admin_actor_ids],
       }
-    : null
+    : null,
 )
 const adminActorIdsText = ref(cachedAdmins?.admin_actor_ids.join("\n") ?? "")
 const saveMessage = ref("")
@@ -66,149 +66,35 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="panel">
-    <div class="header">
-      <div>
-        <p class="eyebrow">Admins</p>
+  <section class="ds-page">
+    <header class="ds-hero">
+      <div class="ds-hero-copy">
+        <p class="ds-eyebrow">Admins</p>
         <h1>管理员</h1>
-        <p class="summary">这里只维护一份共享管理员列表。每行一个标识，例如 <code>qq:private:123456</code>。</p>
+        <p class="ds-summary">这里只维护一份共享管理员列表。每行一个标识，例如 <code>qq:private:123456</code>。</p>
       </div>
-      <div class="actions">
-        <button class="primary-button" type="button" :disabled="loading || !draft" @click="void saveAdmins()">
-          保存
-        </button>
+      <div class="ds-actions">
+        <button class="ds-primary-button" type="button" :disabled="loading || !draft" @click="void saveAdmins()">保存</button>
       </div>
-    </div>
+    </header>
 
-    <p v-if="saveMessage" class="status ok">{{ saveMessage }}</p>
-    <p v-if="errorMessage" class="status error">{{ errorMessage }}</p>
-    <p v-if="loading" class="summary">正在加载管理员设置...</p>
+    <p v-if="saveMessage" class="ds-status is-ok">{{ saveMessage }}</p>
+    <p v-if="errorMessage" class="ds-status is-error">{{ errorMessage }}</p>
+    <p v-if="loading" class="ds-empty">正在加载管理员设置...</p>
 
-    <article v-else-if="draft" class="card">
-      <h2>共享管理员列表</h2>
-      <p class="card-summary">系统权限判断也读这一份列表。</p>
-      <label class="field">
+    <article v-else-if="draft" class="ds-panel ds-panel-padding">
+      <div class="ds-section-head">
+        <div class="ds-section-title">
+          <div>
+            <h2>共享管理员列表</h2>
+            <p class="ds-summary">系统权限判断也读这一份列表。</p>
+          </div>
+        </div>
+      </div>
+      <label class="ds-field">
         <span>管理员</span>
-        <textarea v-model="adminActorIdsText" rows="10"></textarea>
+        <textarea class="ds-textarea ds-mono" v-model="adminActorIdsText" rows="10"></textarea>
       </label>
     </article>
   </section>
 </template>
-
-<style scoped>
-.panel {
-  display: grid;
-  gap: 20px;
-}
-
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-}
-
-.eyebrow {
-  margin: 0 0 8px;
-  font-size: 12px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-h1 {
-  margin: 0;
-  font-size: 36px;
-  color: var(--heading-strong);
-}
-
-.summary {
-  margin: 10px 0 0;
-  max-width: 720px;
-  color: var(--muted);
-  line-height: 1.6;
-}
-
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.primary-button {
-  border: none;
-  border-radius: 999px;
-  padding: 10px 18px;
-  font-size: 14px;
-  font-weight: 700;
-  color: #fff;
-  cursor: pointer;
-  background: linear-gradient(135deg, var(--button-primary-start) 0%, var(--button-primary-end) 100%);
-  box-shadow: 0 14px 30px rgba(10, 74, 123, 0.18);
-}
-
-.primary-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-  box-shadow: none;
-}
-
-.status {
-  margin: 0;
-  font-size: 14px;
-}
-
-.status.ok {
-  color: var(--success);
-}
-
-.status.error {
-  color: var(--danger);
-}
-
-.card {
-  border: 1px solid var(--panel-line-strong);
-  border-radius: 24px;
-  padding: 24px;
-  background: var(--panel-white);
-  box-shadow: var(--shadow);
-  display: grid;
-  gap: 14px;
-}
-
-.card h2 {
-  margin: 0;
-  font-size: 22px;
-  color: var(--heading-strong);
-}
-
-.card-summary {
-  margin: 0;
-  color: var(--muted);
-  line-height: 1.6;
-}
-
-.field {
-  display: grid;
-  gap: 8px;
-}
-
-.field span {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--heading-soft);
-}
-
-.field textarea {
-  width: 100%;
-  border: 1px solid var(--panel-line-soft);
-  border-radius: 18px;
-  padding: 14px 16px;
-  font: inherit;
-  resize: vertical;
-  min-height: 220px;
-  background: var(--panel-strong);
-  color: var(--text);
-  box-sizing: border-box;
-}
-</style>

@@ -219,8 +219,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="panel" :class="panelClass">
-    <div class="panel-header">
+  <section class="panel ds-panel ds-panel-padding" :class="panelClass">
+    <div class="panel-header ds-section-head">
       <div>
         <h2>{{ title }}</h2>
         <p>{{ summary }}</p>

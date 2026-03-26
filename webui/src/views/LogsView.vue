@@ -8,21 +8,21 @@ const displayLimit = ref(600)
 </script>
 
 <template>
-  <section class="page">
-    <header class="hero">
-      <div>
-        <p class="eyebrow">Logs</p>
+  <section class="ds-page">
+    <header class="ds-hero">
+      <div class="ds-hero-copy">
+        <p class="ds-eyebrow">Logs</p>
         <h1>日志台</h1>
-        <p class="summary">首页只留预览。这里是信息量拉满的独立日志页。</p>
+        <p class="ds-summary">首页只留预览。这里是信息量拉满的独立日志页。</p>
       </div>
-      <div class="actions">
-        <label class="toggle">
+      <div class="ds-actions actions-wrap">
+        <label class="toggle-row ds-surface ds-card-padding-sm">
           <input v-model="denseMode" type="checkbox" />
           <span>{{ denseMode ? "紧凑模式" : "面板模式" }}</span>
         </label>
-        <label class="limit">
+        <label class="limit-row ds-surface ds-card-padding-sm">
           <span>显示条数</span>
-          <select v-model="displayLimit">
+          <select class="ds-select" v-model="displayLimit">
             <option :value="200">200</option>
             <option :value="400">400</option>
             <option :value="600">600</option>
@@ -44,74 +44,33 @@ const displayLimit = ref(600)
 </template>
 
 <style scoped>
-.page {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-.hero {
-  border: 1px solid var(--line);
-  border-radius: 24px;
-  background: var(--panel);
-  backdrop-filter: blur(16px);
-  box-shadow: var(--shadow);
-  display: flex;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 20px 22px;
-}
-
-.eyebrow {
-  margin: 0 0 8px;
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-h1,
-.summary {
-  margin: 0;
-}
-
-.summary {
-  margin-top: 8px;
-  color: var(--muted);
-}
-
-.actions {
-  display: flex;
-  flex-wrap: wrap;
+.actions-wrap {
   justify-content: flex-end;
-  align-items: center;
-  gap: 12px;
 }
 
-.toggle,
-.limit {
+.toggle-row,
+.limit-row {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   color: var(--muted);
-  font-size: 14px;
 }
 
-.limit select {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--panel-strong);
-  color: var(--text);
-  padding: 8px 10px;
+.toggle-row {
+  border-radius: 18px;
+}
+
+.limit-row {
+  min-width: 220px;
+  border-radius: 18px;
+}
+
+.limit-row .ds-select {
+  min-width: 110px;
 }
 
 @media (max-width: 900px) {
-  .hero {
-    flex-direction: column;
-  }
-
-  .actions {
+  .actions-wrap {
     justify-content: stretch;
   }
 }

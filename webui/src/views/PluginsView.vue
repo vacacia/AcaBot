@@ -51,101 +51,43 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="panel">
-    <div class="header">
-      <div>
-        <p class="eyebrow">Plugins</p>
+  <section class="ds-page">
+    <header class="ds-hero">
+      <div class="ds-hero-copy">
+        <p class="ds-eyebrow">Plugins</p>
         <h1>插件开关</h1>
+        <p class="ds-summary">统一在这里查看插件状态、保存配置和触发重载。</p>
       </div>
-      <div class="actions">
-        <button type="button" @click="void reloadPlugins()">重载</button>
-        <button type="button" @click="void save()">保存插件配置</button>
+      <div class="ds-actions">
+        <button class="ds-secondary-button" type="button" @click="void reloadPlugins()">重载</button>
+        <button class="ds-primary-button" type="button" @click="void save()">保存插件配置</button>
       </div>
-    </div>
-    <p v-if="saveMessage" class="status ok">{{ saveMessage }}</p>
-    <p v-if="errorMessage" class="status error">{{ errorMessage }}</p>
-    <label v-for="item in items" :key="item.path" class="item">
-      <input v-model="item.enabled" type="checkbox" />
-      <div>
-        <strong>{{ item.display_name || item.name || item.path }}</strong>
-        <p>{{ item.name || "未命名插件" }}</p>
-        <p>{{ item.path }}</p>
-      </div>
-    </label>
+    </header>
+
+    <p v-if="saveMessage" class="ds-status is-ok">{{ saveMessage }}</p>
+    <p v-if="errorMessage" class="ds-status is-error">{{ errorMessage }}</p>
+
+    <section class="ds-list">
+      <label v-for="item in items" :key="item.path" class="ds-list-item ds-list-item-padding item">
+        <input v-model="item.enabled" type="checkbox" />
+        <div>
+          <strong>{{ item.display_name || item.name || item.path }}</strong>
+          <p class="ds-summary compact">{{ item.name || "未命名插件" }}</p>
+          <p class="ds-kicker ds-mono compact">{{ item.path }}</p>
+        </div>
+      </label>
+    </section>
   </section>
 </template>
 
 <style scoped>
-.panel {
-  border: 1px solid var(--line);
-  border-radius: 24px;
-  background: var(--panel);
-  box-shadow: var(--shadow);
-  padding: 22px 24px;
-}
-
-.header {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-.actions {
-  display: flex;
-  gap: 10px;
-}
-
-.eyebrow {
-  margin: 0 0 8px;
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-h1 {
-  margin: 0;
-}
-
-button {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--panel-strong);
-  color: var(--text);
-  padding: 10px 12px;
-  cursor: pointer;
-}
-
-.status {
-  margin: 0 0 16px;
-  padding: 10px 12px;
-  border-radius: 12px;
-}
-
-.status.ok {
-  background: rgba(17, 120, 74, 0.08);
-  color: var(--success);
-}
-
-.status.error {
-  background: rgba(186, 41, 41, 0.08);
-  color: var(--danger);
-}
-
 .item {
   display: grid;
   grid-template-columns: 20px 1fr;
   gap: 10px;
-  padding: 14px;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: var(--panel-white);
-  margin-bottom: 12px;
 }
 
-p {
-  color: var(--muted);
+.compact {
+  margin-top: 4px;
 }
 </style>

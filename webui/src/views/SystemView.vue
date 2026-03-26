@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue"
+
 import StatusCard from "../components/StatusCard.vue"
 import { apiGet, peekCachedGet } from "../lib/api"
 
@@ -36,11 +37,18 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="page">
-    <article class="panel">
-      <p class="eyebrow">System</p>
-      <h1>系统信息</h1>
-      <div class="grid">
+  <section class="ds-page">
+    <article class="ds-panel ds-panel-padding">
+      <div class="ds-section-head">
+        <div class="ds-section-title">
+          <div>
+            <p class="ds-eyebrow">System</p>
+            <h2>系统信息</h2>
+            <p class="ds-summary">这里主要看运行环境、网关状态与 backend 会话绑定位置。</p>
+          </div>
+        </div>
+      </div>
+      <div class="ds-card-grid-3">
         <StatusCard title="Storage" :value="meta?.storage_mode || '-'" :hint="meta?.config_path || '-'" />
         <StatusCard title="Gateway" :value="gateway.connected ? 'Connected' : 'Disconnected'" hint="当前网关状态" />
         <StatusCard title="Backend" :value="backend.configured ? 'Ready' : 'Unavailable'" :hint="backend.session_path || '-'" />
@@ -48,45 +56,3 @@ onMounted(() => {
     </article>
   </section>
 </template>
-
-<style scoped>
-.page {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-.panel {
-  border: 1px solid var(--line);
-  border-radius: 24px;
-  background: var(--panel);
-  box-shadow: var(--shadow);
-  padding: 22px 24px;
-}
-
-.grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-  margin-top: 16px;
-}
-
-.eyebrow {
-  margin: 0 0 8px;
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-h1 {
-  margin: 0;
-}
-
-@media (max-width: 900px) {
-  .grid {
-    grid-template-columns: 1fr;
-  }
-}
-</style>

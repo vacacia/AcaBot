@@ -71,21 +71,21 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="page">
-    <header class="hero">
-      <div>
-        <p class="eyebrow">Soul</p>
+  <section class="ds-page">
+    <header class="ds-hero">
+      <div class="ds-hero-copy">
+        <p class="ds-eyebrow">Soul</p>
         <h1>稳定自我真源</h1>
-        <p class="summary">`soul` 固定进入对外交互链路，不进入维护链路。主文件会一直保持在列表顶部。</p>
+        <p class="ds-summary">`soul` 固定进入对外交互链路，不进入维护链路。主文件会一直保持在列表顶部。</p>
       </div>
-      <div class="create-row">
-        <input v-model="newFileName" type="text" placeholder="新建附加文件名，例如 persona.md" />
-        <button class="primary" type="button" @click="void createFile()">新建文件</button>
+      <div class="ds-actions create-row">
+        <input class="ds-input" v-model="newFileName" type="text" placeholder="新建附加文件名，例如 persona.md" />
+        <button class="ds-primary-button" type="button" @click="void createFile()">新建文件</button>
       </div>
     </header>
 
-    <div v-if="errorText" class="error">{{ errorText }}</div>
-    <div v-else-if="loading && files.length === 0" class="empty">正在加载 soul 文件…</div>
+    <p v-if="errorText" class="ds-status is-error">{{ errorText }}</p>
+    <p v-else-if="loading && files.length === 0" class="ds-empty">正在加载 soul 文件…</p>
     <FileEditorPane
       v-else
       :files="files"
@@ -98,72 +98,11 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.page {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-.hero {
-  display: flex;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 22px 24px;
-  border: 1px solid var(--line);
-  border-radius: 24px;
-  background: var(--panel);
-  backdrop-filter: blur(16px);
-  box-shadow: var(--shadow);
-}
-
-.eyebrow {
-  margin: 0 0 8px;
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-h1 {
-  margin: 0;
-}
-
-.summary {
-  margin: 8px 0 0;
-  color: var(--muted);
-}
-
 .create-row {
-  display: flex;
-  gap: 10px;
-  align-items: center;
+  min-width: min(420px, 100%);
 }
 
-input,
-button {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--panel-strong);
-  color: var(--text);
-  padding: 10px 12px;
-}
-
-button {
-  cursor: pointer;
-}
-
-.primary {
-  border: 0;
-  background: linear-gradient(135deg, #0f6cb8 0%, #0a4a7b 100%);
-  color: #fff;
-}
-
-.error,
-.empty {
-  padding: 18px;
-  border-radius: 16px;
-  background: var(--panel-strong);
-  color: var(--muted);
+.create-row .ds-input {
+  min-width: 240px;
 }
 </style>

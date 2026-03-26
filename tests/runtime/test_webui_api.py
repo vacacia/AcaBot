@@ -3,6 +3,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import textwrap
 from typing import Any
@@ -139,6 +140,10 @@ def measure_page_layout(
     if not node_path or not chrome_path:
         pytest.skip("node 或 chromium 不可用，跳过页面布局测量")
 
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        debug_port = sock.getsockname()[1]
+
     script = textwrap.dedent(
         f"""
         const {{spawn}} = require('node:child_process');
@@ -157,7 +162,7 @@ def measure_page_layout(
             '--disable-gpu',
             '--no-sandbox',
             '--window-size={width},{height}',
-            '--remote-debugging-port=9230',
+            '--remote-debugging-port={debug_port}',
             `--user-data-dir=${{userDataDir}}`,
             'about:blank',
           ], {{ stdio: ['ignore', 'pipe', 'pipe'] }});
@@ -166,7 +171,7 @@ def measure_page_layout(
             let version = null;
             for (let index = 0; index < 40; index += 1) {{
               try {{
-                const response = await fetch('http://127.0.0.1:9230/json/version');
+                const response = await fetch('http://127.0.0.1:{debug_port}/json/version');
                 if (response.ok) {{
                   version = await response.json();
                   break;
@@ -180,7 +185,7 @@ def measure_page_layout(
               throw new Error('CDP not ready');
             }}
 
-            const targets = await (await fetch('http://127.0.0.1:9230/json/list')).json();
+            const targets = await (await fetch('http://127.0.0.1:{debug_port}/json/list')).json();
             const page = targets.find((target) => target.type === 'page');
             if (!page) {{
               throw new Error('No page target');
@@ -304,6 +309,10 @@ def run_page_script(
     if not node_path or not chrome_path:
         pytest.skip("node 或 chromium 不可用，跳过页面交互测试")
 
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        debug_port = sock.getsockname()[1]
+
     node_script = textwrap.dedent(
         f"""
         const {{spawn}} = require('node:child_process');
@@ -322,7 +331,7 @@ def run_page_script(
             '--disable-gpu',
             '--no-sandbox',
             '--window-size={width},{height}',
-            '--remote-debugging-port=9231',
+            '--remote-debugging-port={debug_port}',
             `--user-data-dir=${{userDataDir}}`,
             'about:blank',
           ], {{ stdio: ['ignore', 'pipe', 'pipe'] }});
@@ -331,7 +340,7 @@ def run_page_script(
             let version = null;
             for (let index = 0; index < 40; index += 1) {{
               try {{
-                const response = await fetch('http://127.0.0.1:9231/json/version');
+                const response = await fetch('http://127.0.0.1:{debug_port}/json/version');
                 if (response.ok) {{
                   version = await response.json();
                   break;
@@ -345,25 +354,22 @@ def run_page_script(
               throw new Error('CDP not ready');
             }}
 
-            const targets = await (await fetch('http://127.0.0.1:9231/json/list')).json();
+            const targets = await (await fetch('http://127.0.0.1:{debug_port}/json/list')).json();
             const page = targets.find((target) => target.type === 'page');
             if (!page) {{
               throw new Error('No page target');
             }}
 
-            const ws = new WebSocket(version.webSocketDebuggerUrl);
+            const ws = new WebSocket(page.webSocketDebuggerUrl);
             await new Promise((resolve, reject) => {{
               ws.addEventListener('open', resolve, {{ once: true }});
               ws.addEventListener('error', reject, {{ once: true }});
             }});
 
             let id = 0;
-            function send(method, params = {{}}, sessionId) {{
+            function send(method, params = {{}}) {{
               const messageId = ++id;
-              const payload = sessionId
-                ? {{ id: messageId, sessionId, method, params }}
-                : {{ id: messageId, method, params }};
-              ws.send(JSON.stringify(payload));
+              ws.send(JSON.stringify({{ id: messageId, method, params }}));
               return new Promise((resolve, reject) => {{
                 function onMessage(event) {{
                   const data = JSON.parse(event.data);
@@ -381,12 +387,9 @@ def run_page_script(
               }});
             }}
 
-            const attachResult = await send('Target.attachToTarget', {{ targetId: page.id, flatten: true }});
-            const sessionId = attachResult.sessionId;
-
-            await send('Page.enable', {{}}, sessionId);
-            await send('Runtime.enable', {{}}, sessionId);
-            await send('Page.navigate', {{ url: {json.dumps(url)} }}, sessionId);
+            await send('Page.enable', {{}});
+            await send('Runtime.enable', {{}});
+            await send('Page.navigate', {{ url: {json.dumps(url)} }});
             await wait({wait_ms});
 
             const result = await send('Runtime.evaluate', {{
@@ -396,7 +399,7 @@ def run_page_script(
               }})()`,
               returnByValue: true,
               awaitPromise: true,
-            }}, sessionId);
+            }});
 
             console.log(result.result.value);
             ws.close();
@@ -1388,28 +1391,81 @@ def test_webui_shell_is_vite_bundle_entry() -> None:
     assert "<script type=\"module\"" in html
 
 
-def test_webui_router_exposes_glass_lab_palette_preview_routes() -> None:
+def test_webui_router_removes_legacy_preview_routes() -> None:
     router_source = Path("webui/src/router.ts").read_text(encoding="utf-8")
+    sidebar_source = Path("webui/src/components/AppSidebar.vue").read_text(encoding="utf-8")
 
-    assert 'path: "/preview/glass-lab"' in router_source
-    assert 'redirect: "/preview/glass-lab/graphite"' in router_source
-    assert 'name: "glass-lab-graphite"' in router_source
-    assert 'path: "/preview/glass-lab/graphite"' in router_source
-    assert 'name: "glass-lab-verdigris"' in router_source
-    assert 'path: "/preview/glass-lab/verdigris"' in router_source
-    assert 'name: "glass-lab-brass"' in router_source
-    assert 'path: "/preview/glass-lab/brass"' in router_source
-    assert 'name: "glass-lab-bordeaux"' in router_source
-    assert 'path: "/preview/glass-lab/bordeaux"' in router_source
+    assert '"/preview/' not in router_source
+    assert "GlassLabView" not in router_source
+    assert "GlassEditorialView" not in router_source
+    assert "GlassInstrumentView" not in router_source
+    assert "MaterialConsoleView" not in router_source
+    assert "MaterialDarkStudyView" not in router_source
+    assert "MaterialFrostStudyView" not in router_source
+
+    assert "Glass Palettes" not in sidebar_source
+    assert "Editorial Study" not in sidebar_source
+    assert "Instrument Study" not in sidebar_source
+    assert "Material Cold" not in sidebar_source
+    assert "Frost Study" not in sidebar_source
+    assert "预览" not in sidebar_source
 
 
-def test_webui_router_exposes_advanced_glass_study_routes() -> None:
-    router_source = Path("webui/src/router.ts").read_text(encoding="utf-8")
+def test_webui_source_supports_accent_theme_switching() -> None:
+    app_source = Path("webui/src/App.vue").read_text(encoding="utf-8")
+    sidebar_source = Path("webui/src/components/AppSidebar.vue").read_text(encoding="utf-8")
 
-    assert 'name: "glass-editorial-graphite"' in router_source
-    assert 'path: "/preview/glass-lab/editorial-graphite"' in router_source
-    assert 'name: "glass-instrument-brass"' in router_source
-    assert 'path: "/preview/glass-lab/instrument-brass"' in router_source
+    assert "acabot.accent_theme" in app_source
+    assert "accentTheme" in app_source
+    assert "data-accent-theme" in app_source
+    assert "rose" in app_source
+    assert "graphite" in app_source
+    assert "--main-ribbon-soft" in app_source
+    assert "--main-ribbon-accent" in app_source
+    assert "background-blend-mode: screen" in app_source
+
+    assert "data-accent-option" in sidebar_source
+    assert "update:accent-theme" in sidebar_source
+    assert "蔷薇" in sidebar_source
+    assert "石墨" in sidebar_source
+
+
+def test_webui_imports_shared_design_system_stylesheet() -> None:
+    main_source = Path("webui/src/main.ts").read_text(encoding="utf-8")
+    stylesheet = Path("webui/src/styles/design-system.css")
+
+    assert 'import "./styles/design-system.css"' in main_source
+    assert stylesheet.exists()
+
+    css = stylesheet.read_text(encoding="utf-8")
+    assert ".ds-page" in css
+    assert ".ds-panel" in css
+    assert ".ds-hero" in css
+    assert ".ds-toolbar" in css
+    assert ".ds-field" in css
+
+
+def test_webui_real_pages_migrate_to_shared_design_system() -> None:
+    page_paths = [
+        "webui/src/views/SoulView.vue",
+        "webui/src/views/AdminsView.vue",
+        "webui/src/views/PluginsView.vue",
+        "webui/src/views/LogsView.vue",
+        "webui/src/views/SystemView.vue",
+        "webui/src/views/PromptsView.vue",
+        "webui/src/views/ProvidersView.vue",
+        "webui/src/views/ModelsView.vue",
+        "webui/src/views/SkillsView.vue",
+        "webui/src/views/SubagentsView.vue",
+        "webui/src/views/MemoryView.vue",
+        "webui/src/views/SessionsView.vue",
+    ]
+
+    for path in page_paths:
+        source = Path(path).read_text(encoding="utf-8")
+        assert "ds-page" in source, path
+        assert "ds-panel" in source or "ds-hero" in source, path
+        assert 'class="panel"' not in source, path
 
 
 async def test_memory_page_does_not_overflow_on_narrow_width(tmp_path: Path) -> None:

@@ -22,8 +22,8 @@ type StickyNoteItem = {
   editable: { content: string }
 }
 
-const MEMORY_SCOPE_STORAGE_KEY = "acabot.memory.scope"
-const MEMORY_NOTE_STORAGE_KEY = "acabot.memory.note"
+const MEMORY_SCOPE_STORAGE_KEY = 'acabot.memory.scope'
+const MEMORY_NOTE_STORAGE_KEY = 'acabot.memory.note'
 
 function noteListPath(scope: string, scopeKey: string): string {
   return `/api/memory/sticky-notes?scope=${encodeURIComponent(scope)}&scope_key=${encodeURIComponent(scopeKey)}`
@@ -57,11 +57,11 @@ function readStoredNote() {
   }
 }
 
-const cachedScopes = peekCachedGet<{ items: StickyScopeItem[] }>("/api/memory/sticky-notes/scopes")
+const cachedScopes = peekCachedGet<{ items: StickyScopeItem[] }>('/api/memory/sticky-notes/scopes')
 const storedScope = readStoredScope()
 const storedNote = readStoredNote()
-const initialScope = storedScope?.scope || "channel"
-const initialScopeKey = storedScope?.scope_key || ""
+const initialScope = storedScope?.scope || 'channel'
+const initialScopeKey = storedScope?.scope_key || ''
 const cachedNotes = initialScopeKey
   ? peekCachedGet<{ items: StickyNoteSummary[] }>(noteListPath(initialScope, initialScopeKey))
   : null
@@ -71,17 +71,17 @@ const cachedNoteItem = storedNote
 
 const scopeItems = ref<StickyScopeItem[]>(cachedScopes?.items ?? [])
 const noteItems = ref<StickyNoteSummary[]>(cachedNotes?.items ?? [])
-const noteSearch = ref("")
+const noteSearch = ref('')
 const selectedScope = ref(cachedNoteItem?.scope || initialScope)
 const selectedScopeKey = ref(cachedNoteItem?.scope_key || initialScopeKey)
-const selectedNoteKey = ref(cachedNoteItem?.key || storedNote?.key || "")
+const selectedNoteKey = ref(cachedNoteItem?.key || storedNote?.key || '')
 const noteItem = ref<StickyNoteItem | null>(cachedNoteItem)
 const draftScope = ref(cachedNoteItem?.scope || initialScope)
 const draftScopeKey = ref(cachedNoteItem?.scope_key || initialScopeKey)
-const newNoteKey = ref("")
-const loadingText = ref(cachedNoteItem || cachedNotes || cachedScopes ? "" : "正在加载 sticky notes...")
-const statusText = ref("")
-const errorText = ref("")
+const newNoteKey = ref('')
+const loadingText = ref(cachedNoteItem || cachedNotes || cachedScopes ? '' : '正在加载 sticky notes...')
+const statusText = ref('')
+const errorText = ref('')
 
 let statusTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -94,7 +94,7 @@ const filteredNoteItems = computed(() => {
 })
 
 function clearStatus(): void {
-  statusText.value = ""
+  statusText.value = ''
   if (statusTimer !== null) {
     clearTimeout(statusTimer)
     statusTimer = null
@@ -105,13 +105,13 @@ function showStatus(message: string): void {
   clearStatus()
   statusText.value = message
   statusTimer = setTimeout(() => {
-    statusText.value = ""
+    statusText.value = ''
     statusTimer = null
   }, 1400)
 }
 
 async function loadScopes(): Promise<void> {
-  const payload = await apiGet<{ items: StickyScopeItem[] }>("/api/memory/sticky-notes/scopes")
+  const payload = await apiGet<{ items: StickyScopeItem[] }>('/api/memory/sticky-notes/scopes')
   scopeItems.value = payload.items ?? []
 }
 
@@ -120,15 +120,13 @@ async function openScope(scope: string, scopeKey: string, preserveCurrent = fals
   selectedScopeKey.value = scopeKey
   draftScope.value = scope
   draftScopeKey.value = scopeKey
-  noteSearch.value = ""
+  noteSearch.value = ''
   if (!preserveCurrent) {
-    selectedNoteKey.value = ""
+    selectedNoteKey.value = ''
     noteItem.value = null
   }
   localStorage.setItem(MEMORY_SCOPE_STORAGE_KEY, JSON.stringify({ scope, scope_key: scopeKey }))
-  const payload = await apiGet<{ items: StickyNoteSummary[] }>(
-    noteListPath(scope, scopeKey),
-  )
+  const payload = await apiGet<{ items: StickyNoteSummary[] }>(noteListPath(scope, scopeKey))
   noteItems.value = payload.items ?? []
   if (preserveCurrent && selectedNoteKey.value && noteItems.value.some((item) => item.key === selectedNoteKey.value)) {
     return
@@ -140,9 +138,7 @@ async function openScope(scope: string, scopeKey: string, preserveCurrent = fals
 
 async function openNote(key: string): Promise<void> {
   if (!selectedScope.value || !selectedScopeKey.value) return
-  const payload = await apiGet<StickyNoteItem>(
-    noteItemPath(selectedScope.value, selectedScopeKey.value, key),
-  )
+  const payload = await apiGet<StickyNoteItem>(noteItemPath(selectedScope.value, selectedScopeKey.value, key))
   selectedNoteKey.value = key
   noteItem.value = payload
   localStorage.setItem(
@@ -157,84 +153,84 @@ async function openNote(key: string): Promise<void> {
 
 async function browseScope(): Promise<void> {
   if (!draftScopeKey.value.trim()) {
-    errorText.value = "先填写右上角的 scope key，再点击浏览。"
+    errorText.value = '先填写右上角的 scope key，再点击浏览。'
     clearStatus()
     return
   }
-  errorText.value = ""
+  errorText.value = ''
   clearStatus()
   try {
     await openScope(draftScope.value, draftScopeKey.value.trim())
   } catch (error) {
-    errorText.value = error instanceof Error ? error.message : "读取 sticky note scope 失败"
+    errorText.value = error instanceof Error ? error.message : '读取 sticky note scope 失败'
   }
 }
 
 async function createNote(): Promise<void> {
   if (!draftScopeKey.value.trim()) {
-    errorText.value = "新建 note 前，先在右上角填写 scope key 并点击浏览。"
+    errorText.value = '新建 note 前，先在右上角填写 scope key 并点击浏览。'
     clearStatus()
     return
   }
   if (!newNoteKey.value.trim()) {
-    errorText.value = "先填写 note key，再点击新建。"
+    errorText.value = '先填写 note key，再点击新建。'
     clearStatus()
     return
   }
-  errorText.value = ""
+  errorText.value = ''
   clearStatus()
   try {
-    await apiPost<StickyNoteItem>("/api/memory/sticky-notes/item", {
+    await apiPost<StickyNoteItem>('/api/memory/sticky-notes/item', {
       scope: draftScope.value,
       scope_key: draftScopeKey.value.trim(),
       key: newNoteKey.value.trim(),
     })
-    newNoteKey.value = ""
+    newNoteKey.value = ''
     await loadScopes()
     await openScope(draftScope.value, draftScopeKey.value.trim())
-    showStatus("已创建并打开新的 sticky note")
+    showStatus('已创建并打开新的 sticky note')
   } catch (error) {
-    errorText.value = error instanceof Error ? error.message : "新建 sticky note 失败"
+    errorText.value = error instanceof Error ? error.message : '新建 sticky note 失败'
   }
 }
 
 async function saveReadonly(content: string): Promise<void> {
   if (!noteItem.value) return
-  errorText.value = ""
+  errorText.value = ''
   clearStatus()
   try {
-    noteItem.value = await apiPut<StickyNoteItem>("/api/memory/sticky-notes/readonly", {
+    noteItem.value = await apiPut<StickyNoteItem>('/api/memory/sticky-notes/readonly', {
       scope: noteItem.value.scope,
       scope_key: noteItem.value.scope_key,
       key: noteItem.value.key,
       content,
     })
-    showStatus("只读区已保存")
+    showStatus('只读区已保存')
   } catch (error) {
-    errorText.value = error instanceof Error ? error.message : "保存只读区失败"
+    errorText.value = error instanceof Error ? error.message : '保存只读区失败'
   }
 }
 
 async function saveEditable(content: string): Promise<void> {
   if (!noteItem.value) return
-  errorText.value = ""
+  errorText.value = ''
   clearStatus()
   try {
-    noteItem.value = await apiPut<StickyNoteItem>("/api/memory/sticky-notes/item", {
+    noteItem.value = await apiPut<StickyNoteItem>('/api/memory/sticky-notes/item', {
       scope: noteItem.value.scope,
       scope_key: noteItem.value.scope_key,
       key: noteItem.value.key,
       content,
     })
-    showStatus("可编辑区已保存")
+    showStatus('可编辑区已保存')
   } catch (error) {
-    errorText.value = error instanceof Error ? error.message : "保存可编辑区失败"
+    errorText.value = error instanceof Error ? error.message : '保存可编辑区失败'
   }
 }
 
 onMounted(() => {
   void (async () => {
-    errorText.value = ""
+    errorText.value = ''
     try {
       await loadScopes()
       const preferredScope = draftScopeKey.value.trim()
@@ -254,15 +250,15 @@ onMounted(() => {
           && storedNote.scope_key === preferredScope.scope_key
           && noteItems.value.some((item) => item.key === storedNote.key)
             ? storedNote.key
-            : ""
+            : ''
         if (preferredNote) {
           await openNote(preferredNote)
         }
       }
     } catch (error) {
-      errorText.value = error instanceof Error ? error.message : "加载 sticky notes 失败"
+      errorText.value = error instanceof Error ? error.message : '加载 sticky notes 失败'
     } finally {
-      loadingText.value = ""
+      loadingText.value = ''
     }
   })()
 })
@@ -273,63 +269,66 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="page">
-    <header class="hero">
-      <div class="hero-copy">
-        <p class="eyebrow">Memory</p>
+  <section class="ds-page">
+    <header class="ds-hero">
+      <div class="ds-hero-copy">
+        <p class="ds-eyebrow">Memory</p>
         <h1>Sticky Notes</h1>
-        <p class="summary">第一版只暴露 sticky note。每条 note 都分为只读区和可编辑区，并且两块都会进入上下文。</p>
+        <p class="ds-summary">第一版只暴露 sticky note。每条 note 都分为只读区和可编辑区，并且两块都会进入上下文。</p>
       </div>
-      <div class="scope-tools">
-        <select v-model="draftScope">
+      <div class="ds-actions scope-tools">
+        <select class="ds-select" v-model="draftScope">
           <option value="user">user</option>
           <option value="channel">channel</option>
         </select>
-        <input v-model="draftScopeKey" type="text" placeholder="先填 scope key，例如 qq:user:1733064202" />
-        <button type="button" @click="void browseScope()">浏览</button>
+        <input class="ds-input" v-model="draftScopeKey" type="text" placeholder="先填 scope key，例如 qq:user:1733064202" />
+        <button class="ds-primary-button" type="button" @click="void browseScope()">浏览</button>
       </div>
     </header>
 
-    <div class="content">
-      <aside class="sidebar">
-        <section class="panel note-panel">
-          <div class="panel-header">
+    <div class="layout">
+      <aside class="ds-panel ds-panel-padding sidebar-column note-panel">
+        <div class="ds-section-head compact-head">
+          <div class="ds-section-title">
             <div>
               <h2>Notes</h2>
-              <p>{{ selectedScopeKey || "先选择 scope" }}</p>
+              <p class="ds-summary">{{ selectedScopeKey || '先选择 scope' }}</p>
             </div>
           </div>
-          <div class="note-search">
-            <input v-model="noteSearch" type="text" placeholder="搜索 note" />
+        </div>
+
+        <div class="ds-field note-search">
+          <input class="ds-input" v-model="noteSearch" type="text" placeholder="搜索 note" />
+        </div>
+
+        <div class="ds-list note-list">
+          <p v-if="errorText" class="ds-status is-error error">{{ errorText }}</p>
+          <p v-if="noteItems.length > 0 && filteredNoteItems.length === 0" class="ds-empty empty">没有匹配的 note。</p>
+          <button
+            v-for="item in filteredNoteItems"
+            :key="item.key"
+            class="list-item"
+            :class="{ active: item.key === selectedNoteKey }"
+            type="button"
+            @click="void openNote(item.key)"
+          >
+            {{ item.key }}
+          </button>
+        </div>
+
+        <div class="create-bar note-create">
+          <div class="new-note">
+            <input class="ds-input" v-model="newNoteKey" type="text" placeholder="再填 note key，例如 default" />
+            <button class="ds-secondary-button" type="button" @click="void createNote()">新建</button>
           </div>
-          <div class="note-list">
-            <p v-if="errorText" class="panel-error">{{ errorText }}</p>
-            <p v-if="noteItems.length > 0 && filteredNoteItems.length === 0" class="panel-empty">没有匹配的 note。</p>
-            <button
-              v-for="item in filteredNoteItems"
-              :key="item.key"
-              class="list-item"
-              :class="{ active: item.key === selectedNoteKey }"
-              type="button"
-              @click="void openNote(item.key)"
-            >
-              {{ item.key }}
-            </button>
-          </div>
-          <div class="note-create">
-            <div class="new-note">
-              <input v-model="newNoteKey" type="text" placeholder="再填 note key，例如 default" />
-              <button type="button" @click="void createNote()">新建</button>
-            </div>
-          </div>
-        </section>
+        </div>
       </aside>
 
-      <section class="main-panel">
+      <section class="ds-panel ds-panel-padding main-column">
         <p v-if="statusText" class="toast-status">{{ statusText }}</p>
-        <div v-if="errorText" class="error">{{ errorText }}</div>
-        <div v-else-if="loadingText" class="empty">{{ loadingText }}</div>
-        <div v-else-if="noteItem === null" class="empty">
+        <div v-if="errorText" class="ds-status is-error error">{{ errorText }}</div>
+        <div v-else-if="loadingText" class="ds-empty empty">{{ loadingText }}</div>
+        <div v-else-if="noteItem === null" class="ds-empty empty">
           先在右上角输入 scope key 并点击浏览。如果是第一次创建，直接在左侧 Notes 里填 note key，然后点“新建”。
         </div>
         <StickyNotePane
@@ -345,175 +344,70 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.page {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  min-width: 0;
-}
-
-.hero,
-.panel,
-.main-panel {
-  border: 1px solid var(--line);
-  border-radius: 24px;
-  background: var(--panel);
-  backdrop-filter: blur(16px);
-  box-shadow: var(--shadow);
-}
-
-.hero {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  flex-wrap: wrap;
-  gap: 18px;
-  padding: 22px 24px;
-}
-
-.hero-copy {
-  min-width: 0;
-  flex: 1 1 360px;
-}
-
-.eyebrow {
-  margin: 0 0 8px;
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-h1,
-h2 {
-  margin: 0;
-}
-
-.summary,
-.panel-header p {
-  margin: 8px 0 0;
-  color: var(--muted);
-}
-
-.scope-tools,
-.new-note {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-}
-
-.scope-tools {
-  flex: 1 1 320px;
-  justify-content: flex-end;
-}
-
-.scope-tools input,
-.new-note input {
-  min-width: 0;
-  flex: 1 1 220px;
-}
-
-select,
-input,
-button {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--panel-strong);
-  color: var(--text);
-  padding: 10px 12px;
-}
-
-button {
-  cursor: pointer;
-}
-
-.content {
+.layout {
   display: grid;
   grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
   gap: 16px;
 }
 
-.sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+.sidebar-column,
+.main-column {
   min-width: 0;
 }
 
-.panel,
-.main-panel {
-  padding: 18px;
-  min-width: 0;
-}
-
-.main-panel {
-  position: relative;
-}
-
-.panel-header {
+.compact-head {
   margin-bottom: 14px;
 }
 
-.note-panel {
-  display: flex;
-  flex-direction: column;
-  min-height: 420px;
+.scope-tools {
+  flex: 1 1 360px;
 }
 
-.note-search {
-  margin-bottom: 12px;
-}
-
-.note-search input {
-  width: 100%;
-  box-sizing: border-box;
+.scope-tools .ds-input {
+  min-width: 260px;
 }
 
 .note-list {
-  flex: 1;
-  min-height: 120px;
+  min-height: 160px;
+  max-height: 420px;
   overflow: auto;
 }
 
-.note-create {
+.list-item {
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel-white);
+  color: var(--text);
+  padding: 12px 14px;
+  cursor: pointer;
+}
+
+.list-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.create-bar {
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid var(--line);
 }
 
-.list-item {
-  width: 100%;
+.new-note {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-bottom: 10px;
-  text-align: left;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
-.list-item strong,
-.list-item span {
-  overflow-wrap: anywhere;
+.new-note .ds-input {
+  flex: 1 1 220px;
 }
 
-.list-item.active {
-  background: var(--accent-soft);
-}
-
-.error,
-.empty,
-.status,
-.panel-empty {
-  padding: 18px;
-  border-radius: 16px;
-  background: var(--panel-strong);
-  color: var(--muted);
-}
-
-.status {
-  margin: 0 0 16px;
-  color: var(--success);
+.main-column {
+  position: relative;
 }
 
 .toast-status {
@@ -539,49 +433,28 @@ button {
   z-index: 2;
 }
 
-.panel-error {
-  margin: 0 0 10px;
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: rgba(180, 35, 24, 0.08);
-  color: #b42318;
-}
-
-.panel-empty {
-  margin: 0 0 10px;
-  padding: 14px;
-}
-
 @media (max-width: 1100px) {
-  .content {
+  .layout {
     grid-template-columns: 1fr;
   }
 }
 
 @media (max-width: 720px) {
-  .hero,
-  .panel,
-  .main-panel {
-    border-radius: 20px;
-  }
-
-  .hero {
-    padding: 18px;
-  }
-
-  .scope-tools {
+  .scope-tools,
+  .new-note {
     justify-content: stretch;
   }
 
-  .scope-tools select,
-  .scope-tools button,
-  .new-note button {
+  .scope-tools .ds-select,
+  .scope-tools .ds-primary-button,
+  .new-note .ds-secondary-button {
     flex: 1 0 auto;
   }
 
-  .scope-tools input,
-  .new-note input {
+  .scope-tools .ds-input,
+  .new-note .ds-input {
     flex-basis: 100%;
+    min-width: 0;
   }
 }
 </style>
