@@ -1,5 +1,11 @@
 # 当前进展 Handoff
 
+## 模型真源与长期记忆新基线
+
+这一轮已经把后续实现基线拍板成 `model_provider / model_preset / model_target / model_binding` 四件套，agent、system 和 plugin 都只按 `model_target` 取模型，`record_only` 继续保持“不解析 run model target”的现有语义，插件未加载时的 `plugin:*` binding 允许以 `binding_state=unresolved_target` 形式存在于控制面视图里。  
+长期记忆实现基线也已经固定：runtime 只通过 `LongTermMemoryWritePort + MemorySource` 和 LTM 交接，内部目录名统一用 `long_term_memory`，第一版实现是 `LanceDB-first, storage-layer-contained`，而且 cursor 仍由 `LongTermMemoryIngestor` 在 `ingest_thread_delta()` 成功后推进。  
+接下来执行顺序已经锁死成三步：先完成 `Model Target Registry Backend Unification`，review 通过后提交；再实现 `long_term_memory`；每一阶段都先完成整组 task，再用子代理 review 到通过，最后才提交。
+
 ## 统一上下文装配与记忆主线
 
 前台 runtime 现在已经把最终模型输入收口到 `ContextAssembler + PayloadJsonWriter`，`ctx.system_prompt` 和 `ctx.messages` 只表示最终结果，`RetrievalPlanner` 也已经收成 prepare-only；在这条主线上，这轮把长期记忆写入线真的接进来了：事实存储新增了 sequence-aware 增量读取，runtime 新增 `StoreBackedConversationFactReader` 和 `LongTermMemoryIngestor`，前台写入路径现在是 `RuntimeApp / Outbox -> mark_dirty(thread_id) -> ConversationFactReader -> LongTermMemoryWritePort`，而且 assistant message 事实会显式带上真实 `conversation_id`。
