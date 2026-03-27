@@ -25,6 +25,7 @@ from ..inbound.image_context import ImageContextService
 from ..inbound.message_preparation import MessagePreparationService
 from ..inbound.message_projection import MessageProjectionService
 from ..inbound.message_resolution import MessageResolutionService
+from ..memory.conversation_facts import StoreBackedConversationFactReader
 from ..memory.file_backed import StickyNoteFileStore
 from ..memory.long_term_ingestor import LongTermMemoryIngestor
 from ..memory.sticky_note_renderer import StickyNoteRenderer
@@ -51,6 +52,10 @@ from .builders import (
     build_computer_runtime,
     build_context_compactor,
     build_default_computer_policy,
+    build_long_term_memory_ingestor,
+    build_long_term_memory_source,
+    build_long_term_memory_store,
+    build_long_term_memory_write_port,
     build_memory_broker,
     build_message_store,
     build_model_registry_manager,
@@ -182,11 +187,6 @@ def build_runtime_components(
         executor_registry=runtime_subagent_executor_registry,
         default_agent_id=str(default_agent_id or ""),
     )
-    runtime_memory_broker = memory_broker or build_memory_broker(
-        config,
-        soul_source=runtime_soul_source,
-        sticky_notes_source=runtime_sticky_notes_source,
-    )
     runtime_context_compactor = context_compactor or build_context_compactor(
         config,
         agent=agent,
@@ -207,6 +207,47 @@ def build_runtime_components(
         build_agent_model_targets(profiles.values())
     )
     runtime_model_registry_manager.reload_now()
+    long_term_memory_conf = dict(runtime_conf.get("long_term_memory", {}))
+    long_term_memory_enabled = bool(long_term_memory_conf.get("enabled", False))
+    runtime_long_term_memory_source = None
+    runtime_long_term_memory_ingestor = long_term_memory_ingestor
+    runtime_fact_reader = None
+    runtime_long_term_memory_store = None
+    if long_term_memory_enabled and (memory_broker is None or runtime_long_term_memory_ingestor is None):
+        runtime_long_term_memory_store = build_long_term_memory_store(config)
+    if long_term_memory_enabled and memory_broker is None:
+        if runtime_long_term_memory_store is None:
+            runtime_long_term_memory_store = build_long_term_memory_store(config)
+        runtime_long_term_memory_source = build_long_term_memory_source(
+            config,
+            agent=agent,
+            store=runtime_long_term_memory_store,
+            model_registry_manager=runtime_model_registry_manager,
+        )
+    if long_term_memory_enabled and runtime_long_term_memory_ingestor is None:
+        if runtime_long_term_memory_store is None:
+            runtime_long_term_memory_store = build_long_term_memory_store(config)
+        runtime_fact_reader = StoreBackedConversationFactReader(
+            channel_event_store=runtime_channel_event_store,
+            message_store=runtime_message_store,
+        )
+        runtime_long_term_memory_write_port = build_long_term_memory_write_port(
+            config,
+            agent=agent,
+            store=runtime_long_term_memory_store,
+            model_registry_manager=runtime_model_registry_manager,
+        )
+        runtime_long_term_memory_ingestor = build_long_term_memory_ingestor(
+            thread_manager=runtime_thread_manager,
+            fact_reader=runtime_fact_reader,
+            write_port=runtime_long_term_memory_write_port,
+        )
+    runtime_memory_broker = memory_broker or build_memory_broker(
+        config,
+        soul_source=runtime_soul_source,
+        sticky_notes_source=runtime_sticky_notes_source,
+        long_term_memory_source=runtime_long_term_memory_source,
+    )
     backend_conf = dict(runtime_conf.get("backend", {}))
     runtime_backend_mode_registry = BackendModeRegistry()
     backend_session_path = resolve_runtime_path(
@@ -314,7 +355,7 @@ def build_runtime_components(
     outbox = Outbox(
         gateway=gateway,
         store=runtime_message_store,
-        long_term_memory_ingestor=long_term_memory_ingestor,
+        long_term_memory_ingestor=runtime_long_term_memory_ingestor,
     )
     pipeline = ThreadPipeline(
         agent_runtime=agent_runtime,
@@ -370,7 +411,7 @@ def build_runtime_components(
         plugin_manager=runtime_plugin_manager,
         model_registry_manager=runtime_model_registry_manager,
         computer_runtime=runtime_computer_runtime,
-        long_term_memory_ingestor=long_term_memory_ingestor,
+        long_term_memory_ingestor=runtime_long_term_memory_ingestor,
         backend_bridge=runtime_backend_bridge,
         backend_mode_registry=runtime_backend_mode_registry,
         backend_admin_actor_ids=runtime_backend_admin_actor_ids,
@@ -436,7 +477,7 @@ def build_runtime_components(
         backend_bridge=runtime_backend_bridge,
         backend_mode_registry=runtime_backend_mode_registry,
         app=app,
-        long_term_memory_ingestor=long_term_memory_ingestor,
+        long_term_memory_ingestor=runtime_long_term_memory_ingestor,
     )
 
 

@@ -1,23 +1,51 @@
-参考 simplemem 的实现
-- ref/SimpleMem
+# 长期记忆检索线
 
+这一页只讲 `long_term_memory` 的检索线怎么接进 runtime。
 
-## 问题
+## 先讲结论
 
-多读单写 架构，拦截了多插拔记忆能力的写回可能性
+当前正式主线已经固定成：
 
-Write-back 必须是“Fire-and-Forget”（发射即不管）, 否则会直接阻塞这个会话
+- `MemoryBroker` 统一发出 `SharedMemoryRetrievalRequest`
+- `CoreSimpleMemMemorySource` 自己完成 query planning、semantic / lexical / symbolic 三路召回
+- `CoreSimpleMemRenderer` 把 top-k 命中记忆渲染成一个统一的 `long_term_memory` XML block
+- `ContextAssembler` 把这个 block 当成普通 `MemoryBlock` 继续组装上下文
 
-Sticky Notes 不应该拥有主线的特权判断。它应该作为一个独立的 MemorySource 实例被注册进 MemorySourceRegistry。优先级（Priority = 800）和自己的查询边界，应该在其自身实例的 __call__ 里决定，而不是侵入到 StoreBackedMemoryRetriever 的核心循环中替它判断
+这意味着：
 
-在 MemoryBrokerResult 进入 ContextAssembler 之前，必须有一个基于全局 Token 限额（Token Budget）的“截断器（Truncator）”。它基于全体 MemoryBlock 的 assembly.priority 进行倒序裁切，超出 Budget 的低优先级块应该直接丢弃，代码层面目前没有看到任何控制水位的设计。
+- 长期记忆检索不再走旧的 `StoreBackedMemoryRetriever`
+- sticky notes 和长期记忆都只是普通 `MemorySource`
+- `MemoryBroker` 不负责长期记忆写回, 只负责把当前 run 的检索现场交给 source
 
+## 现在的代码落点
 
-## 分析
+- `src/acabot/runtime/memory/memory_broker.py`
+- `src/acabot/runtime/memory/long_term_memory/source.py`
+- `src/acabot/runtime/memory/long_term_memory/ranking.py`
+- `src/acabot/runtime/memory/long_term_memory/renderer.py`
 
-session 不应该管长期记忆要不要提取.这个和session runtime没有关系, 全部信息都会被长期记忆的组件自己提取，长期记忆自己决定留下哪些(会经过各种处理),然后在有新消息到来的时候，memory broker发出检索，长期记忆再根据这个到来的消息把检索到的内容返回给memory broker
+## 检索线的输入和输出
 
-Memory broker也不负责写长期记忆，因为每一层记忆都是自己决定要不要做，memory broker 他只管提取，他不能判断要不要写长期记忆呢, 他不能判断要写哪个长期记忆, 他没有判断的能力
-- 比如 self 和 sticky notes，这是模型自己判断要不要往里写的记忆
-- 比如长期记忆，它要所有的消息，长期记忆组件是自己整合入库
+输入是 `SharedMemoryRetrievalRequest`，它带上：
 
+- 当前 `conversation_id`
+- 当前 query text
+- working summary
+- retained history
+- retrieval tags 和其他 metadata
+
+输出是一个统一的 `MemoryBlock`：
+
+- `source = "long_term_memory"`
+- `assembly.target_slot = "message_prefix"`
+- `content` 是 XML
+
+## 为什么这样接
+
+这样接之后，长期记忆和别的记忆层有同一个 runtime 边界：
+
+- `MemoryBroker` 统一调度
+- source 自己决定怎么查
+- source 自己决定 priority 和渲染格式
+
+所以 runtime 不需要再为长期记忆开特权分支。

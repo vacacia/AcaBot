@@ -79,6 +79,7 @@
 - workspace
 - attachments
 - self 数据
+- long_term_memory 的 LanceDB 数据
 - 运行过程里的临时状态
 
 ## 为什么这点重要
@@ -135,6 +136,33 @@
 
 - `./.agents/skills`
 - `~/.agents/skills`
+
+这里还有一条和长期记忆直接相关的新配置:
+
+- `runtime.long_term_memory.enabled`
+
+它表示 runtime 是否自动装配 `long_term_memory` 这一整条链路。
+打开后, runtime 会自己构造:
+
+- `LanceDbLongTermMemoryStore`
+- `CoreSimpleMemWritePort`
+- `CoreSimpleMemMemorySource`
+- `LongTermMemoryIngestor`
+
+这只是装配开关, 不是模型配置开关。
+真正让这条链路可用, 还要先在模型绑定里配好:
+
+- `system:ltm_extract`
+- `system:ltm_query_plan`
+- `system:ltm_embed`
+
+当前这个配置块还支持这些字段:
+
+- `storage_dir`
+- `window_size`
+- `overlap_size`
+- `max_entries`
+- `extractor_version`
 
 ### `plugins`
 
@@ -258,6 +286,7 @@ session config 现在决定的是:
 - workspace
 - attachments
 - self 数据
+- `long-term-memory/lancedb`
 
 ### `napcat/`
 

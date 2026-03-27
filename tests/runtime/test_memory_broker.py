@@ -7,6 +7,9 @@ from acabot.runtime import (
     MemorySourcePolicy,
     RunContext,
 )
+from acabot.runtime.memory.long_term_memory.contracts import MemoryEntry, MemoryProvenance
+from acabot.runtime.memory.long_term_memory.source import CoreSimpleMemMemorySource
+from acabot.runtime.memory.long_term_memory.storage import LanceDbLongTermMemoryStore
 from acabot.runtime.contracts import (
     AgentProfile,
     RetrievalPlan,
@@ -238,3 +241,56 @@ def test_runtime_facade_only_exports_memory_source_contracts() -> None:
     assert hasattr(runtime, "MemorySource")
     assert not hasattr(runtime, "MemoryRetriever")
     assert not hasattr(runtime, "NullMemoryRetriever")
+
+
+async def test_memory_broker_accepts_long_term_memory_source_without_special_case(tmp_path) -> None:
+    class StaticPlanner:
+        async def plan_query(self, request_payload):
+            _ = request_payload
+            return {
+                "semantic_queries": [],
+                "lexical_queries": ["latte"],
+                "symbolic_filters": {"persons": ["Alice"]},
+            }
+
+    class NullEmbeddingClient:
+        async def embed_texts(self, texts):
+            _ = texts
+            return []
+
+    store = LanceDbLongTermMemoryStore(tmp_path / "lancedb")
+    store.upsert_entries(
+        [
+            MemoryEntry(
+                entry_id="entry-1",
+                conversation_id="qq:group:20002",
+                created_at=100,
+                updated_at=100,
+                extractor_version="ltm-v1",
+                topic="咖啡偏好",
+                lossless_restatement="Alice 喜欢拿铁。",
+                keywords=["latte"],
+                persons=["Alice"],
+                provenance=MemoryProvenance(fact_ids=["e:evt-1"]),
+            )
+        ]
+    )
+    broker = MemoryBroker(
+        registry=_registry(
+            (
+                "long_term_memory",
+                CoreSimpleMemMemorySource(
+                    store=store,
+                    query_planner=StaticPlanner(),
+                    embedding_client=NullEmbeddingClient(),
+                ),
+            )
+        )
+    )
+    ctx = _ctx()
+
+    result = await broker.retrieve(ctx)
+
+    assert len(result.blocks) == 1
+    assert result.blocks[0].source == "long_term_memory"
+    assert "咖啡偏好" in result.blocks[0].content

@@ -7,6 +7,22 @@ docs/LTM/core-simplemem-design.md
 这一页是 `core-simplemem-design.md` 的结构化整理稿。
 原文件继续保留为结论累积池；这一页负责把已经拍板的内容按主题收束，方便后续实现、review 和 wiki 整理。
 
+## 当前仓库实现
+
+当前代码已经有一版可装配的 `long_term_memory`:
+
+- `contracts.py` 定义 `MemoryEntry`、`MemoryProvenance`、`FailedWindowRecord`
+- `storage.py` 提供 `LanceDbLongTermMemoryStore`
+- `write_port.py` 提供 `CoreSimpleMemWritePort`
+- `source.py` 提供 `CoreSimpleMemMemorySource`
+- `bootstrap/builders.py` 在 `runtime.long_term_memory.enabled = true` 时自动装配写入线和检索线
+
+当前统一模型位点是:
+
+- `system:ltm_extract`
+- `system:ltm_query_plan`
+- `system:ltm_embed`
+
 ## 1. 设计边界
 
 ### 1.1 目标

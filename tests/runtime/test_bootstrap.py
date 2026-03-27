@@ -16,9 +16,11 @@ from acabot.config import Config
 from acabot.runtime import (
     ApprovalRequired,
     AgentProfile,
+    CoreSimpleMemMemorySource,
     ContextAssembler,
     ContextCompactor,
     FileSystemModelRegistryManager,
+    LongTermMemoryIngestor,
     ModelContextSummarizer,
     ModelBinding,
     ModelPreset,
@@ -45,6 +47,7 @@ from acabot.runtime import (
     build_agent_model_targets,
     build_runtime_components,
 )
+from acabot.runtime.memory.long_term_memory.storage import LanceDbLongTermMemoryStore
 from acabot.runtime.contracts import PendingApproval
 from acabot.runtime.bootstrap.builders import build_payload_json_writer
 from acabot.runtime.bootstrap.config import resolve_runtime_path
@@ -156,6 +159,24 @@ def _event() -> StandardEvent:
         raw_message_id="msg-1",
         sender_nickname="acacia",
         sender_role=None,
+    )
+
+
+def _config_with_long_term_memory(tmp_path: Path) -> Config:
+    return Config(
+        {
+            "agent": {
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "default_prompt_ref": "prompt/default",
+                "runtime_root": str(tmp_path / ".acabot-runtime"),
+                "long_term_memory": {
+                    "enabled": True,
+                },
+            },
+        }
     )
 
 
@@ -307,6 +328,29 @@ def test_build_runtime_components_wires_optional_long_term_memory_ingestor() -> 
     assert components.long_term_memory_ingestor is ingestor
     assert components.app.long_term_memory_ingestor is ingestor
     assert components.outbox.long_term_memory_ingestor is ingestor
+
+
+async def test_build_runtime_components_registers_long_term_memory_source_and_ingestor(
+    tmp_path: Path,
+) -> None:
+    components = build_runtime_components(
+        _config_with_long_term_memory(tmp_path),
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+
+    source = components.memory_broker.registry.get("long_term_memory")
+
+    assert isinstance(components.long_term_memory_ingestor, LongTermMemoryIngestor)
+    assert isinstance(source, CoreSimpleMemMemorySource)
+    assert isinstance(source.store, LanceDbLongTermMemoryStore)
+    assert [source_id for source_id, _ in components.memory_broker.registry.items()] == [
+        "self",
+        "sticky_notes",
+        "long_term_memory",
+    ]
+    assert components.app.long_term_memory_ingestor is components.long_term_memory_ingestor
+    assert components.outbox.long_term_memory_ingestor is components.long_term_memory_ingestor
 
 
 async def test_build_runtime_components_accepts_runtime_plugins() -> None:

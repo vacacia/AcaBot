@@ -111,19 +111,22 @@ sticky notes 现在是 file-backed 的稳定记忆材料。
 
 ---
 
-## 5. 普通长期记忆
+## 5. 长期记忆
 
-普通长期记忆当前仍然在 `MemoryStore` 里。
+长期记忆现在的正式实现就是 `long_term_memory`。
 
 对应代码在：
 
-- `src/acabot/runtime/memory/memory_broker.py`
-- `src/acabot/runtime/memory/structured_memory.py`
+- `src/acabot/runtime/memory/long_term_memory/`
+- `src/acabot/runtime/memory/long_term_ingestor.py`
+- `src/acabot/runtime/bootstrap/builders.py`
 
-这条线现在已经跑通的主要是最小闭环：
+这条线当前已经跑通的是：
 
-- run 前 retrieval
-- run 后 extraction
+- `LongTermMemoryIngestor` 负责写入编排
+- `CoreSimpleMemWritePort` 负责滑窗提取、embedding 和 LanceDB upsert
+- `CoreSimpleMemMemorySource` 负责 retrieval 时的混合召回和 XML block 渲染
+- `MemoryBroker` 把它和 `/self`、sticky notes 一起当作普通 `MemorySource`
 
 ---
 
@@ -177,7 +180,7 @@ sticky notes 现在是 file-backed 的稳定记忆材料。
 当前 `RetrievalPlan` 里最重要的内容是：
 
 - `requested_tags`
-- `sticky_note_scopes`
+- `sticky_note_targets`
 - `retained_history`
 - `dropped_messages`
 - `working_summary`
@@ -191,7 +194,7 @@ sticky notes 现在是 file-backed 的稳定记忆材料。
 `RetrievalPlanner` 至少在做三件 `MemoryBroker` 不适合直接背上的事：
 
 - 它把 short-term context 那条线的产物收成一个 run 级 `RetrievalPlan`。`prepare()` 会直接读 `effective_compacted_messages` 和 `effective_working_summary`，然后产出 `retained_history` 和 `working_summary`。这块本质上是“把 compaction 结果解释成检索现场”，不是“问记忆源要内容”。
-- 它把这一轮的 retrieval tags、sticky note scopes、context labels 这些 run-local 条件收口。这属于“这轮到底在问什么”的准备层。
+- 它把这一轮的 retrieval tags、sticky note targets、context labels 这些 run-local 条件收口。这属于“这轮到底在问什么”的准备层。
 - 它产出的 `RetrievalPlan` 不只是给 broker 用，`ContextAssembler` 还直接拿它来组 `working_summary` 和 `retained_history` 进最终上下文
 
 反过来看，`MemoryBroker` 当前更像执行层：
@@ -231,18 +234,18 @@ sticky notes 现在是 file-backed 的稳定记忆材料。
 
 `MemoryBroker` 现在是所有“非聊天记录”的统一读取入口。
 
-当前 retrieval 侧，它会把 `RunContext` 规范成 `MemoryRetrievalRequest`，然后交给组合 retriever：
+当前 retrieval 侧，它会把 `RunContext` 规范成 `SharedMemoryRetrievalRequest`，然后交给注册好的 memory source：
 
 - `SelfFileRetriever`
-- `StickyNotesFileRetriever`
-- `StoreBackedMemoryRetriever`
+- `StickyNoteRetriever`
+- `CoreSimpleMemMemorySource`
 
 对应实现分别在：
 
 - `src/acabot/runtime/memory/file_backed/retrievers.py`
-- `src/acabot/runtime/memory/structured_memory.py`
+- `src/acabot/runtime/memory/long_term_memory/source.py`
 
-所以现在 `/self`、sticky notes、普通长期检索记忆，已经都走 `MemoryBroker.retrieve(ctx)` 这一个入口。
+所以现在 `/self`、sticky notes、长期记忆，已经都走 `MemoryBroker.retrieve(ctx)` 这一个入口。
 
 ---
 

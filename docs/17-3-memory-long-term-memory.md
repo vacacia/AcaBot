@@ -13,6 +13,32 @@
 
 ---
 
+## 当前代码已经落地的形状
+
+现在仓库里的长期记忆正式实现已经落在：
+
+- `src/acabot/runtime/memory/long_term_memory/`
+- `src/acabot/runtime/memory/long_term_ingestor.py`
+- `src/acabot/runtime/bootstrap/builders.py`
+
+当前运行形态是：
+
+- 配置 `runtime.long_term_memory.enabled = true`
+- runtime 自动装配 `LanceDbLongTermMemoryStore`
+- 写侧走 `LongTermMemoryIngestor -> CoreSimpleMemWritePort`
+- 读侧走 `MemoryBroker -> CoreSimpleMemMemorySource`
+- 模型位点统一走：
+  - `system:ltm_extract`
+  - `system:ltm_query_plan`
+  - `system:ltm_embed`
+
+这里要注意:
+
+- 打开开关只负责把链路装起来
+- 真正可用还要先给这三个 `system:ltm_*` target 配好 `model_binding`
+
+---
+
 ## 先讲结论
 
 长期记忆在 AcaBot 里，应该按两条线接入：

@@ -52,6 +52,19 @@ class ThreadLtmCursor:
     updated_at: int = 0
 
 
+@dataclass(slots=True)
+class ThreadLtmIngestResult:
+    """ThreadLtmIngestResult 表示一次增量写入的结果.
+
+    Attributes:
+        advance_cursor (bool): 当前增量是否允许推进游标.
+        has_failures (bool): 这次增量里是否出现失败窗口.
+    """
+
+    advance_cursor: bool
+    has_failures: bool = False
+
+
 class LongTermMemoryWritePort(Protocol):
     """LongTermMemoryWritePort 定义 LTM 写侧最小依赖面."""
 
@@ -76,7 +89,11 @@ class LongTermMemoryWritePort(Protocol):
 
         ...
 
-    async def ingest_thread_delta(self, thread_id: str, delta: ConversationDelta) -> bool:
+    async def ingest_thread_delta(
+        self,
+        thread_id: str,
+        delta: ConversationDelta,
+    ) -> ThreadLtmIngestResult:
         """把一个 thread 的增量事实窗口交给 LTM.
 
         Args:
@@ -84,7 +101,7 @@ class LongTermMemoryWritePort(Protocol):
             delta: 当前增量事实窗口.
 
         Returns:
-            写入成功返回 True, 否则返回 False.
+            当前增量的写入结果.
         """
 
         ...
@@ -259,9 +276,14 @@ class LongTermMemoryIngestor:
         if not delta.facts:
             return
 
-        ok = await self._write_port.ingest_thread_delta(thread_id, delta)
-        if not ok:
+        result = await self._write_port.ingest_thread_delta(thread_id, delta)
+        if not result.advance_cursor:
             return
+        if result.has_failures:
+            logger.warning(
+                "Long-term memory ingest finished with failed windows for thread: %s",
+                thread_id,
+            )
 
         try:
             await self._write_port.save_cursor(
@@ -297,6 +319,7 @@ class LongTermMemoryIngestor:
 
 __all__ = [
     "LongTermMemoryIngestor",
+    "ThreadLtmIngestResult",
     "LongTermMemoryWritePort",
     "ThreadLtmCursor",
 ]

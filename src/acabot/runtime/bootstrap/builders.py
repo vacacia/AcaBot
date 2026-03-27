@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from acabot.agent import BaseAgent
 from acabot.config import Config
@@ -16,10 +17,21 @@ from ..memory.context_compactor import (
     ContextCompactor,
     ModelContextSummarizer,
 )
+from ..memory.conversation_facts import StoreBackedConversationFactReader
 from ..memory.file_backed import SelfFileRetriever, StickyNoteFileStore, StickyNoteRetriever
-from ..memory.memory_broker import MemoryBroker, MemorySourceRegistry
+from ..memory.long_term_ingestor import LongTermMemoryIngestor, LongTermMemoryWritePort
+from ..memory.long_term_memory import (
+    CoreSimpleMemMemorySource,
+    CoreSimpleMemWritePort,
+    LanceDbLongTermMemoryStore,
+    LtmEmbeddingClient,
+    LtmExtractorClient,
+    LtmQueryPlannerClient,
+)
+from ..memory.memory_broker import MemoryBroker, MemorySource, MemorySourceRegistry
 from ..memory.retrieval_planner import RetrievalPlanner
 from ..memory.sticky_note_renderer import StickyNoteRenderer
+from ..model.model_embedding_runtime import ModelEmbeddingRuntime
 from ..model.model_registry import FileSystemModelRegistryManager
 from ..model.model_targets import MutableModelTargetCatalog
 from ..plugin_manager import RuntimePlugin
@@ -214,11 +226,141 @@ def build_channel_event_store(config: Config) -> ChannelEventStore:
     return SQLiteChannelEventStore(sqlite_path)
 
 
+# region 长期记忆 builders
+def build_long_term_memory_store(config: Config) -> LanceDbLongTermMemoryStore:
+    """按当前配置构造长期记忆的 LanceDB 存储.
+
+    Args:
+        config: 当前 runtime 配置.
+
+    Returns:
+        LanceDbLongTermMemoryStore: 已准备好的 LanceDB 存储对象.
+    """
+
+    long_term_memory_conf = _long_term_memory_config(config)
+    storage_dir = resolve_runtime_path(
+        config,
+        long_term_memory_conf.get("storage_dir", "long-term-memory/lancedb"),
+    )
+    return LanceDbLongTermMemoryStore(storage_dir)
+
+
+def build_long_term_memory_source(
+    config: Config,
+    *,
+    agent: BaseAgent,
+    store: LanceDbLongTermMemoryStore,
+    model_registry_manager: FileSystemModelRegistryManager,
+) -> CoreSimpleMemMemorySource:
+    """构造长期记忆检索侧 source.
+
+    Args:
+        config: 当前 runtime 配置.
+        store: 长期记忆存储层.
+        model_registry_manager: 模型注册表管理器.
+
+    Returns:
+        CoreSimpleMemMemorySource: 已接上 query planner 和 embedding 的检索入口.
+    """
+
+    long_term_memory_conf = _long_term_memory_config(config)
+    return CoreSimpleMemMemorySource(
+        store=store,
+        query_planner=LtmQueryPlannerClient(
+            agent=agent,
+            model_registry_manager=model_registry_manager,
+        ),
+        embedding_client=LtmEmbeddingClient(
+            embedding_runtime=ModelEmbeddingRuntime(),
+            model_registry_manager=model_registry_manager,
+        ),
+        max_entries=int(long_term_memory_conf.get("max_entries", 8)),
+    )
+
+
+def build_long_term_memory_write_port(
+    config: Config,
+    *,
+    agent: BaseAgent,
+    store: LanceDbLongTermMemoryStore,
+    model_registry_manager: FileSystemModelRegistryManager,
+) -> LongTermMemoryWritePort:
+    """构造长期记忆写侧端口.
+
+    Args:
+        config: 当前 runtime 配置.
+        agent: 当前模型 agent.
+        store: 长期记忆存储层.
+        model_registry_manager: 模型注册表管理器.
+
+    Returns:
+        LongTermMemoryWritePort: 已接上 extractor 和 embedding 的写侧端口.
+    """
+
+    long_term_memory_conf = _long_term_memory_config(config)
+    return CoreSimpleMemWritePort(
+        store=store,
+        extractor=LtmExtractorClient(
+            agent=agent,
+            model_registry_manager=model_registry_manager,
+            extractor_version=str(
+                long_term_memory_conf.get("extractor_version", "ltm-extractor-v1")
+            ),
+        ),
+        embedding_client=LtmEmbeddingClient(
+            embedding_runtime=ModelEmbeddingRuntime(),
+            model_registry_manager=model_registry_manager,
+        ),
+        window_size=int(long_term_memory_conf.get("window_size", 50)),
+        overlap_size=int(long_term_memory_conf.get("overlap_size", 10)),
+    )
+
+
+def build_long_term_memory_ingestor(
+    *,
+    thread_manager: ThreadManager,
+    fact_reader: StoreBackedConversationFactReader,
+    write_port: LongTermMemoryWritePort,
+) -> LongTermMemoryIngestor:
+    """构造长期记忆写入编排器.
+
+    Args:
+        thread_manager: thread 管理器.
+        fact_reader: 统一事实读取器.
+        write_port: 长期记忆写侧端口.
+
+    Returns:
+        LongTermMemoryIngestor: 已准备好的写入编排器.
+    """
+
+    return LongTermMemoryIngestor(
+        thread_manager=thread_manager,
+        fact_reader=fact_reader,
+        write_port=write_port,
+    )
+
+
+def _long_term_memory_config(config: Config) -> dict[str, Any]:
+    """读取长期记忆配置块.
+
+    Args:
+        config: 当前 runtime 配置.
+
+    Returns:
+        dict[str, Any]: 规范化后的长期记忆配置字典.
+    """
+
+    runtime_conf = config.get("runtime", {})
+    return dict(runtime_conf.get("long_term_memory", {}))
+
+
+# endregion
 def build_memory_broker(
     config: Config,
     *,
     soul_source: SoulSource,
     sticky_notes_source: StickyNoteFileStore,
+    long_term_memory_source: MemorySource | None = None,
 ) -> MemoryBroker:
     _ = config
     registry = MemorySourceRegistry()
@@ -230,6 +372,8 @@ def build_memory_broker(
             renderer=StickyNoteRenderer(),
         ),
     )
+    if long_term_memory_source is not None:
+        registry.register("long_term_memory", long_term_memory_source)
     return MemoryBroker(registry=registry)
 
 
@@ -349,6 +493,10 @@ __all__ = [
     "build_computer_runtime",
     "build_context_compactor",
     "build_default_computer_policy",
+    "build_long_term_memory_ingestor",
+    "build_long_term_memory_source",
+    "build_long_term_memory_store",
+    "build_long_term_memory_write_port",
     "build_memory_broker",
     "build_message_store",
     "build_model_registry_manager",

@@ -4,6 +4,24 @@ docs/00-ai-entry.md
 docs/superpowers/plans/2026-03-25-sticky-note-refactor.md
 这一页只记录已经拍板的 Core SimpleMem 设计结论。
 
+## 当前仓库实现
+
+当前仓库里的第一版实现已经落到这些文件:
+
+- `src/acabot/runtime/memory/long_term_memory/contracts.py`
+- `src/acabot/runtime/memory/long_term_memory/storage.py`
+- `src/acabot/runtime/memory/long_term_memory/extractor.py`
+- `src/acabot/runtime/memory/long_term_memory/write_port.py`
+- `src/acabot/runtime/memory/long_term_memory/source.py`
+- `src/acabot/runtime/bootstrap/builders.py`
+
+当前 runtime 侧的正式开关和模型位点也已经固定:
+
+- `runtime.long_term_memory.enabled`
+- `system:ltm_extract`
+- `system:ltm_query_plan`
+- `system:ltm_embed`
+
 ## 已确认决定
 
 1. AcaBot 的这一轮 LTM 目标明确是 `Core SimpleMem`，不是 `SimpleMem-lite`。也就是说，目标不是先做一个只有 FTS 或 metadata filter 的弱化版替身，而是朝“原子记忆写入 + 混合检索 + query-aware retrieval”这条正式主线设计。
