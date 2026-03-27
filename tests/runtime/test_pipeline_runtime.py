@@ -24,6 +24,7 @@ from acabot.runtime import (
     PlannedAction,
     RouteDecision,
     RunContext,
+    RuntimeModelRequest,
     RetrievalPlanner,
     StaticPromptLoader,
     ThreadPipeline,
@@ -185,7 +186,6 @@ def _profile() -> AgentProfile:
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
-        default_model="test-model",
     )
 
 
@@ -195,6 +195,30 @@ def _decision() -> RouteDecision:
         actor_id="qq:user:10001",
         agent_id="aca",
         channel_scope="qq:user:10001",
+    )
+
+
+def _model_request(model: str = "runtime-model") -> RuntimeModelRequest:
+    return RuntimeModelRequest(
+        provider_kind="openai_compatible",
+        model=model,
+        context_window=128000,
+        supports_tools=True,
+        provider_id="provider",
+        preset_id="preset/main",
+        provider_params={"base_url": "https://example.invalid/v1"},
+    )
+
+
+def _summary_request(model: str = "summary-model") -> RuntimeModelRequest:
+    return RuntimeModelRequest(
+        provider_kind="openai_compatible",
+        model=model,
+        context_window=64000,
+        supports_tools=False,
+        provider_id="provider",
+        preset_id="preset/summary",
+        provider_params={"base_url": "https://example.invalid/v1"},
     )
 
 
@@ -225,6 +249,7 @@ async def test_thread_pipeline_runs_minimal_text_flow() -> None:
         decision=decision,
         thread=thread,
         profile=_profile(),
+        summary_model_request=_summary_request(),
     )
 
     await pipeline.execute(ctx)
@@ -287,6 +312,7 @@ async def test_thread_pipeline_projects_reply_and_attachment_into_working_memory
         decision=decision,
         thread=thread,
         profile=_profile(),
+        summary_model_request=_summary_request(),
     )
 
     await pipeline.execute(ctx)
@@ -528,6 +554,7 @@ async def test_thread_pipeline_compresses_working_memory_before_model_call() -> 
         decision=decision,
         thread=thread,
         profile=_profile(),
+        summary_model_request=_summary_request(),
     )
 
     with (
@@ -620,6 +647,7 @@ async def test_thread_pipeline_uses_compaction_override_when_thread_apply_is_ski
         decision=decision,
         thread=thread,
         profile=_profile(),
+        summary_model_request=_summary_request(),
     )
 
     with (
@@ -710,6 +738,7 @@ async def test_pipeline_and_model_runtime_produce_final_context_and_payload_json
         decision=decision,
         thread=thread,
         profile=_profile(),
+        model_request=_model_request(),
         message_projection=MessageProjection(
             history_text="[acacia/10001] hello",
             model_content="[acacia/10001] hello",
@@ -935,6 +964,7 @@ async def test_thread_pipeline_enters_waiting_approval_after_prompt_delivery() -
         decision=decision,
         thread=thread,
         profile=_profile(),
+        model_request=_model_request(),
     )
     ctx.profile.enabled_tools = ["restricted"]
 
@@ -1005,6 +1035,7 @@ async def test_thread_pipeline_fails_when_approval_prompt_not_delivered() -> Non
         decision=decision,
         thread=thread,
         profile=_profile(),
+        model_request=_model_request(),
     )
     ctx.profile.enabled_tools = ["restricted"]
 

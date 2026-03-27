@@ -32,7 +32,6 @@ def _context(*, enabled_tools: list[str]) -> ToolExecutionContext:
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",
-            default_model="test-model",
             enabled_tools=list(enabled_tools),
         ),
         world_view=SimpleNamespace(name="world"),

@@ -565,11 +565,15 @@ class RuntimeHttpApiServer:
             return self._ok(self._await(self.control_plane.get_model_registry_status()))
         if segments == ["reload"] and method == "POST":
             return self._ok(self._await(self.control_plane.reload_models()))
-        if segments == ["effective", "summary"] and method == "GET":
-            return self._ok(self._await(self.control_plane.preview_effective_summary_model()))
-        if len(segments) == 3 and segments[0] == "effective" and segments[1] == "agents" and method == "GET":
-            return self._ok(self._await(self.control_plane.preview_effective_agent_model(segments[2])))
-
+        if segments == ["targets"] and method == "GET":
+            return self._ok(self._await(self.control_plane.list_model_targets()))
+        if len(segments) == 2 and segments[0] == "targets" and method == "GET":
+            result = self._await(self.control_plane.get_model_target(segments[1]))
+            if result is None:
+                return 404, {"ok": False, "error": "target not found"}
+            return self._ok(result)
+        if len(segments) == 3 and segments[0] == "targets" and segments[2] == "effective" and method == "GET":
+            return self._ok(self._await(self.control_plane.preview_effective_target_model(segments[1])))
         if segments == ["providers"] and method == "GET":
             return self._ok(self._await(self.control_plane.list_model_providers()))
         if len(segments) == 2 and segments[0] == "providers":
@@ -838,13 +842,23 @@ def _model_provider_from_payload(
 def _model_preset_from_payload(payload: dict[str, Any]):
     from ..model.model_registry import ModelPreset
 
+    capabilities = payload.get("capabilities")
+    if capabilities is None:
+        capabilities = [
+            capability
+            for capability, enabled in (
+                ("tool_calling", payload.get("supports_tools", True)),
+                ("image_input", payload.get("supports_vision", False)),
+            )
+            if enabled
+        ]
     return ModelPreset(
         preset_id=str(payload.get("preset_id", "") or ""),
         provider_id=str(payload.get("provider_id", "") or ""),
         model=str(payload.get("model", "") or ""),
+        task_kind=str(payload.get("task_kind", payload.get("capability", "")) or ""),
         context_window=int(payload.get("context_window", 0) or 0),
-        supports_tools=bool(payload.get("supports_tools", True)),
-        supports_vision=bool(payload.get("supports_vision", False)),
+        capabilities=[str(item) for item in list(capabilities or [])],
         max_output_tokens=(
             int(payload["max_output_tokens"])
             if payload.get("max_output_tokens") not in (None, "")
@@ -860,9 +874,7 @@ def _model_binding_from_payload(payload: dict[str, Any]):
     timeout_sec = payload.get("timeout_sec")
     return ModelBinding(
         binding_id=str(payload.get("binding_id", "") or ""),
-        target_type=str(payload.get("target_type", "") or ""),
         target_id=str(payload.get("target_id", "") or ""),
-        preset_id=str(payload.get("preset_id", "") or ""),
         preset_ids=[str(item) for item in list(payload.get("preset_ids", []) or [])],
         timeout_sec=float(timeout_sec) if timeout_sec not in (None, "") else None,
     )

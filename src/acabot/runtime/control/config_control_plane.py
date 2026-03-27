@@ -23,6 +23,8 @@ from acabot.config import Config
 
 from ..computer import ComputerPolicy, parse_computer_policy
 from ..contracts import AgentProfile
+from ..model.model_registry import FileSystemModelRegistryManager
+from ..model.model_targets import build_agent_model_targets
 from ..plugin_manager import RuntimePluginManager, RuntimePluginSpec, load_runtime_plugin
 from ..router import RuntimeRouter
 from ..skills import SkillCatalog
@@ -126,8 +128,8 @@ def _build_profiles(config: Config) -> dict[str, AgentProfile]:
         dict[str, AgentProfile]: 解析后的 profile 映射.
     """
 
-    runtime_conf = config.get("runtime", {})
-    agent_conf = config.get("agent", {})
+    runtime_conf = dict(config.get("runtime", {}) or {})
+    agent_conf = dict(config.get("agent", {}) or {})
     profiles_conf = runtime_conf.get("profiles", {})
     default_policy = _default_computer_policy(config)
     if profiles_conf:
@@ -138,10 +140,6 @@ def _build_profiles(config: Config) -> dict[str, AgentProfile]:
                 agent_id=agent_id,
                 name=str(profile_map.get("name", agent_id) or agent_id),
                 prompt_ref=str(profile_map.get("prompt_ref", f"prompt/{agent_id}") or f"prompt/{agent_id}"),
-                default_model=str(
-                    profile_map.get("default_model", agent_conf.get("default_model", "gpt-4o-mini"))
-                    or agent_conf.get("default_model", "gpt-4o-mini")
-                ),
                 enabled_tools=[str(item) for item in list(profile_map.get("enabled_tools", []) or [])],
                 skills=resolve_profile_skills(profile_map),
                 computer_policy=parse_computer_policy(
@@ -158,7 +156,6 @@ def _build_profiles(config: Config) -> dict[str, AgentProfile]:
             agent_id=default_agent_id,
             name=str(runtime_conf.get("default_agent_name", default_agent_id) or default_agent_id),
             prompt_ref=str(runtime_conf.get("default_prompt_ref", "prompt/default") or "prompt/default"),
-            default_model=str(agent_conf.get("default_model", "gpt-4o-mini") or "gpt-4o-mini"),
             enabled_tools=normalize_enabled_tools(runtime_conf.get("enabled_tools", [])),
             skills=resolve_profile_skills(dict(runtime_conf)),
             computer_policy=default_policy,
@@ -177,18 +174,13 @@ def _build_filesystem_profiles(config: Config) -> dict[str, AgentProfile]:
         dict[str, AgentProfile]: 文件系统 profile 映射.
     """
 
-    runtime_conf = config.get("runtime", {})
+    runtime_conf = dict(config.get("runtime", {}) or {})
     fs_conf = dict(runtime_conf.get("filesystem", {}))
     if not bool(fs_conf.get("enabled", False)):
         return {}
     profiles_dir = _resolve_filesystem_path(config, fs_conf, key="profiles_dir", default="profiles")
-    default_model = str(
-        runtime_conf.get("filesystem_default_model", "")
-        or config.get("agent", {}).get("default_model", "gpt-4o-mini")
-    )
     loader = FileSystemProfileLoader(
         profiles_dir,
-        default_model=default_model,
         default_computer_policy=_default_computer_policy(config),
     )
     return loader.load_all()
@@ -205,8 +197,8 @@ def _build_prompt_map(config: Config, profiles: dict[str, AgentProfile]) -> dict
         dict[str, str]: `prompt_ref -> text` 映射.
     """
 
-    runtime_conf = config.get("runtime", {})
-    agent_conf = config.get("agent", {})
+    runtime_conf = dict(config.get("runtime", {}) or {})
+    agent_conf = dict(config.get("agent", {}) or {})
     prompts = dict(runtime_conf.get("prompts", {}) or {})
     default_prompt_text = str(agent_conf.get("system_prompt", "") or "")
     for profile in profiles.values():
@@ -252,7 +244,6 @@ def _profile_to_config(profile: AgentProfile) -> dict[str, Any]:
     data["agent_id"] = profile.agent_id
     data["name"] = profile.name
     data["prompt_ref"] = profile.prompt_ref
-    data["default_model"] = profile.default_model
     data["enabled_tools"] = list(profile.enabled_tools)
     data["skills"] = list(profile.skills)
     if profile.computer_policy is not None:
@@ -276,6 +267,7 @@ class RuntimeConfigControlPlane:
         router: RuntimeRouter,
         profile_registry: AgentProfileRegistry,
         prompt_loader: ReloadablePromptLoader,
+        model_registry_manager: FileSystemModelRegistryManager | None = None,
         skill_catalog: SkillCatalog | None = None,
         plugin_manager: RuntimePluginManager | None = None,
         subagent_executor_registry: SubagentExecutorRegistry | None = None,
@@ -304,6 +296,7 @@ class RuntimeConfigControlPlane:
         self.router = router
         self.profile_registry = profile_registry
         self.prompt_loader = prompt_loader
+        self.model_registry_manager = model_registry_manager
         self.skill_catalog = skill_catalog
         self.plugin_manager = plugin_manager
         self.subagent_executor_registry = subagent_executor_registry
@@ -331,13 +324,29 @@ class RuntimeConfigControlPlane:
         """
 
         self.config.reload_from_file()
-        runtime_conf = self.config.get("runtime", {})
+        runtime_conf = dict(self.config.get("runtime", {}) or {})
         profiles = _build_profiles(self.config)
         profiles.update(_build_filesystem_profiles(self.config))
         if not profiles:
             raise ValueError("runtime configuration must contain at least one profile")
         default_agent_id = str(runtime_conf.get("default_agent_id", next(iter(profiles))) or next(iter(profiles)))
 
+        if self.model_registry_manager is not None:
+            previous_agent_targets = [
+                target
+                for target in self.model_registry_manager.target_catalog.list_targets()
+                if target.source_kind == "agent"
+            ]
+            self.model_registry_manager.target_catalog.replace_agent_targets(
+                build_agent_model_targets(profiles.values())
+            )
+            reload_snapshot = await self.model_registry_manager.reload()
+            if not reload_snapshot.ok:
+                self.model_registry_manager.target_catalog.replace_agent_targets(previous_agent_targets)
+                rollback_snapshot = await self.model_registry_manager.reload()
+                if not rollback_snapshot.ok:
+                    raise ValueError(rollback_snapshot.error or reload_snapshot.error or "model registry reload failed")
+                raise ValueError(reload_snapshot.error or "model registry reload failed")
         self.profile_registry.reload(
             profiles=profiles,
             default_agent_id=default_agent_id,
@@ -493,6 +502,11 @@ class RuntimeConfigControlPlane:
         Returns:
             bool: 是否真的删除了对象.
         """
+
+        if self.model_registry_manager is not None:
+            binding = self.model_registry_manager.active_registry.binding_for_target(f"agent:{agent_id}")
+            if binding is not None:
+                raise ValueError(f"profile still has model binding: agent:{agent_id}")
 
         existed = False
         if self.storage_mode() == "filesystem":

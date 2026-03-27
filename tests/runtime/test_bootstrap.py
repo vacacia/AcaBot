@@ -18,9 +18,14 @@ from acabot.runtime import (
     AgentProfile,
     ContextAssembler,
     ContextCompactor,
+    FileSystemModelRegistryManager,
     ModelContextSummarizer,
+    ModelBinding,
+    ModelPreset,
+    ModelProvider,
     LocalReferenceBackend,
     NullReferenceBackend,
+    OpenAICompatibleProviderConfig,
     OpenVikingReferenceBackend,
     PayloadJsonWriter,
     RetrievalPlan,
@@ -37,6 +42,7 @@ from acabot.runtime import (
     StoreBackedThreadManager,
     ToolPolicyDecision,
     ToolBroker,
+    build_agent_model_targets,
     build_runtime_components,
 )
 from acabot.runtime.contracts import PendingApproval
@@ -153,11 +159,64 @@ def _event() -> StandardEvent:
     )
 
 
+async def _model_registry_manager(
+    tmp_path: Path,
+    *,
+    agent_models: dict[str, str],
+) -> FileSystemModelRegistryManager:
+    manager = FileSystemModelRegistryManager(
+        providers_dir=tmp_path / "models/providers",
+        presets_dir=tmp_path / "models/presets",
+        bindings_dir=tmp_path / "models/bindings",
+    )
+    manager.target_catalog.replace_agent_targets(
+        build_agent_model_targets(
+            [
+                AgentProfile(
+                    agent_id=agent_id,
+                    name=agent_id,
+                    prompt_ref=f"prompt/{agent_id}",
+                )
+                for agent_id in agent_models
+            ]
+        )
+    )
+    await manager.upsert_provider(
+        ModelProvider(
+            provider_id="openai-main",
+            kind="openai_compatible",
+            config=OpenAICompatibleProviderConfig(
+                base_url="https://example.invalid/v1",
+                api_key_env="OPENAI_API_KEY",
+            ),
+        )
+    )
+    for agent_id, model in agent_models.items():
+        preset_id = f"{agent_id}-main"
+        await manager.upsert_preset(
+            ModelPreset(
+                preset_id=preset_id,
+                provider_id="openai-main",
+                model=model,
+                task_kind="chat",
+                capabilities=["tool_calling"],
+                context_window=128000,
+            )
+        )
+        await manager.upsert_binding(
+            ModelBinding(
+                binding_id=f"binding:{agent_id}",
+                target_id=f"agent:{agent_id}",
+                preset_ids=[preset_id],
+            )
+        )
+    return manager
+
+
 def test_build_runtime_components_uses_runtime_profiles_and_prompts() -> None:
     config = Config(
         {
             "agent": {
-                "default_model": "fallback-model",
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {
@@ -166,7 +225,6 @@ def test_build_runtime_components_uses_runtime_profiles_and_prompts() -> None:
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
-                        "default_model": "runtime-model",
                     }
                 },
                 "prompts": {
@@ -191,14 +249,14 @@ def test_build_runtime_components_uses_runtime_profiles_and_prompts() -> None:
 
     assert components.router.default_agent_id == "aca"
     assert components.prompt_loader.load("prompt/aca") == "You are Aca."
-    assert profile.default_model == "runtime-model"
+    assert profile.name == "Aca"
+    assert not hasattr(profile, "default_model")
 
 
-async def test_build_runtime_components_runs_app_with_model_agent_runtime() -> None:
+async def test_build_runtime_components_runs_app_with_model_agent_runtime(tmp_path: Path) -> None:
     config = Config(
         {
             "agent": {
-                "default_model": "test-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -209,7 +267,12 @@ async def test_build_runtime_components_runs_app_with_model_agent_runtime() -> N
     )
     gateway = FakeGateway()
     agent = FakeAgent(FakeAgentResponse(text="hello back", model_used="test-model"))
-    components = build_runtime_components(config, gateway=gateway, agent=agent)
+    components = build_runtime_components(
+        config,
+        gateway=gateway,
+        agent=agent,
+        model_registry_manager=await _model_registry_manager(tmp_path, agent_models={"aca": "test-model"}),
+    )
 
     components.app.install()
     await gateway.handler(_event())
@@ -224,7 +287,6 @@ def test_build_runtime_components_wires_optional_long_term_memory_ingestor() -> 
     config = Config(
         {
             "agent": {
-                "default_model": "test-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -251,7 +313,6 @@ async def test_build_runtime_components_accepts_runtime_plugins() -> None:
     config = Config(
         {
             "agent": {
-                "default_model": "test-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -282,7 +343,6 @@ async def test_build_runtime_components_loads_runtime_plugins_from_config() -> N
     config = Config(
         {
             "agent": {
-                "default_model": "test-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -311,7 +371,6 @@ async def test_build_runtime_components_exposes_skill_and_delegate_tools_for_ass
     config = Config(
         {
             "agent": {
-                "default_model": "runtime-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -324,7 +383,6 @@ async def test_build_runtime_components_exposes_skill_and_delegate_tools_for_ass
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
-                        "default_model": "runtime-model",
                         "skills": ["sample_configured_skill"],
                     }
                 },
@@ -376,7 +434,6 @@ async def test_build_runtime_components_loads_profiles_and_prompts_from_filesyst
             [
                 "name: Aca Filesystem",
                 "prompt_ref: prompt/aca",
-                "default_model: fs-model",
                 "enabled_tools:",
                 "  - reference_search",
             ]
@@ -387,7 +444,6 @@ async def test_build_runtime_components_loads_profiles_and_prompts_from_filesyst
     config = Config(
         {
             "agent": {
-                "default_model": "fallback-model",
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {
@@ -416,7 +472,7 @@ async def test_build_runtime_components_loads_profiles_and_prompts_from_filesyst
     prompt = components.prompt_loader.load("prompt/aca")
 
     assert profile.name == "Aca Filesystem"
-    assert profile.default_model == "fs-model"
+    assert not hasattr(profile, "default_model")
     assert profile.enabled_tools == ["reference_search"]
     assert prompt == "You are Aca from filesystem."
 
@@ -425,7 +481,6 @@ async def test_build_runtime_components_backend_status_exposes_session_path() ->
     config = Config(
         {
             "agent": {
-                "default_model": "fallback-model",
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {
@@ -451,7 +506,6 @@ async def test_build_runtime_components_constructs_configured_backend_service_wh
     config = Config(
         {
             "agent": {
-                "default_model": "fallback-model",
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {
@@ -489,7 +543,6 @@ async def test_build_runtime_components_uses_default_bot_admin_actor_ids_for_bac
     config = Config(
         {
             "agent": {
-                "default_model": "fallback-model",
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {
@@ -499,7 +552,6 @@ async def test_build_runtime_components_uses_default_bot_admin_actor_ids_for_bac
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/default",
-                        "default_model": "fallback-model",
                         "admin_actor_ids": ["qq:private:123456"],
                     }
                 },
@@ -529,7 +581,6 @@ async def test_build_runtime_components_uses_explicit_backend_cwd_when_configure
     config = Config(
         {
             "agent": {
-                "default_model": "fallback-model",
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {
@@ -563,7 +614,6 @@ async def test_build_runtime_components_resolves_backend_binding_path_under_runt
     config = Config(
         {
             "agent": {
-                "default_model": "fallback-model",
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {
@@ -593,7 +643,6 @@ async def test_build_runtime_components_invalid_backend_command_stays_unconfigur
     config = Config(
         {
             "agent": {
-                "default_model": "fallback-model",
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {
@@ -625,7 +674,6 @@ async def test_build_runtime_components_exposes_control_plane() -> None:
     config = Config(
         {
             "agent": {
-                "default_model": "fallback-model",
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {
@@ -685,7 +733,6 @@ surfaces:
     config_path.write_text(
         """
 agent:
-  default_model: "fallback-model"
   system_prompt: "Fallback prompt."
 
 runtime:
@@ -697,11 +744,9 @@ runtime:
     aca:
       name: "Aca"
       prompt_ref: "prompt/aca"
-      default_model: "model-a"
     ops:
       name: "Ops"
       prompt_ref: "prompt/ops"
-      default_model: "model-o"
   prompts:
     prompt/aca: "You are Aca."
     prompt/ops: "You are Ops."
@@ -760,11 +805,10 @@ runtime:
 
 
 
-async def test_build_runtime_components_wires_tool_broker_into_agent_runtime() -> None:
+async def test_build_runtime_components_wires_tool_broker_into_agent_runtime(tmp_path: Path) -> None:
     config = Config(
         {
             "agent": {
-                "default_model": "runtime-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -773,7 +817,6 @@ async def test_build_runtime_components_wires_tool_broker_into_agent_runtime() -
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
-                        "default_model": "runtime-model",
                         "enabled_tools": ["get_time"],
                     }
                 },
@@ -803,6 +846,7 @@ async def test_build_runtime_components_wires_tool_broker_into_agent_runtime() -
         gateway=gateway,
         agent=agent,
         tool_broker=broker,
+        model_registry_manager=await _model_registry_manager(tmp_path, agent_models={"aca": "runtime-model"}),
     )
 
     components.app.install()
@@ -816,7 +860,6 @@ async def test_build_runtime_components_registers_builtin_computer_tools() -> No
     config = Config(
         {
             "agent": {
-                "default_model": "test-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -825,7 +868,6 @@ async def test_build_runtime_components_registers_builtin_computer_tools() -> No
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
-                        "default_model": "test-model",
                         "enabled_tools": ["read"],
                     }
                 },
@@ -867,7 +909,6 @@ async def test_build_runtime_components_drops_stale_tools_from_removed_computer_
     config = Config(
         {
             "agent": {
-                "default_model": "test-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -876,7 +917,6 @@ async def test_build_runtime_components_drops_stale_tools_from_removed_computer_
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
-                        "default_model": "test-model",
                         "enabled_tools": ["read", "ls", "exec"],
                     }
                 },
@@ -951,7 +991,6 @@ async def test_build_runtime_components_drops_stale_builtin_plugins_from_reused_
     config = Config(
         {
             "agent": {
-                "default_model": "test-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -960,7 +999,6 @@ async def test_build_runtime_components_drops_stale_builtin_plugins_from_reused_
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
-                        "default_model": "test-model",
                         "enabled_tools": ["read", "ls"],
                     }
                 },
@@ -1004,7 +1042,6 @@ async def test_build_runtime_components_rejects_started_plugin_manager() -> None
     config = Config(
         {
             "agent": {
-                "default_model": "test-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -1013,7 +1050,6 @@ async def test_build_runtime_components_rejects_started_plugin_manager() -> None
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
-                        "default_model": "test-model",
                         "enabled_tools": ["read"],
                     }
                 },
@@ -1045,7 +1081,6 @@ async def test_build_runtime_components_full_plugin_reload_keeps_builtin_plugins
     config = Config(
         {
             "agent": {
-                "default_model": "test-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -1054,7 +1089,6 @@ async def test_build_runtime_components_full_plugin_reload_keeps_builtin_plugins
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
-                        "default_model": "test-model",
                         "enabled_tools": ["read"],
                         "skills": ["sample_configured_skill"],
                     }
@@ -1104,7 +1138,6 @@ async def test_build_runtime_components_reload_keeps_conditional_subagent_delega
     config = Config(
         {
             "agent": {
-                "default_model": "test-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -1119,13 +1152,11 @@ async def test_build_runtime_components_reload_keeps_conditional_subagent_delega
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
-                        "default_model": "test-model",
                         "skills": ["sample_configured_skill"],
                     },
                     "worker": {
                         "name": "Worker",
                         "prompt_ref": "prompt/worker",
-                        "default_model": "test-model",
                     },
                 },
                 "prompts": {
@@ -1156,7 +1187,7 @@ async def test_build_runtime_components_reload_keeps_conditional_subagent_delega
     assert "delegate_subagent" in [tool.name for tool in visible]
 
 
-async def test_build_runtime_components_default_approval_resume_replays_tool_call() -> None:
+async def test_build_runtime_components_default_approval_resume_replays_tool_call(tmp_path: Path) -> None:
     class ApprovalPolicy:
         async def allow(self, *, spec, arguments, ctx) -> ToolPolicyDecision:
             _ = spec, arguments, ctx
@@ -1186,7 +1217,6 @@ async def test_build_runtime_components_default_approval_resume_replays_tool_cal
         Config(
             {
                 "agent": {
-                    "default_model": "test-model",
                     "system_prompt": "You are Aca.",
                 },
                 "runtime": {
@@ -1195,7 +1225,6 @@ async def test_build_runtime_components_default_approval_resume_replays_tool_cal
                         "aca": {
                             "name": "Aca",
                             "prompt_ref": "prompt/aca",
-                            "default_model": "test-model",
                             "enabled_tools": ["restricted"],
                         }
                     },
@@ -1208,6 +1237,7 @@ async def test_build_runtime_components_default_approval_resume_replays_tool_cal
         gateway=gateway,
         agent=ApprovalToolAgent(),
         tool_broker=broker,
+        model_registry_manager=await _model_registry_manager(tmp_path, agent_models={"aca": "test-model"}),
     )
 
     components.app.install()
@@ -1222,7 +1252,9 @@ async def test_build_runtime_components_default_approval_resume_replays_tool_cal
     assert restored.status == "completed"
 
 
-async def test_build_runtime_components_approval_resume_marks_completed_with_errors_for_undelivered_outputs() -> None:
+async def test_build_runtime_components_approval_resume_marks_completed_with_errors_for_undelivered_outputs(
+    tmp_path: Path,
+) -> None:
     class ApprovalPolicy:
         async def allow(self, *, spec, arguments, ctx) -> ToolPolicyDecision:
             _ = spec, arguments, ctx
@@ -1257,7 +1289,6 @@ async def test_build_runtime_components_approval_resume_marks_completed_with_err
         Config(
             {
                 "agent": {
-                    "default_model": "test-model",
                     "system_prompt": "You are Aca.",
                 },
                 "runtime": {
@@ -1266,7 +1297,6 @@ async def test_build_runtime_components_approval_resume_marks_completed_with_err
                         "aca": {
                             "name": "Aca",
                             "prompt_ref": "prompt/aca",
-                            "default_model": "test-model",
                             "enabled_tools": ["restricted"],
                         }
                     },
@@ -1279,6 +1309,7 @@ async def test_build_runtime_components_approval_resume_marks_completed_with_err
         gateway=gateway,
         agent=ApprovalToolAgent(),
         tool_broker=broker,
+        model_registry_manager=await _model_registry_manager(tmp_path, agent_models={"aca": "test-model"}),
     )
 
     components.app.install()
@@ -1296,7 +1327,9 @@ async def test_build_runtime_components_approval_resume_marks_completed_with_err
     assert steps[-1].payload["result_metadata"]["undelivered_attachment_count"] == 1
 
 
-async def test_build_runtime_components_approval_resume_fails_closed_on_nested_approval() -> None:
+async def test_build_runtime_components_approval_resume_fails_closed_on_nested_approval(
+    tmp_path: Path,
+) -> None:
     class ApprovalPolicy:
         async def allow(self, *, spec, arguments, ctx) -> ToolPolicyDecision:
             _ = spec, arguments, ctx
@@ -1334,7 +1367,6 @@ async def test_build_runtime_components_approval_resume_fails_closed_on_nested_a
         Config(
             {
                 "agent": {
-                    "default_model": "test-model",
                     "system_prompt": "You are Aca.",
                 },
                 "runtime": {
@@ -1343,7 +1375,6 @@ async def test_build_runtime_components_approval_resume_fails_closed_on_nested_a
                         "aca": {
                             "name": "Aca",
                             "prompt_ref": "prompt/aca",
-                            "default_model": "test-model",
                             "enabled_tools": ["restricted"],
                         }
                     },
@@ -1356,6 +1387,7 @@ async def test_build_runtime_components_approval_resume_fails_closed_on_nested_a
         gateway=gateway,
         agent=ApprovalToolAgent(),
         tool_broker=broker,
+        model_registry_manager=await _model_registry_manager(tmp_path, agent_models={"aca": "test-model"}),
     )
 
     components.app.install()
@@ -1378,7 +1410,6 @@ async def test_build_runtime_components_uses_sqlite_persistence_when_configured(
     config = Config(
         {
             "agent": {
-                "default_model": "test-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -1392,7 +1423,13 @@ async def test_build_runtime_components_uses_sqlite_persistence_when_configured(
     )
     gateway1 = FakeGateway()
     agent1 = FakeAgent(FakeAgentResponse(text="hello back", model_used="test-model"))
-    components1 = build_runtime_components(config, gateway=gateway1, agent=agent1)
+    model_registry_manager = await _model_registry_manager(tmp_path, agent_models={"aca": "test-model"})
+    components1 = build_runtime_components(
+        config,
+        gateway=gateway1,
+        agent=agent1,
+        model_registry_manager=model_registry_manager,
+    )
 
     assert isinstance(components1.thread_manager, StoreBackedThreadManager)
     assert isinstance(components1.run_manager, StoreBackedRunManager)
@@ -1404,7 +1441,12 @@ async def test_build_runtime_components_uses_sqlite_persistence_when_configured(
 
     gateway2 = FakeGateway()
     agent2 = FakeAgent(FakeAgentResponse(text="hello again", model_used="test-model"))
-    components2 = build_runtime_components(config, gateway=gateway2, agent=agent2)
+    components2 = build_runtime_components(
+        config,
+        gateway=gateway2,
+        agent=agent2,
+        model_registry_manager=model_registry_manager,
+    )
     restored = await components2.thread_manager.get("qq:user:10001")
     delivered = await components2.message_store.get_thread_messages("qq:user:10001")
     events = await components2.channel_event_store.get_thread_events("qq:user:10001")
@@ -1423,7 +1465,6 @@ def test_build_runtime_components_defaults_to_null_reference_backend() -> None:
     config = Config(
         {
             "agent": {
-                "default_model": "runtime-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -1449,7 +1490,6 @@ def test_build_runtime_components_ignores_legacy_prompt_assembly_config() -> Non
     config = Config(
         {
             "agent": {
-                "default_model": "runtime-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -1480,7 +1520,6 @@ async def test_build_runtime_components_memory_broker_reads_self_and_sticky_file
     config = Config(
         {
             "agent": {
-                "default_model": "runtime-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -1544,7 +1583,6 @@ async def test_build_runtime_components_wires_context_assembler_and_payload_writ
     config = Config(
         {
             "agent": {
-                "default_model": "runtime-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -1587,7 +1625,6 @@ def test_build_runtime_components_applies_context_compaction_config() -> None:
     config = Config(
         {
             "agent": {
-                "default_model": "runtime-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -1621,7 +1658,6 @@ def test_build_runtime_components_applies_context_compaction_config() -> None:
     assert components.context_compactor.config.prompt_slot_reserve_tokens == 2200
     assert components.context_compactor.config.tool_schema_reserve_tokens == 3300
     assert components.context_compactor.config.fallback_context_window == 32000
-    assert components.context_compactor.config.summary_model == ""
 
 
 def test_build_runtime_components_selects_local_reference_backend(tmp_path: Path) -> None:
@@ -1629,7 +1665,6 @@ def test_build_runtime_components_selects_local_reference_backend(tmp_path: Path
     config = Config(
         {
             "agent": {
-                "default_model": "runtime-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -1660,7 +1695,6 @@ def test_build_runtime_components_selects_openviking_reference_backend() -> None
     config = Config(
         {
             "agent": {
-                "default_model": "runtime-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {

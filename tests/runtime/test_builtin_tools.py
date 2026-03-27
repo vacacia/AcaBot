@@ -224,7 +224,6 @@ def _tool_execution_context(*, enabled_tools: list[str]) -> ToolExecutionContext
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/aca",
-            default_model="test-model",
             enabled_tools=list(enabled_tools),
             computer_policy=ComputerPolicy(),
         ),
@@ -250,7 +249,6 @@ async def test_build_runtime_components_registers_core_tools_as_builtin_sources(
     config = Config(
         {
             "agent": {
-                "default_model": "test-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -259,7 +257,6 @@ async def test_build_runtime_components_registers_core_tools_as_builtin_sources(
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
-                        "default_model": "test-model",
                     }
                 },
                 "prompts": {
@@ -335,7 +332,6 @@ async def test_runtime_plugin_reload_does_not_remove_builtin_core_tools() -> Non
     config = Config(
         {
             "agent": {
-                "default_model": "test-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -344,7 +340,6 @@ async def test_runtime_plugin_reload_does_not_remove_builtin_core_tools() -> Non
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
-                        "default_model": "test-model",
                     }
                 },
                 "prompts": {
@@ -391,7 +386,6 @@ async def test_deprecated_computer_tool_adapter_plugin_cannot_reintroduce_old_to
     config = Config(
         {
             "agent": {
-                "default_model": "test-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -400,7 +394,6 @@ async def test_deprecated_computer_tool_adapter_plugin_cannot_reintroduce_old_to
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
-                        "default_model": "test-model",
                     }
                 },
                 "prompts": {
@@ -440,7 +433,6 @@ async def test_runtime_bootstrap_keeps_failed_plugin_import_paths_for_diagnosis(
     config = Config(
         {
             "agent": {
-                "default_model": "test-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -449,7 +441,6 @@ async def test_runtime_bootstrap_keeps_failed_plugin_import_paths_for_diagnosis(
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
-                        "default_model": "test-model",
                     }
                 },
                 "prompts": {
@@ -475,7 +466,6 @@ async def test_runtime_plugin_full_reload_reports_broken_import_paths() -> None:
     config = Config(
         {
             "agent": {
-                "default_model": "test-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -484,7 +474,6 @@ async def test_runtime_plugin_full_reload_reports_broken_import_paths() -> None:
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
-                        "default_model": "test-model",
                     }
                 },
                 "prompts": {
@@ -517,7 +506,6 @@ async def test_runtime_config_reload_keeps_builtin_core_tools(tmp_path: Path) ->
         "\n".join(
             [
                 "agent:",
-                '  default_model: "test-model"',
                 '  system_prompt: "You are Aca."',
                 "runtime:",
                 '  default_agent_id: "aca"',
@@ -525,7 +513,6 @@ async def test_runtime_config_reload_keeps_builtin_core_tools(tmp_path: Path) ->
                 "    aca:",
                 '      name: "Aca"',
                 '      prompt_ref: "prompt/aca"',
-                '      default_model: "test-model"',
                 "  prompts:",
                 '    prompt/aca: "You are Aca."',
             ]

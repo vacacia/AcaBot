@@ -465,7 +465,6 @@ gateway:
   port: 8080
 
 agent:
-  default_model: "test-model"
 
 runtime:
   default_agent_id: "aca"
@@ -473,7 +472,6 @@ runtime:
     aca:
       name: "Aca"
       prompt_ref: "prompt/default"
-      default_model: "test-model"
   prompts:
     prompt/default: "hello"
   webui:
@@ -494,7 +492,6 @@ gateway:
   port: 8080
 
 agent:
-  default_model: "test-model"
 
 runtime:
   default_agent_id: "aca"
@@ -502,13 +499,11 @@ runtime:
     aca:
       name: "Aca"
       prompt_ref: "prompt/aca"
-      default_model: "model-a"
       admin_actor_ids:
         - "qq:private:1"
     worker:
       name: "Worker"
       prompt_ref: "prompt/worker"
-      default_model: "model-w"
   prompts:
     prompt/aca: "hello aca"
     prompt/worker: "hello worker"
@@ -533,7 +528,6 @@ gateway:
   port: 8080
 
 agent:
-  default_model: "test-model"
 
 runtime:
   default_agent_id: "worker"
@@ -541,11 +535,9 @@ runtime:
     aca:
       name: "Aca"
       prompt_ref: "prompt/aca"
-      default_model: "model-a"
     worker:
       name: "Worker"
       prompt_ref: "prompt/worker"
-      default_model: "model-w"
       admin_actor_ids:
         - "qq:private:2"
   prompts:
@@ -579,7 +571,6 @@ async def test_runtime_config_control_plane_upserts_profile_and_prompt(tmp_path:
             "agent_id": "worker",
             "name": "Worker",
             "prompt_ref": "prompt/worker",
-            "default_model": "worker-model",
             "enabled_tools": ["read"],
             "skills": ["sample_configured_skill"],
         }
@@ -604,6 +595,57 @@ async def test_runtime_config_control_plane_upserts_profile_and_prompt(tmp_path:
     assert prompt["prompt_ref"] == "prompt/worker"
     assert components.prompt_loader.load("prompt/worker") == "you are worker"
     assert "worker" in config_path.read_text(encoding="utf-8")
+
+
+async def test_runtime_config_control_plane_blocks_profile_delete_when_model_binding_exists(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+
+    await components.control_plane.upsert_profile(
+        {
+            "agent_id": "worker",
+            "name": "Worker",
+            "prompt_ref": "prompt/worker",
+        }
+    )
+    await components.control_plane.upsert_model_provider(
+        ModelProvider(
+            provider_id="openai-main",
+            kind="openai_compatible",
+            config=OpenAICompatibleProviderConfig(
+                base_url="https://llm.example.com/v1",
+                api_key_env="OPENAI_API_KEY",
+            ),
+        )
+    )
+    await components.control_plane.upsert_model_preset(
+        ModelPreset(
+            preset_id="worker-main",
+            provider_id="openai-main",
+            model="gpt-worker",
+            task_kind="chat",
+            capabilities=["tool_calling"],
+            context_window=64000,
+        )
+    )
+    await components.control_plane.upsert_model_binding(
+        ModelBinding(
+            binding_id="binding:worker",
+            target_id="agent:worker",
+            preset_ids=["worker-main"],
+        )
+    )
+
+    with pytest.raises(ValueError, match="profile still has model binding"):
+        await components.config_control_plane.delete_profile("worker")
 
 
 def test_runtime_http_api_server_default_static_dir_points_to_src_acabot_webui() -> None:
@@ -670,6 +712,8 @@ async def test_runtime_http_api_server_serves_status_and_profile_crud(tmp_path: 
         assert "tools" in catalog["data"]
         assert "options" in catalog["data"]
         assert "event_types" in catalog["data"]["options"]
+        assert "binding_target_types" not in catalog["data"]["options"]
+        assert catalog["data"]["options"]["model_target_source_kinds"] == ["agent", "system", "plugin"]
         assert any(item["prompt_name"] == "default" for item in catalog["data"]["prompts"])
 
         logs = await asyncio.to_thread(request_json, base_url, "/api/system/logs")
@@ -712,7 +756,6 @@ async def test_runtime_http_api_server_serves_status_and_profile_crud(tmp_path: 
             payload={
                 "name": "Worker",
                 "prompt_ref": "prompt/worker",
-                "default_model": "worker-model",
                 "enabled_tools": ["read"],
                 "skills": [],
             },
@@ -895,7 +938,6 @@ gateway:
   port: 8080
 
 agent:
-  default_model: "test-model"
 
 runtime:
   default_agent_id: "aca"
@@ -903,7 +945,6 @@ runtime:
     aca:
       name: "Aca"
       prompt_ref: "prompt/default"
-      default_model: "test-model"
   prompts:
     prompt/default: "hello"
   plugins:
@@ -949,7 +990,6 @@ gateway:
   port: 8080
 
 agent:
-  default_model: "test-model"
 
 runtime:
   default_agent_id: "aca"
@@ -957,7 +997,6 @@ runtime:
     aca:
       name: "Aca"
       prompt_ref: "prompt/default"
-      default_model: "test-model"
   prompts:
     prompt/default: "hello"
   plugins:
@@ -1014,7 +1053,6 @@ gateway:
   port: 8080
 
 agent:
-  default_model: "test-model"
 
 runtime:
   default_agent_id: "aca"
@@ -1022,7 +1060,6 @@ runtime:
     aca:
       name: "Aca"
       prompt_ref: "prompt/default"
-      default_model: "test-model"
   prompts:
     prompt/default: "hello"
   plugins:
@@ -1112,6 +1149,64 @@ async def test_runtime_http_api_server_persists_model_provider_name(tmp_path: Pa
         await server.stop()
 
 
+async def test_runtime_http_api_server_persists_model_preset_task_kind_and_capabilities(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+
+        await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/models/providers/openai-main",
+            method="PUT",
+            payload={
+                "name": "OpenAI 主线路",
+                "kind": "openai_compatible",
+                "base_url": "https://llm.example.com/v1",
+                "api_key_env": "OPENAI_API_KEY",
+            },
+        )
+        saved = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/models/presets/embed-main",
+            method="PUT",
+            payload={
+                "provider_id": "openai-main",
+                "model": "text-embedding-3-large",
+                "task_kind": "embedding",
+                "capabilities": [],
+                "context_window": 8192,
+                "max_output_tokens": None,
+                "model_params": {},
+            },
+        )
+        assert saved["ok"] is True
+        assert saved["data"]["entity_id"] == "embed-main"
+
+        preset = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/models/presets/embed-main",
+        )
+        assert preset["ok"] is True
+        assert preset["data"]["task_kind"] == "embedding"
+        assert preset["data"]["capabilities"] == []
+    finally:
+        await server.stop()
+
+
 async def test_runtime_http_api_server_serves_product_shaped_bot_settings(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     _write_config(config_path, webui_enabled=True, port=0)
@@ -1126,7 +1221,6 @@ async def test_runtime_http_api_server_serves_product_shaped_bot_settings(tmp_pa
             "agent_id": "aca",
             "name": "Aca",
             "prompt_ref": "prompt/default",
-            "default_model": "main-model",
             "admin_actor_ids": ["qq:private:123456"],
             "enabled_tools": ["read"],
             "skills": ["sample_configured_skill"],
@@ -1151,8 +1245,9 @@ async def test_runtime_http_api_server_serves_product_shaped_bot_settings(tmp_pa
             preset_id="main-a",
             provider_id="openai-main",
             model="gpt-main-a",
+            task_kind="chat",
+            capabilities=["tool_calling"],
             context_window=128000,
-            supports_tools=True,
         )
     )
     await components.control_plane.upsert_model_preset(
@@ -1160,8 +1255,9 @@ async def test_runtime_http_api_server_serves_product_shaped_bot_settings(tmp_pa
             preset_id="main-b",
             provider_id="openai-main",
             model="gpt-main-b",
+            task_kind="chat",
+            capabilities=["tool_calling"],
             context_window=256000,
-            supports_tools=True,
         )
     )
     await components.control_plane.upsert_model_preset(
@@ -1169,8 +1265,8 @@ async def test_runtime_http_api_server_serves_product_shaped_bot_settings(tmp_pa
             preset_id="summary-a",
             provider_id="openai-main",
             model="gpt-summary-a",
+            task_kind="chat",
             context_window=64000,
-            supports_tools=False,
         )
     )
     await components.control_plane.upsert_model_preset(
@@ -1178,23 +1274,21 @@ async def test_runtime_http_api_server_serves_product_shaped_bot_settings(tmp_pa
             preset_id="summary-b",
             provider_id="openai-main",
             model="gpt-summary-b",
+            task_kind="chat",
             context_window=64000,
-            supports_tools=False,
         )
     )
     await components.control_plane.upsert_model_binding(
         ModelBinding(
             binding_id="binding:aca",
-            target_type="agent",
-            target_id="aca",
-            preset_id="main-a",
+            target_id="agent:aca",
+            preset_ids=["main-a"],
         )
     )
     await components.control_plane.upsert_model_binding(
         ModelBinding(
             binding_id="binding:summary",
-            target_type="system",
-            target_id="compactor_summary",
+            target_id="system:compactor_summary",
             preset_ids=["summary-a"],
         )
     )
@@ -1246,7 +1340,7 @@ async def test_runtime_http_api_server_serves_product_shaped_bot_settings(tmp_pa
         assert profile["admin_actor_ids"] == ["qq:private:123456", "napcat:private:42"]
         assert profile["name"] == "Aca"
         assert profile["prompt_ref"] == "prompt/default"
-        assert profile["default_model"] == "main-model"
+        assert "default_model" not in profile
         assert "summary_model_preset_id" not in profile
         assert profile["enabled_tools"] == ["read"]
         assert profile["skills"] == ["sample_configured_skill"]
@@ -1264,14 +1358,23 @@ async def test_runtime_http_api_server_serves_product_shaped_bot_settings(tmp_pa
         assert inbound_after["ok"] is False
 
         bindings = await components.control_plane.list_model_bindings()
-        main_binding = next(item for item in bindings if item.target_type == "agent" and item.target_id == "aca")
+        main_binding = next(item for item in bindings if item.binding.target_id == "agent:aca")
         summary_binding = next(
             item
             for item in bindings
-            if item.target_type == "system" and item.target_id == "compactor_summary"
+            if item.binding.target_id == "system:compactor_summary"
         )
-        assert main_binding.preset_id == "main-a"
-        assert summary_binding.preset_ids == ["summary-a"]
+        assert main_binding.binding.preset_ids == ["main-a"]
+        assert main_binding.binding_state == "resolved"
+        assert summary_binding.binding.preset_ids == ["summary-a"]
+
+        catalog = await asyncio.to_thread(request_json, base_url, "/api/ui/catalog")
+        assert catalog["ok"] is True
+        catalog_binding = next(
+            item for item in catalog["data"]["model_bindings"] if item["binding"]["binding_id"] == "binding:aca"
+        )
+        assert catalog_binding["binding_state"] == "resolved"
+        assert catalog_binding["binding"]["preset_ids"] == ["main-a"]
     finally:
         await server.stop()
 
@@ -1356,7 +1459,6 @@ async def test_runtime_http_api_server_blocks_deleting_prompt_that_is_still_refe
             "agent_id": "worker",
             "name": "Worker",
             "prompt_ref": "prompt/in-use",
-            "default_model": "worker-model",
         }
     )
     server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)

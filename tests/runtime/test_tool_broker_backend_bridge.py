@@ -34,7 +34,6 @@ def _profile(agent_id: str) -> AgentProfile:
         agent_id=agent_id,
         name=agent_id,
         prompt_ref="prompt/default",
-        default_model="test-model",
         enabled_tools=[],
     )
 
@@ -159,7 +158,6 @@ async def test_build_runtime_components_enabled_backend_exposes_ask_backend(
     config = Config(
         {
             "agent": {
-                "default_model": "fallback-model",
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {
@@ -192,7 +190,6 @@ async def test_enabled_runtime_ask_backend_executes_against_real_pi(tmp_path) ->
     config = Config(
         {
             "agent": {
-                "default_model": "fallback-model",
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {

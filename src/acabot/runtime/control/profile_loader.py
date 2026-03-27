@@ -366,7 +366,6 @@ class FileSystemProfileLoader:
         self,
         root: str | Path,
         *,
-        default_model: str,
         default_computer_policy: ComputerPolicy | None = None,
         prompt_prefix: str = "prompt",
     ) -> None:
@@ -374,13 +373,11 @@ class FileSystemProfileLoader:
 
         Args:
             root: profile 根目录.
-            default_model: profile 文件未声明模型时的默认模型.
             default_computer_policy: profile 文件未声明 computer 时的默认 computer policy.
             prompt_prefix: 默认 prompt_ref 前缀.
         """
 
         self.root = Path(root)
-        self.default_model = default_model
         self.default_computer_policy = default_computer_policy
         self.prompt_prefix = prompt_prefix.strip("/")
 
@@ -418,7 +415,6 @@ class FileSystemProfileLoader:
             agent_id=agent_id,
             name=str(normalized.get("name", "") or agent_id),
             prompt_ref=str(normalized.get("prompt_ref", "") or f"{self.prompt_prefix}/{agent_id}"),
-            default_model=str(normalized.get("default_model", "") or self.default_model),
             enabled_tools=[str(item) for item in list(normalized.get("enabled_tools", []) or [])],
             skills=resolve_profile_skills(normalized),
             computer_policy=parse_computer_policy(

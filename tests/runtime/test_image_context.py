@@ -64,46 +64,19 @@ class FakeGateway:
 
 class FakeModelRegistry:
     def __init__(self) -> None:
-        self.resolve_run_request_calls: list[dict[str, object]] = []
+        self.resolve_target_request_calls: list[str] = []
 
-    def resolve_preset_request(self, preset_id: str) -> RuntimeModelRequest | None:
-        if preset_id != "caption-model":
+    def resolve_target_request(self, target_id: str) -> RuntimeModelRequest | None:
+        self.resolve_target_request_calls.append(target_id)
+        if target_id != "system:image_caption":
             return None
         return RuntimeModelRequest(
             provider_kind="openai_compatible",
             model="caption-model",
             supports_vision=True,
             provider_id="provider",
-            preset_id=preset_id,
+            preset_id="caption-model",
             provider_params={"base_url": "https://example.com"},
-        )
-
-    def resolve_run_request(
-        self,
-        *,
-        run_mode: str,
-        agent_id: str,
-        explicit_profile_default_model: str = "",
-        effective_profile_default_model: str = "",
-    ) -> tuple[RuntimeModelRequest | None, None]:
-        self.resolve_run_request_calls.append(
-            {
-                "run_mode": run_mode,
-                "agent_id": agent_id,
-                "explicit_profile_default_model": explicit_profile_default_model,
-                "effective_profile_default_model": effective_profile_default_model,
-            }
-        )
-        return (
-            RuntimeModelRequest(
-                provider_kind="openai_compatible",
-                model="fallback-caption-model",
-                supports_vision=True,
-                provider_id="provider",
-                preset_id="fallback",
-                provider_params={"base_url": "https://example.com"},
-            ),
-            None,
         )
 
 
@@ -173,12 +146,10 @@ def _ctx(tmp_path: Path, *, run_mode: str = "respond", include_reply: bool = Tru
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",
-            default_model="main-model",
             computer_policy=ComputerPolicy(),
             config={
                 "image_caption": {
                     "enabled": True,
-                    "caption_preset_id": "caption-model",
                     "caption_prompt": "请描述图片。",
                     "include_reply_images": include_reply,
                 }
@@ -245,7 +216,6 @@ async def test_message_preparation_service_captions_images_and_builds_model_cont
 
 async def test_message_preparation_service_record_only_uses_fallback_caption_request(tmp_path: Path) -> None:
     computer, ctx, _current_image, _reply_image = _ctx(tmp_path, run_mode="record_only", include_reply=False)
-    ctx.profile.config["image_caption"]["caption_preset_id"] = ""
     await computer.prepare_run_context(ctx)
     agent = FakeCaptionAgent()
     registry = FakeModelRegistry()
@@ -261,7 +231,7 @@ async def test_message_preparation_service_record_only_uses_fallback_caption_req
     assert ctx.message_projection is not None
     assert ctx.message_projection.history_text.endswith("[系统补充-图片说明: caption-1]")
     assert len(ctx.resolved_images) == 1
-    assert registry.resolve_run_request_calls[0]["run_mode"] == "respond"
+    assert registry.resolve_target_request_calls == ["system:image_caption"]
     assert len(agent.calls) == 1
 
 

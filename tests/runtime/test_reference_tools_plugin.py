@@ -20,7 +20,6 @@ def _profile() -> AgentProfile:
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
-        default_model="test-model",
         enabled_tools=[
             "reference_add_document",
             "reference_search",
@@ -92,7 +91,6 @@ async def test_build_runtime_components_can_load_reference_tools_plugin_from_con
     config = Config(
         {
             "agent": {
-                "default_model": "test-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {

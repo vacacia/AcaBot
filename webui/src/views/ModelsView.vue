@@ -7,12 +7,32 @@ type PresetRecord = {
   preset_id: string
   provider_id: string
   model: string
+  task_kind: TaskKind
+  capabilities?: Capability[]
   context_window: number
-  supports_tools: boolean
-  supports_vision: boolean
   max_output_tokens?: number
   model_params?: Record<string, unknown>
 }
+
+type TaskKind =
+  | 'chat'
+  | 'embedding'
+  | 'rerank'
+  | 'speech_to_text'
+  | 'text_to_speech'
+  | 'image_generation'
+
+type Capability =
+  | 'tool_calling'
+  | 'reasoning'
+  | 'structured_output'
+  | 'image_input'
+  | 'image_output'
+  | 'document_input'
+  | 'audio_input'
+  | 'audio_output'
+  | 'video_input'
+  | 'video_output'
 
 type ProviderRecord = {
   provider_id: string
@@ -35,12 +55,34 @@ type PresetDraft = {
   preset_id: string
   provider_id: string
   model: string
+  task_kind: TaskKind
+  capabilities: Capability[]
   context_window: string
-  supports_tools: boolean
-  supports_vision: boolean
   max_output_tokens: string
   model_params_text: string
 }
+
+const TASK_KIND_OPTIONS: TaskKind[] = [
+  'chat',
+  'embedding',
+  'rerank',
+  'speech_to_text',
+  'text_to_speech',
+  'image_generation',
+]
+
+const CAPABILITY_OPTIONS: Capability[] = [
+  'tool_calling',
+  'reasoning',
+  'structured_output',
+  'image_input',
+  'image_output',
+  'document_input',
+  'audio_input',
+  'audio_output',
+  'video_input',
+  'video_output',
+]
 
 const presets = ref<PresetRecord[]>(peekCachedGet<PresetRecord[]>('/api/models/presets') ?? [])
 const providers = ref<ProviderRecord[]>(peekCachedGet<ProviderRecord[]>('/api/models/providers') ?? [])
@@ -62,9 +104,9 @@ function blankDraft(): PresetDraft {
     preset_id: '',
     provider_id: providers.value[0]?.provider_id || '',
     model: '',
+    task_kind: 'chat',
+    capabilities: ['tool_calling'],
     context_window: '128000',
-    supports_tools: true,
-    supports_vision: false,
     max_output_tokens: '',
     model_params_text: '',
   }
@@ -82,16 +124,37 @@ function providerLabel(providerId: string): string {
 }
 
 function toDraft(item: PresetRecord): PresetDraft {
+  const capabilities = Array.isArray(item.capabilities)
+    ? [...item.capabilities]
+    : (item.task_kind === 'chat' ? ['tool_calling'] : [])
   return {
     preset_id: item.preset_id,
     provider_id: item.provider_id,
     model: item.model,
+    task_kind: item.task_kind,
+    capabilities,
     context_window: String(item.context_window || ''),
-    supports_tools: Boolean(item.supports_tools),
-    supports_vision: Boolean(item.supports_vision),
     max_output_tokens: item.max_output_tokens ? String(item.max_output_tokens) : '',
     model_params_text: jsonText(item.model_params),
   }
+}
+
+function toggleCapability(capability: Capability, enabled: boolean): void {
+  if (!draft.value) {
+    return
+  }
+  const next = new Set(draft.value.capabilities)
+  if (enabled) {
+    next.add(capability)
+  } else {
+    next.delete(capability)
+  }
+  draft.value.capabilities = CAPABILITY_OPTIONS.filter((item) => next.has(item))
+}
+
+function onCapabilityToggle(capability: Capability, event: Event): void {
+  const input = event.target as HTMLInputElement | null
+  toggleCapability(capability, Boolean(input?.checked))
 }
 
 function parseObjectText(label: string, value: string): Record<string, unknown> {
@@ -167,9 +230,9 @@ async function savePreset(): Promise<void> {
     const result = await apiPut<MutationResult>(`/api/models/presets/${encodeURIComponent(presetId)}`, {
       provider_id: draft.value.provider_id,
       model: draft.value.model,
+      task_kind: draft.value.task_kind,
+      capabilities: [...draft.value.capabilities],
       context_window: Number(draft.value.context_window || 0),
-      supports_tools: draft.value.supports_tools,
-      supports_vision: draft.value.supports_vision,
       max_output_tokens: draft.value.max_output_tokens ? Number(draft.value.max_output_tokens) : null,
       model_params: parseObjectText('模型参数', draft.value.model_params_text),
     })
@@ -295,6 +358,14 @@ onMounted(() => {
             <input class="ds-input" v-model="draft.model" type="text" />
           </label>
           <label class="ds-field">
+            <span>任务类型</span>
+            <select class="ds-select" v-model="draft.task_kind">
+              <option v-for="taskKind in TASK_KIND_OPTIONS" :key="taskKind" :value="taskKind">
+                {{ taskKind }}
+              </option>
+            </select>
+          </label>
+          <label class="ds-field">
             <span>上下文窗口</span>
             <input class="ds-input" v-model="draft.context_window" type="number" min="0" />
           </label>
@@ -302,14 +373,21 @@ onMounted(() => {
             <span>最大输出 Tokens</span>
             <input class="ds-input" v-model="draft.max_output_tokens" type="number" min="0" />
           </label>
-          <label class="toggle-field ds-surface ds-card-padding-sm">
-            <input v-model="draft.supports_tools" type="checkbox" />
-            <span>支持工具调用</span>
-          </label>
-          <label class="toggle-field ds-surface ds-card-padding-sm">
-            <input v-model="draft.supports_vision" type="checkbox" />
-            <span>支持视觉输入</span>
-          </label>
+          <fieldset class="ds-field is-span-2 capability-grid">
+            <legend>能力集合</legend>
+            <label
+              v-for="capability in CAPABILITY_OPTIONS"
+              :key="capability"
+              class="toggle-field ds-surface ds-card-padding-sm"
+            >
+              <input
+                :checked="draft.capabilities.includes(capability)"
+                type="checkbox"
+                @change="onCapabilityToggle(capability, $event)"
+              />
+              <span>{{ capability }}</span>
+            </label>
+          </fieldset>
           <label class="ds-field is-span-2">
             <span>模型参数(JSON)</span>
             <textarea class="ds-textarea ds-mono" v-model="draft.model_params_text" rows="8"></textarea>
@@ -377,6 +455,20 @@ onMounted(() => {
   align-items: center;
   gap: 10px;
   border-radius: 18px;
+}
+
+.capability-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.capability-grid legend {
+  margin-bottom: 10px;
+  font-weight: 600;
 }
 
 @media (max-width: 960px) {

@@ -6,8 +6,56 @@ from .model_registry import (
     FileSystemModelRegistryManager,
     PersistedModelSnapshot,
     RuntimeModelRequest,
+    snapshot_from_runtime_request,
 )
 from ..contracts import AgentProfile, RouteDecision
+
+
+def resolve_run_request_for_agent(
+    manager: FileSystemModelRegistryManager | None,
+    *,
+    run_mode: str,
+    agent_id: str,
+) -> tuple[RuntimeModelRequest | None, PersistedModelSnapshot | None]:
+    """按 agent target 解析当前 run 的模型请求.
+
+    Args:
+        manager: 模型注册表管理器.
+        run_mode: 当前 run mode.
+        agent_id: 当前 agent ID.
+
+    Returns:
+        `(model_request, model_snapshot)` 二元组.
+    """
+
+    if manager is None:
+        return None, None
+    if run_mode == "record_only":
+        return None, None
+    request = manager.resolve_target_request(f"agent:{agent_id}")
+    if request is None:
+        return None, None
+    return request, snapshot_from_runtime_request(request)
+
+
+def resolve_summary_request(
+    manager: FileSystemModelRegistryManager | None,
+) -> RuntimeModelRequest | None:
+    """解析 summary target 对应的模型请求."""
+
+    if manager is None:
+        return None
+    return manager.resolve_target_request("system:compactor_summary")
+
+
+def resolve_image_caption_request(
+    manager: FileSystemModelRegistryManager | None,
+) -> RuntimeModelRequest | None:
+    """解析 image caption target 对应的模型请求."""
+
+    if manager is None:
+        return None
+    return manager.resolve_target_request("system:image_caption")
 
 
 def resolve_model_requests_for_profile(
@@ -25,18 +73,12 @@ def resolve_model_requests_for_profile(
     if manager is None:
         return None, None, None
 
-    explicit_profile_default_model = str(profile.config.get("default_model", "") or "")
-    model_request, model_snapshot = manager.resolve_run_request(
+    model_request, model_snapshot = resolve_run_request_for_agent(
+        manager,
         run_mode=decision.run_mode,
         agent_id=profile.agent_id,
-        explicit_profile_default_model=explicit_profile_default_model,
-        effective_profile_default_model=profile.default_model,
     )
-    summary_model_request = manager.resolve_summary_request(
-        primary_request=model_request,
-        profile_summary_preset_id=str(profile.config.get("summary_model_preset_id", "") or ""),
-        profile_summary_model=str(profile.config.get("summary_model", "") or ""),
-    )
+    summary_model_request = resolve_summary_request(manager)
     return model_request, model_snapshot, summary_model_request
 
 
@@ -48,30 +90,8 @@ def resolve_image_caption_request_for_profile(
 ) -> RuntimeModelRequest | None:
     """为图片转述解析一份独立的模型请求.
 
-    解析顺序:
-    1. `profile.config.image_caption.caption_preset_id`
-    2. 当前 run 已解析好的 primary_request
-    3. 按 profile 的主模型绑定重新解析一份 respond request
+    这里不再读取 profile 私有模型字段, 只认固定 system target。
     """
 
-    if manager is None:
-        return primary_request
-
-    image_caption_conf = dict(profile.config.get("image_caption", {}) or {})
-    caption_preset_id = str(image_caption_conf.get("caption_preset_id", "") or "")
-    if caption_preset_id:
-        request = manager.resolve_preset_request(caption_preset_id)
-        if request is not None:
-            request.binding_id = "profile:image_caption_preset"
-            return request
-
-    if primary_request is not None:
-        return primary_request
-
-    fallback_request, _ = manager.resolve_run_request(
-        run_mode="respond",
-        agent_id=profile.agent_id,
-        explicit_profile_default_model=str(profile.config.get("default_model", "") or ""),
-        effective_profile_default_model=profile.default_model,
-    )
-    return fallback_request
+    _ = profile, primary_request
+    return resolve_image_caption_request(manager)

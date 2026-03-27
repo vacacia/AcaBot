@@ -75,7 +75,6 @@ def _ctx(tmp_path: Path) -> tuple[ComputerRuntime, RunContext]:
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",
-            default_model="test-model",
             computer_policy=ComputerPolicy(),
             config={},
             skills=[],

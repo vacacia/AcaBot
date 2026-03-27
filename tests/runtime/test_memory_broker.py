@@ -108,7 +108,6 @@ def _ctx() -> RunContext:
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",
-            default_model="test-model",
         ),
         retrieval_plan=RetrievalPlan(
             retained_history=[{"role": "user", "content": "[acacia/10001] [notice:poke]"}],

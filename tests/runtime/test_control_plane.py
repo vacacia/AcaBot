@@ -52,7 +52,6 @@ def _profile_loader(decision: RouteDecision) -> AgentProfile:
         agent_id=decision.agent_id,
         name="Aca",
         prompt_ref="prompt/default",
-        default_model="test-model",
     )
 
 
@@ -89,7 +88,6 @@ def _profile_registry() -> AgentProfileRegistry:
                 agent_id="aca",
                 name="Aca",
                 prompt_ref="prompt/default",
-                default_model="test-model",
                 skills=["sample_configured_skill"],
             )
         },
@@ -341,7 +339,6 @@ async def test_runtime_control_plane_manages_sticky_note_records(tmp_path: Path)
         Config(
             {
                 "agent": {
-                    "default_model": "test-model",
                     "system_prompt": "You are Aca.",
                 },
                 "runtime": {
@@ -378,7 +375,6 @@ async def test_runtime_control_plane_rejects_invalid_entity_kind_for_sticky_note
         Config(
             {
                 "agent": {
-                    "default_model": "test-model",
                     "system_prompt": "You are Aca.",
                 },
                 "runtime": {

@@ -260,7 +260,6 @@ async def test_store_backed_conversation_fact_reader_preserves_channel_scope_fro
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",
-            default_model="test-model",
         ),
         actions=[
             PlannedAction(

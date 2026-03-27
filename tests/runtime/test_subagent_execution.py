@@ -1,6 +1,8 @@
 from acabot.config import Config
 from acabot.runtime import (
+    AgentProfile,
     AgentRuntimeResult,
+    build_agent_model_targets,
     FileSystemModelRegistryManager,
     ModelBinding,
     ModelPreset,
@@ -64,11 +66,28 @@ def _tool_ctx(*, run_id: str, profile) -> ToolExecutionContext:
     )
 
 
-async def _model_registry_manager(tmp_path) -> FileSystemModelRegistryManager:
+async def _model_registry_manager(
+    tmp_path,
+    *,
+    agent_models: dict[str, str] | None = None,
+) -> FileSystemModelRegistryManager:
+    models = dict(agent_models or {"excel_worker": "gpt-worker"})
     manager = FileSystemModelRegistryManager(
         providers_dir=tmp_path / "providers",
         presets_dir=tmp_path / "presets",
         bindings_dir=tmp_path / "bindings",
+    )
+    manager.target_catalog.replace_agent_targets(
+        build_agent_model_targets(
+            [
+                AgentProfile(
+                    agent_id=agent_id,
+                    name=agent_id,
+                    prompt_ref=f"prompt/{agent_id}",
+                )
+                for agent_id in models
+            ]
+        )
     )
     await manager.upsert_provider(
         ModelProvider(
@@ -80,32 +99,33 @@ async def _model_registry_manager(tmp_path) -> FileSystemModelRegistryManager:
             ),
         )
     )
-    await manager.upsert_preset(
-        ModelPreset(
-            preset_id="worker-main",
-            provider_id="openai-main",
-            model="gpt-worker",
-            context_window=32000,
-            supports_tools=True,
+    for agent_id, model in models.items():
+        preset_id = f"{agent_id}-main"
+        await manager.upsert_preset(
+            ModelPreset(
+                preset_id=preset_id,
+                provider_id="openai-main",
+                model=model,
+                task_kind="chat",
+                capabilities=["tool_calling"],
+                context_window=32000,
+            )
         )
-    )
-    await manager.upsert_binding(
-        ModelBinding(
-            binding_id="binding:excel-worker",
-            target_type="agent",
-            target_id="excel_worker",
-            preset_id="worker-main",
+        await manager.upsert_binding(
+            ModelBinding(
+                binding_id=f"binding:{agent_id}",
+                target_id=f"agent:{agent_id}",
+                preset_ids=[preset_id],
+            )
         )
-    )
     return manager
 
 
-async def test_delegate_subagent_uses_real_local_child_run() -> None:
+async def test_delegate_subagent_uses_real_local_child_run(tmp_path) -> None:
     gateway = FakeGateway()
     config = Config(
         {
             "agent": {
-                "default_model": "runtime-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -118,13 +138,11 @@ async def test_delegate_subagent_uses_real_local_child_run() -> None:
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
-                        "default_model": "runtime-model",
                         "skills": ["sample_configured_skill"],
                     },
                     "excel_worker": {
                         "name": "Excel Worker",
                         "prompt_ref": "prompt/excel_worker",
-                        "default_model": "runtime-model",
                     },
                 },
                 "prompts": {
@@ -141,6 +159,13 @@ async def test_delegate_subagent_uses_real_local_child_run() -> None:
         config,
         gateway=gateway,
         agent=FakeAgent(FakeAgentResponse(text="worker summary", model_used="runtime-model")),
+        model_registry_manager=await _model_registry_manager(
+            tmp_path,
+            agent_models={
+                "aca": "runtime-model",
+                "excel_worker": "runtime-model",
+            },
+        ),
     )
     await components.plugin_manager.ensure_started()
 
@@ -200,7 +225,6 @@ async def test_delegate_subagent_builds_subagent_computer_policy() -> None:
     config = Config(
         {
             "agent": {
-                "default_model": "runtime-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -209,12 +233,10 @@ async def test_delegate_subagent_builds_subagent_computer_policy() -> None:
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
-                        "default_model": "runtime-model",
                     },
                     "excel_worker": {
                         "name": "Excel Worker",
                         "prompt_ref": "prompt/excel_worker",
-                        "default_model": "runtime-model",
                     },
                 },
                 "prompts": {
@@ -277,7 +299,6 @@ async def test_bootstrap_registers_local_profile_subagent_executors() -> None:
     config = Config(
         {
             "agent": {
-                "default_model": "runtime-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -286,12 +307,10 @@ async def test_bootstrap_registers_local_profile_subagent_executors() -> None:
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
-                        "default_model": "runtime-model",
                     },
                     "excel_worker": {
                         "name": "Excel Worker",
                         "prompt_ref": "prompt/excel_worker",
-                        "default_model": "runtime-model",
                     },
                 },
                 "prompts": {
@@ -319,11 +338,16 @@ async def test_delegate_subagent_child_run_uses_delegate_agent_model_binding(
 ) -> None:
     gateway = FakeGateway()
     agent = FakeAgent(FakeAgentResponse(text="worker summary", model_used="gpt-worker"))
-    model_registry_manager = await _model_registry_manager(tmp_path)
+    model_registry_manager = await _model_registry_manager(
+        tmp_path,
+        agent_models={
+            "aca": "gpt-worker",
+            "excel_worker": "gpt-worker",
+        },
+    )
     config = Config(
         {
             "agent": {
-                "default_model": "runtime-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -336,13 +360,11 @@ async def test_delegate_subagent_child_run_uses_delegate_agent_model_binding(
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
-                        "default_model": "runtime-model",
                         "skills": ["sample_configured_skill"],
                     },
                     "excel_worker": {
                         "name": "Excel Worker",
                         "prompt_ref": "prompt/excel_worker",
-                        "default_model": "runtime-model",
                     },
                 },
                 "prompts": {
@@ -386,9 +408,9 @@ async def test_delegate_subagent_child_run_uses_delegate_agent_model_binding(
     child_run = await components.run_manager.get(str(result.raw["delegated_run_id"]))
 
     assert child_run is not None
-    assert child_run.metadata["model_snapshot"]["binding_id"] == "binding:excel-worker"
+    assert child_run.metadata["model_snapshot"]["binding_id"] == "binding:excel_worker"
     assert child_run.metadata["model_snapshot"]["provider_id"] == "openai-main"
-    assert child_run.metadata["model_snapshot"]["preset_id"] == "worker-main"
+    assert child_run.metadata["model_snapshot"]["preset_id"] == "excel_worker-main"
     assert agent.calls[-1]["model"] == "gpt-worker"
     assert agent.calls[-1]["request_options"]["api_base"] == "https://example.invalid/v1"
     assert agent.calls[-1]["request_options"]["provider_kind"] == "openai_compatible"

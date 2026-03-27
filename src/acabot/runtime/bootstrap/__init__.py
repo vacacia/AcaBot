@@ -31,6 +31,7 @@ from ..memory.sticky_note_renderer import StickyNoteRenderer
 from ..memory.sticky_notes import StickyNoteService
 from ..soul import SoulSource
 from ..model.model_agent_runtime import ModelAgentRuntime
+from ..model.model_targets import MutableModelTargetCatalog, build_agent_model_targets
 from ..outbox import Outbox
 from ..pipeline import ThreadPipeline
 from ..plugin_manager import (
@@ -150,6 +151,8 @@ def build_runtime_components(
         profiles=profiles,
         default_agent_id=default_agent_id,
     )
+    runtime_model_target_catalog = MutableModelTargetCatalog()
+    runtime_model_target_catalog.replace_agent_targets(build_agent_model_targets(profiles.values()))
     session_runtime = build_session_runtime(config)
     runtime_router = router or RuntimeRouter(
         default_agent_id=default_agent_id,
@@ -196,7 +199,14 @@ def build_runtime_components(
         skill_catalog=runtime_skill_catalog,
     )
     runtime_reference_backend = reference_backend or build_reference_backend(config)
-    runtime_model_registry_manager = model_registry_manager or build_model_registry_manager(config)
+    runtime_model_registry_manager = model_registry_manager or build_model_registry_manager(
+        config,
+        target_catalog=runtime_model_target_catalog,
+    )
+    runtime_model_registry_manager.target_catalog.replace_agent_targets(
+        build_agent_model_targets(profiles.values())
+    )
+    runtime_model_registry_manager.reload_now()
     backend_conf = dict(runtime_conf.get("backend", {}))
     runtime_backend_mode_registry = BackendModeRegistry()
     backend_session_path = resolve_runtime_path(
@@ -274,6 +284,7 @@ def build_runtime_components(
         computer_runtime=runtime_computer_runtime,
         skill_catalog=runtime_skill_catalog,
         subagent_delegator=runtime_subagent_delegator,
+        model_target_catalog=runtime_model_registry_manager.target_catalog,
         builtin_plugins=builtin_plugins,
         plugins=configured_plugins,
     )
@@ -337,6 +348,7 @@ def build_runtime_components(
         router=runtime_router,
         profile_registry=profile_registry,
         prompt_loader=prompt_loader,
+        model_registry_manager=runtime_model_registry_manager,
         skill_catalog=runtime_skill_catalog,
         plugin_manager=runtime_plugin_manager,
         subagent_executor_registry=runtime_subagent_executor_registry,

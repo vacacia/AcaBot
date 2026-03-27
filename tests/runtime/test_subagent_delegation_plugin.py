@@ -40,7 +40,6 @@ async def test_delegate_subagent_is_auto_loaded_for_delegated_profiles() -> None
     config = Config(
         {
             "agent": {
-                "default_model": "runtime-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -53,7 +52,6 @@ async def test_delegate_subagent_is_auto_loaded_for_delegated_profiles() -> None
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
-                        "default_model": "runtime-model",
                         "skills": ["sample_configured_skill"],
                     }
                 },
@@ -85,7 +83,6 @@ async def test_delegate_subagent_tool_calls_subagent_executor() -> None:
     config = Config(
         {
             "agent": {
-                "default_model": "runtime-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -98,7 +95,6 @@ async def test_delegate_subagent_tool_calls_subagent_executor() -> None:
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
-                        "default_model": "runtime-model",
                         "skills": ["sample_configured_skill"],
                     }
                 },
@@ -141,7 +137,6 @@ async def test_delegate_subagent_is_available_when_subagent_exists_without_skill
     config = Config(
         {
             "agent": {
-                "default_model": "runtime-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -154,13 +149,11 @@ async def test_delegate_subagent_is_available_when_subagent_exists_without_skill
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
-                        "default_model": "runtime-model",
                         "skills": [],
                     },
                     "sample_worker": {
                         "name": "Sample Worker",
                         "prompt_ref": "prompt/sample_worker",
-                        "default_model": "runtime-model",
                     },
                 },
                 "prompts": {
@@ -188,7 +181,6 @@ async def test_delegate_subagent_tool_can_delegate_directly_to_subagent_id() -> 
     config = Config(
         {
             "agent": {
-                "default_model": "runtime-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -201,13 +193,11 @@ async def test_delegate_subagent_tool_can_delegate_directly_to_subagent_id() -> 
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
-                        "default_model": "runtime-model",
                         "skills": [],
                     },
                     "sample_worker": {
                         "name": "Sample Worker",
                         "prompt_ref": "prompt/sample_worker",
-                        "default_model": "runtime-model",
                     },
                 },
                 "prompts": {

@@ -340,7 +340,6 @@ async def test_outbox_dispatch_persists_real_channel_scope_metadata() -> None:
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",
-            default_model="test-model",
         ),
         actions=[
             PlannedAction(

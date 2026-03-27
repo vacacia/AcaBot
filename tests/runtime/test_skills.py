@@ -20,7 +20,6 @@ def _profile(*, skills: list[str]) -> AgentProfile:
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
-        default_model="test-model",
         skills=list(skills),
     )
 

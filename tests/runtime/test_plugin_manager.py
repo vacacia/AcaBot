@@ -1,6 +1,8 @@
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from acabot.agent import ToolDef
 from acabot.config import Config
 from acabot.runtime import (
@@ -20,11 +22,14 @@ from acabot.runtime import (
     RuntimePlugin,
     RuntimePluginContext,
     RuntimePluginManager,
+    RuntimePluginModelSlot,
     SkillCatalog,
     SubagentDelegationBroker,
     SubagentExecutorRegistry,
     ThreadPipeline,
     ToolBroker,
+    MutableModelTargetCatalog,
+    ModelReloadSnapshot,
     load_runtime_plugins_from_config,
 )
 from acabot.types import Action, ActionType, EventSource, MsgSegment, StandardEvent
@@ -146,6 +151,24 @@ class BuiltinMarkerPlugin(RuntimePlugin):
         ]
 
 
+class SlotPlugin(RuntimePlugin):
+    name = "slot_plugin"
+
+    async def setup(self, runtime: RuntimePluginContext) -> None:
+        _ = runtime
+
+    def model_slots(self) -> list[RuntimePluginModelSlot]:
+        return [
+            RuntimePluginModelSlot(
+                slot_id="extractor",
+                task_kind="chat",
+                required=True,
+                allow_fallbacks=True,
+                description="slot extractor",
+            )
+        ]
+
+
 def _event() -> StandardEvent:
     return StandardEvent(
         event_id="evt-plugin",
@@ -179,7 +202,6 @@ def _profile() -> AgentProfile:
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
-        default_model="test-model",
         enabled_tools=["echo_plugin_tool"],
     )
 
@@ -205,6 +227,92 @@ async def test_runtime_plugin_manager_registers_tools_and_lifecycle() -> None:
 
     await manager.teardown_all()
     assert plugin.teardown_calls == 1
+
+
+async def test_runtime_plugin_manager_registers_plugin_model_targets() -> None:
+    catalog = _catalog()
+    target_catalog = MutableModelTargetCatalog(system_targets=[])
+    manager = RuntimePluginManager(
+        config=Config({}),
+        gateway=FakeGateway(),
+        tool_broker=ToolBroker(skill_catalog=catalog),
+        skill_catalog=catalog,
+        model_target_catalog=target_catalog,
+        plugins=[SlotPlugin()],
+    )
+
+    await manager.ensure_started()
+
+    target = target_catalog.get("plugin:slot_plugin:extractor")
+    assert target is not None
+    assert target.source_kind == "plugin"
+
+    await manager.unload_plugins(["slot_plugin"])
+    assert target_catalog.get("plugin:slot_plugin:extractor") is None
+
+
+async def test_runtime_plugin_manager_rolls_back_plugin_targets_when_registry_reload_fails() -> None:
+    class RejectingControlPlane:
+        def __init__(self) -> None:
+            self.reload_calls = 0
+
+        async def reload_models(self) -> ModelReloadSnapshot:
+            self.reload_calls += 1
+            return ModelReloadSnapshot(ok=False, error="preset task_kind mismatch")
+
+    catalog = _catalog()
+    target_catalog = MutableModelTargetCatalog(system_targets=[])
+    control_plane = RejectingControlPlane()
+    manager = RuntimePluginManager(
+        config=Config({}),
+        gateway=FakeGateway(),
+        tool_broker=ToolBroker(skill_catalog=catalog),
+        skill_catalog=catalog,
+        model_target_catalog=target_catalog,
+        control_plane=control_plane,  # type: ignore[arg-type]
+        plugins=[SlotPlugin()],
+    )
+
+    await manager.ensure_started()
+
+    assert control_plane.reload_calls == 2
+    assert manager.loaded == []
+    assert target_catalog.get("plugin:slot_plugin:extractor") is None
+
+
+async def test_runtime_plugin_manager_unload_keeps_state_consistent_when_registry_reload_fails() -> None:
+    class FlakyControlPlane:
+        def __init__(self) -> None:
+            self.reload_calls = 0
+
+        async def reload_models(self) -> ModelReloadSnapshot:
+            self.reload_calls += 1
+            if self.reload_calls == 1:
+                return ModelReloadSnapshot(ok=True)
+            return ModelReloadSnapshot(ok=False, error="registry reload failed during unload")
+
+    catalog = _catalog()
+    target_catalog = MutableModelTargetCatalog(system_targets=[])
+    control_plane = FlakyControlPlane()
+    manager = RuntimePluginManager(
+        config=Config({}),
+        gateway=FakeGateway(),
+        tool_broker=ToolBroker(skill_catalog=catalog),
+        skill_catalog=catalog,
+        model_target_catalog=target_catalog,
+        control_plane=control_plane,  # type: ignore[arg-type]
+        plugins=[SlotPlugin()],
+    )
+
+    await manager.ensure_started()
+
+    with pytest.raises(ValueError, match="registry reload failed during unload"):
+        await manager.unload_plugins(["slot_plugin"])
+
+    assert control_plane.reload_calls == 2
+    assert manager.loaded == []
+    assert "slot_plugin" not in manager._names
+    assert target_catalog.get("plugin:slot_plugin:extractor") is None
 
 
 async def test_runtime_plugin_manager_registers_and_unloads_subagent_executors() -> None:
@@ -326,7 +434,6 @@ async def test_runtime_plugin_manager_reload_clears_old_tools_and_reloads() -> N
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
-        default_model="test-model",
         enabled_tools=["sample_configured_tool"],
     )
 
@@ -452,7 +559,6 @@ async def test_runtime_plugin_manager_selected_reload_keeps_builtin_plugins(
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
-        default_model="test-model",
         enabled_tools=["builtin_marker"],
     )
     visible_before = manager.tool_broker.visible_tools(builtin_profile)

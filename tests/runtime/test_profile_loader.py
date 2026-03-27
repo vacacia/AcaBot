@@ -18,7 +18,6 @@ def _profile(agent_id: str, prompt_ref: str) -> AgentProfile:
         agent_id=agent_id,
         name=agent_id,
         prompt_ref=prompt_ref,
-        default_model="test-model",
     )
 
 
@@ -101,7 +100,6 @@ def test_filesystem_profile_loader_loads_yaml_profiles(tmp_path: Path) -> None:
             [
                 "name: Aca FS",
                 "prompt_ref: prompt/aca",
-                "default_model: fs-model",
                 "enabled_tools:",
                 "  - reference_search",
                 "skills:",
@@ -113,14 +111,12 @@ def test_filesystem_profile_loader_loads_yaml_profiles(tmp_path: Path) -> None:
     )
     loader = FileSystemProfileLoader(
         profiles_dir,
-        default_model="fallback-model",
     )
 
     profiles = loader.load_all()
 
     assert "aca" in profiles
     assert profiles["aca"].name == "Aca FS"
-    assert profiles["aca"].default_model == "fs-model"
     assert profiles["aca"].enabled_tools == ["reference_search"]
     assert profiles["aca"].skills == ["reference_lookup", "excel_processing"]
 
@@ -140,7 +136,6 @@ def test_filesystem_profile_loader_rejects_non_string_skill_entries(tmp_path: Pa
     )
     loader = FileSystemProfileLoader(
         profiles_dir,
-        default_model="fallback-model",
     )
 
     with pytest.raises(ValueError, match="Skill must be a string"):

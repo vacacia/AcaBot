@@ -483,7 +483,6 @@
 - `agent_id`
 - `name`
 - `prompt_ref`
-- `default_model`
 - `enabled_tools`
 - `skills`
 - `computer_policy`

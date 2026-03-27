@@ -35,7 +35,6 @@ class AgentProfile:
         agent_id (str): profile 的稳定 ID.
         name (str): 展示名.
         prompt_ref (str): 关联的 prompt 引用.
-        default_model (str): 默认模型名.
         enabled_tools (list[str]): profile 允许的工具列表.
         skills (list[str]): profile 默认可见 skill 列表.
         computer_policy (ComputerPolicy | None): profile 默认 computer policy.
@@ -45,7 +44,6 @@ class AgentProfile:
     agent_id: str
     name: str
     prompt_ref: str
-    default_model: str
     enabled_tools: list[str] = field(default_factory=list)
     skills: list[str] = field(default_factory=list)
     computer_policy: "ComputerPolicy | None" = None

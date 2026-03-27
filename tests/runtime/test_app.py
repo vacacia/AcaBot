@@ -56,7 +56,6 @@ def _profile_loader(decision: RouteDecision) -> AgentProfile:
         agent_id=decision.agent_id,
         name="Aca",
         prompt_ref="prompt/default",
-        default_model="test-model",
     )
 
 

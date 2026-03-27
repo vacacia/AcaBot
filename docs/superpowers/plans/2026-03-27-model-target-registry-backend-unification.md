@@ -54,14 +54,14 @@
 **Create**
 
 - `src/acabot/runtime/model/model_targets.py`
-  - 定义 `ModelCapabilityKind`、`ModelTarget`、system target catalog、agent target builder、插件 target slot 声明和动态注册器。
+  - 定义 `ModelTaskKind`、`ModelCapability`、`ModelTarget`、system target catalog、agent target builder、插件 target slot 声明和动态注册器。
 - `tests/runtime/test_model_targets.py`
   - 覆盖内建 target、插件 target、能力匹配和 dynamic register/unregister 语义。
 
 **Modify**
 
 - `src/acabot/runtime/model/model_registry.py`
-  - 给 `ModelPreset` 增加能力类型；给 `ModelBinding` 改成 `target_id + preset_ids` 形式；移除 legacy run/summary 解析旁路；接入 target catalog 校验和解析；对 `plugin:*` target 支持延迟解析状态；扩展 `ModelMutationResult` 和 control-plane snapshot，使 unresolved binding 有正式返回形状。
+  - 给 `ModelPreset` 增加 `task_kind + capabilities`；给 `ModelBinding` 改成 `target_id + preset_ids` 形式；移除 legacy run/summary 解析旁路；接入 target catalog 校验和解析；对 `plugin:*` target 支持延迟解析状态；扩展 `ModelMutationResult` 和 control-plane snapshot，使 unresolved binding 有正式返回形状。
 - `src/acabot/runtime/model/model_resolution.py`
   - 删除 profile-based fallback 解析；改成按 `agent:<agent_id>`、`system:compactor_summary`、`system:image_caption` 取模型。
 - `src/acabot/runtime/model/model_agent_runtime.py`
@@ -85,7 +85,7 @@
 - `src/acabot/runtime/control/http_api.py`
   - 增加 `/api/models/targets*` 接口；更新 binding payload 解析；binding list/get 返回 view snapshot；删除依赖旧字段的接口语义。
 - `src/acabot/runtime/control/ui_catalog.py`
-  - 增加 `model_capability_kinds`、`model_target_groups` 等目录选项；删除 binding target type 枚举。
+  - 增加 `model_task_kinds`、`model_capabilities`、`model_target_groups` 等目录选项；删除 binding target type 枚举。
 - `src/acabot/runtime/plugin_manager.py`
   - 增加插件 `model_slots()` 声明协议；在 load/unload 生命周期里注册/注销插件 target，并在插件 target 变更后触发 model registry 重校验。
 - `src/acabot/runtime/bootstrap/builders.py`
@@ -119,7 +119,7 @@
 
 ---
 
-### Task 1: 建立 `model_target` 与能力约束的正式后端对象
+### Task 1: 建立 `model_target` 与 `task_kind + required_capabilities` 的正式后端对象
 
 **Files:**
 - Create: `src/acabot/runtime/model/model_targets.py`
@@ -129,7 +129,7 @@
 - Test: `tests/runtime/test_model_targets.py`
 - Test: `tests/runtime/test_model_registry.py`
 
-- [ ] **Step 1: 先写失败测试，锁定 target 和 capability 契约**
+- [ ] **Step 1: 先写失败测试，锁定 target 和 `task_kind + required_capabilities` 契约**
 
 ```python
 def test_model_target_catalog_rebuilds_agent_targets_from_profile_registry() -> None:
@@ -140,13 +140,13 @@ def test_model_target_catalog_rebuilds_agent_targets_from_profile_registry() -> 
     summary = catalog.get("system:compactor_summary")
 
     assert aca is not None
-    assert aca.capability == "chat"
+    assert aca.task_kind == "chat"
     assert summary is not None
     assert summary.allow_fallbacks is True
 ```
 
 ```python
-async def test_model_registry_rejects_binding_when_preset_capability_mismatches_target(tmp_path: Path) -> None:
+async def test_model_registry_rejects_binding_when_preset_task_kind_mismatches_target(tmp_path: Path) -> None:
     manager = _manager(tmp_path, target_catalog=_catalog_with_embed_target())
     await manager.upsert_provider(_provider())
     await manager.upsert_preset(
@@ -154,7 +154,7 @@ async def test_model_registry_rejects_binding_when_preset_capability_mismatches_
             preset_id="embed-a",
             provider_id="openai-main",
             model="text-embedding-3-large",
-            capability="embedding",
+            task_kind="embedding",
             context_window=8192,
         )
     )
@@ -164,7 +164,7 @@ async def test_model_registry_rejects_binding_when_preset_capability_mismatches_
     )
 
     assert result.ok is False
-    assert "capability" in result.message
+    assert "task_kind" in result.message
 ```
 
 - [ ] **Step 2: 跑测试确认当前还没有这些对象**
@@ -178,23 +178,25 @@ pytest tests/runtime/test_model_targets.py tests/runtime/test_model_registry.py 
 Expected:
 
 - `tests/runtime/test_model_targets.py` 因文件和对象不存在而失败。
-- `test_model_registry.py` 因 `ModelBinding.target_id`、`ModelPreset.capability`、target catalog 校验不存在而失败。
+- `test_model_registry.py` 因 `ModelBinding.target_id`、`ModelPreset.task_kind`、target catalog 校验不存在而失败。
 
-- [ ] **Step 3: 实现 `ModelTarget` 与 capability-aware `ModelPreset`**
+- [ ] **Step 3: 实现 `ModelTarget` 与 `task_kind + capabilities` 版 `ModelPreset`**
 
 ```python
-ModelCapabilityKind = Literal["chat", "embedding"]
+ModelTaskKind = Literal["chat", "embedding", "rerank", "speech_to_text", "text_to_speech", "image_generation"]
+ModelCapability = Literal["tool_calling", "reasoning", "structured_output", "image_input", "image_output", "document_input", "audio_input", "audio_output", "video_input", "video_output"]
 
 
 @dataclass(slots=True)
 class ModelTarget:
     target_id: str
-    capability: ModelCapabilityKind
+    task_kind: ModelTaskKind
     source_kind: Literal["system", "agent", "plugin"]
     owner_id: str
     description: str = ""
     required: bool = False
     allow_fallbacks: bool = True
+    required_capabilities: list[ModelCapability] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 ```
 
@@ -204,10 +206,9 @@ class ModelPreset:
     preset_id: str
     provider_id: str
     model: str
-    capability: ModelCapabilityKind
+    task_kind: ModelTaskKind
+    capabilities: list[ModelCapability] = field(default_factory=list)
     context_window: int
-    supports_tools: bool = True
-    supports_vision: bool = False
     max_output_tokens: int | None = None
     model_params: dict[str, Any] = field(default_factory=dict)
 ```
@@ -229,7 +230,7 @@ class ModelBinding:
 - `model_targets.py` 里先落一份 system target catalog，并提供：
   - `replace_agent_targets()` 用于按 live profile registry 整批重建 `agent:<agent_id>`
   - `register_plugin_slots()` / `unregister_plugin_slots()` 用于维护插件 target
-- `ui_catalog.py` 不再返回 `binding_target_types`，改成返回 capability 和 target group 信息。
+- `ui_catalog.py` 不再返回 `binding_target_types`，改成返回 `model_task_kinds`、`model_capabilities` 和 target group 信息。
 
 - [ ] **Step 4: 让 registry 校验 binding 和 target/preset 能力是否匹配**
 
@@ -253,10 +254,16 @@ for preset_id in binding.preset_ids:
     preset = self.presets.get(preset_id)
     if preset is None:
         raise ValueError(f"unknown preset_id for binding {binding.binding_id}: {preset_id}")
-    if preset.capability != target.capability:
+    if preset.task_kind != target.task_kind:
         raise ValueError(
-            f"preset capability mismatch for {binding.binding_id}: "
-            f"target={target.capability} preset={preset.capability}"
+            f"preset task_kind mismatch for {binding.binding_id}: "
+            f"target={target.task_kind} preset={preset.task_kind}"
+        )
+    missing_capabilities = sorted(set(target.required_capabilities).difference(preset.capabilities))
+    if missing_capabilities:
+        raise ValueError(
+            f"preset capabilities mismatch for {binding.binding_id}: "
+            f"target={binding.target_id} missing={','.join(missing_capabilities)}"
         )
 ```
 
@@ -289,7 +296,7 @@ git add \
   src/acabot/runtime/__init__.py \
   tests/runtime/test_model_targets.py \
   tests/runtime/test_model_registry.py
-git commit -m "refactor: add model target catalog and capability-aware bindings"
+git commit -m "refactor: add model target catalog and task-kind bindings"
 ```
 
 ---
@@ -629,7 +636,7 @@ class DemoPlugin(RuntimePlugin):
         return [
             RuntimePluginModelSlot(
                 slot_id="extractor",
-                capability="chat",
+                task_kind="chat",
                 required=True,
                 allow_fallbacks=True,
                 description="demo extractor",
@@ -685,9 +692,10 @@ Expected:
 @dataclass(slots=True)
 class RuntimePluginModelSlot:
     slot_id: str
-    capability: ModelCapabilityKind
+    task_kind: ModelTaskKind
     required: bool = False
     allow_fallbacks: bool = True
+    required_capabilities: list[ModelCapability] = field(default_factory=list)
     description: str = ""
 ```
 

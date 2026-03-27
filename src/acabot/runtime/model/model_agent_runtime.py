@@ -195,12 +195,10 @@ class ModelAgentRuntime(AgentRuntime):
             底层 agent 返回的 AgentResponse.
         """
 
-        # 从 RunContext.model_request 中提取出模型名字符串: model_request -> resolved_model 
-        resolved_model = (
-            ctx.model_request.model
-            if ctx.model_request is not None and ctx.model_request.model
-            else ctx.profile.default_model
-        )
+        # 从 RunContext.model_request 中提取出最终模型.
+        if ctx.model_request is None or not ctx.model_request.model:
+            raise RuntimeError("model_request is required")
+        resolved_model = ctx.model_request.model
         request_options = (
             ctx.model_request.to_request_options()
             if ctx.model_request is not None
@@ -295,7 +293,10 @@ class ModelAgentRuntime(AgentRuntime):
 
         request = ctx.model_request
         if request is None:
-            return None
+            return AgentRuntimeResult(
+                status="failed",
+                error="model_request is required",
+            )
         # request.supports_tools 是模型能力的声明
         if (tool_runtime.tools or tool_runtime.tool_executor is not None) and not request.supports_tools:
             return AgentRuntimeResult(

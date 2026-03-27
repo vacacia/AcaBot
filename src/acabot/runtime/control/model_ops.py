@@ -6,6 +6,7 @@ from ..model.model_registry import (
     EffectiveModelSnapshot,
     FileSystemModelRegistryManager,
     ModelBinding,
+    ModelBindingSnapshot,
     ModelHealthCheckResult,
     ModelImpactSnapshot,
     ModelMutationResult,
@@ -15,6 +16,7 @@ from ..model.model_registry import (
     ModelReloadSnapshot,
 )
 from .profile_loader import AgentProfileRegistry
+from ..model.model_targets import ModelTarget
 
 
 class RuntimeModelControlOps:
@@ -39,10 +41,20 @@ class RuntimeModelControlOps:
             return []
         return self.model_registry_manager.list_presets()
 
-    async def list_model_bindings(self) -> list[ModelBinding]:
+    async def list_model_targets(self) -> list[ModelTarget]:
         if self.model_registry_manager is None:
             return []
-        return self.model_registry_manager.list_bindings()
+        return self.model_registry_manager.target_catalog.list_targets()
+
+    async def get_model_target(self, target_id: str) -> ModelTarget | None:
+        if self.model_registry_manager is None:
+            return None
+        return self.model_registry_manager.target_catalog.get(target_id)
+
+    async def list_model_bindings(self) -> list[ModelBindingSnapshot]:
+        if self.model_registry_manager is None:
+            return []
+        return self.model_registry_manager.list_binding_snapshots()
 
     async def get_model_provider(self, provider_id: str) -> ModelProvider | None:
         if self.model_registry_manager is None:
@@ -54,10 +66,13 @@ class RuntimeModelControlOps:
             return None
         return self.model_registry_manager.get_preset(preset_id)
 
-    async def get_model_binding(self, binding_id: str) -> ModelBinding | None:
+    async def get_model_binding(self, binding_id: str) -> ModelBindingSnapshot | None:
         if self.model_registry_manager is None:
             return None
-        return self.model_registry_manager.get_binding(binding_id)
+        try:
+            return self.model_registry_manager.get_binding_snapshot(binding_id)
+        except KeyError:
+            return None
 
     async def get_model_provider_impact(self, provider_id: str) -> ModelImpactSnapshot:
         if self.model_registry_manager is None:
@@ -74,29 +89,11 @@ class RuntimeModelControlOps:
             return ModelImpactSnapshot(entity_type="binding", entity_id=binding_id)
         return self.model_registry_manager.get_binding_impact(binding_id)
 
-    async def preview_effective_agent_model(self, agent_id: str) -> EffectiveModelSnapshot:
+    async def preview_effective_target_model(self, target_id: str) -> EffectiveModelSnapshot:
         if self.model_registry_manager is None:
-            return EffectiveModelSnapshot(target_type="agent", target_id=agent_id, source="none")
-        explicit = ""
-        effective = ""
-        if self.profile_registry is not None and self.profile_registry.has_agent(agent_id):
-            profile = self.profile_registry.profiles[agent_id]
-            explicit = str(profile.config.get("default_model", "") or "")
-            effective = str(profile.default_model or "")
-        return self.model_registry_manager.preview_effective_agent(
-            agent_id=agent_id,
-            explicit_profile_default_model=explicit,
-            effective_profile_default_model=effective,
-        )
-
-    async def preview_effective_summary_model(self) -> EffectiveModelSnapshot:
-        if self.model_registry_manager is None:
-            return EffectiveModelSnapshot(
-                target_type="system",
-                target_id="compactor_summary",
-                source="none",
-            )
-        return self.model_registry_manager.preview_effective_summary()
+            target_type = target_id.split(":", 1)[0] if ":" in target_id else "unknown"
+            return EffectiveModelSnapshot(target_type=target_type, target_id=target_id, source="none")
+        return self.model_registry_manager.preview_effective_target(target_id)
 
     async def upsert_model_provider(self, provider: ModelProvider) -> ModelMutationResult:
         if self.model_registry_manager is None:

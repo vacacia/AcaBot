@@ -6,7 +6,6 @@ def _profile() -> AgentProfile:
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
-        default_model="test-model",
     )
 
 
@@ -46,7 +45,6 @@ async def test_subagent_delegation_broker_rejects_non_default_agent() -> None:
             agent_id="manager",
             name="Manager",
             prompt_ref="prompt/default",
-            default_model="test-model",
         ),
         delegate_agent_id="excel_worker",
         payload={"task": "整理表格"},

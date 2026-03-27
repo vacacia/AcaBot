@@ -22,7 +22,18 @@ from typing import Any
 
 from acabot.agent import AgentResponse, BaseAgent, ToolSpec
 from acabot.config import Config
-from acabot.runtime import ToolBroker, ToolPolicyDecision, build_runtime_components
+from acabot.runtime import (
+    AgentProfile,
+    FileSystemModelRegistryManager,
+    ModelBinding,
+    ModelPreset,
+    ModelProvider,
+    OpenAICompatibleProviderConfig,
+    ToolBroker,
+    ToolPolicyDecision,
+    build_agent_model_targets,
+    build_runtime_components,
+)
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
 from .test_outbox import FakeGateway
@@ -237,7 +248,6 @@ def _config(db_path: Path, *, enabled_tools: list[str] | None = None) -> Config:
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/default",
-                        "default_model": "test-model",
                         "enabled_tools": list(enabled_tools or []),
                     }
                 },
@@ -247,6 +257,62 @@ def _config(db_path: Path, *, enabled_tools: list[str] | None = None) -> Config:
             }
         }
     )
+
+
+async def _model_registry_manager(tmp_path: Path) -> FileSystemModelRegistryManager:
+    """构造 release checkpoint 测试用的最小模型注册表.
+
+    Args:
+        tmp_path: pytest 临时目录.
+
+    Returns:
+        FileSystemModelRegistryManager: 绑定好 `agent:aca` 的模型注册表.
+    """
+
+    manager = FileSystemModelRegistryManager(
+        providers_dir=tmp_path / "models" / "providers",
+        presets_dir=tmp_path / "models" / "presets",
+        bindings_dir=tmp_path / "models" / "bindings",
+    )
+    manager.target_catalog.replace_agent_targets(
+        build_agent_model_targets(
+            [
+                AgentProfile(
+                    agent_id="aca",
+                    name="Aca",
+                    prompt_ref="prompt/default",
+                )
+            ]
+        )
+    )
+    await manager.upsert_provider(
+        ModelProvider(
+            provider_id="openai-main",
+            kind="openai_compatible",
+            config=OpenAICompatibleProviderConfig(
+                base_url="https://example.invalid/v1",
+                api_key_env="OPENAI_API_KEY",
+            ),
+        )
+    )
+    await manager.upsert_preset(
+        ModelPreset(
+            preset_id="aca-main",
+            provider_id="openai-main",
+            model="runtime-model",
+            task_kind="chat",
+            capabilities=["tool_calling"],
+            context_window=128000,
+        )
+    )
+    await manager.upsert_binding(
+        ModelBinding(
+            binding_id="binding:aca",
+            target_id="agent:aca",
+            preset_ids=["aca-main"],
+        )
+    )
+    return manager
 
 
 def _close_runtime_components(components: Any) -> None:
@@ -295,6 +361,7 @@ async def test_release_checkpoint_runtime_persists_facts_across_restart(
         _config(db_path),
         gateway=gateway1,
         agent=EchoCheckpointAgent(),
+        model_registry_manager=await _model_registry_manager(tmp_path),
     )
     try:
         components1.app.install()
@@ -308,6 +375,7 @@ async def test_release_checkpoint_runtime_persists_facts_across_restart(
         _config(db_path),
         gateway=gateway2,
         agent=EchoCheckpointAgent(reply_text="unused"),
+        model_registry_manager=await _model_registry_manager(tmp_path),
     )
     try:
         thread = await components2.thread_manager.get("qq:user:10001")
@@ -368,6 +436,7 @@ async def test_release_checkpoint_runtime_recovers_pending_approval_after_restar
         gateway=gateway1,
         agent=ApprovalCheckpointAgent(),
         tool_broker=broker1,
+        model_registry_manager=await _model_registry_manager(tmp_path),
     )
     try:
         components1.app.install()
@@ -396,6 +465,7 @@ async def test_release_checkpoint_runtime_recovers_pending_approval_after_restar
         gateway=gateway2,
         agent=ApprovalCheckpointAgent(),
         tool_broker=broker2,
+        model_registry_manager=await _model_registry_manager(tmp_path),
     )
     try:
         await components2.app.start()

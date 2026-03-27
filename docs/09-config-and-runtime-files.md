@@ -154,10 +154,11 @@
 profile 现在主要描述:
 
 - prompt_ref
-- default_model
 - enabled_tools
 - skills
 - computer policy
+
+模型配置不在这里；模型真源统一放在 `models/providers`、`models/presets`、`models/bindings`，再由内建和插件 target 解析。
 
 它可以来自:
 

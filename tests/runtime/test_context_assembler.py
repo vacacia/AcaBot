@@ -75,7 +75,6 @@ def _assembler_ctx(
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",
-            default_model="test-model",
         ),
         retrieval_plan=retrieval_plan,
         message_projection=message_projection,

@@ -21,6 +21,7 @@ from ..memory.memory_broker import MemoryBroker, MemorySourceRegistry
 from ..memory.retrieval_planner import RetrievalPlanner
 from ..memory.sticky_note_renderer import StickyNoteRenderer
 from ..model.model_registry import FileSystemModelRegistryManager
+from ..model.model_targets import MutableModelTargetCatalog
 from ..plugin_manager import RuntimePlugin
 from ..plugins import BackendBridgeToolPlugin
 from ..references import (
@@ -91,7 +92,11 @@ def register_local_subagent_executors(
         )
 
 
-def build_model_registry_manager(config: Config) -> FileSystemModelRegistryManager:
+def build_model_registry_manager(
+    config: Config,
+    *,
+    target_catalog: MutableModelTargetCatalog | None = None,
+) -> FileSystemModelRegistryManager:
     runtime_conf = config.get("runtime", {})
     fs_conf = dict(runtime_conf.get("filesystem", {}))
     manager = FileSystemModelRegistryManager(
@@ -113,8 +118,7 @@ def build_model_registry_manager(config: Config) -> FileSystemModelRegistryManag
             key="model_bindings_dir",
             default="models/bindings",
         ),
-        legacy_global_default_model=str(config.get("agent", {}).get("default_model", "") or ""),
-        legacy_summary_model=str(config.get("runtime", {}).get("context_compaction", {}).get("summary_model", "") or ""),
+        target_catalog=target_catalog,
     )
     manager.reload_now()
     return manager
@@ -316,7 +320,6 @@ def build_context_compactor(
         tool_schema_reserve_tokens=int(
             compaction_conf.get("tool_schema_reserve_tokens", 3000)
         ),
-        summary_model=str(compaction_conf.get("summary_model", "")),
         summary_max_chars=int(compaction_conf.get("summary_max_chars", 2400)),
         summary_system_prompt=str(
             compaction_conf.get(

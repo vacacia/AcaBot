@@ -61,7 +61,6 @@ def _profile(*, enabled_tools: list[str]) -> AgentProfile:
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
-        default_model="test-model",
         enabled_tools=list(enabled_tools),
     )
 
@@ -377,7 +376,6 @@ async def test_tool_broker_only_exposes_backend_bridge_tool_to_default_agent() -
             agent_id="worker",
             name="Worker",
             prompt_ref="prompt/default",
-            default_model="test-model",
             enabled_tools=[],
         )
     )

@@ -232,7 +232,7 @@ class RuntimeApp:
                     profile=profile,
                 )
                 logger.debug(
-                    "Profile/model resolved: event_id=%s agent=%s model=%s summary_model=%s",
+                    "Profile/model resolved: event_id=%s agent=%s run_model=%s summary_target_model=%s",
                     event.event_id,
                     profile.agent_id,
                     getattr(model_request, "model", "") or "-",
@@ -457,7 +457,6 @@ class RuntimeApp:
                 agent_id=decision.agent_id,
                 name=decision.agent_id,
                 prompt_ref="prompt/record_only",
-                default_model="",
             )
         return self.profile_loader(decision)
 

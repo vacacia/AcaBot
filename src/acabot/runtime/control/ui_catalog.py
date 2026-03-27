@@ -63,7 +63,27 @@ def build_ui_options(*, api_key_env_names: list[str]) -> dict[str, object]:
 
     return {
         "provider_kinds": ["openai_compatible", "anthropic", "google_gemini"],
-        "binding_target_types": ["global", "agent", "system"],
+        "model_target_source_kinds": ["agent", "system", "plugin"],
+        "model_task_kinds": [
+            "chat",
+            "embedding",
+            "rerank",
+            "speech_to_text",
+            "text_to_speech",
+            "image_generation",
+        ],
+        "model_capabilities": [
+            "tool_calling",
+            "reasoning",
+            "structured_output",
+            "image_input",
+            "image_output",
+            "document_input",
+            "audio_input",
+            "audio_output",
+            "video_input",
+            "video_output",
+        ],
         "run_modes": ["respond", "record_only", "silent_drop"],
         "event_types": list(UI_EVENT_TYPE_OPTIONS),
         "event_type_labels": dict(SESSION_EVENT_LABELS),

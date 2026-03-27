@@ -122,7 +122,8 @@ AcaBot 的模型正式真源收成四类对象：
 插件槽位至少要带这些元信息：
 
 - `slot_id`
-- `capability`
+- `task_kind`
+- `required_capabilities`
 - `required`
 - `allow_fallbacks`
 - `description`
@@ -133,7 +134,10 @@ AcaBot 的模型正式真源收成四类对象：
 - 让这些 target 进入统一 `model_binding` 真源
 - 插件运行时只按 target 取模型，不自己解析 preset
 
-这里统一使用 `capability`，不再单独发明 `task_type` 这个词。
+这里正式区分两层：
+
+- `task_kind` 表示主任务类型
+- `required_capabilities` 表示这个 target 额外要求的输入输出或行为能力
 
 ### 2.4 插件 target 的生命周期
 
@@ -160,7 +164,7 @@ AcaBot 的模型正式真源收成四类对象：
 
 - 提供统一 `model_provider / model_preset / model_target / model_binding` 真源
 - 提供统一 resolver
-- 提供统一能力校验
+- 提供统一 `task_kind + required_capabilities` 校验
 - 提供统一控制面配置入口
 
 插件负责：

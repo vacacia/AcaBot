@@ -264,7 +264,6 @@ def test_build_skill_catalog_visible_skills_prefers_project_scope_for_duplicate_
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",
-            default_model="test-model",
             skills=["shared", "global_only"],
         )
     )

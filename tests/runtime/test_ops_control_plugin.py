@@ -35,7 +35,6 @@ def _ops_config() -> Config:
     return Config(
         {
             "agent": {
-                "default_model": "test-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -48,13 +47,11 @@ def _ops_config() -> Config:
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/aca",
-                        "default_model": "model-a",
                         "skills": ["sample_configured_skill"],
                     },
                     "ops": {
                         "name": "Ops",
                         "prompt_ref": "prompt/ops",
-                        "default_model": "model-o",
                     },
                 },
                 "prompts": {

@@ -177,7 +177,6 @@ def test_build_runtime_app_uses_factories_and_runtime_config() -> None:
         {
             "gateway": {"host": "127.0.0.1", "port": 9100, "timeout": 30.0},
             "agent": {
-                "default_model": "claude-test",
                 "max_tool_rounds": 9,
                 "system_prompt": "You are Aca.",
             },
@@ -224,7 +223,6 @@ def test_build_runtime_app_keeps_bootstrap_sqlite_selection(tmp_path) -> None:
     config = Config(
         {
             "agent": {
-                "default_model": "claude-test",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {

@@ -63,7 +63,6 @@ def _ctx() -> RunContext:
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",
-            default_model="test-model",
         ),
     )
 

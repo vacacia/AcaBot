@@ -22,8 +22,16 @@ from typing import Any, Literal
 
 import yaml
 
+from .model_targets import (
+    ModelCapability,
+    ModelTaskKind,
+    MutableModelTargetCatalog,
+    SUPPORTED_MODEL_CAPABILITIES,
+    SUPPORTED_MODEL_TASK_KINDS,
+)
+
 ModelProviderKind = Literal["openai_compatible", "anthropic", "google_gemini"]
-ModelBindingTargetType = Literal["global", "agent", "system"]
+ModelBindingState = Literal["resolved", "unresolved_target", "invalid_binding"]
 ModelEntityType = Literal["provider", "preset", "binding"]
 
 _SUPPORTED_PROVIDER_KINDS: set[str] = {
@@ -31,11 +39,9 @@ _SUPPORTED_PROVIDER_KINDS: set[str] = {
     "anthropic",
     "google_gemini",
 }
-_SUPPORTED_BINDING_TARGETS: set[tuple[str, str]] = {
-    ("global", "default"),
-    ("system", "compactor_summary"),
-}
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_SUPPORTED_MODEL_TASK_KINDS = set(SUPPORTED_MODEL_TASK_KINDS)
+_SUPPORTED_MODEL_CAPABILITIES = set(SUPPORTED_MODEL_CAPABILITIES)
 
 
 def _normalize_provider_auth_fields(
@@ -50,6 +56,19 @@ def _normalize_provider_auth_fields(
     if normalized_env and not _ENV_NAME_RE.fullmatch(normalized_env):
         return "", normalized_env
     return normalized_env, normalized_key
+
+
+def _normalize_task_kind(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _normalize_capabilities(values: Any) -> list[str]:
+    items = [str(item or "").strip() for item in list(values or [])]
+    normalized: list[str] = []
+    for item in items:
+        if item and item not in normalized:
+            normalized.append(item)
+    return normalized
 
 
 # region provider config
@@ -131,9 +150,9 @@ class ModelPreset:
     preset_id: str
     provider_id: str
     model: str
+    task_kind: ModelTaskKind
     context_window: int
-    supports_tools: bool = True
-    supports_vision: bool = False
+    capabilities: list[ModelCapability] = field(default_factory=list)
     max_output_tokens: int | None = None
     model_params: dict[str, Any] = field(default_factory=dict)
 
@@ -142,9 +161,9 @@ class ModelPreset:
             "preset_id": self.preset_id,
             "provider_id": self.provider_id,
             "model": self.model,
+            "task_kind": self.task_kind,
+            "capabilities": list(self.capabilities),
             "context_window": self.context_window,
-            "supports_tools": self.supports_tools,
-            "supports_vision": self.supports_vision,
             "model_params": dict(self.model_params),
         }
         if self.max_output_tokens is not None:
@@ -157,26 +176,16 @@ class ModelBinding:
     """一条执行单元到 preset 的绑定."""
 
     binding_id: str
-    target_type: ModelBindingTargetType
     target_id: str
-    preset_id: str = ""
     preset_ids: list[str] = field(default_factory=list)
     timeout_sec: float | None = None
-
-    @property
-    def target_key(self) -> str:
-        return f"{self.target_type}:{self.target_id}"
 
     def to_dict(self) -> dict[str, Any]:
         data = {
             "binding_id": self.binding_id,
-            "target_type": self.target_type,
             "target_id": self.target_id,
+            "preset_ids": list(self.preset_ids),
         }
-        if self.preset_ids:
-            data["preset_ids"] = list(self.preset_ids)
-        elif self.preset_id:
-            data["preset_id"] = self.preset_id
         if self.timeout_sec is not None:
             data["timeout_sec"] = self.timeout_sec
         return data
@@ -199,6 +208,8 @@ class RuntimeModelRequest:
         context_window (int): 该模型声明的最大上下文 token 窗口.
         supports_tools (bool): 该模型是否支持 tool calling.
         supports_vision (bool): 该模型是否支持多模态视觉输入.
+        task_kind (str): 该请求对应的主任务类型.
+        capabilities (list[str]): 该请求声明的附加能力集合.
         provider_id (str): 解析出此请求的祖先 Provider ID.
         preset_id (str): 解析出此请求的祖先 Preset ID.
         binding_id (str): 触发生成此请求的源头 Binding ID.
@@ -214,6 +225,8 @@ class RuntimeModelRequest:
     context_window: int = 0
     supports_tools: bool = False
     supports_vision: bool = False
+    task_kind: str = ""
+    capabilities: list[str] = field(default_factory=list)
     provider_id: str = ""
     preset_id: str = ""
     binding_id: str = ""
@@ -331,6 +344,8 @@ class PersistedModelSnapshot:
     context_window: int
     supports_tools: bool
     supports_vision: bool
+    task_kind: str = ""
+    capabilities: list[str] = field(default_factory=list)
     resolved_non_secret_params: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -344,6 +359,8 @@ class PersistedModelSnapshot:
             "context_window": self.context_window,
             "supports_tools": self.supports_tools,
             "supports_vision": self.supports_vision,
+            "task_kind": self.task_kind,
+            "capabilities": list(self.capabilities),
             "resolved_non_secret_params": dict(self.resolved_non_secret_params),
         }
 
@@ -361,6 +378,8 @@ class PersistedModelSnapshot:
             context_window=int(raw.get("context_window", 0) or 0),
             supports_tools=bool(raw.get("supports_tools", False)),
             supports_vision=bool(raw.get("supports_vision", False)),
+            task_kind=str(raw.get("task_kind", "") or ""),
+            capabilities=[str(item) for item in list(raw.get("capabilities", []) or [])],
             resolved_non_secret_params=dict(raw.get("resolved_non_secret_params", {}) or {}),
         )
 
@@ -371,6 +390,8 @@ class PersistedModelSnapshot:
             context_window=self.context_window,
             supports_tools=self.supports_tools,
             supports_vision=self.supports_vision,
+            task_kind=self.task_kind,
+            capabilities=list(self.capabilities),
             provider_id=self.provider_id,
             preset_id=self.preset_id,
             binding_id=self.binding_id,
@@ -391,6 +412,8 @@ def snapshot_from_runtime_request(request: RuntimeModelRequest) -> PersistedMode
         context_window=request.context_window,
         supports_tools=request.supports_tools,
         supports_vision=request.supports_vision,
+        task_kind=request.task_kind,
+        capabilities=list(request.capabilities),
         resolved_non_secret_params=request.resolved_non_secret_params(),
     )
 
@@ -431,10 +454,21 @@ class ModelMutationResult:
     entity_type: ModelEntityType
     entity_id: str
     message: str = ""
+    binding_state: ModelBindingState = "resolved"
     impact: ModelImpactSnapshot | None = None
     cascaded_provider_ids: list[str] = field(default_factory=list)
     cascaded_preset_ids: list[str] = field(default_factory=list)
     cascaded_binding_ids: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class ModelBindingSnapshot:
+    """控制面查看 binding 当前解析状态的派生视图."""
+
+    binding: ModelBinding
+    binding_state: ModelBindingState = "resolved"
+    target_present: bool = True
+    message: str = ""
 
 
 @dataclass(slots=True)
@@ -482,8 +516,8 @@ class ModelRegistry:
     presets: dict[str, ModelPreset] = field(default_factory=dict)
     bindings: dict[str, ModelBinding] = field(default_factory=dict)
 
-    def validate(self) -> None:
-        target_keys: set[str] = set()
+    def validate(self, *, target_catalog: MutableModelTargetCatalog) -> None:
+        target_ids: set[str] = set()
         for provider_id, provider in self.providers.items():
             if provider_id != provider.provider_id:
                 raise ValueError(f"provider_id mismatch: {provider_id}")
@@ -497,16 +531,13 @@ class ModelRegistry:
         for binding_id, binding in self.bindings.items():
             if binding_id != binding.binding_id:
                 raise ValueError(f"binding_id mismatch: {binding_id}")
-            self._validate_binding(binding)
-            if binding.target_key in target_keys:
-                raise ValueError(f"duplicate binding target: {binding.target_key}")
-            target_keys.add(binding.target_key)
+            self._validate_binding(binding, target_catalog=target_catalog)
+            if binding.target_id in target_ids:
+                raise ValueError(f"duplicate binding target: {binding.target_id}")
+            target_ids.add(binding.target_id)
 
-    def binding_for_agent(self, agent_id: str) -> ModelBinding | None:
-        return self._binding_for("agent", agent_id) or self._binding_for("global", "default")
-
-    def binding_for_system(self, target_id: str) -> ModelBinding | None:
-        return self._binding_for("system", target_id)
+    def binding_for_target(self, target_id: str) -> ModelBinding | None:
+        return self._binding_for(target_id)
 
     def provider_impact(self, provider_id: str) -> ModelImpactSnapshot:
         preset_ids = [
@@ -535,13 +566,13 @@ class ModelRegistry:
             entity_id=preset_id,
         )
         for binding in self.bindings.values():
-            if preset_id != binding.preset_id and preset_id not in binding.preset_ids:
+            if preset_id not in binding.preset_ids:
                 continue
             impact.binding_ids.append(binding.binding_id)
-            if binding.target_type == "agent":
-                impact.agent_ids.append(binding.target_id)
-            if binding.target_type == "system":
-                impact.system_targets.append(binding.target_id)
+            if binding.target_id.startswith("agent:"):
+                impact.agent_ids.append(binding.target_id.removeprefix("agent:"))
+            if binding.target_id.startswith("system:"):
+                impact.system_targets.append(binding.target_id.removeprefix("system:"))
         impact.binding_ids.sort()
         impact.agent_ids.sort()
         impact.system_targets.sort()
@@ -555,18 +586,18 @@ class ModelRegistry:
         )
         if binding is None:
             return impact
-        if binding.target_type == "agent":
-            impact.agent_ids.append(binding.target_id)
-        if binding.target_type == "system":
-            impact.system_targets.append(binding.target_id)
+        if binding.target_id.startswith("agent:"):
+            impact.agent_ids.append(binding.target_id.removeprefix("agent:"))
+        if binding.target_id.startswith("system:"):
+            impact.system_targets.append(binding.target_id.removeprefix("system:"))
         return impact
 
     def clone(self) -> ModelRegistry:
         return deepcopy(self)
 
-    def _binding_for(self, target_type: str, target_id: str) -> ModelBinding | None:
+    def _binding_for(self, target_id: str) -> ModelBinding | None:
         for binding in self.bindings.values():
-            if binding.target_type == target_type and binding.target_id == target_id:
+            if binding.target_id == target_id:
                 return binding
         return None
 
@@ -599,37 +630,52 @@ class ModelRegistry:
             raise ValueError(f"unknown provider_id for preset {preset.preset_id}: {preset.provider_id}")
         if not str(preset.model or "").strip():
             raise ValueError(f"model is required for preset {preset.preset_id}")
+        normalized_task_kind = _normalize_task_kind(preset.task_kind)
+        if normalized_task_kind not in _SUPPORTED_MODEL_TASK_KINDS:
+            raise ValueError(f"unsupported preset task_kind: {preset.preset_id}")
+        preset.task_kind = normalized_task_kind
+        preset.capabilities = _normalize_capabilities(preset.capabilities)
+        for capability in preset.capabilities:
+            if capability not in _SUPPORTED_MODEL_CAPABILITIES:
+                raise ValueError(f"unsupported preset capability entry: {preset.preset_id}:{capability}")
         if int(preset.context_window) <= 0:
             raise ValueError(f"context_window must be positive: {preset.preset_id}")
         if preset.max_output_tokens is not None and int(preset.max_output_tokens) <= 0:
             raise ValueError(f"max_output_tokens must be positive: {preset.preset_id}")
 
-    def _validate_binding(self, binding: ModelBinding) -> None:
+    def _validate_binding(
+        self,
+        binding: ModelBinding,
+        *,
+        target_catalog: MutableModelTargetCatalog,
+    ) -> None:
         if not str(binding.binding_id or "").strip():
             raise ValueError("binding_id is required")
-        if binding.target_type not in {"global", "agent", "system"}:
-            raise ValueError(f"unsupported binding target_type: {binding.target_type}")
         if not str(binding.target_id or "").strip():
             raise ValueError(f"target_id is required: {binding.binding_id}")
-        if binding.target_type != "agent" and (binding.target_type, binding.target_id) not in _SUPPORTED_BINDING_TARGETS:
-            raise ValueError(f"unsupported binding target: {binding.target_type}:{binding.target_id}")
-        if binding.target_type == "system":
-            if binding.target_id != "compactor_summary":
-                raise ValueError(f"unsupported system target_id: {binding.target_id}")
-            if not binding.preset_ids:
-                raise ValueError("system/compactor_summary binding requires preset_ids")
-            if binding.preset_id:
-                raise ValueError("system/compactor_summary binding must not declare preset_id")
-            for preset_id in binding.preset_ids:
-                if preset_id not in self.presets:
-                    raise ValueError(f"unknown preset_id in fallback chain: {preset_id}")
-        else:
-            if not binding.preset_id:
-                raise ValueError(f"binding preset_id is required: {binding.binding_id}")
-            if binding.preset_ids:
-                raise ValueError(f"binding preset_ids only allowed for system fallback chains: {binding.binding_id}")
-            if binding.preset_id not in self.presets:
-                raise ValueError(f"unknown preset_id for binding {binding.binding_id}: {binding.preset_id}")
+        if not binding.preset_ids:
+            raise ValueError(f"binding preset_ids is required: {binding.binding_id}")
+        target = target_catalog.get(binding.target_id)
+        if target is None and not binding.target_id.startswith("plugin:"):
+            raise ValueError(f"unknown model target: {binding.target_id}")
+        required_capabilities = set(target.required_capabilities) if target is not None else set()
+        for preset_id in binding.preset_ids:
+            preset = self.presets.get(preset_id)
+            if preset is None:
+                raise ValueError(f"unknown preset_id for binding {binding.binding_id}: {preset_id}")
+            if target is not None and preset.task_kind != target.task_kind:
+                raise ValueError(
+                    f"preset task_kind mismatch for {binding.binding_id}: "
+                    f"target={target.task_kind} preset={preset.task_kind}"
+                )
+            missing_capabilities = sorted(required_capabilities.difference(preset.capabilities))
+            if missing_capabilities:
+                raise ValueError(
+                    f"preset capabilities mismatch for {binding.binding_id}: "
+                    f"target={binding.target_id} missing={','.join(missing_capabilities)}"
+                )
+        if target is not None and not target.allow_fallbacks and len(binding.preset_ids) > 1:
+            raise ValueError(f"target does not allow fallbacks: {binding.target_id}")
         if binding.timeout_sec is not None and float(binding.timeout_sec) <= 0:
             raise ValueError(f"timeout_sec must be positive: {binding.binding_id}")
 
@@ -647,14 +693,12 @@ class FileSystemModelRegistryManager:
         providers_dir: str | Path,
         presets_dir: str | Path,
         bindings_dir: str | Path,
-        legacy_global_default_model: str = "",
-        legacy_summary_model: str = "",
+        target_catalog: MutableModelTargetCatalog | None = None,
     ) -> None:
         self.providers_dir = Path(providers_dir)
         self.presets_dir = Path(presets_dir)
         self.bindings_dir = Path(bindings_dir)
-        self.legacy_global_default_model = str(legacy_global_default_model or "")
-        self.legacy_summary_model = str(legacy_summary_model or "")
+        self.target_catalog = target_catalog or MutableModelTargetCatalog()
         self.active_registry = ModelRegistry()
         self.last_error = ""
         self._reload_lock = asyncio.Lock()
@@ -662,7 +706,7 @@ class FileSystemModelRegistryManager:
     def reload_now(self) -> ModelReloadSnapshot:
         try:
             registry = self._load_registry_from_filesystem()
-            registry.validate()
+            registry.validate(target_catalog=self.target_catalog)
         except Exception as exc:
             self.last_error = str(exc)
             return ModelReloadSnapshot(
@@ -703,6 +747,11 @@ class FileSystemModelRegistryManager:
     def list_bindings(self) -> list[ModelBinding]:
         return [self.active_registry.bindings[key] for key in sorted(self.active_registry.bindings)]
 
+    def list_binding_snapshots(self) -> list[ModelBindingSnapshot]:
+        """返回 binding 的控制面派生视图."""
+
+        return [self.get_binding_snapshot(binding.binding_id) for binding in self.list_bindings()]
+
     def get_provider(self, provider_id: str) -> ModelProvider | None:
         return self.active_registry.providers.get(provider_id)
 
@@ -712,10 +761,29 @@ class FileSystemModelRegistryManager:
     def get_binding(self, binding_id: str) -> ModelBinding | None:
         return self.active_registry.bindings.get(binding_id)
 
+    def get_binding_snapshot(self, binding_id: str) -> ModelBindingSnapshot:
+        """返回某条 binding 当前的解析状态."""
+
+        binding = self.get_binding(binding_id)
+        if binding is None:
+            raise KeyError(binding_id)
+        return self._binding_snapshot(binding)
+
     def resolve_preset_request(self, preset_id: str) -> RuntimeModelRequest | None:
         """按 preset_id 直接解析一份 RuntimeModelRequest."""
 
         return self._request_from_preset_id(None, preset_id)
+
+    def resolve_target_request(self, target_id: str) -> RuntimeModelRequest | None:
+        """按 target_id 解析一份运行时模型请求."""
+
+        binding = self.active_registry.binding_for_target(target_id)
+        if binding is None:
+            return None
+        binding_snapshot = self._binding_snapshot(binding)
+        if binding_snapshot.binding_state != "resolved":
+            return None
+        return self._request_from_binding(binding)
 
     def get_provider_impact(self, provider_id: str) -> ModelImpactSnapshot:
         return self.active_registry.provider_impact(provider_id)
@@ -837,156 +905,28 @@ class FileSystemModelRegistryManager:
             cascaded_binding_ids=[binding_id] if self.get_binding(binding_id) is not None else [],
         )
 
-    def resolve_run_request(
-        self,
-        *,
-        run_mode: str,
-        agent_id: str,
-        explicit_profile_default_model: str = "",
-        effective_profile_default_model: str = "",
-    ) -> tuple[RuntimeModelRequest | None, PersistedModelSnapshot | None]:
-        """
-        解析 run 模型请求和对应的 snapshot.
-
-        按照 Binding > Profile 显式指定 > 全局默认值 > Profile 隐式指定 的顺序进行匹配
-
-        Args:
-            run_mode: 运行模式.
-            agent_id: Agent ID.
-            explicit_profile_default_model: 显式配置的 Profile 默认模型.
-            effective_profile_default_model: 生效的 Profile 默认模型.
-
-        Returns:
-            `(model_request, model_snapshot)` 二元组.
-        """
-
-        if run_mode == "record_only":
-            return None, None
-        # 控制面板里给这个 agent_id 专门绑定某个模型预设是最高优先级
-        binding = self.active_registry.binding_for_agent(agent_id)
-        if binding is not None:
-            request = self._request_from_binding(binding)
-            return request, snapshot_from_runtime_request(request)
-
-        # 没有绑定的话，看看 profile 里有没有显式指定默认模型
-        if explicit_profile_default_model:
-            request = self._legacy_request(
-                explicit_profile_default_model,
-                binding_id="legacy:profile_default_model",
-            )
-            return request, snapshot_from_runtime_request(request)
-
-        # 配置文件的 agent 节点下有没有写一个全局的 default_model
-        if self.legacy_global_default_model:
-            request = self._legacy_request(
-                self.legacy_global_default_model,
-                binding_id="legacy:global_default_model",
-            )
-            return request, snapshot_from_runtime_request(request)
-
-        if effective_profile_default_model:
-            request = self._legacy_request(
-                effective_profile_default_model,
-                binding_id="legacy:effective_profile_default_model",
-            )
-            return request, snapshot_from_runtime_request(request)
-
-        return None, None
-
-    def resolve_summary_request(
-        self,
-        *,
-        primary_request: RuntimeModelRequest | None,
-        profile_summary_preset_id: str = "",
-        profile_summary_model: str = "",
-    ) -> RuntimeModelRequest | None:
-        if profile_summary_preset_id:
-            request = self._request_from_preset_id(None, profile_summary_preset_id)
-            if request is not None:
-                request.binding_id = "profile:summary_model_preset"
-                return request
-
-        if profile_summary_model:
-            return self._legacy_request(
-                profile_summary_model,
-                binding_id="legacy:profile_summary_model",
-            )
-
-        binding = self.active_registry.binding_for_system("compactor_summary")
-        if binding is not None:
-            requests = [self._request_from_preset_id(binding, preset_id) for preset_id in binding.preset_ids]
-            requests = [item for item in requests if item is not None]
-            if requests:
-                first, *rest = requests
-                for item in [first, *rest]:
-                    item.binding_id = binding.binding_id
-                    if binding.timeout_sec is not None:
-                        item.execution_params = {
-                            **dict(item.execution_params),
-                            "timeout": binding.timeout_sec,
-                        }
-                first.fallback_requests = list(rest)
-                return first
-
-        if self.legacy_summary_model:
-            return self._legacy_request(
-                self.legacy_summary_model,
-                binding_id="legacy:summary_model",
-            )
-
-        if primary_request is None:
-            return None
-        return RuntimeModelRequest(
-            provider_kind=primary_request.provider_kind,
-            model=primary_request.model,
-            context_window=primary_request.context_window,
-            supports_tools=primary_request.supports_tools,
-            supports_vision=primary_request.supports_vision,
-            provider_id=primary_request.provider_id,
-            preset_id=primary_request.preset_id,
-            binding_id=primary_request.binding_id,
-            api_key_env=primary_request.api_key_env,
-            provider_params=dict(primary_request.provider_params),
-            model_params=dict(primary_request.model_params),
-            execution_params=dict(primary_request.execution_params),
-        )
-
     def resolve_from_snapshot(self, snapshot: PersistedModelSnapshot | None) -> RuntimeModelRequest | None:
         if snapshot is None:
             return None
         return snapshot.to_runtime_request()
 
-    def preview_effective_agent(
-        self,
-        *,
-        agent_id: str,
-        explicit_profile_default_model: str = "",
-        effective_profile_default_model: str = "",
-    ) -> EffectiveModelSnapshot:
-        request, _ = self.resolve_run_request(
-            run_mode="respond",
-            agent_id=agent_id,
-            explicit_profile_default_model=explicit_profile_default_model,
-            effective_profile_default_model=effective_profile_default_model,
-        )
-        source = "none"
-        if request is not None:
-            source = request.binding_id or "resolved"
-        return EffectiveModelSnapshot(
-            target_type="agent",
-            target_id=agent_id,
-            source=source,
-            request=request,
-        )
+    def preview_effective_target(self, target_id: str) -> EffectiveModelSnapshot:
+        """预览某个 target 当前解析出来的请求."""
 
-    def preview_effective_summary(self) -> EffectiveModelSnapshot:
-        request = self.resolve_summary_request(primary_request=None)
         source = "none"
-        if request is not None:
-            source = request.binding_id or "resolved"
+        request = None
+        binding = self.active_registry.binding_for_target(target_id)
+        if binding is not None:
+            binding_snapshot = self._binding_snapshot(binding)
+            if binding_snapshot.binding_state == "resolved":
+                request = self._request_from_binding(binding)
+                source = request.binding_id or "resolved"
+            else:
+                source = binding_snapshot.binding_state
+        target_type = target_id.split(":", 1)[0] if ":" in target_id else "unknown"
         return EffectiveModelSnapshot(
-            target_type="system",
-            target_id="compactor_summary",
+            target_type=target_type,
+            target_id=target_id,
             source=source,
             request=request,
         )
@@ -1066,6 +1006,7 @@ class FileSystemModelRegistryManager:
         impact: ModelImpactSnapshot | None,
         mutator,
         writer,
+        binding_state: ModelBindingState = "resolved",
         cascaded_provider_ids: list[str] | None = None,
         cascaded_preset_ids: list[str] | None = None,
         cascaded_binding_ids: list[str] | None = None,
@@ -1073,11 +1014,16 @@ class FileSystemModelRegistryManager:
         candidate = self.active_registry.clone()
         try:
             mutator(candidate)
-            candidate.validate()
+            candidate.validate(target_catalog=self.target_catalog)
             result = writer()
             if isawaitable(result):
                 await result
         except Exception as exc:
+            resolved_binding_state = binding_state
+            if entity_type == "binding":
+                candidate_binding = candidate.bindings.get(entity_id)
+                if candidate_binding is not None:
+                    resolved_binding_state = self._binding_snapshot_for_registry(candidate, candidate_binding).binding_state
             return ModelMutationResult(
                 ok=False,
                 applied=False,
@@ -1085,6 +1031,7 @@ class FileSystemModelRegistryManager:
                 entity_type=entity_type,
                 entity_id=entity_id,
                 message=str(exc),
+                binding_state=resolved_binding_state,
                 impact=impact,
                 cascaded_provider_ids=list(cascaded_provider_ids or []),
                 cascaded_preset_ids=list(cascaded_preset_ids or []),
@@ -1092,6 +1039,9 @@ class FileSystemModelRegistryManager:
             )
 
         reload_result = await self.reload()
+        resolved_binding_state = binding_state
+        if entity_type == "binding":
+            resolved_binding_state = self.get_binding_snapshot(entity_id).binding_state
         return ModelMutationResult(
             ok=reload_result.ok,
             applied=reload_result.ok,
@@ -1099,6 +1049,7 @@ class FileSystemModelRegistryManager:
             entity_type=entity_type,
             entity_id=entity_id,
             message=reload_result.error,
+            binding_state=resolved_binding_state,
             impact=impact,
             cascaded_provider_ids=list(cascaded_provider_ids or []),
             cascaded_preset_ids=list(cascaded_preset_ids or []),
@@ -1106,12 +1057,13 @@ class FileSystemModelRegistryManager:
         )
 
     def _request_from_binding(self, binding: ModelBinding) -> RuntimeModelRequest:
-        if binding.target_type == "system":
-            raise ValueError("system binding requires fallback-chain resolution")
-        request = self._request_from_preset_id(binding, binding.preset_id)
-        if request is None:
-            raise ValueError(f"unknown preset_id for binding: {binding.binding_id}")
-        return request
+        requests = [self._request_from_preset_id(binding, preset_id) for preset_id in binding.preset_ids]
+        resolved_requests = [item for item in requests if item is not None]
+        if not resolved_requests:
+            raise ValueError(f"unknown preset_ids for binding: {binding.binding_id}")
+        first, *rest = resolved_requests
+        first.fallback_requests = list(rest)
+        return first
 
     def _request_from_preset_id(
         self,
@@ -1135,12 +1087,15 @@ class FileSystemModelRegistryManager:
             execution_params["timeout"] = binding.timeout_sec
         if preset.max_output_tokens is not None:
             model_params.setdefault("max_tokens", preset.max_output_tokens)
+        capabilities = _normalize_capabilities(preset.capabilities)
         return RuntimeModelRequest(
             provider_kind=provider.kind,
             model=self._resolved_model_name(provider.kind, preset.model),
             context_window=preset.context_window,
-            supports_tools=bool(preset.supports_tools),
-            supports_vision=bool(preset.supports_vision),
+            supports_tools="tool_calling" in capabilities,
+            supports_vision="image_input" in capabilities,
+            task_kind=preset.task_kind,
+            capabilities=capabilities,
             provider_id=provider.provider_id,
             preset_id=preset.preset_id,
             binding_id=binding.binding_id if binding is not None else "",
@@ -1159,6 +1114,8 @@ class FileSystemModelRegistryManager:
             binding_id=binding_id,
             supports_tools=True,
             supports_vision=False,
+            task_kind="chat",
+            capabilities=["tool_calling"],
         )
 
     @staticmethod
@@ -1283,9 +1240,20 @@ class FileSystemModelRegistryManager:
             preset_id=str(raw.get("preset_id", "") or path.stem),
             provider_id=str(raw.get("provider_id", "") or ""),
             model=str(raw.get("model", "") or ""),
+            task_kind=str(raw.get("task_kind", raw.get("capability", "")) or ""),
             context_window=int(raw.get("context_window", 0) or 0),
-            supports_tools=bool(raw.get("supports_tools", True)),
-            supports_vision=bool(raw.get("supports_vision", False)),
+            capabilities=_normalize_capabilities(
+                raw.get("capabilities")
+                if "capabilities" in raw
+                else [
+                    capability
+                    for capability, enabled in (
+                        ("tool_calling", raw.get("supports_tools", True)),
+                        ("image_input", raw.get("supports_vision", False)),
+                    )
+                    if enabled
+                ]
+            ),
             max_output_tokens=(
                 None if raw.get("max_output_tokens") in {None, ""} else int(raw.get("max_output_tokens"))
             ),
@@ -1299,13 +1267,91 @@ class FileSystemModelRegistryManager:
             raise ValueError(f"binding file must be a mapping: {path}")
         return ModelBinding(
             binding_id=str(raw.get("binding_id", "") or path.stem),
-            target_type=str(raw.get("target_type", "") or ""),
             target_id=str(raw.get("target_id", "") or ""),
-            preset_id=str(raw.get("preset_id", "") or ""),
             preset_ids=[str(item) for item in list(raw.get("preset_ids", []) or [])],
             timeout_sec=(
                 None if raw.get("timeout_sec") in {None, ""} else float(raw.get("timeout_sec"))
             ),
+        )
+
+    def _binding_snapshot(self, binding: ModelBinding) -> ModelBindingSnapshot:
+        """根据当前 target 目录和 active registry 计算 binding 的真实状态."""
+
+        return self._binding_snapshot_for_registry(self.active_registry, binding)
+
+    def _binding_snapshot_for_registry(
+        self,
+        registry: ModelRegistry,
+        binding: ModelBinding,
+    ) -> ModelBindingSnapshot:
+        """根据给定 registry 和当前 target 目录计算 binding 的真实状态."""
+
+        target = self.target_catalog.get(binding.target_id)
+        if target is None:
+            return ModelBindingSnapshot(
+                binding=binding,
+                binding_state="unresolved_target",
+                target_present=False,
+                message=f"target not registered: {binding.target_id}",
+            )
+        if not binding.preset_ids:
+            return ModelBindingSnapshot(
+                binding=binding,
+                binding_state="invalid_binding",
+                target_present=True,
+                message=f"binding has no preset_ids: {binding.binding_id}",
+            )
+        if not target.allow_fallbacks and len(binding.preset_ids) > 1:
+            return ModelBindingSnapshot(
+                binding=binding,
+                binding_state="invalid_binding",
+                target_present=True,
+                message=f"target does not allow fallbacks: {binding.target_id}",
+            )
+        required_capabilities = set(target.required_capabilities)
+        for preset_id in binding.preset_ids:
+            preset = registry.presets.get(preset_id)
+            if preset is None:
+                return ModelBindingSnapshot(
+                    binding=binding,
+                    binding_state="invalid_binding",
+                    target_present=True,
+                    message=f"unknown preset_id for binding {binding.binding_id}: {preset_id}",
+                )
+            if preset.task_kind != target.task_kind:
+                return ModelBindingSnapshot(
+                    binding=binding,
+                    binding_state="invalid_binding",
+                    target_present=True,
+                    message=(
+                        f"preset task_kind mismatch for {binding.binding_id}: "
+                        f"target={target.task_kind} preset={preset.task_kind}"
+                    ),
+                )
+            missing_capabilities = sorted(required_capabilities.difference(preset.capabilities))
+            if missing_capabilities:
+                return ModelBindingSnapshot(
+                    binding=binding,
+                    binding_state="invalid_binding",
+                    target_present=True,
+                    message=(
+                        f"preset capabilities mismatch for {binding.binding_id}: "
+                        f"target={binding.target_id} missing={','.join(missing_capabilities)}"
+                    ),
+                )
+            provider = registry.providers.get(preset.provider_id)
+            if provider is None:
+                return ModelBindingSnapshot(
+                    binding=binding,
+                    binding_state="invalid_binding",
+                    target_present=True,
+                    message=f"unknown provider_id for preset {preset.preset_id}: {preset.provider_id}",
+                )
+        return ModelBindingSnapshot(
+            binding=binding,
+            binding_state="resolved",
+            target_present=True,
+            message="",
         )
 
     def _delete_provider_from_registry(

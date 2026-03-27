@@ -52,7 +52,6 @@ async def test_builtin_skill_tool_uses_doc18_name_schema_and_description(tmp_pat
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",
-            default_model="test-model",
             skills=[],
         )
     )
@@ -63,7 +62,6 @@ async def test_builtin_skill_tool_uses_doc18_name_schema_and_description(tmp_pat
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",
-            default_model="test-model",
             skills=["sample_configured_skill"],
         )
     )
@@ -89,7 +87,6 @@ async def test_builtin_skill_tool_returns_launch_message_base_dir_and_marks_load
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
-        default_model="test-model",
         skills=["sample_configured_skill"],
     )
     execution_ctx = broker._build_execution_context(ctx)
@@ -118,7 +115,6 @@ async def test_builtin_skill_tool_rejects_invisible_skill(tmp_path: Path) -> Non
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
-        default_model="test-model",
         skills=["excel_processing"],
     )
     result = await broker.execute(
@@ -139,7 +135,6 @@ async def test_builtin_skill_tool_respects_world_visible_skills(tmp_path: Path) 
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
-        default_model="test-model",
         skills=["sample_configured_skill", "excel_processing"],
     )
     ctx.computer_policy_decision = ComputerPolicyDecision(
@@ -186,7 +181,6 @@ async def test_builtin_skill_tool_disappears_when_visible_skills_is_explicitly_e
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
-        default_model="test-model",
         skills=["sample_configured_skill"],
     )
     ctx.computer_policy_decision = ComputerPolicyDecision(
@@ -222,7 +216,6 @@ async def test_builtin_skill_tool_disappears_when_skills_root_is_hidden(tmp_path
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
-        default_model="test-model",
         skills=["sample_configured_skill"],
     )
     ctx.computer_policy_decision = ComputerPolicyDecision(

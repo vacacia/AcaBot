@@ -828,10 +828,12 @@ class RuntimeControlPlane:
                     "preset_id": item.preset_id,
                     "provider_id": item.provider_id,
                     "model": item.model,
+                    "task_kind": item.task_kind,
+                    "capabilities": list(item.capabilities),
                 }
                 for item in presets
             ],
-            "model_bindings": [item.to_dict() for item in bindings],
+            "model_bindings": [asdict(item) for item in bindings],
             "options": build_ui_options(
                 api_key_env_names=[key for key in os.environ if key.endswith("_API_KEY")]
             ),
@@ -915,7 +917,13 @@ class RuntimeControlPlane:
     async def list_model_presets(self) -> list[ModelPreset]:
         return await self.model_ops.list_model_presets()
 
-    async def list_model_bindings(self) -> list[ModelBinding]:
+    async def list_model_targets(self):
+        return await self.model_ops.list_model_targets()
+
+    async def get_model_target(self, target_id: str):
+        return await self.model_ops.get_model_target(target_id)
+
+    async def list_model_bindings(self):
         return await self.model_ops.list_model_bindings()
 
     async def get_model_provider(self, provider_id: str) -> ModelProvider | None:
@@ -924,7 +932,7 @@ class RuntimeControlPlane:
     async def get_model_preset(self, preset_id: str) -> ModelPreset | None:
         return await self.model_ops.get_model_preset(preset_id)
 
-    async def get_model_binding(self, binding_id: str) -> ModelBinding | None:
+    async def get_model_binding(self, binding_id: str):
         return await self.model_ops.get_model_binding(binding_id)
 
     async def get_model_provider_impact(self, provider_id: str) -> ModelImpactSnapshot:
@@ -936,11 +944,8 @@ class RuntimeControlPlane:
     async def get_model_binding_impact(self, binding_id: str) -> ModelImpactSnapshot:
         return await self.model_ops.get_model_binding_impact(binding_id)
 
-    async def preview_effective_agent_model(self, agent_id: str) -> EffectiveModelSnapshot:
-        return await self.model_ops.preview_effective_agent_model(agent_id)
-
-    async def preview_effective_summary_model(self) -> EffectiveModelSnapshot:
-        return await self.model_ops.preview_effective_summary_model()
+    async def preview_effective_target_model(self, target_id: str) -> EffectiveModelSnapshot:
+        return await self.model_ops.preview_effective_target_model(target_id)
 
     async def upsert_model_provider(self, provider: ModelProvider) -> ModelMutationResult:
         return await self.model_ops.upsert_model_provider(provider)

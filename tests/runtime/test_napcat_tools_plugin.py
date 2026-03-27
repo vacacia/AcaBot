@@ -116,7 +116,6 @@ def _profile(*, enabled_tools: list[str]) -> AgentProfile:
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
-        default_model="test-model",
         enabled_tools=list(enabled_tools),
     )
 
@@ -221,7 +220,6 @@ async def test_build_runtime_components_can_load_napcat_tools_plugin_from_config
     config = Config(
         {
             "agent": {
-                "default_model": "test-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
@@ -233,7 +231,6 @@ async def test_build_runtime_components_can_load_napcat_tools_plugin_from_config
                     "aca": {
                         "name": "Aca",
                         "prompt_ref": "prompt/default",
-                        "default_model": "test-model",
                         "enabled_tools": ["get_group_info"],
                     }
                 },

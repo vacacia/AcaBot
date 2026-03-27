@@ -48,7 +48,6 @@ def _profile_loader(decision: RouteDecision) -> AgentProfile:
         agent_id=decision.agent_id,
         name="Aca",
         prompt_ref="prompt/default",
-        default_model="test-model",
     )
 
 
@@ -186,7 +185,6 @@ async def test_build_runtime_components_enabled_backend_admin_bang_routes_to_rea
     config = Config(
         {
             "agent": {
-                "default_model": "fallback-model",
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {
@@ -226,7 +224,6 @@ async def test_build_runtime_components_enabled_backend_maintain_followup_routes
     config = Config(
         {
             "agent": {
-                "default_model": "fallback-model",
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {

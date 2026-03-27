@@ -8,7 +8,6 @@ gateway:
 
 # --- Agent ---
 agent:
-  default_model: "openai/gemini-3-flash-preview"
   max_tool_rounds: 30
 
 # --- Runtime ---
@@ -20,7 +19,6 @@ runtime:
     aca:
       name: "Aca"
       prompt_ref: "prompt/default"
-      default_model: "openai/gemini-3-flash-preview"
       enabled_tools: []
 
   prompts:
@@ -45,7 +43,6 @@ runtime:
     strategy: "summarize"
     max_context_ratio: 0.7
     preserve_recent: 10
-    summary_model: ""
     summary_max_chars: 1200
     system_prompt_reserve_tokens: 800
     prompt_slot_reserve_tokens: 1200

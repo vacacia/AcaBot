@@ -150,7 +150,6 @@ def _profile_loader(decision) -> AgentProfile:
         agent_id=decision.agent_id,
         name=decision.agent_id,
         prompt_ref=f"prompt/{decision.agent_id}",
-        default_model="test-model",
     )
 
 

@@ -34,6 +34,7 @@ from acabot.config import Config
 from .computer import ComputerRuntime
 from .gateway_protocol import GatewayProtocol
 from .contracts import RunContext
+from .model.model_targets import MutableModelTargetCatalog, RuntimePluginModelSlot
 from .references import ReferenceBackend
 from .skills import SkillCatalog
 from .memory.sticky_notes import StickyNoteService
@@ -305,6 +306,15 @@ class RuntimePlugin(ABC):
 
         return []
 
+    def model_slots(self) -> list[RuntimePluginModelSlot]:
+        """返回插件声明的模型槽位.
+
+        Returns:
+            RuntimePluginModelSlot 列表. 默认空列表.
+        """
+
+        return []
+
     async def teardown(self) -> None:
         """在 runtime 停止或热卸载时清理资源."""
         # 子类可重写, 默认空实现
@@ -350,6 +360,7 @@ class RuntimePluginManager:
         skill_catalog: SkillCatalog | None = None,
         control_plane: RuntimeControlPlane | None = None,
         subagent_delegator: SubagentDelegationBroker | None = None,
+        model_target_catalog: MutableModelTargetCatalog | None = None,
         builtin_plugins: list[RuntimePlugin] | None = None,
         plugins: list[RuntimePlugin] | None = None,
     ) -> None:
@@ -381,6 +392,7 @@ class RuntimePluginManager:
         self.skill_catalog = skill_catalog
         self.control_plane = control_plane
         self.subagent_delegator = subagent_delegator
+        self.model_target_catalog = model_target_catalog
         self._builtin_plugins: list[RuntimePlugin] = list(builtin_plugins or [])
         self._builtin_plugin_names: set[str] = {
             plugin.name for plugin in self._builtin_plugins
@@ -396,6 +408,7 @@ class RuntimePluginManager:
         self._names: set[str] = set()
         # 记录每个插件实际注册的 hooks, 便于精确卸载和重建 registry
         self._plugin_hooks: dict[str, list[tuple[RuntimeHookPoint, RuntimeHook]]] = {}
+        self._plugin_model_target_ids: dict[str, list[str]] = {}
         # 延迟加载队列, 支持动态添加插件
         self._pending: list[RuntimePlugin] = [
             *self._fresh_builtin_plugins(),
@@ -605,6 +618,28 @@ class RuntimePluginManager:
             logger.exception("Runtime plugin '%s' setup failed, skipping", plugin.name)
             return
 
+        if self.model_target_catalog is not None:
+            try:
+                targets = self.model_target_catalog.register_plugin_slots(
+                    plugin_id=plugin.name,
+                    slots=plugin.model_slots(),
+                )
+                self._plugin_model_target_ids[plugin.name] = [target.target_id for target in targets]
+                await self._revalidate_model_registry()
+            except Exception:
+                logger.exception("Runtime plugin '%s' model target registration failed, skipping", plugin.name)
+                self.model_target_catalog.unregister_plugin_targets(plugin.name)
+                self._plugin_model_target_ids.pop(plugin.name, None)
+                try:
+                    await self._revalidate_model_registry()
+                except Exception:
+                    logger.exception("Runtime plugin '%s' model target rollback failed", plugin.name)
+                try:
+                    await plugin.teardown()
+                except Exception:
+                    logger.exception("Runtime plugin '%s' teardown failed after model target rollback", plugin.name)
+                return
+
         # 步骤 4: 注册 hooks 到各个 Point
         plugin_hooks = list(plugin.hooks())
         for point, hook in plugin_hooks:
@@ -642,7 +677,6 @@ class RuntimePluginManager:
                 source=f"plugin:{plugin.name}", # 打上命名空间标签, 方便统一卸载
                 metadata={"plugin_name": plugin.name},
             )
-
         # 步骤 6: 标记为已加载
         self.loaded.append(plugin)
         self._names.add(plugin.name)
@@ -728,6 +762,9 @@ class RuntimePluginManager:
                 await plugin.teardown()
             except Exception:
                 logger.exception("Runtime plugin '%s' teardown failed", plugin.name)
+            if self.model_target_catalog is not None:
+                self.model_target_catalog.unregister_plugin_targets(plugin.name)
+                self._plugin_model_target_ids.pop(plugin.name, None)
             removed_names.append(plugin.name)
 
         if not removed_names:
@@ -739,9 +776,9 @@ class RuntimePluginManager:
         for plugin_name in removed_set:
             self._plugin_hooks.pop(plugin_name, None)
         self._rebuild_hook_registry()
-        return [plugin.name for plugin in self.loaded if plugin.name in removed_set] or [
-            plugin_name for plugin_name in plugin_names if plugin_name in removed_set
-        ]
+        if self.model_target_catalog is not None:
+            await self._revalidate_model_registry()
+        return [plugin_name for plugin_name in plugin_names if plugin_name in removed_set]
 
     def _rebuild_hook_registry(self) -> None:
         """根据当前已加载插件重建 hook registry."""
@@ -790,12 +827,17 @@ class RuntimePluginManager:
                 await plugin.teardown()
             except Exception:
                 logger.exception("Runtime plugin '%s' teardown failed", plugin.name)
+            if self.model_target_catalog is not None:
+                self.model_target_catalog.unregister_plugin_targets(plugin.name)
+                self._plugin_model_target_ids.pop(plugin.name, None)
         # 清空状态, 允许重新加载
         self.loaded.clear()
         self._names.clear()
         self._plugin_hooks.clear()
         self.hooks = RuntimeHookRegistry()
         self._started = False
+        if self.model_target_catalog is not None:
+            await self._revalidate_model_registry()
 
     async def reload_from_config(self, plugin_names: list[str] | None = None) -> tuple[list[str], list[str]]:
         """按当前 Config 重新加载 runtime plugins.
@@ -876,6 +918,16 @@ class RuntimePluginManager:
         for plugin in selected:
             await self.load_plugin(plugin, context)
         return [plugin.name for plugin in selected if plugin.name in self._names], missing
+
+    async def _revalidate_model_registry(self) -> None:
+        """在插件 target 集合变化后触发一次模型 registry 重载."""
+
+        if self.control_plane is None:
+            return
+        snapshot = await self.control_plane.reload_models()
+        if snapshot.ok:
+            return
+        raise ValueError(snapshot.error or "model registry reload failed")
 
 
 # endregion

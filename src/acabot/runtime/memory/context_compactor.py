@@ -55,7 +55,6 @@ class ContextCompactionConfig:
         system_prompt_reserve_tokens (int): 为稳定 system prompt 预留的 token.
         prompt_slot_reserve_tokens (int): 为 sticky summary retrieval 这些动态 slot 预留的 token.
         tool_schema_reserve_tokens (int): 为 tool schema 预留的 token.
-        summary_model (str): summarize 模式使用的模型. 为空时沿用当前 profile model.
         summary_max_chars (int): 单次 summary 最多保留多少字符.
         summary_system_prompt (str): 首次摘要使用的 system prompt.
         update_summary_system_prompt (str): 增量摘要使用的 system prompt.
@@ -69,7 +68,6 @@ class ContextCompactionConfig:
     system_prompt_reserve_tokens: int = 1500
     prompt_slot_reserve_tokens: int = 2500
     tool_schema_reserve_tokens: int = 3000
-    summary_model: str = ""
     summary_max_chars: int = 2400
     summary_system_prompt: str = (
         "You are compacting old conversation history for a long running agent. "
@@ -286,17 +284,6 @@ class ModelContextSummarizer:
             yield request
             for item in request.fallback_requests:
                 yield item
-            return
-
-        model = str(self.config.summary_model or ctx.profile.default_model or "")
-        if model:
-            from ..model.model_registry import RuntimeModelRequest
-
-            yield RuntimeModelRequest(
-                provider_kind="legacy",
-                model=model,
-                binding_id="legacy:summary_model" if self.config.summary_model else "legacy:profile_default_model",
-            )
 
     def _candidate_has_context_window(
         self,
@@ -314,9 +301,37 @@ class ModelContextSummarizer:
         messages = [{"role": "user", "content": user_prompt}]
         return max(
             1,
-            self._count_tokens(model, messages)
+            self._count_summary_tokens(model, messages)
             + self.config.system_prompt_reserve_tokens,
         )
+
+    def _count_summary_tokens(self, model: str, messages: list[dict[str, Any]]) -> int:
+        """计算摘要请求消息的 token 数.
+
+        Args:
+            model: 当前摘要模型名.
+            messages: 待发送给摘要模型的消息列表.
+
+        Returns:
+            估算 token 数.
+        """
+
+        if token_counter is not None:
+            try:
+                counted = token_counter(model=model, messages=messages)
+                if isinstance(counted, int):
+                    return counted
+            except Exception:
+                pass
+
+        total = 0
+        for message in messages:
+            content = message.get("content", "")
+            if isinstance(content, str):
+                total += max(1, len(content) // 3)
+            if "tool_calls" in message:
+                total += 20
+        return total
 
     def _serialize_messages(self, messages: list[dict[str, Any]]) -> str:
         """把消息列表转成摘要模型可读的纯文本.
@@ -435,11 +450,7 @@ class ContextCompactor:
         active_snapshot = snapshot or self.snapshot_thread(ctx.thread)
         messages = [dict(message) for message in active_snapshot.working_messages]
         model_request = ctx.model_request
-        model = (
-            model_request.model
-            if model_request is not None and model_request.model
-            else ctx.profile.default_model
-        )
+        model = model_request.model if model_request is not None and model_request.model else ""
         context_window = (
             model_request.context_window
             if model_request is not None and model_request.context_window > 0
@@ -788,11 +799,7 @@ class ContextCompactor:
             "turns_kept": result.kept_turns,
             "turns_dropped": result.dropped_turns,
             "strategy_used": result.strategy_used,
-            "model": (
-                ctx.model_request.model
-                if ctx.model_request is not None and ctx.model_request.model
-                else ctx.profile.default_model
-            ),
+            "model": ctx.model_request.model if ctx.model_request is not None and ctx.model_request.model else "",
         }
 
     # endregion

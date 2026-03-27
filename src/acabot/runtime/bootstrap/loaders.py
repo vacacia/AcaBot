@@ -32,8 +32,8 @@ def build_profiles(config: Config, *, default_computer_policy: ComputerPolicy) -
         dict[str, AgentProfile]: 解析后的 profile 映射.
     """
 
-    runtime_conf = config.get("runtime", {})
-    agent_conf = config.get("agent", {})
+    runtime_conf = dict(config.get("runtime", {}) or {})
+    agent_conf = dict(config.get("agent", {}) or {})
     profiles_conf = runtime_conf.get("profiles", {})
     if profiles_conf:
         profiles: dict[str, AgentProfile] = {}
@@ -43,10 +43,6 @@ def build_profiles(config: Config, *, default_computer_policy: ComputerPolicy) -
                 agent_id=agent_id,
                 name=normalized.get("name", agent_id),
                 prompt_ref=normalized.get("prompt_ref", f"prompt/{agent_id}"),
-                default_model=normalized.get(
-                    "default_model",
-                    agent_conf.get("default_model", "gpt-4o-mini"),
-                ),
                 enabled_tools=list(normalized.get("enabled_tools", [])),
                 skills=resolve_profile_skills(normalized),
                 computer_policy=parse_computer_policy(
@@ -63,7 +59,6 @@ def build_profiles(config: Config, *, default_computer_policy: ComputerPolicy) -
             agent_id=default_agent_id,
             name=runtime_conf.get("default_agent_name", default_agent_id),
             prompt_ref=runtime_conf.get("default_prompt_ref", "prompt/default"),
-            default_model=agent_conf.get("default_model", "gpt-4o-mini"),
             enabled_tools=normalize_enabled_tools(runtime_conf.get("enabled_tools", [])),
             skills=resolve_profile_skills(dict(runtime_conf)),
             computer_policy=default_computer_policy,
@@ -83,7 +78,7 @@ def build_filesystem_profiles(config: Config, *, default_computer_policy: Comput
         dict[str, AgentProfile]: 文件系统 profile 映射.
     """
 
-    runtime_conf = config.get("runtime", {})
+    runtime_conf = dict(config.get("runtime", {}) or {})
     fs_conf = dict(runtime_conf.get("filesystem", {}))
     if not bool(fs_conf.get("enabled", False)):
         return {}
@@ -93,13 +88,8 @@ def build_filesystem_profiles(config: Config, *, default_computer_policy: Comput
         key="profiles_dir",
         default="profiles",
     )
-    default_model = str(
-        runtime_conf.get("filesystem_default_model", "")
-        or config.get("agent", {}).get("default_model", "gpt-4o-mini")
-    )
     loader = FileSystemProfileLoader(
         profiles_dir,
-        default_model=default_model,
         default_computer_policy=default_computer_policy,
     )
     return loader.load_all()
@@ -119,8 +109,8 @@ def build_prompt_map(
         dict[str, str]: `prompt_ref -> text` 映射.
     """
 
-    runtime_conf = config.get("runtime", {})
-    agent_conf = config.get("agent", {})
+    runtime_conf = dict(config.get("runtime", {}) or {})
+    agent_conf = dict(config.get("agent", {}) or {})
     prompts = dict(runtime_conf.get("prompts", {}))
     default_prompt_text = str(agent_conf.get("system_prompt", "") or "")
     for profile in profiles.values():
@@ -142,7 +132,7 @@ def build_prompt_loader(
         PromptLoader: 当前有效 prompt loader.
     """
 
-    runtime_conf = config.get("runtime", {})
+    runtime_conf = dict(config.get("runtime", {}) or {})
     fs_conf = dict(runtime_conf.get("filesystem", {}))
     static_loader = StaticPromptLoader(build_prompt_map(config, profiles))
     if not bool(fs_conf.get("enabled", False)):
@@ -169,7 +159,7 @@ def build_session_runtime(config: Config) -> SessionRuntime:
         SessionRuntime: 正式 session-config 决策运行时.
     """
 
-    runtime_conf = config.get("runtime", {})
+    runtime_conf = dict(config.get("runtime", {}) or {})
     fs_conf = dict(runtime_conf.get("filesystem", {}))
     if "sessions_dir" in fs_conf:
         sessions_dir = resolve_filesystem_path(

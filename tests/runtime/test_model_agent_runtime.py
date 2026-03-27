@@ -28,6 +28,7 @@ from acabot.runtime import (
     RouteDecision,
     RunContext,
     RunRecord,
+    RuntimeModelRequest,
     StaticPromptLoader,
     ThreadState,
     ToolBroker,
@@ -209,7 +210,14 @@ def _context() -> RunContext:
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",
-            default_model="test-model",
+        ),
+        model_request=RuntimeModelRequest(
+            provider_kind="openai_compatible",
+            model="test-model",
+            supports_tools=True,
+            provider_id="provider",
+            preset_id="main",
+            provider_params={"base_url": "https://example.com"},
         ),
         retrieval_plan=RetrievalPlan(retained_history=[]),
         message_projection=MessageProjection(

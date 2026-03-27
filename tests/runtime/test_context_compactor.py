@@ -9,6 +9,7 @@ from acabot.runtime import (
     ModelContextSummarizer,
     RouteDecision,
     RunContext,
+    RuntimeModelRequest,
 )
 from acabot.runtime.contracts import RunRecord, ThreadState
 from acabot.types import EventSource, MsgSegment, StandardEvent
@@ -95,8 +96,28 @@ def _ctx(messages: list[dict[str, object]]) -> RunContext:
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",
-            default_model="test-model",
         ),
+        model_request=RuntimeModelRequest(
+            provider_kind="openai_compatible",
+            model="test-model",
+            context_window=1000,
+            supports_tools=True,
+            provider_id="provider",
+            preset_id="main",
+            provider_params={"base_url": "https://example.com"},
+        ),
+    )
+
+
+def _summary_request(model: str = "summary-model") -> RuntimeModelRequest:
+    return RuntimeModelRequest(
+        provider_kind="openai_compatible",
+        model=model,
+        context_window=64000,
+        supports_tools=False,
+        provider_id="provider",
+        preset_id="summary",
+        provider_params={"base_url": "https://example.com"},
     )
 
 
@@ -213,6 +234,7 @@ async def test_context_compactor_truncates_by_token_budget() -> None:
 async def test_context_compactor_honors_session_strategy_override() -> None:
     ctx = _ctx(_make_messages(15, content_len=45))
     ctx.profile.config["context_management"] = {"strategy": "summarize"}
+    ctx.summary_model_request = _summary_request("session-summary-model")
     summary_agent = _SummaryAgent(text="session summary")
     config = ContextCompactionConfig(
         strategy="truncate",
@@ -313,12 +335,12 @@ async def test_context_compactor_summarize_without_summarizer_falls_back_to_trun
 @pytest.mark.usefixtures("_mock_litellm")
 async def test_context_compactor_uses_llm_summary_when_enabled() -> None:
     ctx = _ctx(_make_messages(15, content_len=45))
+    ctx.summary_model_request = _summary_request("summary-model")
     summary_agent = _SummaryAgent(text="## Goal\n继续跟进实习材料要求")
     config = ContextCompactionConfig(
         strategy="summarize",
         max_context_ratio=0.7,
         preserve_recent_turns=3,
-        summary_model="summary-model",
     )
     compactor = ContextCompactor(
         config,
@@ -336,6 +358,7 @@ async def test_context_compactor_uses_llm_summary_when_enabled() -> None:
 @pytest.mark.usefixtures("_mock_litellm")
 async def test_context_compactor_updates_existing_summary_incrementally() -> None:
     ctx = _ctx(_make_messages(15, content_len=45))
+    ctx.summary_model_request = _summary_request("summary-model")
     ctx.thread.working_summary = "旧摘要"
     summary_agent = _SummaryAgent(text="新摘要")
     config = ContextCompactionConfig(
@@ -360,6 +383,7 @@ async def test_context_compactor_updates_existing_summary_incrementally() -> Non
 @pytest.mark.usefixtures("_mock_litellm")
 async def test_context_compactor_truncates_long_summary_output() -> None:
     ctx = _ctx(_make_messages(15, content_len=45))
+    ctx.summary_model_request = _summary_request("summary-model")
     summary_agent = _SummaryAgent(text="x" * 50)
     config = ContextCompactionConfig(
         strategy="summarize",

@@ -175,7 +175,6 @@
 profile 现在更像“agent 身份卡”，里面放的是：
 
 - prompt_ref
-- default_model
 - enabled_tools
 - skills
 - computer policy 默认值
@@ -299,10 +298,11 @@ profile 现在只负责这些事:
 - agent_id
 - name
 - prompt_ref
-- default_model
 - enabled_tools
 - skills
 - computer policy
+
+模型不在 profile 里配置；主回复和 system 能力都通过 `model_target / model_binding` 进入 runtime。
 
 ### profile 的两个来源
 

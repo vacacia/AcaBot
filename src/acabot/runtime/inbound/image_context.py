@@ -32,7 +32,6 @@ DEFAULT_IMAGE_CAPTION_PROMPT = (
 @dataclass(slots=True)
 class ImageCaptionSettings:
     enabled: bool = False
-    caption_preset_id: str = ""
     caption_prompt: str = DEFAULT_IMAGE_CAPTION_PROMPT
     include_reply_images: bool = True
 
@@ -44,7 +43,6 @@ def parse_image_caption_settings(raw: object) -> ImageCaptionSettings:
     prompt = str(data.get("caption_prompt", "") or "").strip() or DEFAULT_IMAGE_CAPTION_PROMPT
     return ImageCaptionSettings(
         enabled=bool(data.get("enabled", False)),
-        caption_preset_id=str(data.get("caption_preset_id", "") or "").strip(),
         caption_prompt=prompt,
         include_reply_images=bool(data.get("include_reply_images", True)),
     )

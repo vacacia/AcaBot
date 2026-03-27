@@ -99,7 +99,6 @@ async def test_enabled_backend_control_plane_reports_configured_true(tmp_path: P
     config = Config(
         {
             "agent": {
-                "default_model": "fallback-model",
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {
@@ -133,7 +132,6 @@ async def test_invalid_backend_command_control_plane_reports_unconfigured(tmp_pa
     config = Config(
         {
             "agent": {
-                "default_model": "fallback-model",
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {

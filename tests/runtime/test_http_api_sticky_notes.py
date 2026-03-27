@@ -31,7 +31,6 @@ def _server(tmp_path) -> RuntimeHttpApiServer:
     config = Config(
         {
             "agent": {
-                "default_model": "test-model",
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
