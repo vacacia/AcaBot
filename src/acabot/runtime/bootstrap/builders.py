@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +24,6 @@ from ..memory.long_term_ingestor import LongTermMemoryIngestor, LongTermMemoryWr
 from ..memory.long_term_memory import (
     CoreSimpleMemMemorySource,
     CoreSimpleMemWritePort,
-    LanceDbLongTermMemoryStore,
     LtmEmbeddingClient,
     LtmExtractorClient,
     LtmQueryPlannerClient,
@@ -64,6 +64,9 @@ from .config import (
     resolve_runtime_path,
     resolve_skill_catalog_dirs,
 )
+
+if TYPE_CHECKING:
+    from ..memory.long_term_memory.storage import LanceDbLongTermMemoryStore
 
 
 def build_builtin_runtime_plugins(profiles: dict[str, AgentProfile]) -> list[RuntimePlugin]:
@@ -242,6 +245,14 @@ def build_long_term_memory_store(config: Config) -> LanceDbLongTermMemoryStore:
         config,
         long_term_memory_conf.get("storage_dir", "long-term-memory/lancedb"),
     )
+    try:
+        from ..memory.long_term_memory.storage import LanceDbLongTermMemoryStore
+    except ModuleNotFoundError as exc:
+        missing_module = str(getattr(exc, "name", "") or "lancedb")
+        raise RuntimeError(
+            "runtime.long_term_memory.enabled=true requires LanceDB runtime dependencies; "
+            f"missing module: {missing_module}"
+        ) from exc
     return LanceDbLongTermMemoryStore(storage_dir)
 
 

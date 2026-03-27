@@ -29,7 +29,6 @@ from .model_clients import (
 from .ranking import HitChannelScore, merge_ranked_entry_hits, score_hit_channels
 from .renderer import CoreSimpleMemRenderer
 from .source import CoreSimpleMemMemorySource
-from .storage import LanceDbLongTermMemoryStore
 from .write_port import (
     CoreSimpleMemWritePort,
     FactWindow,
@@ -52,7 +51,6 @@ __all__ = [
     "LtmSearchHit",
     "LtmExtractorClient",
     "LtmQueryPlannerClient",
-    "LanceDbLongTermMemoryStore",
     "MemoryEntry",
     "MemoryProvenance",
     "WindowExtractionError",
