@@ -368,6 +368,10 @@ class RuntimeHttpApiServer:
                     )
                 )
             )
+        if segments == ["memory", "long-term", "config"] and method == "GET":
+            return self._ok(self._await(self.control_plane.get_long_term_memory_config()))
+        if segments == ["memory", "long-term", "config"] and method == "PUT":
+            return self._ok(self._await(self.control_plane.upsert_long_term_memory_config(payload)))
         if segments == ["memory", "sticky-notes", "item"] and method == "GET":
             result = self._await(
                 self.control_plane.get_sticky_note_record(

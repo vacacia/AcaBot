@@ -14,6 +14,7 @@ import pytest
 
 from acabot.config import Config
 from acabot.runtime import (
+    AnthropicProviderConfig,
     ModelBinding,
     ModelPreset,
     ModelProvider,
@@ -64,6 +65,120 @@ class FakeAgent:
             tool_executor,
         )
         return self.response
+
+
+async def _seed_model_registry(control_plane: Any) -> None:
+    await control_plane.upsert_model_provider(
+        ModelProvider(
+            provider_id="openai-main",
+            name="OpenAI Main",
+            kind="openai_compatible",
+            config=OpenAICompatibleProviderConfig(
+                base_url="https://llm.example.com/v1",
+                api_key_env="OPENAI_API_KEY",
+            ),
+        )
+    )
+    await control_plane.upsert_model_provider(
+        ModelProvider(
+            provider_id="anthropic-main",
+            name="Anthropic Main",
+            kind="anthropic",
+            config=AnthropicProviderConfig(
+                api_key_env="ANTHROPIC_API_KEY",
+                anthropic_version="2023-06-01",
+            ),
+        )
+    )
+    for preset in (
+        ModelPreset(
+            preset_id="aca-main",
+            provider_id="openai-main",
+            model="gpt-4.1",
+            task_kind="chat",
+            capabilities=["tool_calling", "reasoning"],
+            context_window=128000,
+            max_output_tokens=8192,
+        ),
+        ModelPreset(
+            preset_id="aca-fallback",
+            provider_id="anthropic-main",
+            model="claude-sonnet-4-5",
+            task_kind="chat",
+            capabilities=["tool_calling", "structured_output"],
+            context_window=200000,
+            max_output_tokens=8192,
+        ),
+        ModelPreset(
+            preset_id="summary-fast",
+            provider_id="openai-main",
+            model="gpt-4.1-mini",
+            task_kind="chat",
+            capabilities=["structured_output"],
+            context_window=128000,
+            max_output_tokens=4096,
+        ),
+        ModelPreset(
+            preset_id="vision-main",
+            provider_id="openai-main",
+            model="gpt-4.1",
+            task_kind="chat",
+            capabilities=["image_input", "tool_calling"],
+            context_window=128000,
+            max_output_tokens=4096,
+        ),
+        ModelPreset(
+            preset_id="ltm-chat",
+            provider_id="anthropic-main",
+            model="claude-sonnet-4-5",
+            task_kind="chat",
+            capabilities=["structured_output"],
+            context_window=200000,
+            max_output_tokens=4096,
+        ),
+        ModelPreset(
+            preset_id="ltm-embed",
+            provider_id="openai-main",
+            model="text-embedding-3-large",
+            task_kind="embedding",
+            context_window=32000,
+        ),
+    ):
+        await control_plane.upsert_model_preset(preset)
+
+    for binding in (
+        ModelBinding(
+            binding_id="binding:agent:aca",
+            target_id="agent:aca",
+            preset_ids=["aca-main", "aca-fallback"],
+        ),
+        ModelBinding(
+            binding_id="binding:system:compactor_summary",
+            target_id="system:compactor_summary",
+            preset_ids=["summary-fast"],
+        ),
+        ModelBinding(
+            binding_id="binding:system:image_caption",
+            target_id="system:image_caption",
+            preset_ids=["vision-main"],
+        ),
+        ModelBinding(
+            binding_id="binding:system:ltm_extract",
+            target_id="system:ltm_extract",
+            preset_ids=["ltm-chat", "aca-fallback"],
+        ),
+        ModelBinding(
+            binding_id="binding:system:ltm_query_plan",
+            target_id="system:ltm_query_plan",
+            preset_ids=["ltm-chat"],
+        ),
+        ModelBinding(
+            binding_id="binding:system:ltm_embed",
+            target_id="system:ltm_embed",
+            preset_ids=["ltm-embed"],
+        ),
+    ):
+        await control_plane.upsert_model_binding(binding)
 
 
 def request_json(
@@ -929,6 +1044,62 @@ async def test_runtime_http_api_server_serves_soul_and_sticky_notes_routes(tmp_p
         await server.stop()
 
 
+async def test_runtime_http_api_server_serves_and_updates_long_term_memory_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+
+        initial = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/memory/long-term/config",
+        )
+        assert initial["ok"] is True
+        assert initial["data"]["enabled"] is False
+        assert initial["data"]["window_size"] == 50
+        assert initial["data"]["required_target_ids"] == [
+            "system:ltm_extract",
+            "system:ltm_query_plan",
+            "system:ltm_embed",
+        ]
+
+        updated = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/memory/long-term/config",
+            method="PUT",
+            payload={
+                "enabled": True,
+                "storage_dir": "runtime-data/ltm",
+                "window_size": 64,
+                "overlap_size": 12,
+                "max_entries": 10,
+                "extractor_version": "ltm-extractor-v2",
+            },
+        )
+        assert updated["ok"] is True
+        assert updated["data"]["enabled"] is True
+        assert updated["data"]["storage_dir"] == "runtime-data/ltm"
+        assert updated["data"]["window_size"] == 64
+        assert updated["data"]["overlap_size"] == 12
+        assert updated["data"]["max_entries"] == 10
+        assert updated["data"]["extractor_version"] == "ltm-extractor-v2"
+        assert updated["data"]["restart_required"] is True
+    finally:
+        await server.stop()
+
+
 async def test_runtime_http_api_server_plugin_configs_include_display_names(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
@@ -1568,6 +1739,265 @@ def test_webui_real_pages_migrate_to_shared_design_system() -> None:
         assert "ds-page" in source, path
         assert "ds-panel" in source or "ds-hero" in source, path
         assert 'class="panel"' not in source, path
+
+
+async def test_models_page_renders_seeded_registry_targets_and_bindings(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    await _seed_model_registry(components.control_plane)
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        result = await asyncio.to_thread(
+            run_page_script,
+            url=f"{base_url}/config/models",
+            width=1440,
+            height=1200,
+            wait_ms=2200,
+            script="""
+              const metaValues = Array.from(document.querySelectorAll('.binding-meta-card .meta-value'));
+              return {
+                title: document.querySelector('h1')?.textContent?.trim() || '',
+                presetIds: Array.from(document.querySelectorAll('.sidebar-column .list-item strong')).map((item) => item.textContent?.trim() || ''),
+                targetIds: Array.from(document.querySelectorAll('.binding-sidebar .list-item strong')).map((item) => item.textContent?.trim() || ''),
+                statusChips: Array.from(document.querySelectorAll('.binding-sidebar .state-chip')).map((item) => item.textContent?.trim() || ''),
+                selectedModel: metaValues[1]?.textContent?.trim() || '',
+                bodyText: document.body.textContent || '',
+              };
+            """,
+        )
+
+        assert result["title"] == "模型真源"
+        assert "aca-main" in result["presetIds"]
+        assert "ltm-embed" in result["presetIds"]
+        assert "agent:aca" in result["targetIds"]
+        assert "system:ltm_extract" in result["targetIds"]
+        assert "resolved" in result["statusChips"]
+        assert "gpt-4.1" in result["selectedModel"]
+        assert "fallback" in result["bodyText"].lower()
+    finally:
+        await server.stop()
+
+
+async def test_models_page_refreshes_binding_state_after_saving_bound_preset(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    await _seed_model_registry(components.control_plane)
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        result = await asyncio.to_thread(
+            run_page_script,
+            url=f"{base_url}/config/models",
+            width=1440,
+            height=1200,
+            wait_ms=2200,
+            script="""
+              function findButton(containerSelector, text) {
+                return Array.from(document.querySelectorAll(containerSelector))
+                  .find((item) => (item.textContent || '').includes(text));
+              }
+              function fieldByLabel(text) {
+                return Array.from(document.querySelectorAll('.editor-column .ds-field'))
+                  .find((field) => (field.querySelector('span')?.textContent || '').includes(text));
+              }
+              return new Promise((resolve) => {
+                const presetButton = findButton('.sidebar-column .list-item', 'aca-main');
+                presetButton?.click();
+                setTimeout(() => {
+                  const modelInput = fieldByLabel('模型名')?.querySelector('input');
+                  if (modelInput) {
+                    modelInput.value = 'gpt-4.1-refreshed';
+                    modelInput.dispatchEvent(new Event('input', { bubbles: true }));
+                  }
+                  const saveButton = Array.from(document.querySelectorAll('.editor-column .ds-actions button'))
+                    .find((item) => item.textContent?.trim() === '保存');
+                  saveButton?.click();
+                  setTimeout(() => {
+                    const metaValues = Array.from(document.querySelectorAll('.binding-meta-card .meta-value'))
+                      .map((item) => item.textContent?.trim() || '');
+                    resolve({
+                      bindingState: metaValues[0] || '',
+                      effectiveModel: metaValues[1] || '',
+                      modelFieldValue: fieldByLabel('模型名')?.querySelector('input')?.value || '',
+                      statusTexts: Array.from(document.querySelectorAll('.ds-status')).map((item) => item.textContent?.trim() || ''),
+                    });
+                  }, 1600);
+                }, 100);
+              });
+            """,
+        )
+
+        assert result["bindingState"] == "resolved"
+        assert result["effectiveModel"] == "gpt-4.1-refreshed"
+        assert result["modelFieldValue"] == "gpt-4.1-refreshed"
+        assert any("已保存" in item for item in result["statusTexts"])
+    finally:
+        await server.stop()
+
+
+async def test_models_page_keeps_existing_binding_id_when_saving_binding(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    await _seed_model_registry(components.control_plane)
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        result = await asyncio.to_thread(
+            run_page_script,
+            url=f"{base_url}/config/models",
+            width=1440,
+            height=1200,
+            wait_ms=2200,
+            script="""
+              return new Promise((resolve) => {
+                const bindingInput = document.querySelector('.binding-editor input[readonly]');
+                if (bindingInput) {
+                  bindingInput.value = 'binding:renamed';
+                  bindingInput.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+                const saveButton = Array.from(document.querySelectorAll('.binding-editor .ds-actions button'))
+                  .find((item) => item.textContent?.trim() === '保存 Binding');
+                saveButton?.click();
+                    setTimeout(() => {
+                      resolve({
+                        bindingIdValue: bindingInput?.value || '',
+                        isReadonly: Boolean(bindingInput?.readOnly),
+                        errorTexts: Array.from(document.querySelectorAll('.ds-status.is-error')).map((item) => item.textContent?.trim() || ''),
+                      });
+                    }, 1200);
+                  });
+                """,
+            )
+        bindings = await asyncio.to_thread(request_json, base_url, "/api/models/bindings")
+        agent_binding = next(item for item in bindings["data"] if item["binding"]["target_id"] == "agent:aca")
+
+        assert result["isReadonly"] is True
+        assert result["errorTexts"] == []
+        assert agent_binding["binding"]["binding_id"] == "binding:agent:aca"
+    finally:
+        await server.stop()
+
+
+async def test_memory_page_surfaces_long_term_memory_binding_health(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0)
+    config = Config.from_file(str(config_path))
+    runtime_conf = dict(config.get("runtime", {}) or {})
+    runtime_conf["long_term_memory"] = {
+        "enabled": True,
+        "storage_dir": str(tmp_path / "ltm" / "lancedb"),
+        "window_size": 48,
+        "overlap_size": 8,
+        "max_entries": 6,
+        "extractor_version": "ltm-extractor-v1",
+    }
+    next_config = config.to_dict()
+    next_config["runtime"] = runtime_conf
+    config.replace(next_config)
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    await _seed_model_registry(components.control_plane)
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        result = await asyncio.to_thread(
+            run_page_script,
+            url=f"{base_url}/config/memory",
+            width=1440,
+            height=1200,
+            wait_ms=2200,
+            script="""
+              const metaCards = Array.from(document.querySelectorAll('.ltm-meta-card'));
+              return {
+                title: document.querySelector('h1')?.textContent?.trim() || '',
+                bindingState: metaCards[1]?.querySelector('.meta-value')?.textContent?.trim() || '',
+                bodyText: document.body.textContent || '',
+              };
+            """,
+        )
+
+        assert result["title"] == "长期记忆与 Sticky Notes"
+        assert result["bindingState"] == "ready"
+        assert "system:ltm_extract" in result["bodyText"]
+        assert "system:ltm_query_plan" in result["bodyText"]
+        assert "system:ltm_embed" in result["bodyText"]
+    finally:
+        await server.stop()
+
+
+async def test_memory_page_surfaces_initial_sticky_note_load_failure(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+
+    async def failing_list_sticky_notes(*, entity_kind: str) -> dict[str, object]:
+        _ = entity_kind
+        raise RuntimeError("sticky list unavailable")
+
+    components.control_plane.list_sticky_notes = failing_list_sticky_notes  # type: ignore[method-assign]
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        result = await asyncio.to_thread(
+            run_page_script,
+            url=f"{base_url}/config/memory",
+            width=1440,
+            height=1100,
+            wait_ms=2200,
+            script="""
+              return {
+                errorText: document.querySelector('.error')?.textContent?.trim() || '',
+                emptyText: document.querySelector('.main-column .empty')?.textContent?.trim() || '',
+              };
+            """,
+        )
+
+        assert "sticky list unavailable" in result["errorText"]
+        assert result["emptyText"] == ""
+    finally:
+        await server.stop()
 
 
 async def test_memory_page_does_not_overflow_on_narrow_width(tmp_path: Path) -> None:

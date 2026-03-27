@@ -439,6 +439,76 @@ class RuntimeConfigControlPlane:
         self.config.save()
         return self.get_gateway_config()
 
+    def get_long_term_memory_config(self) -> dict[str, Any]:
+        """读取长期记忆配置视图.
+
+        Returns:
+            dict[str, Any]: 当前长期记忆配置和模型绑定状态.
+        """
+
+        runtime_conf = dict(self.config.get("runtime", {}) or {})
+        current_conf = dict(runtime_conf.get("long_term_memory", {}) or {})
+        normalized = {
+            "enabled": bool(current_conf.get("enabled", False)),
+            "storage_dir": str(current_conf.get("storage_dir", "long-term-memory/lancedb") or "long-term-memory/lancedb"),
+            "window_size": max(1, int(current_conf.get("window_size", 50) or 50)),
+            "overlap_size": max(0, int(current_conf.get("overlap_size", 10) or 10)),
+            "max_entries": max(1, int(current_conf.get("max_entries", 8) or 8)),
+            "extractor_version": str(current_conf.get("extractor_version", "ltm-extractor-v1") or "ltm-extractor-v1"),
+        }
+        if normalized["overlap_size"] >= normalized["window_size"]:
+            normalized["overlap_size"] = max(0, normalized["window_size"] - 1)
+
+        required_target_ids = [
+            "system:ltm_extract",
+            "system:ltm_query_plan",
+            "system:ltm_embed",
+        ]
+        missing_target_ids: list[str] = []
+        if self.model_registry_manager is not None:
+            missing_target_ids = [
+                target_id
+                for target_id in required_target_ids
+                if self.model_registry_manager.resolve_target_request(target_id) is None
+            ]
+        return {
+            **normalized,
+            "required_target_ids": required_target_ids,
+            "missing_target_ids": missing_target_ids,
+            "restart_required": True,
+        }
+
+    async def upsert_long_term_memory_config(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """写回长期记忆配置.
+
+        Args:
+            payload: 前端提交的长期记忆配置片段.
+
+        Returns:
+            dict[str, Any]: 写回后的长期记忆配置视图.
+        """
+
+        current = self.get_long_term_memory_config()
+        next_conf = {
+            "enabled": bool(payload.get("enabled", current["enabled"])),
+            "storage_dir": str(payload.get("storage_dir", current["storage_dir"]) or current["storage_dir"]),
+            "window_size": max(1, int(payload.get("window_size", current["window_size"]) or current["window_size"])),
+            "overlap_size": max(0, int(payload.get("overlap_size", current["overlap_size"]) or current["overlap_size"])),
+            "max_entries": max(1, int(payload.get("max_entries", current["max_entries"]) or current["max_entries"])),
+            "extractor_version": str(
+                payload.get("extractor_version", current["extractor_version"]) or current["extractor_version"]
+            ),
+        }
+        if next_conf["overlap_size"] >= next_conf["window_size"]:
+            next_conf["overlap_size"] = max(0, next_conf["window_size"] - 1)
+        data = self.config.to_dict()
+        runtime_conf = dict(data.get("runtime", {}) or {})
+        runtime_conf["long_term_memory"] = next_conf
+        data["runtime"] = runtime_conf
+        self.config.replace(data)
+        self.config.save()
+        return self.get_long_term_memory_config()
+
     def get_profile(self, agent_id: str) -> dict[str, Any] | None:
         """读取单个 profile.
 

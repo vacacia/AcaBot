@@ -110,14 +110,23 @@ function invalidateApiCache(path: string): void {
 }
 
 function cachePrefixesForPath(path: string): string[] {
+  if (path.startsWith("/api/memory/long-term/config")) {
+    return ["/api/memory/long-term/config"]
+  }
   if (path.startsWith("/api/memory/sticky-notes")) {
     return ["/api/memory/sticky-notes"]
   }
   if (path.startsWith("/api/models/providers")) {
-    return ["/api/models/providers", "/api/ui/catalog"]
+    return ["/api/models/providers", "/api/models/bindings", "/api/models/targets", "/api/ui/catalog"]
   }
   if (path.startsWith("/api/models/presets")) {
-    return ["/api/models/presets"]
+    return ["/api/models/presets", "/api/models/bindings", "/api/models/targets", "/api/ui/catalog"]
+  }
+  if (path.startsWith("/api/models/targets")) {
+    return ["/api/models/targets"]
+  }
+  if (path.startsWith("/api/models/bindings")) {
+    return ["/api/models/bindings", "/api/models/targets", "/api/ui/catalog"]
   }
   if (path.startsWith("/api/prompt") || path.startsWith("/api/prompts")) {
     return ["/api/prompt", "/api/prompts"]

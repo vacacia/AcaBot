@@ -281,6 +281,16 @@ class RuntimeControlPlane:
             raise RuntimeError("config control plane unavailable")
         return await self.config_control_plane.upsert_gateway_config(payload)
 
+    async def get_long_term_memory_config(self) -> dict[str, object]:
+        if self.config_control_plane is None:
+            return {}
+        return self.config_control_plane.get_long_term_memory_config()
+
+    async def upsert_long_term_memory_config(self, payload: dict[str, object]) -> dict[str, object]:
+        if self.config_control_plane is None:
+            raise RuntimeError("config control plane unavailable")
+        return await self.config_control_plane.upsert_long_term_memory_config(payload)
+
     async def delete_profile(self, agent_id: str) -> bool:
         if self.config_control_plane is None:
             return False
