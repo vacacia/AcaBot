@@ -266,6 +266,8 @@ class RuntimeHttpApiServer:
             return self._ok(self._await(self.control_plane.get_filesystem_scan_config()))
         if segments == ["filesystem", "config"] and method == "PUT":
             return self._ok(self._await(self.control_plane.upsert_filesystem_scan_config(payload)))
+        if segments == ["system", "configuration"] and method == "GET":
+            return self._ok(self._await(self.control_plane.get_system_configuration_view()))
         if segments == ["approvals"] and method == "GET":
             status = self._await(self.control_plane.get_status())
             return self._ok(status.pending_approvals)

@@ -291,6 +291,29 @@ class RuntimeControlPlane:
             raise RuntimeError("config control plane unavailable")
         return await self.config_control_plane.upsert_filesystem_scan_config(payload)
 
+    async def get_system_configuration_view(self) -> dict[str, object]:
+        """返回系统页所需的统一系统配置快照."""
+
+        if self.config_control_plane is None:
+            return {
+                "meta": {},
+                "gateway": {},
+                "filesystem": {},
+                "admins": await self.get_admins(),
+                "paths": {},
+            }
+        path_overview = self.config_control_plane.get_runtime_path_overview()
+        return {
+            "meta": {
+                "config_path": str(path_overview.get("config_path", "") or ""),
+                "storage_mode": str(path_overview.get("storage_mode", "") or ""),
+            },
+            "gateway": self.config_control_plane.get_gateway_config(),
+            "filesystem": self.config_control_plane.get_filesystem_scan_config(),
+            "admins": await self.get_admins(),
+            "paths": path_overview,
+        }
+
     async def get_long_term_memory_config(self) -> dict[str, object]:
         if self.config_control_plane is None:
             return {}
@@ -722,9 +745,18 @@ class RuntimeControlPlane:
         saved = await self.config_control_plane.upsert_profile(updated)
         admin_actor_ids = {str(value) for value in list(saved.get("admin_actor_ids", []) or []) if str(value)}
         self.app.backend_admin_actor_ids = admin_actor_ids
-        return {
-            "admin_actor_ids": [str(value) for value in list(saved.get("admin_actor_ids", []) or []) if str(value)],
-        }
+        return self.config_control_plane.with_apply_result(
+            {
+                "admin_actor_ids": [
+                    str(value)
+                    for value in list(saved.get("admin_actor_ids", []) or [])
+                    if str(value)
+                ],
+            },
+            apply_status="applied",
+            restart_required=False,
+            message="已保存并已生效",
+        )
 
     async def list_sessions(self) -> dict[str, object]:
         """返回 session shell 已下线的提示.

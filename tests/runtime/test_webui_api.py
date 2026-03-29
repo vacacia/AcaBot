@@ -1050,6 +1050,124 @@ async def test_runtime_http_api_server_serves_status_and_profile_crud(tmp_path: 
         await server.stop()
 
 
+async def test_runtime_http_api_server_exposes_system_configuration_snapshot_and_gateway_restart_status(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""
+gateway:
+  host: "127.0.0.1"
+  port: 8080
+  timeout: 10
+  token: ""
+
+agent:
+
+runtime:
+  default_agent_id: "aca"
+  filesystem:
+    enabled: true
+    base_dir: "{tmp_path}"
+  profiles:
+    aca:
+      name: "Aca"
+      prompt_ref: "prompt/default"
+      admin_actor_ids:
+        - "qq:private:123456"
+  prompts:
+    prompt/default: "hello"
+  webui:
+    enabled: true
+    host: "127.0.0.1"
+    port: 0
+""".strip(),
+        encoding="utf-8",
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+
+        snapshot = await asyncio.to_thread(request_json, base_url, "/api/system/configuration")
+        saved_gateway = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/gateway/config",
+            method="PUT",
+            payload={
+                "host": "0.0.0.0",
+                "port": 9001,
+                "timeout": 30,
+                "token": "updated-token",
+            },
+        )
+    finally:
+        await server.stop()
+
+    assert snapshot["ok"] is True
+    assert snapshot["data"]["meta"] == {
+        "config_path": str(config_path.resolve()),
+        "storage_mode": "filesystem",
+    }
+    assert snapshot["data"]["admins"] == {
+        "admin_actor_ids": ["qq:private:123456"],
+    }
+    assert snapshot["data"]["gateway"]["host"] == "127.0.0.1"
+    assert snapshot["data"]["filesystem"]["enabled"] is True
+    assert snapshot["data"]["paths"]["config_path"] == str(config_path.resolve())
+    assert snapshot["data"]["paths"]["storage_mode"] == "filesystem"
+    assert snapshot["data"]["paths"]["filesystem_base_dir"] == str(tmp_path.resolve())
+    assert snapshot["data"]["paths"]["profiles_dir"] == str((tmp_path / "profiles").resolve())
+    assert snapshot["data"]["paths"]["prompts_dir"] == str((tmp_path / "prompts").resolve())
+    assert snapshot["data"]["paths"]["sessions_dir"] == str((tmp_path / "sessions").resolve())
+    assert snapshot["data"]["paths"]["computer_root_dir"] == str((Path.home() / ".acabot" / "workspaces").resolve())
+    assert snapshot["data"]["paths"]["sticky_notes_dir"] == str((tmp_path / ".acabot-runtime" / "sticky-notes").resolve())
+    assert snapshot["data"]["paths"]["long_term_memory_storage_dir"] == str(
+        (tmp_path / ".acabot-runtime" / "long-term-memory" / "lancedb").resolve()
+    )
+    assert snapshot["data"]["paths"]["backend_session_path"] == str(
+        (tmp_path / ".acabot-runtime" / "backend" / "session.json").resolve()
+    )
+    assert snapshot["data"]["paths"]["resolved_skill_catalog_dirs"] == [
+        str((tmp_path / ".agents" / "skills").resolve()),
+        str(Path("~/.agents/skills").expanduser().resolve()),
+    ]
+    assert snapshot["data"]["paths"]["resolved_subagent_catalog_dirs"] == [
+        str((tmp_path / ".agents" / "subagents").resolve()),
+        str(Path("~/.agents/subagents").expanduser().resolve()),
+    ]
+    for key in (
+        "config_path",
+        "filesystem_base_dir",
+        "profiles_dir",
+        "prompts_dir",
+        "sessions_dir",
+        "computer_root_dir",
+        "sticky_notes_dir",
+        "long_term_memory_storage_dir",
+        "backend_session_path",
+    ):
+        assert Path(snapshot["data"]["paths"][key]).is_absolute()
+
+    assert saved_gateway["ok"] is True
+    assert saved_gateway["data"]["host"] == "0.0.0.0"
+    assert saved_gateway["data"]["port"] == 9001
+    assert saved_gateway["data"]["timeout"] == 30.0
+    assert saved_gateway["data"]["token"] == "updated-token"
+    assert saved_gateway["data"]["apply_status"] == "restart_required"
+    assert saved_gateway["data"]["restart_required"] is True
+    assert saved_gateway["data"]["message"] == "已保存，需要重启后生效"
+
+
 async def test_runtime_http_api_server_serves_incremental_logs(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     _write_config(config_path, webui_enabled=True, port=0)
@@ -1413,6 +1531,9 @@ runtime:
         await server.stop()
 
     assert updated["ok"] is True
+    assert updated["data"]["apply_status"] == "applied"
+    assert updated["data"]["restart_required"] is False
+    assert updated["data"]["message"] == "已保存并已生效"
     assert updated["data"]["configured_skill_catalog_dirs"] == [str(skill_fixtures_root)]
     assert updated["data"]["configured_subagent_catalog_dirs"] == [str(custom_subagents_dir)]
     assert updated["data"]["skill_catalog_dirs"] == [str(skill_fixtures_root)]
@@ -1431,6 +1552,80 @@ runtime:
     ]
     assert any(item["skill_name"] == "sample_configured_skill" for item in skills["data"])
     assert any(item["subagent_name"] == "excel-worker" for item in subagents["data"])
+
+
+async def test_runtime_http_api_server_reports_filesystem_apply_failure_after_save(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""
+gateway:
+  host: "127.0.0.1"
+  port: 8080
+
+agent:
+
+runtime:
+  default_agent_id: "aca"
+  filesystem:
+    enabled: true
+    base_dir: "{tmp_path}"
+  profiles:
+    aca:
+      name: "Aca"
+      prompt_ref: "prompt/default"
+  prompts:
+    prompt/default: "hello"
+  webui:
+    enabled: true
+    host: "127.0.0.1"
+    port: 0
+""".strip(),
+        encoding="utf-8",
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+
+    async def _fail_reload() -> dict[str, object]:
+        raise ValueError("reload exploded")
+
+    monkeypatch.setattr(components.config_control_plane, "reload_runtime_configuration", _fail_reload)
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+    custom_skills_dir = tmp_path / "custom-skills"
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        updated = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/filesystem/config",
+            method="PUT",
+            payload={
+                "skill_catalog_dirs": [str(custom_skills_dir.resolve())],
+            },
+        )
+    finally:
+        await server.stop()
+
+    assert updated["ok"] is True
+    assert updated["data"]["apply_status"] == "apply_failed"
+    assert updated["data"]["restart_required"] is False
+    assert updated["data"]["message"] == "已写入，但应用失败"
+    assert "reload exploded" in updated["data"]["technical_detail"]
+    assert updated["data"]["configured_skill_catalog_dirs"] == [str(custom_skills_dir.resolve())]
+
+    saved_config = Config.from_file(str(config_path))
+    runtime_conf = dict(saved_config.get("runtime", {}) or {})
+    filesystem_conf = dict(runtime_conf.get("filesystem", {}) or {})
+    assert filesystem_conf["skill_catalog_dirs"] == [str(custom_skills_dir.resolve())]
 
 
 async def test_runtime_http_api_server_plugin_configs_include_display_names(tmp_path: Path) -> None:
@@ -1711,7 +1906,9 @@ async def test_runtime_http_api_server_persists_model_preset_task_kind_and_capab
         await server.stop()
 
 
-async def test_runtime_http_api_server_serves_product_shaped_bot_settings(tmp_path: Path) -> None:
+async def test_runtime_http_api_server_serves_product_shaped_bot_settings_and_admin_actor_ids_apply_status(
+    tmp_path: Path,
+) -> None:
     config_path = tmp_path / "config.yaml"
     _write_config(config_path, webui_enabled=True, port=0)
     config = Config.from_file(str(config_path))
@@ -1835,9 +2032,10 @@ async def test_runtime_http_api_server_serves_product_shaped_bot_settings(tmp_pa
             },
         )
         assert saved["ok"] is True
-        assert saved["data"] == {
-            "admin_actor_ids": ["qq:private:123456", "napcat:private:42"],
-        }
+        assert saved["data"]["admin_actor_ids"] == ["qq:private:123456", "napcat:private:42"]
+        assert saved["data"]["apply_status"] == "applied"
+        assert saved["data"]["restart_required"] is False
+        assert saved["data"]["message"] == "已保存并已生效"
 
         profile = await components.control_plane.get_profile("aca")
         assert profile is not None

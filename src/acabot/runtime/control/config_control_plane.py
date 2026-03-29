@@ -21,6 +21,7 @@ import yaml
 
 from acabot.config import Config
 
+from ..bootstrap.config import resolve_runtime_path as _resolve_runtime_path
 from ..computer import ComputerPolicy, parse_computer_policy
 from ..contracts import AgentProfile
 from ..model.model_registry import FileSystemModelRegistryManager
@@ -495,7 +496,12 @@ class RuntimeConfigControlPlane:
         data["gateway"] = next_conf
         self.config.replace(data)
         self.config.save()
-        return self.get_gateway_config()
+        return self.with_apply_result(
+            self.get_gateway_config(),
+            apply_status="restart_required",
+            restart_required=True,
+            message="已保存，需要重启后生效",
+        )
 
     def get_long_term_memory_config(self) -> dict[str, Any]:
         """读取长期记忆配置视图.
@@ -587,13 +593,32 @@ class RuntimeConfigControlPlane:
             else:
                 fs_conf[key] = normalized
         if not changed:
-            return self.get_filesystem_scan_config()
+            return self.with_apply_result(
+                self.get_filesystem_scan_config(),
+                apply_status="applied",
+                restart_required=False,
+                message="没有检测到配置变更，当前配置已生效",
+            )
         runtime_conf["filesystem"] = fs_conf
         data["runtime"] = runtime_conf
         self.config.replace(data)
         self.config.save()
-        await self.reload_runtime_configuration()
-        return self.get_filesystem_scan_config()
+        try:
+            await self.reload_runtime_configuration()
+        except Exception as exc:
+            return self.with_apply_result(
+                self.get_filesystem_scan_config(),
+                apply_status="apply_failed",
+                restart_required=False,
+                message="已写入，但应用失败",
+                technical_detail=str(exc),
+            )
+        return self.with_apply_result(
+            self.get_filesystem_scan_config(),
+            apply_status="applied",
+            restart_required=False,
+            message="已保存并已生效",
+        )
 
     async def upsert_long_term_memory_config(self, payload: dict[str, Any]) -> dict[str, Any]:
         """写回长期记忆配置.
@@ -1069,6 +1094,106 @@ class RuntimeConfigControlPlane:
         """
 
         return _resolve_filesystem_path(self.config, self._filesystem_conf(), key="prompts_dir", default="prompts")
+
+    def _sessions_dir(self) -> Path:
+        """返回 filesystem sessions 目录."""
+
+        return _resolve_filesystem_path(self.config, self._filesystem_conf(), key="sessions_dir", default="sessions")
+
+    def _computer_root_dir(self) -> Path:
+        """返回 computer runtime 根目录."""
+
+        return _resolve_filesystem_path(
+            self.config,
+            self._filesystem_conf(),
+            key="computer_root_dir",
+            default=str(Path.home() / ".acabot" / "workspaces"),
+        )
+
+    def _sticky_notes_dir(self) -> Path:
+        """返回 sticky notes 根目录."""
+
+        runtime_conf = dict(self.config.get("runtime", {}) or {})
+        return _resolve_runtime_path(
+            self.config,
+            runtime_conf.get("sticky_notes_dir", "sticky-notes"),
+        )
+
+    def _long_term_memory_storage_dir(self) -> Path:
+        """返回长期记忆存储目录."""
+
+        runtime_conf = dict(self.config.get("runtime", {}) or {})
+        long_term_memory_conf = dict(runtime_conf.get("long_term_memory", {}) or {})
+        return _resolve_runtime_path(
+            self.config,
+            long_term_memory_conf.get("storage_dir", "long-term-memory/lancedb"),
+        )
+
+    def _backend_session_path(self) -> Path:
+        """返回 backend session binding 文件路径."""
+
+        runtime_conf = dict(self.config.get("runtime", {}) or {})
+        backend_conf = dict(runtime_conf.get("backend", {}) or {})
+        return _resolve_runtime_path(
+            self.config,
+            backend_conf.get("session_binding_path", "backend/session.json"),
+        )
+
+    def get_runtime_path_overview(self) -> dict[str, Any]:
+        """返回系统页需要的运行时路径总览."""
+
+        fs_conf = self._filesystem_conf()
+        base_dir = Path(str(fs_conf.get("base_dir", ".") or "."))
+        if not base_dir.is_absolute():
+            base_dir = self.config.resolve_path(base_dir)
+        config_path = Path(str(self.config.path or "config.yaml")).resolve()
+        return {
+            "config_path": str(config_path),
+            "storage_mode": self.storage_mode(),
+            "filesystem_base_dir": str(base_dir.resolve()),
+            "profiles_dir": str(self._profiles_dir().resolve()),
+            "prompts_dir": str(self._prompts_dir().resolve()),
+            "sessions_dir": str(self._sessions_dir().resolve()),
+            "computer_root_dir": str(self._computer_root_dir().resolve()),
+            "sticky_notes_dir": str(self._sticky_notes_dir().resolve()),
+            "long_term_memory_storage_dir": str(self._long_term_memory_storage_dir().resolve()),
+            "resolved_skill_catalog_dirs": [
+                str(Path(item["host_root_path"]).resolve())
+                for item in self._resolved_catalog_dir_views(
+                    key="skill_catalog_dirs",
+                    defaults=DEFAULT_SKILL_CATALOG_DIRS,
+                )
+            ],
+            "resolved_subagent_catalog_dirs": [
+                str(Path(item["host_root_path"]).resolve())
+                for item in self._resolved_catalog_dir_views(
+                    key="subagent_catalog_dirs",
+                    defaults=DEFAULT_SUBAGENT_CATALOG_DIRS,
+                )
+            ],
+            "backend_session_path": str(self._backend_session_path().resolve()),
+        }
+
+    @staticmethod
+    def with_apply_result(
+        data: dict[str, Any],
+        *,
+        apply_status: str,
+        restart_required: bool,
+        message: str,
+        technical_detail: str | None = None,
+    ) -> dict[str, Any]:
+        """把配置写入结果整形成统一的 apply-result payload."""
+
+        result = {
+            **dict(data),
+            "apply_status": apply_status,
+            "restart_required": restart_required,
+            "message": message,
+        }
+        if technical_detail:
+            result["technical_detail"] = technical_detail
+        return result
 
     def _path_for_prompt_ref(self, prompt_ref: str) -> Path:
         """把 prompt_ref 转成目标文件路径.
