@@ -37,8 +37,8 @@ from acabot.runtime import (
     StickyNoteFileStore,
     StickyNoteRenderer,
     StickyNoteService,
+    SubagentCatalog,
     SubagentDelegationBroker,
-    SubagentExecutorRegistry,
     BackendBridge,
     BackendModeRegistry,
     BackendSessionService,
@@ -312,7 +312,7 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
     """
 
     skill_catalog = SkillCatalog()
-    executor_registry = SubagentExecutorRegistry()
+    subagent_catalog = SubagentCatalog()
     sticky_note_store = StickyNoteFileStore(root_dir="/tmp/acabot-test-sticky-notes")
 
     return RuntimeComponents(
@@ -329,9 +329,8 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
             renderer=StickyNoteRenderer(),
         ),
         skill_catalog=skill_catalog,
-        subagent_executor_registry=executor_registry,
+        subagent_catalog=subagent_catalog,
         subagent_delegator=SubagentDelegationBroker(
-            executor_registry=executor_registry,
             default_agent_id="aca",
         ),
         subagent_execution_service=LocalSubagentExecutionService(

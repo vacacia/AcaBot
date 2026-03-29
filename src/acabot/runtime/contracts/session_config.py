@@ -485,6 +485,7 @@ class ComputerPolicyDecision:
         roots (dict[str, dict[str, bool]]): 每个 world root 的可见性定义.
         visible_skills (list[str] | None): 当前 actor 真正可见的技能列表.
             传入 `None` 表示继续沿用 profile / capability 默认值.
+        visible_subagents (list[str]): 当前 actor 真正可见的 subagent 列表.
         notes (list[str]): 其他说明.
         reason (str): 这次决策为什么是这个结果.
         source_case_id (str): 命中的 case ID. 没命中时为空.
@@ -498,6 +499,7 @@ class ComputerPolicyDecision:
     allow_sessions: bool = True
     roots: dict[str, dict[str, bool]] = field(default_factory=dict)
     visible_skills: list[str] | None = None
+    visible_subagents: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     reason: str = ""
     source_case_id: str = ""

@@ -172,13 +172,13 @@ class OpsControlPlugin(RuntimePlugin):
             return "\n".join(lines)
 
         if command == "subagents":
-            items = await self._control_plane.list_subagent_executors()
+            items = await self._control_plane.list_subagents()
             if not items:
-                return "subagents: no registered executors"
+                return "subagents: no catalog subagents"
             lines = ["subagents:"]
             for item in items:
                 lines.append(
-                    f"- {item.agent_id} source={item.source or '-'}"
+                    f"- {item.subagent_name}: {item.description or '-'} source={item.source or '-'}"
                 )
             return "\n".join(lines)
 

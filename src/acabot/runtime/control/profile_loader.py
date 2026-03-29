@@ -277,6 +277,9 @@ class FileSystemPromptLoader(PromptLoader):
             Path | None: 命中的文件路径. 未命中时返回 `None`.
         """
 
+        # `subagent/*` 已经收口为 SUBAGENT.md 真源, 不再允许被 prompts/ 命名空间覆盖.
+        if str(prompt_ref or "").strip().startswith("subagent/"):
+            return None
         relative = prompt_ref.removeprefix("prompt/")
         candidate = self.root / relative
         candidates: list[Path] = []

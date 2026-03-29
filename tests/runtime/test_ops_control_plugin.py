@@ -12,6 +12,26 @@ def _skills_dir() -> str:
     return str(Path(__file__).resolve().parent.parent / "fixtures" / "skills")
 
 
+def _write_subagent(tmp_path, *, name: str, description: str) -> None:
+    subagent_dir = tmp_path / ".agents" / "subagents" / name
+    subagent_dir.mkdir(parents=True, exist_ok=True)
+    (subagent_dir / "SUBAGENT.md").write_text(
+        "\n".join(
+            [
+                "---",
+                f"name: {name}",
+                f"description: {description}",
+                "tools:",
+                "  - sample_configured_tool",
+                "---",
+                f"You are {name}.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def _message_event(text: str, *, event_id: str = "evt-1") -> StandardEvent:
     return StandardEvent(
         event_id=event_id,
@@ -31,7 +51,12 @@ def _message_event(text: str, *, event_id: str = "evt-1") -> StandardEvent:
     )
 
 
-def _ops_config() -> Config:
+def _ops_config(tmp_path) -> Config:
+    _write_subagent(
+        tmp_path,
+        name="sample-worker",
+        description="处理样例子任务的 catalog worker",
+    )
     return Config(
         {
             "agent": {
@@ -41,6 +66,7 @@ def _ops_config() -> Config:
                 "default_agent_id": "aca",
                 "filesystem": {
                     "enabled": True,
+                    "base_dir": str(tmp_path),
                     "skill_catalog_dirs": [_skills_dir()],
                 },
                 "profiles": {
@@ -61,7 +87,6 @@ def _ops_config() -> Config:
                 "plugins": [
                     "acabot.runtime.plugins:OpsControlPlugin",
                     "tests.runtime.runtime_plugin_samples:SampleConfiguredRuntimePlugin",
-                    "tests.runtime.runtime_plugin_samples:SampleDelegationWorkerPlugin",
                 ],
             },
             "plugins": {
@@ -73,10 +98,10 @@ def _ops_config() -> Config:
     )
 
 
-async def test_ops_control_plugin_handles_status_command() -> None:
+async def test_ops_control_plugin_handles_status_command(tmp_path) -> None:
     gateway = FakeGateway()
     agent = FakeAgent(FakeAgentResponse(text="should not be used"))
-    components = build_runtime_components(_ops_config(), gateway=gateway, agent=agent)
+    components = build_runtime_components(_ops_config(tmp_path), gateway=gateway, agent=agent)
 
     components.app.install()
     await gateway.handler(_message_event("/status"))
@@ -85,7 +110,7 @@ async def test_ops_control_plugin_handles_status_command() -> None:
     assert len(gateway.sent) == 1
     status_text = gateway.sent[0].payload["text"]
     assert "active_runs=1" in status_text
-    assert "loaded_plugins=backend_bridge_tool,ops_control,sample_configured_runtime,sample_delegation_worker" in status_text
+    assert "loaded_plugins=backend_bridge_tool,ops_control,sample_configured_runtime" in status_text
     loaded_skills_line = next(
         line for line in status_text.splitlines() if line.startswith("loaded_skills=")
     )
@@ -93,10 +118,10 @@ async def test_ops_control_plugin_handles_status_command() -> None:
     assert "sample_configured_skill" in loaded_skills_line
 
 
-async def test_ops_control_plugin_can_list_skills() -> None:
+async def test_ops_control_plugin_can_list_skills(tmp_path) -> None:
     gateway = FakeGateway()
     agent = FakeAgent(FakeAgentResponse(text="should not be used"))
-    components = build_runtime_components(_ops_config(), gateway=gateway, agent=agent)
+    components = build_runtime_components(_ops_config(tmp_path), gateway=gateway, agent=agent)
 
     components.app.install()
     await gateway.handler(_message_event("/skills"))
@@ -106,10 +131,10 @@ async def test_ops_control_plugin_can_list_skills() -> None:
     assert "sample_configured_skill" in gateway.sent[0].payload["text"]
 
 
-async def test_ops_control_plugin_can_list_agent_skills() -> None:
+async def test_ops_control_plugin_can_list_agent_skills(tmp_path) -> None:
     gateway = FakeGateway()
     agent = FakeAgent(FakeAgentResponse(text="should not be used"))
-    components = build_runtime_components(_ops_config(), gateway=gateway, agent=agent)
+    components = build_runtime_components(_ops_config(tmp_path), gateway=gateway, agent=agent)
 
     components.app.install()
     await gateway.handler(_message_event("/skills aca"))
@@ -121,24 +146,25 @@ async def test_ops_control_plugin_can_list_agent_skills() -> None:
     assert "resources=" in gateway.sent[0].payload["text"]
 
 
-async def test_ops_control_plugin_can_list_subagents() -> None:
+async def test_ops_control_plugin_can_list_subagents(tmp_path) -> None:
     gateway = FakeGateway()
     agent = FakeAgent(FakeAgentResponse(text="should not be used"))
-    components = build_runtime_components(_ops_config(), gateway=gateway, agent=agent)
+    components = build_runtime_components(_ops_config(tmp_path), gateway=gateway, agent=agent)
 
     components.app.install()
     await gateway.handler(_message_event("/subagents"))
 
     assert agent.calls == []
     assert len(gateway.sent) == 1
-    assert "sample_worker" in gateway.sent[0].payload["text"]
+    assert "sample-worker" in gateway.sent[0].payload["text"]
+    assert "catalog worker" in gateway.sent[0].payload["text"]
 
 
 
-async def test_ops_control_plugin_reports_unknown_memory_command() -> None:
+async def test_ops_control_plugin_reports_unknown_memory_command(tmp_path) -> None:
     gateway = FakeGateway()
     agent = FakeAgent(FakeAgentResponse(text="should not be used"))
-    components = build_runtime_components(_ops_config(), gateway=gateway, agent=agent)
+    components = build_runtime_components(_ops_config(tmp_path), gateway=gateway, agent=agent)
 
     components.app.install()
     await gateway.handler(_message_event("/memory show user qq:user:10001 sticky_note"))
@@ -148,13 +174,13 @@ async def test_ops_control_plugin_reports_unknown_memory_command() -> None:
     assert "unknown ops command: memory" in gateway.sent[0].payload["text"]
 
 
-async def test_ops_control_plugin_can_reload_selected_plugin() -> None:
+async def test_ops_control_plugin_can_reload_selected_plugin(tmp_path) -> None:
     from tests.runtime.runtime_plugin_samples import SampleConfiguredRuntimePlugin
 
     SampleConfiguredRuntimePlugin.reset()
     gateway = FakeGateway()
     agent = FakeAgent(FakeAgentResponse(text="should not be used"))
-    components = build_runtime_components(_ops_config(), gateway=gateway, agent=agent)
+    components = build_runtime_components(_ops_config(tmp_path), gateway=gateway, agent=agent)
 
     components.app.install()
     await gateway.handler(_message_event("/reload_plugin sample_configured_runtime"))
@@ -165,10 +191,10 @@ async def test_ops_control_plugin_can_reload_selected_plugin() -> None:
     assert SampleConfiguredRuntimePlugin.setup_calls == 2
 
 
-async def test_ops_control_plugin_reports_missing_plugin_on_reload() -> None:
+async def test_ops_control_plugin_reports_missing_plugin_on_reload(tmp_path) -> None:
     gateway = FakeGateway()
     agent = FakeAgent(FakeAgentResponse(text="should not be used"))
-    components = build_runtime_components(_ops_config(), gateway=gateway, agent=agent)
+    components = build_runtime_components(_ops_config(tmp_path), gateway=gateway, agent=agent)
 
     components.app.install()
     await gateway.handler(_message_event("/reload_plugin missing_plugin"))

@@ -41,6 +41,11 @@ class SkillCatalog:
         }
         return self.list_all()
 
+    def replace_loader(self, loader: FileSystemSkillPackageLoader | None) -> None:
+        """替换当前 catalog 使用的底层 loader."""
+
+        self.loader = loader
+
     def get(self, skill_name: str) -> SkillPackageManifest | None:
         """按当前正式选择规则拿一条 skill metadata."""
 

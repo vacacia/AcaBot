@@ -600,6 +600,9 @@ class ComputerRuntime:
         shutil.copytree(source, target)
         return str(target)
 
+    # NOTE: 会把这个 thread 里已经 load 过的 skill 全部镜像到共享 workspace 的 skills 目录里
+    # 一旦某个 skill 被显式 load 过，后续 run 理论上可以把它继续保留在这个 thread 的 /skills 世界里
+    # 
     def mark_skill_loaded(self, thread_id: str, skill_name: str) -> None:
         """记录当前 thread 已经显式加载过某个 skill.
 

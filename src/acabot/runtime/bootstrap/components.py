@@ -33,7 +33,7 @@ from ..soul import SoulSource
 from ..storage.runs import RunManager
 from ..storage.stores import ChannelEventStore, MessageStore
 from ..storage.threads import ThreadManager
-from ..subagents import SubagentDelegationBroker, SubagentExecutorRegistry
+from ..subagents import SubagentCatalog, SubagentDelegationBroker
 from ..subagents.execution import LocalSubagentExecutionService
 from ..tool_broker import ToolBroker
 from ..approval_resumer import ApprovalResumer
@@ -53,7 +53,7 @@ class RuntimeComponents:
     sticky_notes_source: StickyNoteFileStore
     sticky_notes: StickyNoteService
     skill_catalog: SkillCatalog
-    subagent_executor_registry: SubagentExecutorRegistry
+    subagent_catalog: SubagentCatalog
     subagent_delegator: SubagentDelegationBroker
     subagent_execution_service: LocalSubagentExecutionService
     memory_broker: MemoryBroker

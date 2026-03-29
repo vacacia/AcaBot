@@ -313,7 +313,9 @@ class ThreadPipeline:
             ctx.run.run_id,
             len(ctx.memory_blocks),
         )
-
+    # NOTE: 工具的原始返回、tool audit、tool loop 中间态，默认还是留在当前 run 内部
+    # 每次 run 都使用 thread working memory 的 snapshot
+    # 每次 run 结束只更新本次 run 的回复内容, 避免上下文污染
     async def _update_thread_after_send(self, ctx: RunContext) -> None:
         """根据实际送达结果更新 thread working memory.
 
@@ -350,6 +352,17 @@ class ThreadPipeline:
                 await self.run_manager.mark_failed(
                     ctx.run.run_id,
                     "approval requested without pending_approval context",
+                )
+                return
+            if bool(ctx.metadata.get("subagent_child_run")):
+                if self.tool_broker is not None:
+                    await self.tool_broker.fail_pending_approval(
+                        pending,
+                        error="subagent child run cannot enter waiting_approval",
+                    )
+                await self.run_manager.mark_failed(
+                    ctx.run.run_id,
+                    "subagent child run cannot enter waiting_approval",
                 )
                 return
 

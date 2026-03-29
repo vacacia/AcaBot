@@ -10,9 +10,6 @@ from acabot.agent import ToolDef
 from acabot.runtime import (
     RuntimePlugin,
     RuntimePluginContext,
-    SubagentDelegationRequest,
-    SubagentDelegationResult,
-    SubagentExecutorRegistration,
 )
 
 
@@ -99,48 +96,3 @@ class AnotherConfiguredRuntimePlugin(RuntimePlugin):
         """记录一次 teardown 调用."""
 
         type(self).teardown_calls += 1
-
-
-class SampleDelegationWorkerPlugin(RuntimePlugin):
-    """用于 subagent delegation 测试的 worker 插件."""
-
-    name = "sample_delegation_worker"
-
-    async def setup(self, runtime: RuntimePluginContext) -> None:
-        """记录 setup 但不做额外初始化.
-
-        Args:
-            runtime: runtime plugin 上下文.
-        """
-
-        _ = runtime
-
-    def subagent_executors(self) -> list[SubagentExecutorRegistration]:
-        """返回一个样例 subagent executor.
-
-        Returns:
-            一条 `sample_worker` executor 注册项.
-        """
-
-        async def execute(request: SubagentDelegationRequest) -> SubagentDelegationResult:
-            task = str(request.payload.get("task", "") or "")
-            return SubagentDelegationResult(
-                ok=True,
-                delegated_run_id=f"subrun:{request.parent_run_id}",
-                summary=f"worker handled: {task}",
-                artifacts=[
-                    {
-                        "type": "delegation_result",
-                        "delegate_agent_id": request.delegate_agent_id,
-                        "task": task,
-                    }
-                ],
-            )
-
-        return [
-            SubagentExecutorRegistration(
-                agent_id="sample_worker",
-                executor=execute,
-                metadata={"label": "sample"},
-            )
-        ]

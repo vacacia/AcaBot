@@ -24,8 +24,6 @@ from acabot.runtime import (
     RuntimePluginManager,
     RuntimePluginModelSlot,
     SkillCatalog,
-    SubagentDelegationBroker,
-    SubagentExecutorRegistry,
     ThreadPipeline,
     ToolBroker,
     MutableModelTargetCatalog,
@@ -313,33 +311,6 @@ async def test_runtime_plugin_manager_unload_keeps_state_consistent_when_registr
     assert manager.loaded == []
     assert "slot_plugin" not in manager._names
     assert target_catalog.get("plugin:slot_plugin:extractor") is None
-
-
-async def test_runtime_plugin_manager_registers_and_unloads_subagent_executors() -> None:
-    from tests.runtime.runtime_plugin_samples import SampleDelegationWorkerPlugin
-
-    catalog = _catalog()
-    executor_registry = SubagentExecutorRegistry()
-    manager = RuntimePluginManager(
-        config=Config({}),
-        gateway=FakeGateway(),
-        tool_broker=ToolBroker(skill_catalog=catalog),
-        skill_catalog=catalog,
-        subagent_delegator=SubagentDelegationBroker(
-            executor_registry=executor_registry,
-        ),
-        plugins=[SampleDelegationWorkerPlugin()],
-    )
-
-    await manager.ensure_started()
-    before = [item.agent_id for item in executor_registry.list_all()]
-    removed = await manager.unload_plugins(["sample_delegation_worker"])
-    after = [item.agent_id for item in executor_registry.list_all()]
-
-    assert before == ["sample_worker"]
-    assert removed == ["sample_delegation_worker"]
-    assert after == []
-
 
 async def test_thread_pipeline_can_be_short_circuited_by_runtime_plugin() -> None:
     plugin = EchoRuntimePlugin()

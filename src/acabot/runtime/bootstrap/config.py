@@ -13,6 +13,7 @@ from pathlib import Path
 from acabot.config import Config
 
 from ..skills.loader import SkillDiscoveryRoot
+from ..subagents.loader import SubagentDiscoveryRoot
 
 
 def resolve_filesystem_path(
@@ -90,7 +91,7 @@ def resolve_skill_catalog_dirs(
     """
 
     raw_values = fs_conf.get("skill_catalog_dirs")
-    items = _normalize_skill_catalog_dir_values(raw_values, defaults=defaults)
+    items = _normalize_catalog_dir_values(raw_values, defaults=defaults)
     base_dir = Path(str(fs_conf.get("base_dir", ".") or "."))
     if not base_dir.is_absolute():
         base_dir = config.resolve_path(base_dir)
@@ -98,8 +99,8 @@ def resolve_skill_catalog_dirs(
     resolved: list[SkillDiscoveryRoot] = []
     seen: set[tuple[str, str]] = set()
     for raw in items:
-        scope = _scope_for_skill_catalog_dir(raw)
-        path = _resolve_skill_catalog_dir_path(raw=raw, base_dir=base_dir)
+        scope = _scope_for_catalog_dir(raw)
+        path = _resolve_catalog_dir_path(raw=raw, base_dir=base_dir)
         root = SkillDiscoveryRoot(host_root_path=str(path), scope=scope)
         key = (str(root.path), root.scope)
         if key in seen:
@@ -109,8 +110,45 @@ def resolve_skill_catalog_dirs(
     return resolved
 
 
-def _normalize_skill_catalog_dir_values(raw_values: object, *, defaults: list[str]) -> list[str]:
-    """把配置里的 `skill_catalog_dirs` 收成字符串列表."""
+def resolve_subagent_catalog_dirs(
+    config: Config,
+    fs_conf: dict[str, object],
+    *,
+    defaults: list[str],
+) -> list[SubagentDiscoveryRoot]:
+    """解析 subagent catalog 扫描根目录列表.
+
+    Args:
+        config: 当前 runtime 配置.
+        fs_conf: `runtime.filesystem` 配置块.
+        defaults: 默认扫描目录列表.
+
+    Returns:
+        list[SubagentDiscoveryRoot]: 去重后的扫描根列表.
+    """
+
+    raw_values = fs_conf.get("subagent_catalog_dirs")
+    items = _normalize_catalog_dir_values(raw_values, defaults=defaults)
+    base_dir = Path(str(fs_conf.get("base_dir", ".") or "."))
+    if not base_dir.is_absolute():
+        base_dir = config.resolve_path(base_dir)
+
+    resolved: list[SubagentDiscoveryRoot] = []
+    seen: set[tuple[str, str]] = set()
+    for raw in items:
+        scope = _scope_for_catalog_dir(raw)
+        path = _resolve_catalog_dir_path(raw=raw, base_dir=base_dir)
+        root = SubagentDiscoveryRoot(host_root_path=str(path), scope=scope)
+        key = (str(root.path), root.scope)
+        if key in seen:
+            continue
+        resolved.append(root)
+        seen.add(key)
+    return resolved
+
+
+def _normalize_catalog_dir_values(raw_values: object, *, defaults: list[str]) -> list[str]:
+    """把配置里的 catalog 根目录配置收成字符串列表."""
 
     if raw_values in (None, ""):
         values = list(defaults)
@@ -128,8 +166,8 @@ def _normalize_skill_catalog_dir_values(raw_values: object, *, defaults: list[st
     return normalized
 
 
-def _scope_for_skill_catalog_dir(raw_value: str) -> str:
-    """按配置写法推断 skill 根目录 scope."""
+def _scope_for_catalog_dir(raw_value: str) -> str:
+    """按配置写法推断 catalog 根目录 scope."""
 
     if raw_value.startswith("~"):
         return "user"
@@ -138,8 +176,8 @@ def _scope_for_skill_catalog_dir(raw_value: str) -> str:
     return "project"
 
 
-def _resolve_skill_catalog_dir_path(*, raw: str, base_dir: Path) -> Path:
-    """把 skill 扫描目录解析成宿主机绝对路径."""
+def _resolve_catalog_dir_path(*, raw: str, base_dir: Path) -> Path:
+    """把 catalog 扫描目录解析成宿主机绝对路径."""
 
     path = Path(raw).expanduser()
     if path.is_absolute():
@@ -186,4 +224,5 @@ __all__ = [
     "resolve_filesystem_path",
     "resolve_runtime_path",
     "resolve_skill_catalog_dirs",
+    "resolve_subagent_catalog_dirs",
 ]

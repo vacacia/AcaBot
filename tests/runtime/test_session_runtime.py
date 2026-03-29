@@ -168,6 +168,50 @@ def test_session_runtime_resolves_domain_decisions_from_surface_cases(tmp_path: 
     assert computer.source_case_id == "admin_host"
 
 
+def test_session_runtime_reads_visible_subagents_from_computer_block(tmp_path: Path) -> None:
+    config_path = tmp_path / "sessions/qq/group/123.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        """
+session:
+  id: qq:group:123
+  template: qq_group
+frontstage:
+  profile: aca.qq.group.default
+surfaces:
+  message.mention:
+    admission:
+      default:
+        mode: respond
+    computer:
+      default:
+        visible_subagents:
+          - excel-worker
+          - search-worker
+""".strip(),
+        encoding="utf-8",
+    )
+    runtime = SessionRuntime(SessionConfigLoader(config_root=tmp_path / "sessions"))
+    facts = runtime.build_facts(_group_mention_event(sender_role="admin"))
+    session = runtime.load_session(facts)
+    surface = runtime.resolve_surface(facts, session)
+
+    decision = runtime.resolve_computer(facts, session, surface)
+
+    assert decision.visible_subagents == ["excel-worker", "search-worker"]
+
+
+def test_runtime_router_inline_default_session_visible_subagents_is_empty() -> None:
+    router = RuntimeRouter(default_agent_id="aca")
+    facts = router.session_runtime.build_facts(_group_mention_event(sender_role="admin"))
+    session = router.session_runtime.load_session(facts)
+    surface = router.session_runtime.resolve_surface(facts, session)
+
+    decision = router.session_runtime.resolve_computer(facts, session, surface)
+
+    assert decision.visible_subagents == []
+
+
 def test_session_runtime_context_decision_no_longer_exposes_prompt_slots(tmp_path: Path) -> None:
     _write_session(tmp_path)
     runtime = SessionRuntime(SessionConfigLoader(config_root=tmp_path / "sessions"))

@@ -17,7 +17,7 @@ from ..backend.contracts import BackendRequest, BackendSourceRef
 from ..contracts import AgentProfile, ApprovalRequired, DispatchReport, PendingApproval, PlannedAction, RunContext
 from ..model.model_agent_runtime import ToolRuntime, ToolRuntimeState
 from ..skills import SkillCatalog
-from ..subagents import SubagentExecutorRegistry
+from ..subagents import SubagentCatalog
 from .contracts import (
     RegisteredTool,
     ToolAuditRecord,
@@ -41,7 +41,7 @@ class ToolBroker:
         policy: ToolPolicy | None = None,
         audit: ToolAudit | None = None,
         skill_catalog: SkillCatalog | None = None,
-        subagent_executor_registry: SubagentExecutorRegistry | None = None,
+        subagent_catalog: SubagentCatalog | None = None,
         default_agent_id: str = "",
         backend_bridge: BackendBridge | None = None,
     ) -> None:
@@ -51,7 +51,7 @@ class ToolBroker:
             policy: 可选的工具策略层.
             audit: 可选的工具审计实现.
             skill_catalog: 可选的 skill catalog.
-            subagent_executor_registry: 可选的 subagent executor 注册表.
+            subagent_catalog: 可选的 subagent catalog.
             default_agent_id: 默认主 agent 标识.
             backend_bridge: 可选的后台桥接入口, 用于暴露 frontstage backend bridge tool.
         """
@@ -60,7 +60,7 @@ class ToolBroker:
         self.policy = policy or AllowAllToolPolicy()
         self.audit = audit or InMemoryToolAudit()
         self.skill_catalog = skill_catalog
-        self.subagent_executor_registry = subagent_executor_registry
+        self.subagent_catalog = subagent_catalog
         self.default_agent_id = str(default_agent_id or "")
         self.backend_bridge = backend_bridge
 
@@ -239,8 +239,6 @@ class ToolBroker:
             tool_names.append(tool_name)
         if self._should_expose_skill_tool(profile) and "Skill" not in tool_names:
             tool_names.append("Skill")
-        if self._should_expose_delegate_tool(profile) and "delegate_subagent" not in tool_names:
-            tool_names.append("delegate_subagent")
         if self._should_expose_backend_bridge_tool(profile) and "ask_backend" not in tool_names:
             tool_names.append("ask_backend")
         return tool_names
@@ -268,8 +266,12 @@ class ToolBroker:
         else:
             tool_names = [tool_name for tool_name in tool_names if tool_name != "Skill"]
 
-        if self._should_expose_delegate_tool(ctx.profile) and "delegate_subagent" not in tool_names:
-            tool_names.append("delegate_subagent")
+        run_visible_subagents = self._visible_subagents_for_run(ctx)
+        if run_visible_subagents:
+            if "delegate_subagent" in self._tools and "delegate_subagent" not in tool_names:
+                tool_names.append("delegate_subagent")
+        else:
+            tool_names = [tool_name for tool_name in tool_names if tool_name != "delegate_subagent"]
         if self._should_expose_backend_bridge_tool(ctx.profile) and "ask_backend" not in tool_names:
             tool_names.append("ask_backend")
 
@@ -398,20 +400,36 @@ class ToolBroker:
             )
         return summaries
 
-    def _visible_subagent_summaries(self, profile: AgentProfile) -> list[dict[str, Any]]:
-        if self.default_agent_id and profile.agent_id != self.default_agent_id:
+    def _visible_subagents_for_run(self, ctx: RunContext) -> list[object]:
+        """按当前 run 的 session allowlist 解析可见 subagent."""
+
+        if self.subagent_catalog is None:
             return []
-        if self.subagent_executor_registry is None:
+        if ctx.computer_policy_decision is None:
             return []
-        summaries: list[dict[str, Any]] = []
-        for item in self.subagent_executor_registry.list_all():
-            if item.agent_id == profile.agent_id:
+        manifests = []
+        seen: set[str] = set()
+        for subagent_name in list(ctx.computer_policy_decision.visible_subagents or []):
+            normalized = str(subagent_name or "").strip()
+            if not normalized or normalized in seen:
                 continue
+            manifest = self.subagent_catalog.get(normalized)
+            if manifest is None:
+                continue
+            manifests.append(manifest)
+            seen.add(normalized)
+        return manifests
+
+    def _visible_subagent_summaries_for_run(self, ctx: RunContext) -> list[dict[str, Any]]:
+        """为当前 run 构造可见 subagent 摘要."""
+
+        summaries: list[dict[str, Any]] = []
+        for manifest in self._visible_subagents_for_run(ctx):
             summaries.append(
                 {
-                    "agent_id": item.agent_id,
-                    "source": item.source,
-                    "profile_name": str(item.metadata.get("profile_name", "") or item.agent_id),
+                    "agent_id": manifest.subagent_name,
+                    "description": manifest.description,
+                    "source": manifest.scope,
                 }
             )
         return summaries
@@ -447,29 +465,19 @@ class ToolBroker:
             "The tool only forwards a concise summary plus source reference."
         )
 
-    def _should_expose_delegate_tool(self, profile: AgentProfile) -> bool:
-        if "delegate_subagent" not in self._tools:
-            return False
-        if self.subagent_executor_registry is not None and (
-            not self.default_agent_id or profile.agent_id == self.default_agent_id
-        ):
-            for item in self.subagent_executor_registry.list_all():
-                if item.agent_id != profile.agent_id:
-                    return True
-        return False
-
     def build_tool_runtime(self, ctx: RunContext) -> ToolRuntime:
         """按当前 RunContext 解析工具可见性与 tool executor."""
 
         allowed_tool_names = self._allowed_tool_names_for_run(ctx)
         visible_tools = self._visible_tools_for_run(ctx, allowed_tool_names)
         state = ToolRuntimeState()
+        visible_subagents = [item.subagent_name for item in self._visible_subagents_for_run(ctx)]
         metadata = {
             "source": "tool_broker",
             "visible_tools": [tool.name for tool in visible_tools],
             "visible_skills": [skill.skill_name for skill in self._visible_skills_for_run(ctx)],
             "visible_skill_summaries": self._visible_skill_summaries_for_run(ctx),
-            "visible_subagent_summaries": self._visible_subagent_summaries(ctx.profile),
+            "visible_subagent_summaries": self._visible_subagent_summaries_for_run(ctx),
         }
         if not visible_tools:
             return ToolRuntime(state=state, metadata=metadata)
@@ -776,6 +784,7 @@ class ToolBroker:
 
         visible_tools = self._allowed_tool_names_for_run(ctx)
         visible_skills = [skill.skill_name for skill in self._visible_skills_for_run(ctx)]
+        visible_subagents = [item.subagent_name for item in self._visible_subagents_for_run(ctx)]
         return ToolExecutionContext(
             run_id=ctx.run.run_id,
             thread_id=ctx.thread.thread_id,
@@ -785,11 +794,13 @@ class ToolBroker:
             profile=ctx.profile,
             world_view=ctx.world_view,
             state=state,
+            visible_subagents=visible_subagents,
             metadata={
                 "backend_bridge": self.backend_bridge,
                 "default_agent_id": self.default_agent_id,
                 "visible_tools": visible_tools,
                 "visible_skills": visible_skills,
+                "visible_subagents": visible_subagents,
                 "channel_scope": ctx.decision.channel_scope,
                 "event_id": ctx.event.event_id,
                 "event_timestamp": ctx.event.timestamp,

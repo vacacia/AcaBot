@@ -347,6 +347,11 @@ class SessionRuntime:
             if "visible_skills" in payload
             else None
         )
+        visible_subagents = (
+            list(payload.get("visible_subagents", []))
+            if "visible_subagents" in payload
+            else []
+        )
         return ComputerPolicyDecision(
             actor_kind=actor_kind,
             backend=str(payload.get("backend", "host") or "host"),
@@ -354,6 +359,7 @@ class SessionRuntime:
             allow_sessions=bool(payload.get("allow_sessions", True)),
             roots=roots,
             visible_skills=visible_skills,
+            visible_subagents=visible_subagents,
             notes=self._computer_notes(payload),
             reason="surface case" if case_id else "surface default",
             source_case_id=case_id,

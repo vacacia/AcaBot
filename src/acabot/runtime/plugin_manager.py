@@ -38,10 +38,6 @@ from .model.model_targets import MutableModelTargetCatalog, RuntimePluginModelSl
 from .references import ReferenceBackend
 from .skills import SkillCatalog
 from .memory.sticky_notes import StickyNoteService
-from .subagents import (
-    SubagentDelegationBroker,
-    SubagentExecutorRegistration,
-)
 from .tool_broker import ToolBroker
 from .tool_broker import ToolHandler as RuntimeToolHandler
 
@@ -208,7 +204,6 @@ class RuntimePluginContext:
         computer_runtime (ComputerRuntime | None): computer 基础设施入口.
         skill_catalog (SkillCatalog | None): 统一 skill catalog.
         control_plane (RuntimeControlPlane | None): 本地 control plane 入口.
-        subagent_delegator (SubagentDelegationBroker | None): subagent delegation 编排入口.
     """
 
     config: Config
@@ -219,7 +214,6 @@ class RuntimePluginContext:
     computer_runtime: ComputerRuntime | None = None
     skill_catalog: SkillCatalog | None = None
     control_plane: RuntimeControlPlane | None = None
-    subagent_delegator: SubagentDelegationBroker | None = None
 
     def get_plugin_config(self, plugin_name: str) -> dict[str, object]:
         """读取插件配置.
@@ -297,15 +291,6 @@ class RuntimePlugin(ABC):
 
         return []
 
-    def subagent_executors(self) -> list[SubagentExecutorRegistration]:
-        """返回插件声明的 subagent executors.
-
-        Returns:
-            SubagentExecutorRegistration 列表. 默认空列表.
-        """
-
-        return []
-
     def model_slots(self) -> list[RuntimePluginModelSlot]:
         """返回插件声明的模型槽位.
 
@@ -339,7 +324,6 @@ class RuntimePluginManager:
         sticky_notes (StickyNoteService | None): sticky note 服务.
         skill_catalog (SkillCatalog | None): 统一 skill catalog.
         control_plane (RuntimeControlPlane | None): 本地 control plane 入口.
-        subagent_delegator (SubagentDelegationBroker | None): subagent delegation 编排入口.
         hooks (RuntimeHookRegistry): runtime hook 注册表.
         loaded (list[RuntimePlugin]): 已加载插件列表, 按加载顺序.
         _names (set[str]): 已加载插件名集合, 用于去重.
@@ -359,7 +343,6 @@ class RuntimePluginManager:
         computer_runtime: ComputerRuntime | None = None,
         skill_catalog: SkillCatalog | None = None,
         control_plane: RuntimeControlPlane | None = None,
-        subagent_delegator: SubagentDelegationBroker | None = None,
         model_target_catalog: MutableModelTargetCatalog | None = None,
         builtin_plugins: list[RuntimePlugin] | None = None,
         plugins: list[RuntimePlugin] | None = None,
@@ -377,7 +360,6 @@ class RuntimePluginManager:
             computer_runtime: 可选的 computer 基础设施入口.
             skill_catalog: 可选的统一 skill catalog.
             control_plane: 可选的本地 control plane 入口.
-            subagent_delegator: 可选的 subagent delegation 编排入口.
             builtin_plugins: 系统保底内建插件列表, full reload 时始终重建.
             plugins: 启动时需要加载的插件实例列表.
         """
@@ -391,7 +373,6 @@ class RuntimePluginManager:
         self.computer_runtime = computer_runtime
         self.skill_catalog = skill_catalog
         self.control_plane = control_plane
-        self.subagent_delegator = subagent_delegator
         self.model_target_catalog = model_target_catalog
         self._builtin_plugins: list[RuntimePlugin] = list(builtin_plugins or [])
         self._builtin_plugin_names: set[str] = {
@@ -502,7 +483,6 @@ class RuntimePluginManager:
                 computer_runtime=self.computer_runtime,
                 skill_catalog=self.skill_catalog,
                 control_plane=self.control_plane,
-                subagent_delegator=self.subagent_delegator,
             )
             for plugin in added_plugins:
                 await self.load_plugin(plugin, context)
@@ -524,15 +504,6 @@ class RuntimePluginManager:
         """
 
         self.control_plane = control_plane
-
-    def attach_subagent_delegator(self, subagent_delegator: SubagentDelegationBroker) -> None:
-        """把 subagent delegation broker 接到 plugin manager.
-
-        Args:
-            subagent_delegator: 当前 runtime 的 delegation broker.
-        """
-
-        self.subagent_delegator = subagent_delegator
 
     def attach_computer_runtime(self, computer_runtime: ComputerRuntime) -> None:
         """把 computer runtime 接到 plugin manager."""
@@ -560,7 +531,6 @@ class RuntimePluginManager:
                 computer_runtime=self.computer_runtime,
                 skill_catalog=self.skill_catalog,
                 control_plane=self.control_plane,
-                subagent_delegator=self.subagent_delegator,
             )
             # 复制并清空 pending, 防止 load 过程中 add_plugin 导致重复
             pending = list(self._pending)
@@ -609,7 +579,6 @@ class RuntimePluginManager:
             computer_runtime=self.computer_runtime,
             skill_catalog=self.skill_catalog,
             control_plane=self.control_plane,
-            subagent_delegator=self.subagent_delegator,
         )
         # 步骤 3: 调用 setup, 失败则跳过整个插件
         try:
@@ -645,18 +614,6 @@ class RuntimePluginManager:
         for point, hook in plugin_hooks:
             self.hooks.register(point, hook)
         self._plugin_hooks[plugin.name] = plugin_hooks
-        plugin_executors = list(plugin.subagent_executors())
-        if self.subagent_delegator is not None:
-            for registration in plugin_executors:
-                self.subagent_delegator.executor_registry.register(
-                    registration.agent_id,
-                    registration.executor,
-                    source=f"plugin:{plugin.name}",
-                    metadata={
-                        "plugin_name": plugin.name,
-                        **dict(registration.metadata),
-                    },
-                )
         runtime_tools = list(plugin.runtime_tools())
         for registration in runtime_tools:
             self.tool_broker.register_tool(
@@ -681,11 +638,10 @@ class RuntimePluginManager:
         self.loaded.append(plugin)
         self._names.add(plugin.name)
         logger.info(
-            "Runtime plugin loaded: %s (%s hooks, %s tools, %s executors)",
+            "Runtime plugin loaded: %s (%s hooks, %s tools)",
             plugin.name,
             len(plugin_hooks),
             len(runtime_tools) + len(legacy_tools),
-            len(plugin_executors),
         )
 
     async def run_hooks(self, point: RuntimeHookPoint, ctx: RunContext) -> RuntimeHookResult:
@@ -740,16 +696,6 @@ class RuntimePluginManager:
         for plugin in reversed(self.loaded):
             if plugin.name not in unload_set:
                 continue
-            if self.subagent_delegator is not None:
-                removed_executors = self.subagent_delegator.executor_registry.unregister_source(
-                    f"plugin:{plugin.name}"
-                )
-                if removed_executors:
-                    logger.info(
-                        "Runtime plugin subagent executors removed: plugin=%s executors=%s",
-                        plugin.name,
-                        ",".join(removed_executors),
-                    )
             # 切断响应
             removed = self.tool_broker.unregister_source(f"plugin:{plugin.name}")
             if removed:
@@ -806,16 +752,6 @@ class RuntimePluginManager:
         # 这是依赖关系处理的关键: 如果插件A依赖插件B, 应该先加载B再加载A
         # 清理时则相反, 先清理A再清理B, 避免依赖悬空
         for plugin in reversed(self.loaded):
-            if self.subagent_delegator is not None:
-                removed_executors = self.subagent_delegator.executor_registry.unregister_source(
-                    f"plugin:{plugin.name}"
-                )
-                if removed_executors:
-                    logger.info(
-                        "Runtime plugin subagent executors removed: plugin=%s executors=%s",
-                        plugin.name,
-                        ",".join(removed_executors),
-                    )
             removed = self.tool_broker.unregister_source(f"plugin:{plugin.name}")
             if removed:
                 logger.info(
@@ -909,7 +845,6 @@ class RuntimePluginManager:
             computer_runtime=self.computer_runtime,
             skill_catalog=self.skill_catalog,
             control_plane=self.control_plane,
-            subagent_delegator=self.subagent_delegator,
         )
         # 新插件实例，重新执行 load_plugin
         # 1. new_target.setup(context)

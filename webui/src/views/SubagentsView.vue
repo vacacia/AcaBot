@@ -3,17 +3,20 @@ import { onMounted, ref } from "vue"
 
 import { apiGet, peekCachedGet } from "../lib/api"
 
-type ExecutorItem = {
-  executor_id?: string
-  agent_id?: string
-  display_name?: string
+type SubagentItem = {
+  subagent_id?: string
+  subagent_name?: string
   description?: string
+  source?: string
+  host_subagent_file_path?: string
+  tools?: string[]
+  effective?: boolean
 }
 
-const items = ref<ExecutorItem[]>(peekCachedGet<ExecutorItem[]>('/api/subagents/executors') ?? [])
+const items = ref<SubagentItem[]>(peekCachedGet<SubagentItem[]>("/api/subagents") ?? [])
 
 onMounted(() => {
-  void apiGet<ExecutorItem[]>('/api/subagents/executors').then((payload) => {
+  void apiGet<SubagentItem[]>("/api/subagents").then((payload) => {
     items.value = payload
   })
 })
@@ -26,16 +29,26 @@ onMounted(() => {
         <div class="ds-section-title">
           <div>
             <p class="ds-eyebrow">Subagents</p>
-            <h2>Executor 注册表</h2>
-            <p class="ds-summary">当前先做可视化，不承诺 enable / disable 的持久配置。</p>
+            <h2>Catalog 清单</h2>
+            <p class="ds-summary">这里展示当前文件系统 catalog 里可发现的子代理定义。</p>
           </div>
         </div>
       </div>
 
       <div class="ds-list">
-        <article v-for="item in items" :key="item.executor_id || item.agent_id" class="ds-list-item ds-list-item-padding executor-item">
-          <strong>{{ item.display_name || item.executor_id || item.agent_id }}</strong>
+        <article
+          v-for="item in items"
+          :key="item.subagent_id || item.subagent_name || 'unnamed-subagent'"
+          class="ds-list-item ds-list-item-padding executor-item"
+        >
+          <strong>{{ item.subagent_name || "unnamed-subagent" }}</strong>
           <p class="ds-summary compact">{{ item.description || '暂无说明' }}</p>
+          <p class="ds-summary compact">id={{ item.subagent_id || "-" }}</p>
+          <p class="ds-summary compact">
+            source={{ item.source || "-" }} effective={{ item.effective ? "yes" : "no" }}
+          </p>
+          <p class="ds-summary compact">path={{ item.host_subagent_file_path || "-" }}</p>
+          <p class="ds-summary compact">tools={{ (item.tools || []).join(", ") || "-" }}</p>
         </article>
       </div>
     </article>

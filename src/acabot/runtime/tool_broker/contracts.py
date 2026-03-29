@@ -64,6 +64,7 @@ class ToolExecutionContext:
         profile (AgentProfile): 当前 profile.
         world_view (WorldView | None): 当前 run 的 Work World 视图.
         state (ToolRuntimeState | None): 当前 tool runtime 状态.
+        visible_subagents (list[str]): 当前 run 真正允许访问的 subagent 列表.
         metadata (dict[str, Any]): 其他执行元数据.
     """
 
@@ -75,6 +76,7 @@ class ToolExecutionContext:
     profile: AgentProfile
     world_view: "WorldView | None" = None
     state: "ToolRuntimeState | None" = None
+    visible_subagents: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

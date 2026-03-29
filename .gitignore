@@ -4,6 +4,7 @@ tmp
 .codebuddy
 .claude
 .codex
+.agent
 .worktrees/
 
 docs/agent-first
@@ -43,3 +44,5 @@ webui/.vite/
 notes
 docs/ex
 docs/webui
+# local brainstorming companion
+.superpowers/

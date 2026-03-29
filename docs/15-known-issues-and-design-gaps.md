@@ -10,40 +10,46 @@
 - 对应专题文档
 - 必要时 `10-change-playbooks.md`
 
-## 1. subagent 可见性和委派边界还不够严
+## 1. subagent 第一版还不支持递归和 approval resume
 
 ### 现象
 
-当前 `delegate_subagent` 支持直接传 `delegate_agent_id`。
+当前 subagent 已经有明确边界:
 
-这条路径会优先直接查 executor registry，而不是先严格经过当前 profile 的 skill assignment / delegation policy。
+- 定义真源是文件系统 `SUBAGENT.md`
+- 可见性只认 session `visible_subagents`
+- child run 默认 `visible_subagents=[]`
 
-结果就是:
+所以第一版现在不会:
 
-- 只要某个 subagent executor 已注册
-- 当前 agent 又能看到 `delegate_subagent` 这个工具
-- 就可能直接调用一个本不该对它开放的 subagent
+- 递归委派 subagent
+- 把 child run 挂进 `waiting_approval`
+- 让 approval replay 恢复 subagent child run
 
 ### 为什么这是问题
 
-这会削弱你在 WebUI / profile 层做的能力隔离。
+这不是 bug, 是当前刻意保守的产品边界。
 
-系统表面上看起来是:
+但如果以后想做:
 
-- bot 选择携带哪些 skill / subagent
+- 更复杂的多级委派
+- 可审批的子任务
+- 真正长期运行的后台 worker
 
-但实际 direct delegation 路径可能比这个更宽。
+那就必须重新设计 child run 生命周期, 不能直接把现在这版短生命周期 subagent 往上硬加。
 
 ### 相关代码
 
 - `src/acabot/runtime/builtin_tools/subagents.py`
 - `src/acabot/runtime/subagents/broker.py`
+- `src/acabot/runtime/subagents/execution.py`
+- `src/acabot/runtime/pipeline.py`
 
 ### 修复时通常要同步
 
 - `20-subagent.md`
 - `02-runtime-mainline.md`
-- 如果改变了配置语义，再看 `08-webui-and-control-plane.md`
+- 如果改变 session 语义, 再看 `08-webui-and-control-plane.md`
 
 ### 建议状态
 

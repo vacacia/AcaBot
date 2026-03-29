@@ -152,6 +152,8 @@ const draft = ref<PresetDraft | null>(null)
 const bindingDraft = ref<BindingDraft | null>(null)
 const effectiveTarget = ref<EffectiveTargetModel | null>(null)
 const bindingPresetCandidate = ref("")
+const showPresetEditor = ref(false)
+const showBindingEditor = ref(false)
 
 const loading = ref(true)
 const saveMessage = ref("")
@@ -362,6 +364,33 @@ function createPreset(): void {
   errorMessage.value = ""
 }
 
+function openNewPresetEditor(): void {
+  createPreset()
+  showPresetEditor.value = true
+}
+
+function openPresetEditor(): void {
+  if (!draft.value) {
+    return
+  }
+  showPresetEditor.value = true
+}
+
+function closePresetEditor(): void {
+  showPresetEditor.value = false
+}
+
+function openBindingEditor(): void {
+  if (!selectedTarget.value || !bindingDraft.value) {
+    return
+  }
+  showBindingEditor.value = true
+}
+
+function closeBindingEditor(): void {
+  showBindingEditor.value = false
+}
+
 async function savePreset(): Promise<void> {
   if (!draft.value) {
     return
@@ -391,6 +420,7 @@ async function savePreset(): Promise<void> {
       throw new Error(result.message || "保存失败")
     }
     saveMessage.value = "已保存"
+    showPresetEditor.value = false
     await loadModels(presetId, selectedTargetId.value)
   } catch (error) {
     saveMessage.value = ""
@@ -411,6 +441,7 @@ async function deletePreset(): Promise<void> {
     }
     saveMessage.value = "已删除"
     selectedId.value = ""
+    showPresetEditor.value = false
     await loadModels("", selectedTargetId.value)
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "删除失败"
@@ -440,6 +471,10 @@ async function healthCheckPreset(): Promise<void> {
 
 const selectedTarget = computed(() => {
   return targets.value.find((item) => item.target_id === selectedTargetId.value) ?? null
+})
+
+const selectedPresetCapabilities = computed(() => {
+  return draft.value?.capabilities ?? []
 })
 
 const selectedBindingSnapshot = computed(() => {
@@ -514,6 +549,7 @@ async function saveBinding(): Promise<void> {
       throw new Error(result.message || "保存 Binding 失败")
     }
     bindingSaveMessage.value = "Binding 已保存"
+    showBindingEditor.value = false
     await loadModels(selectedId.value, target.target_id)
   } catch (error) {
     bindingSaveMessage.value = ""
@@ -537,6 +573,7 @@ async function deleteBinding(): Promise<void> {
       throw new Error(result.message || "删除 Binding 失败")
     }
     bindingSaveMessage.value = "Binding 已删除"
+    showBindingEditor.value = false
     await loadModels(selectedId.value, selectedTargetId.value)
   } catch (error) {
     bindingErrorMessage.value = error instanceof Error ? error.message : "删除 Binding 失败"
@@ -571,7 +608,7 @@ onMounted(() => {
               <h2>模型预设</h2>
             </div>
           </div>
-          <button class="ds-secondary-button round-button" type="button" @click="createPreset">+</button>
+          <button class="ds-secondary-button round-button" type="button" @click="openNewPresetEditor">+</button>
         </div>
         <div class="ds-list">
           <button
@@ -588,79 +625,62 @@ onMounted(() => {
         </div>
       </aside>
 
-      <article class="ds-panel ds-panel-padding editor-column">
+      <article class="ds-panel ds-panel-padding summary-column">
         <div class="ds-section-head compact-head">
           <div class="ds-section-title">
             <div>
-              <h2>{{ draft?.preset_id || "新建模型 Preset" }}</h2>
-              <p class="ds-summary">Preset 只表达“这是什么模型”，不表达“谁在用”。</p>
+              <h2>{{ draft?.preset_id || "先选择一个 Preset" }}</h2>
+              <p class="ds-summary">主页面只看摘要。冗长字段、能力集合和 JSON 参数都放到单独的设置弹层里编辑。</p>
             </div>
           </div>
-          <div class="ds-actions">
-            <button class="ds-secondary-button" type="button" :disabled="!selectedId" @click="void healthCheckPreset()">健康检查</button>
-            <button class="ds-secondary-button" type="button" :disabled="!selectedId" @click="void deletePreset()">删除</button>
-            <button class="ds-primary-button" type="button" :disabled="loading || !draft" @click="void savePreset()">保存</button>
-          </div>
+          <button class="ds-primary-button" type="button" :disabled="!draft" @click="openPresetEditor()">打开 Preset 设置</button>
         </div>
 
         <p v-if="saveMessage" class="ds-status is-ok">{{ saveMessage }}</p>
         <p v-if="errorMessage" class="ds-status is-error">{{ errorMessage }}</p>
         <p v-if="loading" class="ds-empty">正在加载模型配置...</p>
 
-        <div v-else-if="draft" class="ds-form-grid editor-grid">
-          <label class="ds-field">
-            <span>Preset ID</span>
-            <input class="ds-input" v-model="draft.preset_id" type="text" :readonly="Boolean(selectedId)" />
-          </label>
-          <label class="ds-field">
-            <span>Provider</span>
-            <select class="ds-select" v-model="draft.provider_id">
-              <option value="">请选择</option>
-              <option v-for="item in providers" :key="item.provider_id" :value="item.provider_id">
-                {{ item.name || item.provider_id }}
-              </option>
-            </select>
-          </label>
-          <label class="ds-field is-span-2">
-            <span>模型名</span>
-            <input class="ds-input" v-model="draft.model" type="text" />
-          </label>
-          <label class="ds-field">
-            <span>任务类型</span>
-            <select class="ds-select" v-model="draft.task_kind">
-              <option v-for="taskKind in taskKindOptions" :key="taskKind" :value="taskKind">
-                {{ taskKind }}
-              </option>
-            </select>
-          </label>
-          <label class="ds-field">
-            <span>上下文窗口</span>
-            <input class="ds-input" v-model="draft.context_window" type="number" min="0" />
-          </label>
-          <label class="ds-field">
-            <span>最大输出 Tokens</span>
-            <input class="ds-input" v-model="draft.max_output_tokens" type="number" min="0" />
-          </label>
-          <fieldset class="ds-field is-span-2 capability-grid">
-            <legend>能力集合</legend>
-            <label
-              v-for="capability in capabilityOptions"
-              :key="capability"
-              class="toggle-field ds-surface ds-card-padding-sm"
-            >
-              <input
-                :checked="draft.capabilities.includes(capability)"
-                type="checkbox"
-                @change="onCapabilityToggle(capability, $event)"
-              />
-              <span>{{ capability }}</span>
-            </label>
-          </fieldset>
-          <label class="ds-field is-span-2">
-            <span>模型参数(JSON)</span>
-            <textarea class="ds-textarea ds-mono" v-model="draft.model_params_text" rows="8"></textarea>
-          </label>
+        <div v-else-if="draft" class="summary-stack">
+          <div class="preset-summary-grid">
+            <article class="ds-surface ds-card-padding-sm summary-card">
+              <p class="summary-label">Provider</p>
+              <strong>{{ providerLabel(draft.provider_id) }}</strong>
+              <small>{{ draft.provider_id || "未选择" }}</small>
+            </article>
+            <article class="ds-surface ds-card-padding-sm summary-card">
+              <p class="summary-label">模型</p>
+              <strong>{{ draft.model || "未填写模型名" }}</strong>
+              <small>{{ draft.preset_id || "新建 Preset" }}</small>
+            </article>
+            <article class="ds-surface ds-card-padding-sm summary-card">
+              <p class="summary-label">任务类型</p>
+              <strong>{{ draft.task_kind }}</strong>
+              <small>{{ selectedPresetCapabilities.length }} 个能力标签</small>
+            </article>
+            <article class="ds-surface ds-card-padding-sm summary-card">
+              <p class="summary-label">上下文窗口</p>
+              <strong>{{ draft.context_window || "0" }}</strong>
+              <small>max output {{ draft.max_output_tokens || "未设置" }}</small>
+            </article>
+          </div>
+
+          <div class="ds-surface ds-card-padding-sm capability-preview">
+            <div class="capability-preview-head">
+              <div>
+                <h3>能力摘要</h3>
+                <p class="ds-summary">这里只展示简版标签，详细能力和参数都放进设置弹层。</p>
+              </div>
+              <button class="ds-secondary-button" type="button" @click="openPresetEditor()">编辑详情</button>
+            </div>
+            <div v-if="selectedPresetCapabilities.length > 0" class="ds-chip-row">
+              <span v-for="capability in selectedPresetCapabilities" :key="capability" class="ds-chip">
+                {{ capability }}
+              </span>
+            </div>
+            <p v-else class="ds-empty inline-empty">这个 Preset 还没有声明附加能力。</p>
+          </div>
         </div>
+        <p v-else class="ds-empty">当前没有可展示的 Preset。</p>
       </article>
     </div>
 
@@ -677,123 +697,109 @@ onMounted(() => {
 
       <div class="binding-layout">
         <aside class="binding-sidebar">
-          <div class="ds-list">
-            <button
-              v-for="target in targets"
-              :key="target.target_id"
-              class="list-item target-item"
-              :class="{ active: target.target_id === selectedTargetId }"
-              type="button"
-              @click="void selectTarget(target.target_id)"
-            >
-              <div class="target-item-head">
-                <strong>{{ target.target_id }}</strong>
-                <span
-                  class="state-chip"
-                  :class="stateChipClass(bindingSnapshots.find((item) => item.binding.target_id === target.target_id)?.binding_state || 'unbound')"
-                >
-                  {{ bindingSnapshots.find((item) => item.binding.target_id === target.target_id)?.binding_state || "unbound" }}
-                </span>
+          <div class="ds-surface ds-card-padding-sm catalog-shell">
+            <div class="catalog-head">
+              <div>
+                <h3>Target Catalog</h3>
+                <p class="ds-summary">点击左侧职责位点，右边只显示当前选中的绑定细节。</p>
               </div>
-              <small>{{ targetLabel(target) }}</small>
-            </button>
+              <div class="catalog-count">{{ targets.length }}</div>
+            </div>
+            <div class="ds-list target-list">
+              <button
+                v-for="target in targets"
+                :key="target.target_id"
+                class="list-item target-item"
+                :class="{ active: target.target_id === selectedTargetId }"
+                type="button"
+                @click="void selectTarget(target.target_id)"
+              >
+                <div class="target-item-head">
+                  <strong>{{ target.target_id }}</strong>
+                  <span
+                    class="state-chip"
+                    :class="stateChipClass(bindingSnapshots.find((item) => item.binding.target_id === target.target_id)?.binding_state || 'unbound')"
+                  >
+                    {{ bindingSnapshots.find((item) => item.binding.target_id === target.target_id)?.binding_state || "unbound" }}
+                  </span>
+                </div>
+                <small>{{ targetLabel(target) }}</small>
+              </button>
+            </div>
           </div>
         </aside>
 
         <section class="binding-editor">
           <div v-if="selectedTarget" class="binding-stack">
-            <div class="binding-header">
-              <div>
-                <h3>{{ selectedTarget.target_id }}</h3>
-                <p class="ds-summary">{{ selectedTarget.description || "没有额外说明" }}</p>
+            <div class="ds-surface ds-card-padding-sm overview-shell">
+              <div class="binding-header">
+                <div class="binding-title-block">
+                  <p class="ds-eyebrow">Selected Target</p>
+                  <h3>{{ selectedTarget.target_id }}</h3>
+                  <p class="ds-summary">{{ selectedTarget.description || "没有额外说明" }}</p>
+                </div>
+                <div class="ds-chip-row binding-chip-row">
+                  <span class="ds-chip">{{ selectedTarget.source_kind }}</span>
+                  <span class="ds-chip">{{ selectedTarget.task_kind }}</span>
+                  <span v-if="selectedTarget.required" class="ds-chip">required</span>
+                  <span v-if="!selectedTarget.allow_fallbacks" class="ds-chip">single-shot</span>
+                  <span
+                    v-for="capability in selectedTarget.required_capabilities"
+                    :key="capability"
+                    class="ds-chip"
+                  >
+                    {{ capability }}
+                  </span>
+                </div>
               </div>
-              <div class="ds-chip-row">
-                <span class="ds-chip">{{ selectedTarget.source_kind }}</span>
-                <span class="ds-chip">{{ selectedTarget.task_kind }}</span>
-                <span v-if="selectedTarget.required" class="ds-chip">required</span>
-                <span v-if="!selectedTarget.allow_fallbacks" class="ds-chip">single-shot</span>
-                <span
-                  v-for="capability in selectedTarget.required_capabilities"
-                  :key="capability"
-                  class="ds-chip"
-                >
-                  {{ capability }}
-                </span>
+
+              <div class="binding-meta ds-two-column">
+                <article class="ds-surface ds-card-padding-sm binding-meta-card">
+                  <h4>当前解析状态</h4>
+                  <p class="meta-value">{{ selectedBindingSnapshot?.binding_state || "unbound" }}</p>
+                  <p class="ds-summary">{{ selectedBindingSnapshot?.message || "这个 target 还没有 binding。" }}</p>
+                </article>
+                <article class="ds-surface ds-card-padding-sm binding-meta-card">
+                  <h4>当前会落到</h4>
+                  <p class="meta-value">{{ effectiveTarget?.request?.model || "未解析到模型" }}</p>
+                  <p class="ds-summary">
+                    {{ effectiveTarget?.request?.preset_id || "先绑定 Preset 才会有实际模型请求" }}
+                  </p>
+                </article>
               </div>
             </div>
 
             <p v-if="bindingSaveMessage" class="ds-status is-ok">{{ bindingSaveMessage }}</p>
             <p v-if="bindingErrorMessage" class="ds-status is-error">{{ bindingErrorMessage }}</p>
 
-            <div class="binding-meta ds-two-column">
-              <article class="ds-surface ds-card-padding-sm binding-meta-card">
-                <h4>当前解析状态</h4>
-                <p class="meta-value">{{ selectedBindingSnapshot?.binding_state || "unbound" }}</p>
-                <p class="ds-summary">{{ selectedBindingSnapshot?.message || "这个 target 还没有 binding。" }}</p>
-              </article>
-              <article class="ds-surface ds-card-padding-sm binding-meta-card">
-                <h4>当前会落到</h4>
-                <p class="meta-value">{{ effectiveTarget?.request?.model || "未解析到模型" }}</p>
-                <p class="ds-summary">
-                  {{ effectiveTarget?.request?.preset_id || "先绑定 Preset 才会有实际模型请求" }}
-                </p>
-              </article>
-            </div>
-
             <div v-if="bindingDraft" class="binding-stack">
-              <label class="ds-field">
-                <span>Binding ID</span>
-                <input class="ds-input" v-model="bindingDraft.binding_id" type="text" readonly />
-                <small class="ds-help">Binding ID 跟随当前 target 保存，不支持在这里改名。</small>
-              </label>
-              <label class="ds-field">
-                <span>超时(秒，可选)</span>
-                <input class="ds-input" v-model="bindingDraft.timeout_sec" type="number" min="0" step="0.1" />
-              </label>
+              <div class="ds-surface ds-card-padding-sm chain-shell">
+                <div class="chain-head">
+                  <div>
+                    <h4>绑定链</h4>
+                    <p class="ds-summary">主页面只看当前链和解析状态；实际增删、调序、超时参数都放到单独的 Binding 设置里。</p>
+                  </div>
+                  <div class="chain-actions">
+                    <button class="ds-secondary-button" type="button" :disabled="!selectedBindingSnapshot" @click="openBindingEditor()">打开 Binding 设置</button>
+                  </div>
+                </div>
 
-              <div class="ds-field">
-                <span>绑定链</span>
-                <p class="ds-summary">第一项是主模型，后面的顺序就是 fallback。</p>
                 <div v-if="bindingDraft.preset_ids.length > 0" class="selected-presets">
                   <article
                     v-for="(presetId, index) in bindingDraft.preset_ids"
                     :key="`${presetId}:${index}`"
                     class="ds-surface ds-card-padding-sm selected-preset"
                   >
-                    <div>
-                      <strong>{{ index === 0 ? "主模型" : `Fallback ${index}` }}</strong>
-                      <p class="ds-summary">{{ presetLabel(presetId) }}</p>
+                    <div class="preset-rank">
+                      <span class="preset-rank-label">{{ index === 0 ? "主模型" : `Fallback ${index}` }}</span>
+                      <strong>{{ presetLabel(presetId) }}</strong>
                     </div>
-                    <div class="ds-actions">
-                      <button class="ds-ghost-button" type="button" :disabled="index === 0" @click="moveBindingPreset(index, -1)">上移</button>
-                      <button
-                        class="ds-ghost-button"
-                        type="button"
-                        :disabled="index === bindingDraft.preset_ids.length - 1"
-                        @click="moveBindingPreset(index, 1)"
-                      >
-                        下移
-                      </button>
-                      <button class="ds-ghost-button" type="button" @click="removeBindingPreset(presetId)">移除</button>
+                    <div class="preset-inline-meta">
+                      <span class="ds-chip">{{ index === 0 ? "active" : "fallback" }}</span>
                     </div>
                   </article>
                 </div>
                 <p v-else class="ds-empty inline-empty">这个 target 还没有绑定模型。</p>
-              </div>
-
-              <div class="binding-add-row">
-                <select class="ds-select" v-model="bindingPresetCandidate">
-                  <option value="">选择一个兼容 Preset</option>
-                  <option v-for="preset in compatiblePresets" :key="preset.preset_id" :value="preset.preset_id">
-                    {{ presetLabel(preset.preset_id) }}
-                  </option>
-                </select>
-                <button class="ds-secondary-button" type="button" @click="addPresetToBinding()">加入绑定链</button>
-              </div>
-
-              <div class="ds-actions">
-                <button class="ds-secondary-button" type="button" :disabled="!selectedBindingSnapshot || bindingLoading" @click="void deleteBinding()">删除 Binding</button>
-                <button class="ds-primary-button" type="button" :disabled="bindingLoading" @click="void saveBinding()">保存 Binding</button>
               </div>
             </div>
           </div>
@@ -802,6 +808,158 @@ onMounted(() => {
         </section>
       </div>
     </article>
+
+    <Teleport to="body">
+      <div v-if="showPresetEditor && draft" class="modal-backdrop" @click.self="closePresetEditor()">
+        <article class="modal-shell">
+          <div class="modal-head">
+            <div>
+              <p class="ds-eyebrow">Preset Settings</p>
+              <h2>{{ draft.preset_id || "新建模型 Preset" }}</h2>
+              <p class="ds-summary">长字段、能力集合和模型参数只在这里编辑，主页面保持摘要视图。</p>
+            </div>
+            <button class="ds-ghost-button" type="button" @click="closePresetEditor()">关闭</button>
+          </div>
+
+          <p v-if="saveMessage" class="ds-status is-ok">{{ saveMessage }}</p>
+          <p v-if="errorMessage" class="ds-status is-error">{{ errorMessage }}</p>
+
+          <div class="ds-form-grid editor-grid">
+            <label class="ds-field">
+              <span>Preset ID</span>
+              <input class="ds-input" v-model="draft.preset_id" type="text" :readonly="Boolean(selectedId)" />
+            </label>
+            <label class="ds-field">
+              <span>Provider</span>
+              <select class="ds-select" v-model="draft.provider_id">
+                <option value="">请选择</option>
+                <option v-for="item in providers" :key="item.provider_id" :value="item.provider_id">
+                  {{ item.name || item.provider_id }}
+                </option>
+              </select>
+            </label>
+            <label class="ds-field is-span-2">
+              <span>模型名</span>
+              <input class="ds-input" v-model="draft.model" type="text" />
+            </label>
+            <label class="ds-field">
+              <span>任务类型</span>
+              <select class="ds-select" v-model="draft.task_kind">
+                <option v-for="taskKind in taskKindOptions" :key="taskKind" :value="taskKind">
+                  {{ taskKind }}
+                </option>
+              </select>
+            </label>
+            <label class="ds-field">
+              <span>上下文窗口</span>
+              <input class="ds-input" v-model="draft.context_window" type="number" min="0" />
+            </label>
+            <label class="ds-field">
+              <span>最大输出 Tokens</span>
+              <input class="ds-input" v-model="draft.max_output_tokens" type="number" min="0" />
+            </label>
+            <fieldset class="ds-field is-span-2 capability-grid">
+              <legend>能力集合</legend>
+              <label
+                v-for="capability in capabilityOptions"
+                :key="capability"
+                class="toggle-field ds-surface ds-card-padding-sm"
+              >
+                <input
+                  :checked="draft.capabilities.includes(capability)"
+                  type="checkbox"
+                  @change="onCapabilityToggle(capability, $event)"
+                />
+                <span>{{ capability }}</span>
+              </label>
+            </fieldset>
+            <label class="ds-field is-span-2">
+              <span>模型参数(JSON)</span>
+              <textarea class="ds-textarea ds-mono" v-model="draft.model_params_text" rows="8"></textarea>
+            </label>
+          </div>
+
+          <div class="modal-actions">
+            <button class="ds-secondary-button" type="button" :disabled="!selectedId" @click="void healthCheckPreset()">健康检查</button>
+            <button class="ds-secondary-button" type="button" :disabled="!selectedId" @click="void deletePreset()">删除</button>
+            <button class="ds-primary-button" type="button" :disabled="loading || !draft" @click="void savePreset()">保存</button>
+          </div>
+        </article>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="showBindingEditor && selectedTarget && bindingDraft" class="modal-backdrop" @click.self="closeBindingEditor()">
+        <article class="modal-shell">
+          <div class="modal-head">
+            <div>
+              <p class="ds-eyebrow">Binding Settings</p>
+              <h2>{{ selectedTarget.target_id }}</h2>
+              <p class="ds-summary">把 Binding 的长表单收在这里，主页面只保留解析状态和当前链摘要。</p>
+            </div>
+            <button class="ds-ghost-button" type="button" @click="closeBindingEditor()">关闭</button>
+          </div>
+
+          <p v-if="bindingSaveMessage" class="ds-status is-ok">{{ bindingSaveMessage }}</p>
+          <p v-if="bindingErrorMessage" class="ds-status is-error">{{ bindingErrorMessage }}</p>
+
+          <div class="binding-config-grid">
+            <label class="ds-field">
+              <span>Binding ID</span>
+              <input class="ds-input" v-model="bindingDraft.binding_id" type="text" readonly />
+              <small class="ds-help">Binding ID 跟随当前 target 保存，不支持在这里改名。</small>
+            </label>
+            <label class="ds-field">
+              <span>超时(秒，可选)</span>
+              <input class="ds-input" v-model="bindingDraft.timeout_sec" type="number" min="0" step="0.1" />
+            </label>
+          </div>
+
+          <div class="ds-surface ds-card-padding-sm modal-chain-shell">
+            <div v-if="bindingDraft.preset_ids.length > 0" class="selected-presets">
+              <article
+                v-for="(presetId, index) in bindingDraft.preset_ids"
+                :key="`${presetId}:${index}`"
+                class="ds-surface ds-card-padding-sm selected-preset"
+              >
+                <div class="preset-rank">
+                  <span class="preset-rank-label">{{ index === 0 ? "主模型" : `Fallback ${index}` }}</span>
+                  <strong>{{ presetLabel(presetId) }}</strong>
+                </div>
+                <div class="preset-inline-actions">
+                  <button class="ds-ghost-button" type="button" :disabled="index === 0" @click="moveBindingPreset(index, -1)">上移</button>
+                  <button
+                    class="ds-ghost-button"
+                    type="button"
+                    :disabled="index === bindingDraft.preset_ids.length - 1"
+                    @click="moveBindingPreset(index, 1)"
+                  >
+                    下移
+                  </button>
+                  <button class="ds-ghost-button" type="button" @click="removeBindingPreset(presetId)">移除</button>
+                </div>
+              </article>
+            </div>
+            <p v-else class="ds-empty inline-empty">这个 target 还没有绑定模型。</p>
+
+            <div class="binding-add-row">
+              <select class="ds-select" v-model="bindingPresetCandidate">
+                <option value="">选择一个兼容 Preset</option>
+                <option v-for="preset in compatiblePresets" :key="preset.preset_id" :value="preset.preset_id">
+                  {{ presetLabel(preset.preset_id) }}
+                </option>
+              </select>
+              <button class="ds-secondary-button" type="button" @click="addPresetToBinding()">加入绑定链</button>
+            </div>
+          </div>
+
+          <div class="modal-actions">
+            <button class="ds-secondary-button" type="button" :disabled="!selectedBindingSnapshot || bindingLoading" @click="void deleteBinding()">删除 Binding</button>
+            <button class="ds-primary-button" type="button" :disabled="bindingLoading" @click="void saveBinding()">保存 Binding</button>
+          </div>
+        </article>
+      </div>
+    </Teleport>
   </section>
 </template>
 
@@ -813,7 +971,7 @@ onMounted(() => {
 }
 
 .sidebar-column,
-.editor-column,
+.summary-column,
 .binding-sidebar,
 .binding-editor {
   min-width: 0;
@@ -828,6 +986,56 @@ onMounted(() => {
   padding-inline: 0;
 }
 
+.summary-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.preset-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.summary-card {
+  display: grid;
+  gap: 6px;
+}
+
+.summary-card strong {
+  font-size: 18px;
+  color: var(--heading-strong);
+}
+
+.summary-card small,
+.summary-label {
+  color: var(--muted);
+}
+
+.summary-label {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.capability-preview {
+  display: grid;
+  gap: 12px;
+}
+
+.capability-preview-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.capability-preview-head h3 {
+  margin: 0;
+}
+
 .binding-panel {
   margin-top: 16px;
 }
@@ -835,22 +1043,67 @@ onMounted(() => {
 .binding-layout {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
-  gap: 16px;
+  gap: 18px;
+  align-items: start;
 }
 
 .binding-stack {
   display: grid;
-  gap: 14px;
+  gap: 16px;
+}
+
+.catalog-shell,
+.overview-shell,
+.chain-shell {
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02)),
+    rgba(12, 18, 42, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.catalog-head,
+.chain-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.catalog-head h3,
+.chain-head h4,
+.binding-header h3 {
+  margin: 0;
+}
+
+.catalog-count {
+  min-width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--heading-strong);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.target-list {
+  max-height: 620px;
+  overflow: auto;
 }
 
 .target-item {
   display: grid;
   gap: 6px;
+  align-items: start;
 }
 
 .target-item-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
 }
@@ -881,6 +1134,22 @@ onMounted(() => {
   gap: 12px;
 }
 
+.binding-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.binding-title-block {
+  display: grid;
+  gap: 6px;
+}
+
+.binding-chip-row {
+  justify-content: flex-end;
+}
+
 .binding-meta-card {
   display: grid;
   gap: 8px;
@@ -895,13 +1164,102 @@ onMounted(() => {
 
 .selected-presets {
   display: grid;
-  gap: 10px;
+  gap: 12px;
   margin-top: 10px;
 }
 
 .selected-preset {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.preset-rank {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.preset-rank-label {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+
+.preset-inline-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.preset-inline-meta {
+  display: inline-flex;
+  justify-content: flex-end;
+}
+
+.binding-config-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 1.2fr) minmax(180px, 0.8fr);
+  gap: 12px;
+}
+
+.chain-actions {
+  display: inline-flex;
   gap: 10px;
+  flex-wrap: wrap;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(7, 10, 24, 0.7);
+  backdrop-filter: blur(18px);
+}
+
+.modal-shell {
+  width: min(980px, 100%);
+  max-height: min(90vh, 960px);
+  overflow: auto;
+  border-radius: 28px;
+  padding: 24px;
+  background:
+    linear-gradient(180deg, rgba(26, 34, 68, 0.95), rgba(11, 16, 37, 0.96)),
+    rgba(10, 14, 30, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 30px 120px rgba(0, 0, 0, 0.42);
+}
+
+.modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.modal-head h2 {
+  margin: 0;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+
+.modal-chain-shell {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
 }
 
 .binding-add-row {
@@ -919,11 +1277,42 @@ onMounted(() => {
   .binding-layout {
     grid-template-columns: 1fr;
   }
+
+  .preset-summary-grid,
+  .binding-config-grid,
+  .selected-preset {
+    grid-template-columns: 1fr;
+  }
+
+  .binding-header,
+  .catalog-head,
+  .chain-head {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+
+  .binding-chip-row,
+  .preset-inline-actions {
+    justify-content: flex-start;
+  }
 }
 
 @media (max-width: 720px) {
   .binding-add-row {
     grid-template-columns: 1fr;
+  }
+
+  .capability-preview-head,
+  .modal-head {
+    display: grid;
+  }
+
+  .chain-actions {
+    width: 100%;
+  }
+
+  .modal-shell {
+    padding: 18px;
   }
 }
 </style>

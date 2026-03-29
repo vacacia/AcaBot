@@ -54,8 +54,10 @@ from ..storage.sqlite_stores import (
 )
 from ..storage.stores import ChannelEventStore, MessageStore
 from ..storage.threads import InMemoryThreadManager, StoreBackedThreadManager, ThreadManager
-from ..subagents import SubagentExecutorRegistry
-from ..subagents.execution import LocalSubagentExecutionService
+from ..subagents import (
+    FileSystemSubagentPackageLoader,
+    SubagentCatalog,
+)
 from ..soul import SoulSource
 from .config import (
     get_persistence_sqlite_path,
@@ -63,6 +65,7 @@ from .config import (
     resolve_filesystem_path,
     resolve_runtime_path,
     resolve_skill_catalog_dirs,
+    resolve_subagent_catalog_dirs,
 )
 
 if TYPE_CHECKING:
@@ -81,31 +84,6 @@ def build_builtin_runtime_plugins(profiles: dict[str, AgentProfile]) -> list[Run
 
     _ = profiles
     return [BackendBridgeToolPlugin()]
-
-
-def register_local_subagent_executors(
-    *,
-    registry: SubagentExecutorRegistry,
-    profiles: dict[str, AgentProfile],
-    service: LocalSubagentExecutionService,
-) -> None:
-    """把本地 profile 注册为可用的 subagent executor."""
-
-    for profile in profiles.values():
-        metadata = dict(profile.config.get("metadata", {}) or {})
-        managed_by = str(metadata.get("managed_by", "") or "").strip()
-        if managed_by in {"webui_session", "webui_v2_session"} or str(metadata.get("session_key", "") or "").strip():
-            continue
-        registry.register(
-            profile.agent_id,
-            service.execute,
-            source="runtime:local_profile",
-            metadata={
-                "kind": "local_profile",
-                "profile_name": profile.name,
-            },
-        )
-
 
 def build_model_registry_manager(
     config: Config,
@@ -454,6 +432,28 @@ def build_skill_catalog(config: Config) -> SkillCatalog:
     return catalog
 
 
+def build_subagent_catalog(config: Config) -> SubagentCatalog:
+    """按当前配置构造统一 subagent catalog.
+
+    Args:
+        config: 当前 runtime 配置.
+
+    Returns:
+        SubagentCatalog: 已经完成一次 reload 的 subagent catalog.
+    """
+
+    runtime_conf = config.get("runtime", {})
+    fs_conf = dict(runtime_conf.get("filesystem", {}))
+    subagent_catalog_dirs = resolve_subagent_catalog_dirs(
+        config,
+        fs_conf,
+        defaults=["./.agents/subagents", "~/.agents/subagents"],
+    )
+    catalog = SubagentCatalog(FileSystemSubagentPackageLoader(subagent_catalog_dirs))
+    catalog.reload()
+    return catalog
+
+
 def build_context_compactor(
     config: Config,
     *,
@@ -516,6 +516,6 @@ __all__ = [
     "build_retrieval_planner",
     "build_run_manager",
     "build_skill_catalog",
+    "build_subagent_catalog",
     "build_thread_manager",
-    "register_local_subagent_executors",
 ]

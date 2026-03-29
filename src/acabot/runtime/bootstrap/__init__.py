@@ -43,7 +43,7 @@ from ..plugin_manager import (
 )
 from ..control.profile_loader import AgentProfileRegistry, ProfileLoader, PromptLoader, ReloadablePromptLoader
 from ..router import RuntimeRouter
-from ..subagents import SubagentDelegationBroker, SubagentExecutorRegistry
+from ..subagents import SubagentDelegationBroker
 from ..subagents.execution import LocalSubagentExecutionService
 from ..tool_broker import ToolBroker
 from .builders import (
@@ -64,8 +64,8 @@ from .builders import (
     build_retrieval_planner,
     build_run_manager,
     build_skill_catalog,
+    build_subagent_catalog,
     build_thread_manager,
-    register_local_subagent_executors,
 )
 from .config import resolve_runtime_path
 from .components import RuntimeComponents
@@ -131,7 +131,7 @@ def build_runtime_components(
     plugin_manager=None,
     tool_broker=None,
     skill_catalog=None,
-    subagent_executor_registry=None,
+    subagent_catalog=None,
     subagent_delegator=None,
     long_term_memory_ingestor: LongTermMemoryIngestor | None = None,
     approval_resumer: ApprovalResumer | None = None,
@@ -149,7 +149,14 @@ def build_runtime_components(
         default_computer_policy=default_computer_policy,
     )
     profiles.update(filesystem_profiles)
-    prompt_loader = ReloadablePromptLoader(build_prompt_loader(config, profiles))
+    runtime_subagent_catalog = subagent_catalog or build_subagent_catalog(config)
+    prompt_loader = ReloadablePromptLoader(
+        build_prompt_loader(
+            config,
+            profiles,
+            subagent_catalog=runtime_subagent_catalog,
+        )
+    )
     default_agent_id = runtime_conf.get("default_agent_id", next(iter(profiles))) or next(iter(profiles))
 
     profile_registry = AgentProfileRegistry(
@@ -182,9 +189,8 @@ def build_runtime_components(
         renderer=StickyNoteRenderer(),
     )
     runtime_skill_catalog = skill_catalog or build_skill_catalog(config)
-    runtime_subagent_executor_registry = subagent_executor_registry or SubagentExecutorRegistry()
     runtime_subagent_delegator = subagent_delegator or SubagentDelegationBroker(
-        executor_registry=runtime_subagent_executor_registry,
+        catalog=runtime_subagent_catalog,
         default_agent_id=str(default_agent_id or ""),
     )
     runtime_context_compactor = context_compactor or build_context_compactor(
@@ -294,11 +300,12 @@ def build_runtime_components(
     )
     runtime_tool_broker = tool_broker or ToolBroker(
         skill_catalog=runtime_skill_catalog,
-        subagent_executor_registry=runtime_subagent_executor_registry,
+        subagent_catalog=runtime_subagent_catalog,
         default_agent_id=default_agent_id,
         backend_bridge=runtime_backend_bridge,
     )
     runtime_tool_broker.skill_catalog = runtime_skill_catalog
+    runtime_tool_broker.subagent_catalog = runtime_subagent_catalog
     runtime_tool_broker.backend_bridge = runtime_backend_bridge
     runtime_context_assembler = ContextAssembler()
     runtime_payload_json_writer = build_payload_json_writer(config)
@@ -324,7 +331,6 @@ def build_runtime_components(
         sticky_notes=runtime_sticky_notes,
         computer_runtime=runtime_computer_runtime,
         skill_catalog=runtime_skill_catalog,
-        subagent_delegator=runtime_subagent_delegator,
         model_target_catalog=runtime_model_registry_manager.target_catalog,
         builtin_plugins=builtin_plugins,
         plugins=configured_plugins,
@@ -336,7 +342,6 @@ def build_runtime_components(
     runtime_plugin_manager.sticky_notes = runtime_sticky_notes
     runtime_plugin_manager.computer_runtime = runtime_computer_runtime
     runtime_plugin_manager.skill_catalog = runtime_skill_catalog
-    runtime_plugin_manager.subagent_delegator = runtime_subagent_delegator
     runtime_plugin_manager.configure_builtin_plugins(builtin_plugins)
     runtime_plugin_manager.failed_plugin_import_paths = list(failed_plugin_import_paths)
     runtime_approval_resumer = approval_resumer or ToolApprovalResumer(
@@ -378,12 +383,9 @@ def build_runtime_components(
         pipeline=pipeline,
         profile_loader=profile_registry.load,
         model_registry_manager=runtime_model_registry_manager,
+        subagent_catalog=runtime_subagent_catalog,
     )
-    register_local_subagent_executors(
-        registry=runtime_subagent_executor_registry,
-        profiles=profiles,
-        service=runtime_subagent_execution_service,
-    )
+    runtime_subagent_delegator.execution_service = runtime_subagent_execution_service
     config_control_plane = RuntimeConfigControlPlane(
         config=config,
         router=runtime_router,
@@ -391,11 +393,10 @@ def build_runtime_components(
         prompt_loader=prompt_loader,
         model_registry_manager=runtime_model_registry_manager,
         skill_catalog=runtime_skill_catalog,
+        subagent_catalog=runtime_subagent_catalog,
         plugin_manager=runtime_plugin_manager,
-        subagent_executor_registry=runtime_subagent_executor_registry,
         tool_broker=runtime_tool_broker,
         subagent_delegator=runtime_subagent_delegator,
-        local_subagent_executor=runtime_subagent_execution_service.execute,
         builtin_plugin_factory=build_builtin_runtime_plugins,
     )
     app = RuntimeApp(
@@ -428,7 +429,7 @@ def build_runtime_components(
         profile_registry=profile_registry,
         plugin_manager=runtime_plugin_manager,
         skill_catalog=runtime_skill_catalog,
-        subagent_executor_registry=runtime_subagent_executor_registry,
+        subagent_catalog=runtime_subagent_catalog,
         tool_broker=runtime_tool_broker,
         model_registry_manager=runtime_model_registry_manager,
         computer_runtime=runtime_computer_runtime,
@@ -437,7 +438,6 @@ def build_runtime_components(
         log_buffer=log_buffer,
     )
     runtime_plugin_manager.attach_control_plane(control_plane)
-    runtime_plugin_manager.attach_subagent_delegator(runtime_subagent_delegator)
     runtime_plugin_manager.attach_computer_runtime(runtime_computer_runtime)
 
     return RuntimeComponents(
@@ -451,7 +451,7 @@ def build_runtime_components(
         sticky_notes_source=runtime_sticky_notes_source,
         sticky_notes=runtime_sticky_notes,
         skill_catalog=runtime_skill_catalog,
-        subagent_executor_registry=runtime_subagent_executor_registry,
+        subagent_catalog=runtime_subagent_catalog,
         subagent_delegator=runtime_subagent_delegator,
         subagent_execution_service=runtime_subagent_execution_service,
         memory_broker=runtime_memory_broker,

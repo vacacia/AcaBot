@@ -58,7 +58,7 @@ from ..skills import SkillPackageManifest
 from ..skills import SkillCatalog
 from ..storage.stores import ChannelEventStore, MessageStore
 from ..memory.file_backed.sticky_notes import StickyNoteRecord
-from ..subagents import RegisteredSubagentExecutor, SubagentExecutorRegistry
+from ..subagents import SubagentCatalog, SubagentPackageManifest
 from ..soul import SoulSource
 from ..memory.file_backed import StickyNoteFileStore
 from ..memory.sticky_note_entities import normalize_sticky_note_entity_kind
@@ -76,7 +76,7 @@ from .snapshots import (
     PluginReloadSnapshot,
     RuntimeStatusSnapshot,
     SkillSnapshot,
-    SubagentExecutorSnapshot,
+    SubagentSnapshot,
 )
 from .ui_catalog import build_ui_options
 from .log_buffer import InMemoryLogBuffer
@@ -109,7 +109,7 @@ class RuntimeControlPlane:
         profile_registry: AgentProfileRegistry | None = None,
         plugin_manager: RuntimePluginManager | None = None,
         skill_catalog: SkillCatalog | None = None,
-        subagent_executor_registry: SubagentExecutorRegistry | None = None,
+        subagent_catalog: SubagentCatalog | None = None,
         tool_broker: ToolBroker | None = None,
         model_registry_manager: FileSystemModelRegistryManager | None = None,
         computer_runtime: ComputerRuntime | None = None,
@@ -131,7 +131,7 @@ class RuntimeControlPlane:
             profile_registry: 可选的 profile registry, 用于校验 agent 是否存在.
             plugin_manager: 可选的 runtime plugin manager.
             skill_catalog: 可选的统一 skill catalog.
-            subagent_executor_registry: 可选的 subagent executor 注册表.
+            subagent_catalog: 可选的 subagent catalog.
             tool_broker: 可选的 tool broker, 用于给 WebUI 提供工具目录.
             model_registry_manager: 可选的模型注册表管理器.
             computer_runtime: 可选的 computer 基础设施入口.
@@ -150,7 +150,7 @@ class RuntimeControlPlane:
         self.profile_registry = profile_registry
         self.plugin_manager = plugin_manager
         self.skill_catalog = skill_catalog
-        self.subagent_executor_registry = subagent_executor_registry
+        self.subagent_catalog = subagent_catalog
         self.tool_broker = tool_broker
         self.model_registry_manager = model_registry_manager
         self.computer_runtime = computer_runtime
@@ -281,6 +281,16 @@ class RuntimeControlPlane:
             raise RuntimeError("config control plane unavailable")
         return await self.config_control_plane.upsert_gateway_config(payload)
 
+    async def get_filesystem_scan_config(self) -> dict[str, object]:
+        if self.config_control_plane is None:
+            return {}
+        return self.config_control_plane.get_filesystem_scan_config()
+
+    async def upsert_filesystem_scan_config(self, payload: dict[str, object]) -> dict[str, object]:
+        if self.config_control_plane is None:
+            raise RuntimeError("config control plane unavailable")
+        return await self.config_control_plane.upsert_filesystem_scan_config(payload)
+
     async def get_long_term_memory_config(self) -> dict[str, object]:
         if self.config_control_plane is None:
             return {}
@@ -381,18 +391,27 @@ class RuntimeControlPlane:
             for item in self.skill_catalog.visible_skills(profile)
         ]
 
-    async def list_subagent_executors(self) -> list[SubagentExecutorSnapshot]:
-        """列出当前已注册的 subagent executors.
+    async def list_subagents(self) -> list[SubagentSnapshot]:
+        """列出当前 catalog subagents.
 
         Returns:
-            SubagentExecutorSnapshot 列表.
+            SubagentSnapshot 列表.
         """
 
-        if self.subagent_executor_registry is None:
+        if self.subagent_catalog is None:
             return []
+        effective_ids: dict[str, str] = {}
+        for item in self.subagent_catalog.list_all():
+            winner = self.subagent_catalog.get(item.subagent_name)
+            if winner is None:
+                continue
+            effective_ids[item.subagent_name] = winner.subagent_id
         return [
-            self._to_subagent_executor_snapshot(item)
-            for item in self.subagent_executor_registry.list_all()
+            self._to_subagent_snapshot(
+                item,
+                effective=effective_ids.get(item.subagent_name) == item.subagent_id,
+            )
+            for item in self.subagent_catalog.list_all()
         ]
 
     async def list_available_tools(self) -> list[dict[str, object]]:
@@ -798,7 +817,7 @@ class RuntimeControlPlane:
             default_agent_id = str(profiles[0].get("agent_id", "") or "")
         bot_profile = next((item for item in profiles if item.get("agent_id") == default_agent_id), None)
         skills = await self.list_skills()
-        executors = await self.list_subagent_executors()
+        subagents = await self.list_subagents()
         providers = await self.list_model_providers()
         presets = await self.list_model_presets()
         bindings = await self.list_model_bindings()
@@ -824,7 +843,7 @@ class RuntimeControlPlane:
             ],
             "tools": await self.list_available_tools(),
             "skills": [asdict(item) for item in skills],
-            "subagent_executors": [asdict(item) for item in executors],
+            "subagents": [asdict(item) for item in subagents],
             "model_providers": [
                 {
                     "provider_id": item.provider_id,
@@ -1154,20 +1173,30 @@ class RuntimeControlPlane:
         )
 
     @staticmethod
-    def _to_subagent_executor_snapshot(item: RegisteredSubagentExecutor) -> SubagentExecutorSnapshot:
-        """把 RegisteredSubagentExecutor 转成 SubagentExecutorSnapshot.
+    def _to_subagent_snapshot(
+        item: SubagentPackageManifest,
+        *,
+        effective: bool,
+    ) -> SubagentSnapshot:
+        """把 SubagentPackageManifest 转成 SubagentSnapshot.
 
         Args:
-            item: 当前注册的 subagent executor.
+            item: 当前 catalog subagent manifest.
+            effective: 当前 manifest 是否为同名组里的生效版本.
 
         Returns:
-            对应的 SubagentExecutorSnapshot.
+            对应的 SubagentSnapshot.
         """
 
-        return SubagentExecutorSnapshot(
-            agent_id=item.agent_id,
-            source=item.source,
-            metadata=dict(item.metadata),
+        return SubagentSnapshot(
+            subagent_id=item.subagent_id,
+            subagent_name=item.subagent_name,
+            description=item.description,
+            source=item.scope,
+            host_subagent_file_path=item.host_subagent_file_path,
+            tools=list(item.tools),
+            model_target=item.model_target or "",
+            effective=effective,
         )
 
 

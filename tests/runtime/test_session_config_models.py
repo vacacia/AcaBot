@@ -93,3 +93,12 @@ def test_decision_objects_keep_reason_and_case_identity() -> None:
     assert routing.profile_id == "aca.qq.group.default"
     assert computer.roots["skills"]["visible"] is True
     assert admission.source_case_id == "reply_messages"
+
+
+def test_computer_policy_decision_keeps_visible_subagents() -> None:
+    decision = ComputerPolicyDecision(
+        actor_kind="frontstage_agent",
+        visible_subagents=["excel-worker", "search-worker"],
+    )
+
+    assert decision.visible_subagents == ["excel-worker", "search-worker"]

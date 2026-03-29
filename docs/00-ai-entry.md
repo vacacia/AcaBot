@@ -17,6 +17,7 @@
 4. 一组 todo/task 视为一次 commit, 而不是每一个 todo/task 都是一个commit
 5. 在完成了全部 todo/task 后, 先不要 commit, 立即启动子代理 (首次使用 gpt 5.4 mini, 直到 gpt 5.4 mini 找不出问题给出通过后, 再用一次 gpt5.4 来 review) 用 superpowers review 的 skill 去 review 你这次的代码 和 测试文件.
   - 不要只完成了文件里的一个 todo/task 就去 review, 浪费时间
+  - 不要使用 gpt-5.1 ~ gpt-5.3的模型, 没有 gpt5.4 mini 和 gpt5.4 聪明
 6. review 多次后确认无误, 更新文档. 然后给出 commit 信息, 你做的重大决策, 修改后变化的流程...全部解释清楚, 不准 commit 
 7. 发现难以决策的点就停下来, 说清楚现状, 及时讨论
 8. 清晰的代码目录结构, 相关的代码文件放在一个文件夹下面; 明确的代码文件夹命名, 不要用含糊不清的文件夹名; 方法名也含义清晰, 尽量长, 不要用抽象的命名
@@ -318,6 +319,10 @@
 
 
 # 项目组件理解⭐
+## run
+把一个 conversation(也就是一个群聊/私聊)里面的每一次调用都定义成一次 `run`，每次取上下文的 snapshot 调起 LLM(也就是上下文是 system prompt + 消息记录 snapshot + 新来的消息 + 附加的内容如记忆), 每次只把 `run` 的结果附加进公共的 working memory
+
+这个过程中所有的 工具调用 子代理 skill 各种脏内容都不会出现在上下文, 只附加 LLM 的最终回复, working memory(上下文的聊天消息部分)始终是干净的, 实现了 bot 对消息的并行处理, 又避免了上下文污染
 
 ## tool
 
@@ -331,6 +336,7 @@
 - plugin 是 runtime 暴露给外部的可选扩展包, 是外部的插件, 和系统本身无关. plugin 的典型应用是:链接解析工具(hook阻断llm回复, 直接解析视频并发送)/日报分析插件(定时查数据库分析聊天记录)/查询天气插件(提供一个外部的tool, 也是tool). 和系统无关
 - plugin 的代码把额外能力(hook)接进 runtime, 或提供给 llm 相应的 tool, 它描述的是“这包扩展怎么接进系统、怎么参与生命周期”
 - plugin 可以提供 tool, 但 tool 不等于 plugin。tool 是给 LLM 调用的接口; plugin 只是这些 tool 可能来自的一个来源。
+- plugin 不注册 subagent。subagent 的定义真源是文件系统 `SUBAGENT.md` catalog，plugin 和 subagent 的唯一交点是 tool。
 - builtin runtime service、core tool、主线控制组件要单独表达, 不要因为它们内部也有适配层或注册动作, 就顺手把它们都叫成 plugin。
 - 判断一个东西是不是 plugin, 看的是它是不是可选扩展边界: 卸掉它后, 系统应该只是少一项扩展能力, 不该把 `read / write / edit / bash` 这类基础能力一起卸掉。
 
@@ -509,6 +515,8 @@ event / message facts 负责记录真实发生过什么和真实发送过什么,
    - 记忆 / retrieval / compaction: `05-memory-and-context.md`
    - 工具 / builtin tool / plugin / skill: `19-tool.md`
    - subagent: `20-subagent.md`
+   - run 机制 / 为什么不做 continuation: `21-run-mechanism.md`、`25-why-not-continuation.md`
+   - 私聊 foreground worker: `26-foreground-worker.md`
    - 平台接入 / NapCat / 事件翻译: `07-gateway-and-channel-layer.md`
    - WebUI / 控制面: `08-webui-and-control-plane.md`
    - workspace / computer / 附件 / shell session: `12-computer.md`
@@ -542,7 +550,7 @@ event / message facts 负责记录真实发生过什么和真实发送过什么,
 - `MessageStore` 记录真正送达的消息事实
 - `MemoryStore` 存长期记忆
 - `ToolBroker` 负责工具可见性、审批、前台到后台 bridge tool 和执行
-- `PluginManager` 给主线插 hook / tool / executor
+- `PluginManager` 给主线插 hook / tool / model slot
 - `ControlPlane + HTTP API + WebUI` 负责本地运维和配置改写
 - `runtime/backend/` 现在已经是一个真实接线的子域, 不只是设计草图：里面已经有 canonical session binding、configured backend session service、真实 `pi --mode rpc` adapter、管理员后台模式和前台 `ask_backend` bridge
 
@@ -701,7 +709,14 @@ event / message facts 负责记录真实发生过什么和真实发送过什么,
 - `runtime/plugin_manager.py`
 - `runtime/plugins/`
 - `runtime/skills/catalog.py`
-- `runtime/subagent_*`
+- `runtime/subagents/`
+
+当前正式口径:
+
+- subagent 的定义真源是文件系统 catalog，每个 subagent 只认自己的 `SUBAGENT.md`
+- session 只负责 `visible_subagents`，真正的暴露和执行严格看当前 run allowlist
+- plugin 不注册 subagent；plugin 和 subagent 的唯一交点是 tool 分配
+- subagent child run 默认不递归，也不支持 approval resume
 
 通常要同步:
 

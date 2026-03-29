@@ -1,20 +1,23 @@
 """runtime.subagents 子包."""
 
-from .broker import (
-    RegisteredSubagentExecutor,
-    SubagentDelegationBroker,
-    SubagentExecutor,
-    SubagentExecutorRegistration,
-    SubagentExecutorRegistry,
-)
+from .broker import SubagentDelegationBroker
+from .catalog import SubagentCatalog
 from .contracts import SubagentDelegationRequest, SubagentDelegationResult
+from .loader import FileSystemSubagentPackageLoader, SubagentDiscoveryRoot
+from .package import (
+    SubagentPackageDocument,
+    SubagentPackageFormatError,
+    SubagentPackageManifest,
+)
 
 __all__ = [
-    "RegisteredSubagentExecutor",
+    "FileSystemSubagentPackageLoader",
+    "SubagentCatalog",
     "SubagentDelegationBroker",
     "SubagentDelegationRequest",
     "SubagentDelegationResult",
-    "SubagentExecutor",
-    "SubagentExecutorRegistration",
-    "SubagentExecutorRegistry",
+    "SubagentDiscoveryRoot",
+    "SubagentPackageDocument",
+    "SubagentPackageFormatError",
+    "SubagentPackageManifest",
 ]

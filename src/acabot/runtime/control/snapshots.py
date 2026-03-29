@@ -103,12 +103,17 @@ class AgentSkillSnapshot:
 
 
 @dataclass(slots=True)
-class SubagentExecutorSnapshot:
-    """当前已注册 subagent executor 的轻量快照."""
+class SubagentSnapshot:
+    """当前 catalog subagent 的轻量快照."""
 
-    agent_id: str
+    subagent_id: str
+    subagent_name: str
+    description: str = ""
     source: str = ""
-    metadata: dict[str, object] = field(default_factory=dict)
+    host_subagent_file_path: str = ""
+    tools: list[str] = field(default_factory=list)
+    model_target: str = ""
+    effective: bool = False
 
 
 @dataclass(slots=True)

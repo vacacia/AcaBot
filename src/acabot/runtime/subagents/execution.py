@@ -33,11 +33,13 @@ from acabot.types import EventSource, MsgSegment, StandardEvent
 
 from ..model.model_resolution import resolve_model_requests_for_profile
 from ..model.model_registry import FileSystemModelRegistryManager
-from ..contracts import ComputerPolicyDecision, RouteDecision, RunContext, RunRecord, RunStep
+from ..contracts import AgentProfile, ComputerPolicyDecision, RouteDecision, RunContext, RunRecord, RunStep
 from ..pipeline import ThreadPipeline
 from ..storage.runs import RunManager
 from ..storage.threads import ThreadManager
+from .catalog import SubagentCatalog
 from .contracts import SubagentDelegationRequest, SubagentDelegationResult
+from .package import SubagentPackageDocument
 
 logger = logging.getLogger("acabot.runtime.subagents.execution")
 
@@ -61,6 +63,7 @@ class LocalSubagentExecutionService:
         pipeline: ThreadPipeline,
         profile_loader,
         model_registry_manager: FileSystemModelRegistryManager | None = None,
+        subagent_catalog: SubagentCatalog | None = None,
     ) -> None:
         """初始化本地 child run delegation 服务.
         """
@@ -70,6 +73,7 @@ class LocalSubagentExecutionService:
         self.pipeline = pipeline
         self.profile_loader = profile_loader
         self.model_registry_manager = model_registry_manager
+        self.subagent_catalog = subagent_catalog
     # region execute
     async def execute(self, request: SubagentDelegationRequest) -> SubagentDelegationResult:
         """执行一次本地 child run delegation.
@@ -81,10 +85,18 @@ class LocalSubagentExecutionService:
             一份标准化的 SubagentDelegationResult.
         """
 
+        document = self._load_subagent_document(request)
+        if document is None:
+            return SubagentDelegationResult(
+                ok=False,
+                error=f"subagent package not found: {request.delegate_agent_id}",
+                metadata={"delegate_agent_id": request.delegate_agent_id},
+            )
+
         # 伪造一个内部事件
         event = self._build_event(request)
-        # 
-        decision = self._build_decision(request)
+        profile = self._build_profile(request, document)
+        decision = self._build_decision(request, profile)
         thread = await self.thread_manager.get_or_create(
             thread_id=decision.thread_id,
             channel_scope=decision.channel_scope,
@@ -93,8 +105,6 @@ class LocalSubagentExecutionService:
         )
         thread.metadata.setdefault("parent_run_id", request.parent_run_id)
         thread.metadata.setdefault("delegate_agent_id", request.delegate_agent_id)
-
-        profile = self.profile_loader(decision)
         model_request, model_snapshot, summary_model_request = resolve_model_requests_for_profile(
             self.model_registry_manager,
             decision=decision,
@@ -124,6 +134,7 @@ class LocalSubagentExecutionService:
                     "self": {"visible": False},
                 },
                 visible_skills=list(profile.skills),
+                visible_subagents=[],
             ),
             metadata={
                 "delivery_mode": "internal",
@@ -182,11 +193,16 @@ class LocalSubagentExecutionService:
             },
         )
     # region _build_decision
-    def _build_decision(self, request: SubagentDelegationRequest) -> RouteDecision:
+    def _build_decision(
+        self,
+        request: SubagentDelegationRequest,
+        profile: AgentProfile,
+    ) -> RouteDecision:
         """构造 child run 使用的 RouteDecision.
 
         Args:
             request: 标准化后的 delegation request.
+            profile: 当前 subagent 使用的 synthetic profile.
 
         Returns:
             一份绑定到 delegate agent 的 RouteDecision.
@@ -195,7 +211,7 @@ class LocalSubagentExecutionService:
         return RouteDecision(
             thread_id=f"subagent:{request.parent_run_id}:{request.delegate_agent_id}:{uuid.uuid4().hex[:8]}",
             actor_id=request.actor_id,
-            agent_id=request.delegate_agent_id,
+            agent_id=profile.agent_id,
             channel_scope=request.channel_scope,
             metadata={
                 "run_kind": "subagent",
@@ -206,6 +222,35 @@ class LocalSubagentExecutionService:
                 "parent_agent_id": request.parent_agent_id,
                 "delegate_agent_id": request.delegate_agent_id,
             },
+        )
+
+    def _load_subagent_document(
+        self,
+        request: SubagentDelegationRequest,
+    ) -> SubagentPackageDocument | None:
+        """按当前 request 读取 subagent 文档."""
+
+        if self.subagent_catalog is None:
+            return None
+        try:
+            return self.subagent_catalog.read(request.delegate_agent_id)
+        except KeyError:
+            return None
+
+    @staticmethod
+    def _build_profile(
+        request: SubagentDelegationRequest,
+        document: SubagentPackageDocument,
+    ) -> AgentProfile:
+        """从 subagent 文档构造 synthetic child profile."""
+
+        resolved_model_target = document.manifest.model_target or f"agent:{request.parent_agent_id}"
+        return AgentProfile(
+            agent_id=f"subagent:{document.manifest.subagent_name}",
+            name=document.manifest.subagent_name,
+            prompt_ref=f"subagent/{document.manifest.subagent_name}",
+            enabled_tools=list(document.manifest.tools),
+            config={"model_target": resolved_model_target},
         )
 
     # region _build_event_source

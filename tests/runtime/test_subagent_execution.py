@@ -1,16 +1,22 @@
+from pathlib import Path
+
 from acabot.config import Config
 from acabot.runtime import (
     AgentProfile,
     AgentRuntimeResult,
-    build_agent_model_targets,
     FileSystemModelRegistryManager,
+    InMemoryToolAudit,
     ModelBinding,
     ModelPreset,
     ModelProvider,
     OpenAICompatibleProviderConfig,
     RouteDecision,
+    ToolBroker,
+    ToolPolicyDecision,
+    build_agent_model_targets,
     build_runtime_components,
 )
+from acabot.agent import ToolSpec
 from acabot.runtime.tool_broker import ToolExecutionContext
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
@@ -19,9 +25,38 @@ from .test_outbox import FakeGateway
 
 
 def _skills_dir() -> str:
-    from pathlib import Path
-
     return str(Path(__file__).resolve().parent.parent / "fixtures" / "skills")
+
+
+def _write_subagent(
+    tmp_path: Path,
+    *,
+    name: str,
+    description: str,
+    tools: list[str],
+    prompt: str,
+    model_target: str | None = None,
+) -> None:
+    subagent_dir = tmp_path / ".agents" / "subagents" / name
+    subagent_dir.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "---",
+        f"name: {name}",
+        f"description: {description}",
+        "tools:",
+    ]
+    for tool_name in tools:
+        lines.append(f"  - {tool_name}")
+    if model_target is not None:
+        lines.append(f"model_target: {model_target}")
+    lines.extend(
+        [
+            "---",
+            prompt,
+            "",
+        ]
+    )
+    (subagent_dir / "SUBAGENT.md").write_text("\n".join(lines), encoding="utf-8")
 
 
 def _event(*, event_id: str = "evt:parent") -> StandardEvent:
@@ -56,13 +91,52 @@ def _tool_ctx(*, run_id: str, profile) -> ToolExecutionContext:
             group_id=None,
         ),
         profile=profile,
+        visible_subagents=["excel-worker"],
         metadata={
             "channel_scope": "qq:user:10001",
             "event_id": "evt:parent",
             "event_timestamp": 123,
             "platform": "qq",
             "message_type": "private",
+            "visible_tools": ["delegate_subagent"],
+            "visible_subagents": ["excel-worker"],
         },
+    )
+
+
+def _runtime_config(tmp_path: Path) -> Config:
+    return Config(
+        {
+            "agent": {
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "default_agent_id": "aca",
+                "filesystem": {
+                    "enabled": True,
+                    "base_dir": str(tmp_path),
+                    "skill_catalog_dirs": [_skills_dir()],
+                },
+                "profiles": {
+                    "aca": {
+                        "name": "Aca",
+                        "prompt_ref": "prompt/aca",
+                        "skills": ["sample_configured_skill"],
+                    },
+                    "worker": {
+                        "name": "Worker",
+                        "prompt_ref": "prompt/worker",
+                    },
+                },
+                "prompts": {
+                    "prompt/aca": "You are Aca.",
+                    "prompt/worker": "You are Worker.",
+                },
+                "plugins": [
+                    "tests.runtime.runtime_plugin_samples:SampleConfiguredRuntimePlugin",
+                ],
+            },
+        }
     )
 
 
@@ -71,7 +145,7 @@ async def _model_registry_manager(
     *,
     agent_models: dict[str, str] | None = None,
 ) -> FileSystemModelRegistryManager:
-    models = dict(agent_models or {"excel_worker": "gpt-worker"})
+    models = dict(agent_models or {"aca": "gpt-parent", "worker": "gpt-worker"})
     manager = FileSystemModelRegistryManager(
         providers_dir=tmp_path / "providers",
         presets_dir=tmp_path / "presets",
@@ -121,267 +195,27 @@ async def _model_registry_manager(
     return manager
 
 
-async def test_delegate_subagent_uses_real_local_child_run(tmp_path) -> None:
-    gateway = FakeGateway()
-    config = Config(
-        {
-            "agent": {
-                "system_prompt": "You are Aca.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "filesystem": {
-                    "enabled": True,
-                    "skill_catalog_dirs": [_skills_dir()],
-                },
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                        "skills": ["sample_configured_skill"],
-                    },
-                    "excel_worker": {
-                        "name": "Excel Worker",
-                        "prompt_ref": "prompt/excel_worker",
-                    },
-                },
-                "prompts": {
-                    "prompt/aca": "You are Aca.",
-                    "prompt/excel_worker": "You are Excel Worker.",
-                },
-                "plugins": [
-                    "tests.runtime.runtime_plugin_samples:SampleConfiguredRuntimePlugin",
-                ],
-            },
-        }
-    )
-    components = build_runtime_components(
-        config,
-        gateway=gateway,
-        agent=FakeAgent(FakeAgentResponse(text="worker summary", model_used="runtime-model")),
-        model_registry_manager=await _model_registry_manager(
-            tmp_path,
-            agent_models={
-                "aca": "runtime-model",
-                "excel_worker": "runtime-model",
-            },
-        ),
-    )
-    await components.plugin_manager.ensure_started()
-
-    parent_decision = RouteDecision(
-        thread_id="qq:user:10001",
-        actor_id="qq:user:10001",
-        agent_id="aca",
-        channel_scope="qq:user:10001",
-    )
-    parent_run = await components.run_manager.open(
-        event=_event(),
-        decision=parent_decision,
-    )
-    profile = components.profile_loader.profiles["aca"]
-
-    result = await components.tool_broker.execute(
-        tool_name="delegate_subagent",
-        arguments={
-            "delegate_agent_id": "excel_worker",
-            "task": "整理 Excel 文件并总结",
-        },
-        ctx=_tool_ctx(run_id=parent_run.run_id, profile=profile),
-    )
-
-    assert result.raw["ok"] is True
-    child_run_id = str(result.raw["delegated_run_id"])
-    assert child_run_id.startswith("run:")
-    assert result.raw["summary"] == "worker summary"
-    assert result.metadata["delegate_agent_id"] == "excel_worker"
-    assert gateway.sent == []
-
-    child_run = await components.run_manager.get(child_run_id)
-    assert child_run is not None
-    assert child_run.agent_id == "excel_worker"
-    assert child_run.status == "completed"
-    assert child_run.metadata["run_kind"] == "subagent"
-    assert child_run.metadata["parent_run_id"] == parent_run.run_id
-
-    child_thread = await components.thread_manager.get(child_run.thread_id)
-    assert child_thread is not None
-    assert child_thread.thread_kind == "subagent"
-    assert child_thread.metadata["parent_run_id"] == parent_run.run_id
-    assert child_thread.metadata["delegate_agent_id"] == "excel_worker"
-    assert child_thread.working_messages[-1]["role"] == "assistant"
-    assert child_thread.working_messages[-1]["content"] == "worker summary"
-
-    parent_steps = components.run_manager._steps[parent_run.run_id]  # type: ignore[attr-defined]
-    assert len(parent_steps) == 2
-    assert parent_steps[0].status == "started"
-    assert parent_steps[1].status == "completed"
-    assert parent_steps[1].payload["child_run_id"] == child_run_id
-    assert parent_steps[1].payload["result_summary"] == "worker summary"
-
-
-async def test_delegate_subagent_builds_subagent_computer_policy() -> None:
-    gateway = FakeGateway()
-    config = Config(
-        {
-            "agent": {
-                "system_prompt": "You are Aca.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                    },
-                    "excel_worker": {
-                        "name": "Excel Worker",
-                        "prompt_ref": "prompt/excel_worker",
-                    },
-                },
-                "prompts": {
-                    "prompt/aca": "You are Aca.",
-                    "prompt/excel_worker": "You are Excel Worker.",
-                },
-            },
-        }
-    )
-    components = build_runtime_components(
-        config,
-        gateway=gateway,
-        agent=FakeAgent(FakeAgentResponse(text="worker summary", model_used="runtime-model")),
-    )
-    await components.plugin_manager.ensure_started()
-
-    captured = {}
-
-    async def fake_execute(ctx, deliver_actions: bool = True):
-        captured["ctx"] = ctx
-        _ = deliver_actions
-        ctx.response = AgentRuntimeResult(status="completed", text="worker summary")
-        await components.run_manager.mark_completed(ctx.run.run_id)
-
-    components.pipeline.execute = fake_execute  # type: ignore[method-assign]
-
-    parent_decision = RouteDecision(
-        thread_id="qq:user:10001",
-        actor_id="qq:user:10001",
-        agent_id="aca",
-        channel_scope="qq:user:10001",
-    )
-    parent_run = await components.run_manager.open(
-        event=_event(),
-        decision=parent_decision,
-    )
-    profile = components.profile_loader.profiles["aca"]
-
-    result = await components.tool_broker.execute(
-        tool_name="delegate_subagent",
-        arguments={
-            "delegate_agent_id": "excel_worker",
-            "task": "整理 Excel 文件并总结",
-        },
-        ctx=_tool_ctx(run_id=parent_run.run_id, profile=profile),
-    )
-
-    assert result.raw["ok"] is True
-    child_ctx = captured["ctx"]
-    assert child_ctx.event_facts is None
-    assert child_ctx.surface_resolution is None
-    assert child_ctx.context_decision is None
-    assert child_ctx.extraction_decision is None
-    assert child_ctx.computer_policy_decision is not None
-    assert child_ctx.computer_policy_decision.actor_kind == "subagent"
-    assert child_ctx.computer_policy_decision.roots["self"]["visible"] is False
-
-
-async def test_bootstrap_registers_local_profile_subagent_executors() -> None:
-    config = Config(
-        {
-            "agent": {
-                "system_prompt": "You are Aca.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                    },
-                    "excel_worker": {
-                        "name": "Excel Worker",
-                        "prompt_ref": "prompt/excel_worker",
-                    },
-                },
-                "prompts": {
-                    "prompt/aca": "You are Aca.",
-                    "prompt/excel_worker": "You are Excel Worker.",
-                },
-            },
-        }
-    )
-    components = build_runtime_components(
-        config,
-        gateway=FakeGateway(),
-        agent=FakeAgent(FakeAgentResponse(text="ok")),
-    )
-
-    registered = components.subagent_executor_registry.list_all()
-
-    assert [item.agent_id for item in registered] == ["aca", "excel_worker"]
-    assert all(item.source == "runtime:local_profile" for item in registered)
-    assert registered[1].metadata["kind"] == "local_profile"
-
-
-async def test_delegate_subagent_child_run_uses_delegate_agent_model_binding(
-    tmp_path,
-) -> None:
-    gateway = FakeGateway()
-    agent = FakeAgent(FakeAgentResponse(text="worker summary", model_used="gpt-worker"))
-    model_registry_manager = await _model_registry_manager(
+async def test_delegate_subagent_uses_subagent_prompt_body(tmp_path) -> None:
+    _write_subagent(
         tmp_path,
-        agent_models={
-            "aca": "gpt-worker",
-            "excel_worker": "gpt-worker",
-        },
+        name="excel-worker",
+        description="Excel worker",
+        tools=["sample_configured_tool"],
+        prompt="You are Excel Worker.",
     )
-    config = Config(
-        {
-            "agent": {
-                "system_prompt": "You are Aca.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "filesystem": {
-                    "enabled": True,
-                    "skill_catalog_dirs": [_skills_dir()],
-                },
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                        "skills": ["sample_configured_skill"],
-                    },
-                    "excel_worker": {
-                        "name": "Excel Worker",
-                        "prompt_ref": "prompt/excel_worker",
-                    },
-                },
-                "prompts": {
-                    "prompt/aca": "You are Aca.",
-                    "prompt/excel_worker": "You are Excel Worker.",
-                },
-                "plugins": [
-                    "tests.runtime.runtime_plugin_samples:SampleConfiguredRuntimePlugin",
-                ],
-            },
-        }
+    prompts_dir = tmp_path / "prompts" / "subagent"
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+    (prompts_dir / "excel-worker.md").write_text(
+        "Legacy prompt file should never win.",
+        encoding="utf-8",
     )
+    gateway = FakeGateway()
+    agent = FakeAgent(FakeAgentResponse(text="worker summary", model_used="gpt-parent"))
     components = build_runtime_components(
-        config,
+        _runtime_config(tmp_path),
         gateway=gateway,
         agent=agent,
-        model_registry_manager=model_registry_manager,
+        model_registry_manager=await _model_registry_manager(tmp_path),
     )
     await components.plugin_manager.ensure_started()
 
@@ -399,7 +233,57 @@ async def test_delegate_subagent_child_run_uses_delegate_agent_model_binding(
     result = await components.tool_broker.execute(
         tool_name="delegate_subagent",
         arguments={
-            "delegate_agent_id": "excel_worker",
+            "delegate_agent_id": "excel-worker",
+            "task": "整理 Excel 文件并总结",
+        },
+        ctx=_tool_ctx(run_id=parent_run.run_id, profile=profile),
+    )
+
+    assert result.raw["ok"] is True
+    assert "You are Excel Worker." in agent.calls[-1]["system_prompt"]
+    assert "Legacy prompt file should never win." not in agent.calls[-1]["system_prompt"]
+    assert agent.calls[-1]["model"] == "gpt-parent"
+    child_run = await components.run_manager.get(str(result.raw["delegated_run_id"]))
+    assert child_run is not None
+    assert child_run.agent_id == "subagent:excel-worker"
+    assert child_run.metadata["delegate_agent_id"] == "excel-worker"
+
+
+async def test_delegate_subagent_uses_manifest_model_target_override(
+    tmp_path,
+) -> None:
+    _write_subagent(
+        tmp_path,
+        name="excel-worker",
+        description="Excel worker",
+        tools=["sample_configured_tool"],
+        prompt="You are Excel Worker.",
+        model_target="agent:worker",
+    )
+    agent = FakeAgent(FakeAgentResponse(text="worker summary", model_used="gpt-worker"))
+    components = build_runtime_components(
+        _runtime_config(tmp_path),
+        gateway=FakeGateway(),
+        agent=agent,
+        model_registry_manager=await _model_registry_manager(tmp_path),
+    )
+    await components.plugin_manager.ensure_started()
+
+    parent_run = await components.run_manager.open(
+        event=_event(),
+        decision=RouteDecision(
+            thread_id="qq:user:10001",
+            actor_id="qq:user:10001",
+            agent_id="aca",
+            channel_scope="qq:user:10001",
+        ),
+    )
+    profile = components.profile_loader.profiles["aca"]
+
+    result = await components.tool_broker.execute(
+        tool_name="delegate_subagent",
+        arguments={
+            "delegate_agent_id": "excel-worker",
             "task": "整理 Excel 文件并总结",
         },
         ctx=_tool_ctx(run_id=parent_run.run_id, profile=profile),
@@ -408,9 +292,235 @@ async def test_delegate_subagent_child_run_uses_delegate_agent_model_binding(
     child_run = await components.run_manager.get(str(result.raw["delegated_run_id"]))
 
     assert child_run is not None
-    assert child_run.metadata["model_snapshot"]["binding_id"] == "binding:excel_worker"
+    assert child_run.metadata["model_snapshot"]["binding_id"] == "binding:worker"
     assert child_run.metadata["model_snapshot"]["provider_id"] == "openai-main"
-    assert child_run.metadata["model_snapshot"]["preset_id"] == "excel_worker-main"
+    assert child_run.metadata["model_snapshot"]["preset_id"] == "worker-main"
     assert agent.calls[-1]["model"] == "gpt-worker"
     assert agent.calls[-1]["request_options"]["api_base"] == "https://example.invalid/v1"
     assert agent.calls[-1]["request_options"]["provider_kind"] == "openai_compatible"
+
+
+async def test_delegate_subagent_builds_subagent_computer_policy(tmp_path) -> None:
+    _write_subagent(
+        tmp_path,
+        name="excel-worker",
+        description="Excel worker",
+        tools=["sample_configured_tool"],
+        prompt="You are Excel Worker.",
+    )
+    components = build_runtime_components(
+        _runtime_config(tmp_path),
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="worker summary", model_used="gpt-parent")),
+    )
+    await components.plugin_manager.ensure_started()
+
+    captured = {}
+
+    async def fake_execute(ctx, deliver_actions: bool = True):
+        captured["ctx"] = ctx
+        _ = deliver_actions
+        ctx.response = AgentRuntimeResult(status="completed", text="worker summary")
+        await components.run_manager.mark_completed(ctx.run.run_id)
+
+    components.pipeline.execute = fake_execute  # type: ignore[method-assign]
+
+    parent_run = await components.run_manager.open(
+        event=_event(),
+        decision=RouteDecision(
+            thread_id="qq:user:10001",
+            actor_id="qq:user:10001",
+            agent_id="aca",
+            channel_scope="qq:user:10001",
+        ),
+    )
+    profile = components.profile_loader.profiles["aca"]
+
+    result = await components.tool_broker.execute(
+        tool_name="delegate_subagent",
+        arguments={
+            "delegate_agent_id": "excel-worker",
+            "task": "整理 Excel 文件并总结",
+        },
+        ctx=_tool_ctx(run_id=parent_run.run_id, profile=profile),
+    )
+
+    assert result.raw["ok"] is True
+    child_ctx = captured["ctx"]
+    assert child_ctx.profile.agent_id == "subagent:excel-worker"
+    assert child_ctx.profile.prompt_ref == "subagent/excel-worker"
+    assert child_ctx.profile.enabled_tools == ["sample_configured_tool"]
+    assert child_ctx.computer_policy_decision is not None
+    assert child_ctx.computer_policy_decision.actor_kind == "subagent"
+    assert child_ctx.computer_policy_decision.roots["self"]["visible"] is False
+
+
+async def test_subagent_can_use_plugin_tool_when_subagent_definition_enables_it(
+    tmp_path: Path,
+) -> None:
+    class PluginToolCallingAgent:
+        def __init__(self) -> None:
+            self.tool_results = []
+
+        async def run(
+            self,
+            system_prompt: str,
+            messages,
+            model: str | None = None,
+            *,
+            request_options=None,
+            max_tool_rounds=None,
+            tools=None,
+            tool_executor=None,
+        ):
+            _ = system_prompt, messages, model, request_options, max_tool_rounds
+            assert tools is not None
+            assert tool_executor is not None
+            execution = await tool_executor(
+                "sample_configured_tool",
+                {"text": "plugin says hi"},
+            )
+            self.tool_results.append(execution)
+            return FakeAgentResponse(text=str(execution.raw["echo"]), model_used=str(model or ""))
+
+    _write_subagent(
+        tmp_path,
+        name="excel-worker",
+        description="Excel worker",
+        tools=["sample_configured_tool"],
+        prompt="You are Excel Worker.",
+    )
+    agent = PluginToolCallingAgent()
+    components = build_runtime_components(
+        _runtime_config(tmp_path),
+        gateway=FakeGateway(),
+        agent=agent,
+        model_registry_manager=await _model_registry_manager(tmp_path),
+    )
+    await components.plugin_manager.ensure_started()
+
+    parent_run = await components.run_manager.open(
+        event=_event(),
+        decision=RouteDecision(
+            thread_id="qq:user:10001",
+            actor_id="qq:user:10001",
+            agent_id="aca",
+            channel_scope="qq:user:10001",
+        ),
+    )
+    profile = components.profile_loader.profiles["aca"]
+
+    result = await components.tool_broker.execute(
+        tool_name="delegate_subagent",
+        arguments={
+            "delegate_agent_id": "excel-worker",
+            "task": "调用 plugin tool",
+        },
+        ctx=_tool_ctx(run_id=parent_run.run_id, profile=profile),
+    )
+
+    assert result.raw["ok"] is True
+    assert result.raw["summary"] == "plugin says hi"
+    assert agent.tool_results[0].raw["echo"] == "plugin says hi"
+
+
+async def test_subagent_child_run_cannot_enter_waiting_approval(tmp_path: Path) -> None:
+    class ApprovalPolicy:
+        async def allow(self, *, spec, arguments, ctx) -> ToolPolicyDecision:
+            _ = arguments, ctx
+            if spec.name == "restricted":
+                return ToolPolicyDecision(
+                    allowed=True,
+                    requires_approval=True,
+                    reason="needs admin approval",
+                )
+            return ToolPolicyDecision(allowed=True)
+
+    class ApprovalToolAgent:
+        async def run(
+            self,
+            system_prompt: str,
+            messages,
+            model: str | None = None,
+            *,
+            request_options=None,
+            max_tool_rounds=None,
+            tools=None,
+            tool_executor=None,
+        ):
+            _ = system_prompt, messages, model, request_options, max_tool_rounds, tools
+            assert tool_executor is not None
+            await tool_executor("restricted", {"danger": True})
+            raise AssertionError("approval interrupt should stop the subagent tool loop")
+
+    _write_subagent(
+        tmp_path,
+        name="excel-worker",
+        description="Excel worker",
+        tools=["restricted"],
+        prompt="You are Excel Worker.",
+    )
+    audit = InMemoryToolAudit()
+    broker = ToolBroker(policy=ApprovalPolicy(), audit=audit)
+
+    async def restricted(arguments: dict[str, object], ctx) -> dict[str, object]:
+        _ = arguments, ctx
+        return {"ok": True}
+
+    broker.register_tool(
+        ToolSpec(
+            name="restricted",
+            description="Restricted tool",
+            parameters={"type": "object", "properties": {}},
+        ),
+        restricted,
+    )
+    components = build_runtime_components(
+        _runtime_config(tmp_path),
+        gateway=FakeGateway(),
+        agent=ApprovalToolAgent(),
+        tool_broker=broker,
+        model_registry_manager=await _model_registry_manager(tmp_path),
+    )
+    await components.plugin_manager.ensure_started()
+
+    parent_run = await components.run_manager.open(
+        event=_event(),
+        decision=RouteDecision(
+            thread_id="qq:user:10001",
+            actor_id="qq:user:10001",
+            agent_id="aca",
+            channel_scope="qq:user:10001",
+        ),
+    )
+    profile = components.profile_loader.profiles["aca"]
+
+    result = await components.tool_broker.execute(
+        tool_name="delegate_subagent",
+        arguments={
+            "delegate_agent_id": "excel-worker",
+            "task": "触发审批工具",
+        },
+        ctx=_tool_ctx(run_id=parent_run.run_id, profile=profile),
+    )
+
+    restricted_record = next(
+        record for record in audit.records.values() if record.tool_name == "restricted"
+    )
+    child_run = await components.run_manager.get(restricted_record.run_id)
+
+    assert result.raw["ok"] is False
+    assert "cannot enter waiting_approval" in str(result.raw["error"])
+    assert child_run is not None
+    assert child_run.status == "failed"
+    assert restricted_record.status == "failed"
+
+
+async def test_bootstrap_no_longer_registers_local_profiles_as_subagents(tmp_path) -> None:
+    components = build_runtime_components(
+        _runtime_config(tmp_path),
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+
+    assert not hasattr(components, "subagent_executor_registry")

@@ -73,11 +73,23 @@ def resolve_model_requests_for_profile(
     if manager is None:
         return None, None, None
 
-    model_request, model_snapshot = resolve_run_request_for_agent(
-        manager,
-        run_mode=decision.run_mode,
-        agent_id=profile.agent_id,
-    )
+    model_target = str(profile.config.get("model_target", "") or "").strip()
+    if decision.run_mode == "record_only":
+        model_request = None
+        model_snapshot = None
+    elif model_target:
+        model_request = manager.resolve_target_request(model_target)
+        model_snapshot = (
+            snapshot_from_runtime_request(model_request)
+            if model_request is not None
+            else None
+        )
+    else:
+        model_request, model_snapshot = resolve_run_request_for_agent(
+            manager,
+            run_mode=decision.run_mode,
+            agent_id=profile.agent_id,
+        )
     summary_model_request = resolve_summary_request(manager)
     return model_request, model_snapshot, summary_model_request
 

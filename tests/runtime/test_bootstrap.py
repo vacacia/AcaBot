@@ -410,7 +410,7 @@ async def test_build_runtime_components_loads_runtime_plugins_from_config() -> N
     assert SampleConfiguredRuntimePlugin.setup_calls == 1
 
 
-async def test_build_runtime_components_exposes_skill_and_delegate_tools_for_assigned_skills() -> None:
+async def test_build_runtime_components_exposes_skill_tool_and_empty_subagent_catalog() -> None:
     skills_dir = Path(__file__).resolve().parent.parent / "fixtures" / "skills"
     config = Config(
         {
@@ -460,9 +460,8 @@ async def test_build_runtime_components_exposes_skill_and_delegate_tools_for_ass
     assert profile.skills == ["sample_configured_skill"]
     assert [tool.name for tool in visible_tools] == ["Skill"]
     assert "sample_configured_skill" in visible_tools[0].description
-    registered_executors = components.subagent_delegator.executor_registry.list_all()
-    assert [item.agent_id for item in registered_executors] == ["aca"]
-    assert registered_executors[0].source == "runtime:local_profile"
+    assert components.subagent_catalog.list_all() == []
+    assert not hasattr(components, "subagent_executor_registry")
     assert any(tool.name == "Skill" for tool in visible_tools)
 
 
@@ -1228,7 +1227,7 @@ async def test_build_runtime_components_reload_keeps_conditional_subagent_delega
     assert missing == []
     assert loaded_names == ["backend_bridge_tool"]
     assert sources["delegate_subagent"] == "builtin:subagents"
-    assert "delegate_subagent" in [tool.name for tool in visible]
+    assert "delegate_subagent" not in [tool.name for tool in visible]
 
 
 async def test_build_runtime_components_default_approval_resume_replays_tool_call(tmp_path: Path) -> None:

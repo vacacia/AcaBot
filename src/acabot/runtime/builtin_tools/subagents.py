@@ -103,6 +103,7 @@ class BuiltinSubagentToolSurface:
             parent_agent_id=ctx.agent_id,
             profile=ctx.profile,
             delegate_agent_id=delegate_agent_id,
+            visible_subagents=list(ctx.visible_subagents),
             payload=payload,
             metadata={
                 "requested_by": "delegate_subagent",

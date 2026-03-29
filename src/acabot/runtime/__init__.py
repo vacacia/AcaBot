@@ -107,7 +107,7 @@ from .control.control_plane import (
     RuntimeControlPlane,
     RuntimeStatusSnapshot,
     SkillSnapshot,
-    SubagentExecutorSnapshot,
+    SubagentSnapshot,
 )
 from .control.snapshots import BackendStatusSnapshot
 from .storage.event_store import InMemoryChannelEventStore
@@ -284,13 +284,15 @@ from .skills import (
 )
 from .skills import SkillCatalog
 from .subagents import (
-    RegisteredSubagentExecutor,
+    FileSystemSubagentPackageLoader,
+    SubagentCatalog,
     SubagentDelegationBroker,
     SubagentDelegationRequest,
     SubagentDelegationResult,
-    SubagentExecutor,
-    SubagentExecutorRegistration,
-    SubagentExecutorRegistry,
+    SubagentDiscoveryRoot,
+    SubagentPackageDocument,
+    SubagentPackageFormatError,
+    SubagentPackageManifest,
 )
 from .subagents.execution import LocalSubagentExecutionService
 from .storage.sqlite_stores import (
@@ -373,7 +375,7 @@ __all__ = [
     "RuntimeControlPlane",
     "RuntimeStatusSnapshot",
     "SkillSnapshot",
-    "SubagentExecutorSnapshot",
+    "SubagentSnapshot",
     "StoreBackedConversationFactReader",
     "ContextSummarizer",
     "ModelContextSummarizer",
@@ -502,12 +504,14 @@ __all__ = [
     "SkillPackageDocument",
     "SkillPackageFormatError",
     "SkillPackageManifest",
+    "FileSystemSubagentPackageLoader",
+    "SubagentCatalog",
     "SubagentDelegationRequest",
     "SubagentDelegationResult",
-    "SubagentExecutor",
-    "SubagentExecutorRegistration",
-    "RegisteredSubagentExecutor",
-    "SubagentExecutorRegistry",
+    "SubagentDiscoveryRoot",
+    "SubagentPackageDocument",
+    "SubagentPackageFormatError",
+    "SubagentPackageManifest",
     "SubagentDelegationBroker",
     "LocalSubagentExecutionService",
     "load_runtime_plugin",

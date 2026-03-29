@@ -26,7 +26,10 @@ from acabot.runtime import (
     RuntimePluginContext,
     RuntimePluginManager,
     RuntimeRouter,
+    FileSystemSubagentPackageLoader,
     SkillCatalog,
+    SubagentDiscoveryRoot,
+    SubagentCatalog,
     ThreadPipeline,
     ToolBroker,
     build_runtime_components,
@@ -101,6 +104,51 @@ def _computer_runtime(tmp_path: Path) -> ComputerRuntime:
             root_dir=str(tmp_path / "computer"),
             host_skills_catalog_root_path=str(_fixtures_root()),
         )
+    )
+
+
+def _write_subagent(tmp_path: Path, *, name: str, description: str) -> SubagentCatalog:
+    subagent_dir = tmp_path / ".agents" / "subagents" / name
+    subagent_dir.mkdir(parents=True, exist_ok=True)
+    (subagent_dir / "SUBAGENT.md").write_text(
+        "\n".join(
+            [
+                "---",
+                f"name: {name}",
+                f"description: {description}",
+                "tools:",
+                "  - read",
+                "---",
+                f"You are {name}.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    catalog = SubagentCatalog(
+        FileSystemSubagentPackageLoader(tmp_path / ".agents" / "subagents")
+    )
+    catalog.reload()
+    return catalog
+
+
+def _write_subagent_under(root_dir: Path, *, name: str, description: str) -> None:
+    subagent_dir = root_dir / name
+    subagent_dir.mkdir(parents=True, exist_ok=True)
+    (subagent_dir / "SUBAGENT.md").write_text(
+        "\n".join(
+            [
+                "---",
+                f"name: {name}",
+                f"description: {description}",
+                "tools:",
+                "  - read",
+                "---",
+                f"You are {name}.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
     )
 
 
@@ -250,6 +298,96 @@ async def test_runtime_control_plane_lists_catalog_skills_and_agent_assignments(
     assert skills[0].has_references is True
     assert agent_skills[0].skill_name == "sample_configured_skill"
     assert agent_skills[0].has_references is True
+
+
+async def test_runtime_control_plane_lists_catalog_subagents(tmp_path: Path) -> None:
+    subagent_catalog = _write_subagent(
+        tmp_path,
+        name="excel-worker",
+        description="负责整理 Excel 文件",
+    )
+    control_plane = RuntimeControlPlane(
+        app=RuntimeApp(
+            gateway=FakeGateway(),
+            router=RuntimeRouter(default_agent_id="aca"),
+            thread_manager=InMemoryThreadManager(),
+            run_manager=InMemoryRunManager(),
+            channel_event_store=InMemoryChannelEventStore(),
+            pipeline=ThreadPipeline(
+                agent_runtime=FakeAgentRuntime(),
+                outbox=Outbox(gateway=FakeGateway(), store=FakeMessageStore()),
+                run_manager=InMemoryRunManager(),
+                thread_manager=InMemoryThreadManager(),
+            ),
+            profile_loader=_profile_loader,
+        ),
+        run_manager=InMemoryRunManager(),
+        subagent_catalog=subagent_catalog,
+    )
+
+    subagents = await control_plane.list_subagents()
+
+    assert [item.subagent_name for item in subagents] == ["excel-worker"]
+    assert subagents[0].subagent_id
+    assert subagents[0].description == "负责整理 Excel 文件"
+    assert subagents[0].effective is True
+    assert subagents[0].host_subagent_file_path.endswith("excel-worker/SUBAGENT.md")
+    assert subagents[0].tools == ["read"]
+
+
+async def test_runtime_control_plane_lists_duplicate_subagent_names_with_unique_ids(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / ".agents" / "subagents"
+    user_root = tmp_path / "user-subagents"
+    _write_subagent_under(
+        project_root,
+        name="excel-worker",
+        description="项目作用域 Excel worker",
+    )
+    _write_subagent_under(
+        user_root,
+        name="excel-worker",
+        description="用户作用域 Excel worker",
+    )
+    subagent_catalog = SubagentCatalog(
+        FileSystemSubagentPackageLoader(
+            [
+                SubagentDiscoveryRoot(host_root_path=str(project_root), scope="project"),
+                SubagentDiscoveryRoot(host_root_path=str(user_root), scope="user"),
+            ]
+        )
+    )
+    subagent_catalog.reload()
+    control_plane = RuntimeControlPlane(
+        app=RuntimeApp(
+            gateway=FakeGateway(),
+            router=RuntimeRouter(default_agent_id="aca"),
+            thread_manager=InMemoryThreadManager(),
+            run_manager=InMemoryRunManager(),
+            channel_event_store=InMemoryChannelEventStore(),
+            pipeline=ThreadPipeline(
+                agent_runtime=FakeAgentRuntime(),
+                outbox=Outbox(gateway=FakeGateway(), store=FakeMessageStore()),
+                run_manager=InMemoryRunManager(),
+                thread_manager=InMemoryThreadManager(),
+            ),
+            profile_loader=_profile_loader,
+        ),
+        run_manager=InMemoryRunManager(),
+        subagent_catalog=subagent_catalog,
+    )
+
+    subagents = await control_plane.list_subagents()
+
+    assert [item.subagent_name for item in subagents] == ["excel-worker", "excel-worker"]
+    assert len({item.subagent_id for item in subagents}) == 2
+    assert [item.source for item in subagents] == ["project", "user"]
+    assert [item.effective for item in subagents] == [True, False]
+    assert [item.description for item in subagents] == [
+        "项目作用域 Excel worker",
+        "用户作用域 Excel worker",
+    ]
 
 
 async def test_runtime_control_plane_lists_mirrored_skills(tmp_path: Path) -> None:
@@ -409,5 +547,3 @@ async def test_computer_runtime_one_shot_exec_persists_backend_state(tmp_path: P
     status = await computer_runtime.get_sandbox_status("thread:1")
 
     assert status.backend_kind == "docker"
-
-

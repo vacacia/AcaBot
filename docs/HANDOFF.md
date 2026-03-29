@@ -1,5 +1,5 @@
 # 当前进展 Handoff
 
-phase 1 已经提交为 `cf555d5`，正式模型真源现在是 `model_provider / model_preset / model_target / model_binding`，而当前实际在用的 Python 环境固定是 `/home/acacia/AcaBot/.venv`，`pip` 也已经通过 `.venv/pip.conf` 切到腾讯镜像。
-`long_term_memory` 第一版已经接进 runtime：打开 `runtime.long_term_memory.enabled` 后，会自动装配 `LanceDbLongTermMemoryStore`、`CoreSimpleMemWritePort`、`CoreSimpleMemMemorySource` 和 `LongTermMemoryIngestor`，实现代码集中在 `src/acabot/runtime/memory/long_term_memory/`，但 `system:ltm_extract`、`system:ltm_query_plan`、`system:ltm_embed` 这三个 binding 仍然需要先配置好。
-当前最可靠的验收方式是用 `PYTHONPATH=src python -m pytest ...` 跑本地纯逻辑测试，因为 worktree 里直接执行 `python` 会走根目录 `.venv`；最近一轮整套非后端验收结果是 `458 passed in 28.88s`，下一步是拿到 reviewer 复核通过后 commit。
+subagent 定义真源已经从 profile / plugin 方向收成文件系统 catalog，每个 subagent 只认自己的 `SUBAGENT.md`，plugin 和 subagent 的直接注册关系已经删除。
+session 现在只负责 `visible_subagents`，`delegate_subagent` 只有在当前 run allowlist 非空且 catalog 能解析时才会暴露，control plane / HTTP API / WebUI / ops 也都改成展示 catalog subagent。
+第一版 subagent child run 默认不递归，也不支持 approval resume；一旦命中需要审批的工具会直接失败，所以继续往后做时不要把它当成可恢复的子会话。

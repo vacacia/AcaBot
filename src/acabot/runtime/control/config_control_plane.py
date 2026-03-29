@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from pathlib import Path
 import re
 from tempfile import NamedTemporaryFile
@@ -27,8 +27,10 @@ from ..model.model_registry import FileSystemModelRegistryManager
 from ..model.model_targets import build_agent_model_targets
 from ..plugin_manager import RuntimePluginManager, RuntimePluginSpec, load_runtime_plugin
 from ..router import RuntimeRouter
-from ..skills import SkillCatalog
-from ..subagents import SubagentExecutorRegistry
+from ..skills import FileSystemSkillPackageLoader, SkillCatalog
+from ..skills.loader import SkillDiscoveryRoot
+from ..subagents import FileSystemSubagentPackageLoader, SubagentCatalog
+from ..subagents.loader import SubagentDiscoveryRoot
 from .profile_loader import (
     AgentProfileRegistry,
     ChainedPromptLoader,
@@ -43,6 +45,9 @@ from .profile_loader import (
 )
 from .session_loader import ConfigBackedSessionConfigLoader, SessionConfigLoader
 from .session_runtime import SessionRuntime
+
+DEFAULT_SKILL_CATALOG_DIRS = ["./.agents/skills", "~/.agents/skills"]
+DEFAULT_SUBAGENT_CATALOG_DIRS = ["./.agents/subagents", "~/.agents/subagents"]
 
 
 def _resolve_filesystem_path(
@@ -71,6 +76,44 @@ def _resolve_filesystem_path(
     if raw_value.is_absolute():
         return raw_value
     return (base_dir / raw_value).resolve()
+
+
+def _normalize_catalog_dir_values(raw_values: object, *, defaults: list[str]) -> list[str]:
+    """把配置里的 catalog 根目录收成字符串列表."""
+
+    if raw_values in (None, ""):
+        values = list(defaults)
+    elif isinstance(raw_values, str):
+        values = [raw_values]
+    else:
+        values = [str(item) for item in list(raw_values or [])]
+
+    normalized: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        normalized.append(text)
+    return normalized
+
+
+def _scope_for_catalog_dir(raw_value: str) -> str:
+    """按配置写法推断 catalog 根目录 scope."""
+
+    if raw_value.startswith("~"):
+        return "user"
+    if Path(raw_value).is_absolute():
+        return "user"
+    return "project"
+
+
+def _resolve_catalog_dir_path(*, raw: str, base_dir: Path) -> Path:
+    """把 catalog 扫描目录解析成宿主机绝对路径."""
+
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return path.resolve()
+    return (base_dir / path).resolve()
 
 
 def _build_session_runtime(config: Config) -> SessionRuntime:
@@ -206,12 +249,35 @@ def _build_prompt_map(config: Config, profiles: dict[str, AgentProfile]) -> dict
     return prompts
 
 
-def _build_prompt_loader(config: Config, profiles: dict[str, AgentProfile]) -> PromptLoader:
+def _build_subagent_prompt_map(subagent_catalog: SubagentCatalog | None) -> dict[str, str]:
+    """构造 subagent prompt 映射."""
+
+    if subagent_catalog is None:
+        return {}
+
+    prompts: dict[str, str] = {}
+    seen: set[str] = set()
+    for manifest in subagent_catalog.list_all():
+        subagent_name = manifest.subagent_name
+        if subagent_name in seen:
+            continue
+        prompts[f"subagent/{subagent_name}"] = subagent_catalog.read(subagent_name).body_markdown
+        seen.add(subagent_name)
+    return prompts
+
+
+def _build_prompt_loader(
+    config: Config,
+    profiles: dict[str, AgentProfile],
+    *,
+    subagent_catalog: SubagentCatalog | None = None,
+) -> PromptLoader:
     """构造 prompt loader.
 
     Args:
         config: 当前 runtime 配置.
         profiles: 当前 profile 映射.
+        subagent_catalog: 可选的 subagent catalog.
 
     Returns:
         PromptLoader: 当前有效 prompt loader.
@@ -219,7 +285,9 @@ def _build_prompt_loader(config: Config, profiles: dict[str, AgentProfile]) -> P
 
     runtime_conf = config.get("runtime", {})
     fs_conf = dict(runtime_conf.get("filesystem", {}))
-    static_loader = StaticPromptLoader(_build_prompt_map(config, profiles))
+    prompt_map = _build_prompt_map(config, profiles)
+    prompt_map.update(_build_subagent_prompt_map(subagent_catalog))
+    static_loader = StaticPromptLoader(prompt_map)
     if not bool(fs_conf.get("enabled", False)):
         return static_loader
     prompts_dir = _resolve_filesystem_path(config, fs_conf, key="prompts_dir", default="prompts")
@@ -269,11 +337,10 @@ class RuntimeConfigControlPlane:
         prompt_loader: ReloadablePromptLoader,
         model_registry_manager: FileSystemModelRegistryManager | None = None,
         skill_catalog: SkillCatalog | None = None,
+        subagent_catalog: SubagentCatalog | None = None,
         plugin_manager: RuntimePluginManager | None = None,
-        subagent_executor_registry: SubagentExecutorRegistry | None = None,
         tool_broker=None,
         subagent_delegator=None,
-        local_subagent_executor: Callable[[Any], Awaitable[Any]] | None = None,
         builtin_plugin_factory: Callable[[dict[str, AgentProfile]], list[Any]] | None = None,
     ) -> None:
         """初始化 RuntimeConfigControlPlane.
@@ -284,11 +351,10 @@ class RuntimeConfigControlPlane:
             profile_registry: profile registry.
             prompt_loader: 可热刷新的 prompt loader.
             skill_catalog: 可选 skill catalog.
+            subagent_catalog: 可选 subagent catalog.
             plugin_manager: 可选 runtime plugin manager.
-            subagent_executor_registry: 可选 subagent executor 注册表.
             tool_broker: 可选 tool broker.
             subagent_delegator: 可选 subagent delegator.
-            local_subagent_executor: 本地 subagent 执行入口.
             builtin_plugin_factory: builtin plugin 工厂.
         """
 
@@ -298,11 +364,10 @@ class RuntimeConfigControlPlane:
         self.prompt_loader = prompt_loader
         self.model_registry_manager = model_registry_manager
         self.skill_catalog = skill_catalog
+        self.subagent_catalog = subagent_catalog
         self.plugin_manager = plugin_manager
-        self.subagent_executor_registry = subagent_executor_registry
         self.tool_broker = tool_broker
         self.subagent_delegator = subagent_delegator
-        self.local_subagent_executor = local_subagent_executor
         self.builtin_plugin_factory = builtin_plugin_factory
 
     def storage_mode(self) -> str:
@@ -351,7 +416,16 @@ class RuntimeConfigControlPlane:
             profiles=profiles,
             default_agent_id=default_agent_id,
         )
-        self.prompt_loader.replace_loader(_build_prompt_loader(self.config, profiles))
+        if self.subagent_catalog is not None:
+            self.subagent_catalog.replace_loader(self._subagent_catalog_loader())
+            self.subagent_catalog.reload()
+        self.prompt_loader.replace_loader(
+            _build_prompt_loader(
+                self.config,
+                profiles,
+                subagent_catalog=self.subagent_catalog,
+            )
+        )
         self.router.default_agent_id = default_agent_id
         self.router.session_runtime = _build_session_runtime(self.config)
 
@@ -360,24 +434,8 @@ class RuntimeConfigControlPlane:
         if self.subagent_delegator is not None:
             self.subagent_delegator.default_agent_id = default_agent_id
         if self.skill_catalog is not None:
+            self.skill_catalog.replace_loader(self._skill_catalog_loader())
             self.skill_catalog.reload()
-        if self.subagent_executor_registry is not None:
-            self.subagent_executor_registry.unregister_source("runtime:local_profile")
-            if self.local_subagent_executor is not None:
-                for profile in profiles.values():
-                    metadata = dict(profile.config.get("metadata", {}) or {})
-                    managed_by = str(metadata.get("managed_by", "") or "").strip()
-                    if managed_by in {"webui_session", "webui_v2_session"} or str(metadata.get("session_key", "") or "").strip():
-                        continue
-                    self.subagent_executor_registry.register(
-                        profile.agent_id,
-                        self.local_subagent_executor,
-                        source="runtime:local_profile",
-                        metadata={
-                            "kind": "local_profile",
-                            "profile_name": profile.name,
-                        },
-                    )
         if self.plugin_manager is not None:
             builtin_plugins = (
                 self.builtin_plugin_factory(profiles)
@@ -477,6 +535,65 @@ class RuntimeConfigControlPlane:
             "missing_target_ids": missing_target_ids,
             "restart_required": True,
         }
+
+    def get_filesystem_scan_config(self) -> dict[str, Any]:
+        """读取 filesystem catalog 扫描配置视图."""
+
+        fs_conf = self._filesystem_conf()
+        base_dir = Path(str(fs_conf.get("base_dir", ".") or "."))
+        if not base_dir.is_absolute():
+            base_dir = self.config.resolve_path(base_dir)
+        configured_skill_catalog_dirs = self._configured_catalog_dir_values("skill_catalog_dirs")
+        configured_subagent_catalog_dirs = self._configured_catalog_dir_values("subagent_catalog_dirs")
+        return {
+            "enabled": bool(fs_conf.get("enabled", False)),
+            "base_dir": str(base_dir.resolve()),
+            "skill_catalog_dirs": _normalize_catalog_dir_values(
+                fs_conf.get("skill_catalog_dirs"),
+                defaults=DEFAULT_SKILL_CATALOG_DIRS,
+            ),
+            "subagent_catalog_dirs": _normalize_catalog_dir_values(
+                fs_conf.get("subagent_catalog_dirs"),
+                defaults=DEFAULT_SUBAGENT_CATALOG_DIRS,
+            ),
+            "configured_skill_catalog_dirs": configured_skill_catalog_dirs,
+            "configured_subagent_catalog_dirs": configured_subagent_catalog_dirs,
+            "default_skill_catalog_dirs": list(DEFAULT_SKILL_CATALOG_DIRS),
+            "default_subagent_catalog_dirs": list(DEFAULT_SUBAGENT_CATALOG_DIRS),
+            "resolved_skill_catalog_dirs": self._resolved_catalog_dir_views(
+                key="skill_catalog_dirs",
+                defaults=DEFAULT_SKILL_CATALOG_DIRS,
+            ),
+            "resolved_subagent_catalog_dirs": self._resolved_catalog_dir_views(
+                key="subagent_catalog_dirs",
+                defaults=DEFAULT_SUBAGENT_CATALOG_DIRS,
+            ),
+        }
+
+    async def upsert_filesystem_scan_config(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """写回 filesystem catalog 扫描配置并热刷新."""
+
+        data = self.config.to_dict()
+        runtime_conf = dict(data.get("runtime", {}) or {})
+        fs_conf = dict(runtime_conf.get("filesystem", {}) or {})
+        changed = False
+        for key in ("skill_catalog_dirs", "subagent_catalog_dirs"):
+            if key not in payload:
+                continue
+            changed = True
+            normalized = self._normalize_catalog_dir_update_value(payload.get(key))
+            if normalized is None:
+                fs_conf.pop(key, None)
+            else:
+                fs_conf[key] = normalized
+        if not changed:
+            return self.get_filesystem_scan_config()
+        runtime_conf["filesystem"] = fs_conf
+        data["runtime"] = runtime_conf
+        self.config.replace(data)
+        self.config.save()
+        await self.reload_runtime_configuration()
+        return self.get_filesystem_scan_config()
 
     async def upsert_long_term_memory_config(self, payload: dict[str, Any]) -> dict[str, Any]:
         """写回长期记忆配置.
@@ -852,6 +969,88 @@ class RuntimeConfigControlPlane:
 
         runtime_conf = self.config.get("runtime", {})
         return dict(runtime_conf.get("filesystem", {}) or {})
+
+    def _configured_catalog_dir_values(self, key: str) -> list[str] | None:
+        """返回某个 catalog 根目录字段的显式配置值."""
+
+        fs_conf = self._filesystem_conf()
+        if key not in fs_conf:
+            return None
+        raw_values = fs_conf.get(key)
+        if raw_values in (None, ""):
+            return None
+        return _normalize_catalog_dir_values(raw_values, defaults=[])
+
+    def _resolved_catalog_dir_views(
+        self,
+        *,
+        key: str,
+        defaults: list[str],
+    ) -> list[dict[str, str]]:
+        """返回某组 catalog 根目录的解析后视图."""
+
+        fs_conf = self._filesystem_conf()
+        base_dir = Path(str(fs_conf.get("base_dir", ".") or "."))
+        if not base_dir.is_absolute():
+            base_dir = self.config.resolve_path(base_dir)
+        resolved: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for raw in _normalize_catalog_dir_values(fs_conf.get(key), defaults=defaults):
+            scope = _scope_for_catalog_dir(raw)
+            path = _resolve_catalog_dir_path(raw=raw, base_dir=base_dir)
+            item = {
+                "host_root_path": str(path),
+                "scope": scope,
+            }
+            dedupe_key = (item["host_root_path"], item["scope"])
+            if dedupe_key in seen:
+                continue
+            resolved.append(item)
+            seen.add(dedupe_key)
+        return resolved
+
+    def _skill_catalog_loader(self) -> FileSystemSkillPackageLoader:
+        """按当前配置构造 skill catalog loader."""
+
+        return FileSystemSkillPackageLoader(
+            [
+                SkillDiscoveryRoot(
+                    host_root_path=item["host_root_path"],
+                    scope=item["scope"],
+                )
+                for item in self._resolved_catalog_dir_views(
+                    key="skill_catalog_dirs",
+                    defaults=DEFAULT_SKILL_CATALOG_DIRS,
+                )
+            ]
+        )
+
+    def _subagent_catalog_loader(self) -> FileSystemSubagentPackageLoader:
+        """按当前配置构造 subagent catalog loader."""
+
+        return FileSystemSubagentPackageLoader(
+            [
+                SubagentDiscoveryRoot(
+                    host_root_path=item["host_root_path"],
+                    scope=item["scope"],
+                )
+                for item in self._resolved_catalog_dir_views(
+                    key="subagent_catalog_dirs",
+                    defaults=DEFAULT_SUBAGENT_CATALOG_DIRS,
+                )
+            ]
+        )
+
+    @staticmethod
+    def _normalize_catalog_dir_update_value(raw_value: object) -> list[str] | None:
+        """把 PUT 提交的 catalog 根目录值归一化.
+
+        `None` 表示移除字段, 回退到默认目录; 空列表表示显式禁用该扫描源。
+        """
+
+        if raw_value is None:
+            return None
+        return _normalize_catalog_dir_values(raw_value, defaults=[])
 
     def _profiles_dir(self) -> Path:
         """返回 filesystem profiles 目录.

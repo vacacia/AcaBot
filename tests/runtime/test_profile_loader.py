@@ -77,6 +77,19 @@ def test_filesystem_prompt_loader_loads_prompt_file(tmp_path: Path) -> None:
     assert prompt == "You are Aca from filesystem."
 
 
+def test_filesystem_prompt_loader_ignores_deprecated_subagent_namespace(tmp_path: Path) -> None:
+    prompts_dir = tmp_path / "prompts"
+    (prompts_dir / "subagent").mkdir(parents=True)
+    (prompts_dir / "subagent" / "excel-worker.md").write_text(
+        "Legacy subagent prompt.",
+        encoding="utf-8",
+    )
+    loader = FileSystemPromptLoader(prompts_dir)
+
+    with pytest.raises(KeyError, match="Unknown prompt_ref: subagent/excel-worker"):
+        loader.load("subagent/excel-worker")
+
+
 def test_chained_prompt_loader_falls_back_to_static_loader(tmp_path: Path) -> None:
     prompts_dir = tmp_path / "prompts"
     prompts_dir.mkdir()

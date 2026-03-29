@@ -137,6 +137,13 @@ class ToolApprovalResumer(ApprovalResumer):
         approval_context: dict[str, Any],
         metadata: dict[str, Any],
     ) -> ApprovalResumeResult:
+        if bool(run.metadata.get("subagent_child_run")) or str(run.metadata.get("run_kind", "") or "") == "subagent":
+            return ApprovalResumeResult(
+                status="failed",
+                message="subagent child runs do not support approval resume",
+                approval_context=dict(approval_context),
+            )
+
         pending = self._pending_from_context(approval_context)
         if pending is None:
             return ApprovalResumeResult(

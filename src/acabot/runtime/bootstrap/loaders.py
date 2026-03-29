@@ -18,6 +18,7 @@ from ..control.profile_loader import (
 )
 from ..control.session_loader import ConfigBackedSessionConfigLoader, SessionConfigLoader
 from ..control.session_runtime import SessionRuntime
+from ..subagents import SubagentCatalog
 from .config import resolve_filesystem_path
 
 
@@ -121,12 +122,15 @@ def build_prompt_map(
 def build_prompt_loader(
     config: Config,
     profiles: dict[str, AgentProfile],
+    *,
+    subagent_catalog: SubagentCatalog | None = None,
 ) -> PromptLoader:
     """构造 prompt loader.
 
     Args:
         config: 当前 runtime 配置.
         profiles: 当前 profile 映射.
+        subagent_catalog: 可选的 subagent catalog, 用于注入 subagent prompt.
 
     Returns:
         PromptLoader: 当前有效 prompt loader.
@@ -134,7 +138,9 @@ def build_prompt_loader(
 
     runtime_conf = dict(config.get("runtime", {}) or {})
     fs_conf = dict(runtime_conf.get("filesystem", {}))
-    static_loader = StaticPromptLoader(build_prompt_map(config, profiles))
+    prompt_map = build_prompt_map(config, profiles)
+    prompt_map.update(_build_subagent_prompt_map(subagent_catalog))
+    static_loader = StaticPromptLoader(prompt_map)
     if not bool(fs_conf.get("enabled", False)):
         return static_loader
     prompts_dir = resolve_filesystem_path(
@@ -147,6 +153,23 @@ def build_prompt_loader(
         FileSystemPromptLoader(prompts_dir),
         static_loader,
     ])
+
+
+def _build_subagent_prompt_map(subagent_catalog: SubagentCatalog | None) -> dict[str, str]:
+    """构造 subagent prompt 映射."""
+
+    if subagent_catalog is None:
+        return {}
+
+    prompts: dict[str, str] = {}
+    seen: set[str] = set()
+    for manifest in subagent_catalog.list_all():
+        subagent_name = manifest.subagent_name
+        if subagent_name in seen:
+            continue
+        prompts[f"subagent/{subagent_name}"] = subagent_catalog.read(subagent_name).body_markdown
+        seen.add(subagent_name)
+    return prompts
 
 
 def build_session_runtime(config: Config) -> SessionRuntime:

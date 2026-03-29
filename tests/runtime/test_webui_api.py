@@ -598,6 +598,33 @@ runtime:
     )
 
 
+def _write_subagent(
+    tmp_path: Path,
+    *,
+    name: str,
+    description: str,
+    root_dir: Path | None = None,
+) -> None:
+    subagent_root = root_dir or (tmp_path / ".agents" / "subagents")
+    subagent_dir = subagent_root / name
+    subagent_dir.mkdir(parents=True, exist_ok=True)
+    (subagent_dir / "SUBAGENT.md").write_text(
+        "\n".join(
+            [
+                "---",
+                f"name: {name}",
+                f"description: {description}",
+                "tools:",
+                "  - read",
+                "---",
+                f"You are {name}.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 async def test_runtime_reload_updates_default_agent_dependent_state(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
@@ -701,7 +728,7 @@ async def test_runtime_config_control_plane_upserts_profile_and_prompt(tmp_path:
         )
     )
     assert loaded.agent_id == "worker"
-    assert components.subagent_executor_registry.get("worker") is not None
+    assert components.subagent_catalog.get("worker") is None
 
     prompt = await components.control_plane.upsert_prompt(
         prompt_ref="prompt/worker",
@@ -710,6 +737,141 @@ async def test_runtime_config_control_plane_upserts_profile_and_prompt(tmp_path:
     assert prompt["prompt_ref"] == "prompt/worker"
     assert components.prompt_loader.load("prompt/worker") == "you are worker"
     assert "worker" in config_path.read_text(encoding="utf-8")
+
+
+async def test_webui_subagents_endpoint_returns_catalog_items(tmp_path: Path) -> None:
+    _write_subagent(
+        tmp_path,
+        name="excel-worker",
+        description="负责整理 Excel 子任务",
+    )
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""
+gateway:
+  host: "127.0.0.1"
+  port: 8080
+
+agent:
+
+runtime:
+  default_agent_id: "aca"
+  filesystem:
+    enabled: true
+    base_dir: "{tmp_path}"
+  profiles:
+    aca:
+      name: "Aca"
+      prompt_ref: "prompt/default"
+  prompts:
+    prompt/default: "hello"
+  webui:
+    enabled: true
+    host: "127.0.0.1"
+    port: 0
+""".strip(),
+        encoding="utf-8",
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+        log_buffer=InMemoryLogBuffer(),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        payload = await asyncio.to_thread(request_json, base_url, "/api/subagents")
+    finally:
+        await server.stop()
+
+    assert payload["ok"] is True
+    assert payload["data"] == [
+        {
+            "subagent_id": f"project:{str((tmp_path / '.agents' / 'subagents' / 'excel-worker' / 'SUBAGENT.md').resolve())}",
+            "subagent_name": "excel-worker",
+            "description": "负责整理 Excel 子任务",
+            "source": "project",
+            "host_subagent_file_path": str(
+                (tmp_path / ".agents" / "subagents" / "excel-worker" / "SUBAGENT.md").resolve()
+            ),
+            "tools": ["read"],
+            "model_target": "",
+            "effective": True,
+        }
+    ]
+
+
+async def test_webui_subagents_endpoint_preserves_duplicate_names_with_unique_ids(
+    tmp_path: Path,
+) -> None:
+    _write_subagent(
+        tmp_path,
+        name="excel-worker",
+        description="项目作用域 Excel 子任务",
+    )
+    user_root = tmp_path / "user-subagents"
+    _write_subagent(
+        tmp_path,
+        name="excel-worker",
+        description="用户作用域 Excel 子任务",
+        root_dir=user_root,
+    )
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""
+gateway:
+  host: "127.0.0.1"
+  port: 8080
+
+agent:
+
+runtime:
+  default_agent_id: "aca"
+  filesystem:
+    enabled: true
+    base_dir: "{tmp_path}"
+    subagent_catalog_dirs:
+      - ".agents/subagents"
+      - "{user_root.resolve()}"
+  profiles:
+    aca:
+      name: "Aca"
+      prompt_ref: "prompt/default"
+  prompts:
+    prompt/default: "hello"
+  webui:
+    enabled: true
+    host: "127.0.0.1"
+    port: 0
+""".strip(),
+        encoding="utf-8",
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+        log_buffer=InMemoryLogBuffer(),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        payload = await asyncio.to_thread(request_json, base_url, "/api/subagents")
+    finally:
+        await server.stop()
+
+    assert payload["ok"] is True
+    assert [item["subagent_name"] for item in payload["data"]] == ["excel-worker", "excel-worker"]
+    assert len({item["subagent_id"] for item in payload["data"]}) == 2
+    assert [item["effective"] for item in payload["data"]] == [True, False]
 
 
 async def test_runtime_config_control_plane_blocks_profile_delete_when_model_binding_exists(
@@ -1098,6 +1260,177 @@ async def test_runtime_http_api_server_serves_and_updates_long_term_memory_confi
         assert updated["data"]["restart_required"] is True
     finally:
         await server.stop()
+
+
+async def test_runtime_http_api_server_serves_filesystem_catalog_scan_config_defaults(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""
+gateway:
+  host: "127.0.0.1"
+  port: 8080
+
+agent:
+
+runtime:
+  default_agent_id: "aca"
+  filesystem:
+    enabled: true
+    base_dir: "{tmp_path}"
+  profiles:
+    aca:
+      name: "Aca"
+      prompt_ref: "prompt/default"
+  prompts:
+    prompt/default: "hello"
+  webui:
+    enabled: true
+    host: "127.0.0.1"
+    port: 0
+""".strip(),
+        encoding="utf-8",
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        result = await asyncio.to_thread(request_json, base_url, "/api/filesystem/config")
+    finally:
+        await server.stop()
+
+    assert result["ok"] is True
+    assert result["data"]["enabled"] is True
+    assert result["data"]["base_dir"] == str(tmp_path.resolve())
+    assert result["data"]["skill_catalog_dirs"] == ["./.agents/skills", "~/.agents/skills"]
+    assert result["data"]["subagent_catalog_dirs"] == ["./.agents/subagents", "~/.agents/subagents"]
+    assert result["data"]["configured_skill_catalog_dirs"] is None
+    assert result["data"]["configured_subagent_catalog_dirs"] is None
+    assert result["data"]["default_skill_catalog_dirs"] == ["./.agents/skills", "~/.agents/skills"]
+    assert result["data"]["default_subagent_catalog_dirs"] == ["./.agents/subagents", "~/.agents/subagents"]
+    assert result["data"]["resolved_skill_catalog_dirs"] == [
+        {
+            "host_root_path": str((tmp_path / ".agents" / "skills").resolve()),
+            "scope": "project",
+        },
+        {
+            "host_root_path": str(Path("~/.agents/skills").expanduser().resolve()),
+            "scope": "user",
+        },
+    ]
+    assert result["data"]["resolved_subagent_catalog_dirs"] == [
+        {
+            "host_root_path": str((tmp_path / ".agents" / "subagents").resolve()),
+            "scope": "project",
+        },
+        {
+            "host_root_path": str(Path("~/.agents/subagents").expanduser().resolve()),
+            "scope": "user",
+        },
+    ]
+
+
+async def test_runtime_http_api_server_updates_filesystem_catalog_scan_config_and_reloads(
+    tmp_path: Path,
+) -> None:
+    skill_fixtures_root = Path(__file__).resolve().parent.parent / "fixtures" / "skills"
+    initial_skills_dir = tmp_path / "initial-skills"
+    initial_subagents_dir = tmp_path / "initial-subagents"
+    initial_skills_dir.mkdir(parents=True, exist_ok=True)
+    initial_subagents_dir.mkdir(parents=True, exist_ok=True)
+    custom_subagents_dir = tmp_path / "custom-subagents"
+    _write_subagent(
+        tmp_path,
+        name="excel-worker",
+        description="通过自定义扫描目录发现的子代理",
+        root_dir=custom_subagents_dir,
+    )
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""
+gateway:
+  host: "127.0.0.1"
+  port: 8080
+
+agent:
+
+runtime:
+  default_agent_id: "aca"
+  filesystem:
+    enabled: true
+    base_dir: "{tmp_path}"
+    skill_catalog_dirs:
+      - "{initial_skills_dir}"
+    subagent_catalog_dirs:
+      - "{initial_subagents_dir}"
+  profiles:
+    aca:
+      name: "Aca"
+      prompt_ref: "prompt/default"
+  prompts:
+    prompt/default: "hello"
+  webui:
+    enabled: true
+    host: "127.0.0.1"
+    port: 0
+""".strip(),
+        encoding="utf-8",
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        updated = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/filesystem/config",
+            method="PUT",
+            payload={
+                "skill_catalog_dirs": [str(skill_fixtures_root)],
+                "subagent_catalog_dirs": [str(custom_subagents_dir)],
+            },
+        )
+        skills = await asyncio.to_thread(request_json, base_url, "/api/skills")
+        subagents = await asyncio.to_thread(request_json, base_url, "/api/subagents")
+    finally:
+        await server.stop()
+
+    assert updated["ok"] is True
+    assert updated["data"]["configured_skill_catalog_dirs"] == [str(skill_fixtures_root)]
+    assert updated["data"]["configured_subagent_catalog_dirs"] == [str(custom_subagents_dir)]
+    assert updated["data"]["skill_catalog_dirs"] == [str(skill_fixtures_root)]
+    assert updated["data"]["subagent_catalog_dirs"] == [str(custom_subagents_dir)]
+    assert updated["data"]["resolved_skill_catalog_dirs"] == [
+        {
+            "host_root_path": str(skill_fixtures_root.resolve()),
+            "scope": "user",
+        }
+    ]
+    assert updated["data"]["resolved_subagent_catalog_dirs"] == [
+        {
+            "host_root_path": str(custom_subagents_dir.resolve()),
+            "scope": "user",
+        }
+    ]
+    assert any(item["skill_name"] == "sample_configured_skill" for item in skills["data"])
+    assert any(item["subagent_name"] == "excel-worker" for item in subagents["data"])
 
 
 async def test_runtime_http_api_server_plugin_configs_include_display_names(tmp_path: Path) -> None:
@@ -1816,31 +2149,35 @@ async def test_models_page_refreshes_binding_state_after_saving_bound_preset(tmp
                   .find((item) => (item.textContent || '').includes(text));
               }
               function fieldByLabel(text) {
-                return Array.from(document.querySelectorAll('.editor-column .ds-field'))
+                return Array.from(document.querySelectorAll('.modal-shell .ds-field'))
                   .find((field) => (field.querySelector('span')?.textContent || '').includes(text));
               }
               return new Promise((resolve) => {
                 const presetButton = findButton('.sidebar-column .list-item', 'aca-main');
                 presetButton?.click();
                 setTimeout(() => {
+                  const openButton = findButton('.summary-column button', '打开 Preset 设置');
+                  openButton?.click();
+                  setTimeout(() => {
                   const modelInput = fieldByLabel('模型名')?.querySelector('input');
                   if (modelInput) {
                     modelInput.value = 'gpt-4.1-refreshed';
                     modelInput.dispatchEvent(new Event('input', { bubbles: true }));
                   }
-                  const saveButton = Array.from(document.querySelectorAll('.editor-column .ds-actions button'))
+                  const saveButton = Array.from(document.querySelectorAll('.modal-actions button'))
                     .find((item) => item.textContent?.trim() === '保存');
                   saveButton?.click();
-                  setTimeout(() => {
-                    const metaValues = Array.from(document.querySelectorAll('.binding-meta-card .meta-value'))
-                      .map((item) => item.textContent?.trim() || '');
-                    resolve({
-                      bindingState: metaValues[0] || '',
-                      effectiveModel: metaValues[1] || '',
-                      modelFieldValue: fieldByLabel('模型名')?.querySelector('input')?.value || '',
-                      statusTexts: Array.from(document.querySelectorAll('.ds-status')).map((item) => item.textContent?.trim() || ''),
-                    });
-                  }, 1600);
+                    setTimeout(() => {
+                      const metaValues = Array.from(document.querySelectorAll('.binding-meta-card .meta-value'))
+                        .map((item) => item.textContent?.trim() || '');
+                      resolve({
+                        bindingState: metaValues[0] || '',
+                        effectiveModel: metaValues[1] || '',
+                        summaryModelText: document.querySelector('.summary-card strong:nth-of-type(1)')?.textContent?.trim() || '',
+                        statusTexts: Array.from(document.querySelectorAll('.ds-status')).map((item) => item.textContent?.trim() || ''),
+                      });
+                    }, 1600);
+                  }, 100);
                 }, 100);
               });
             """,
@@ -1848,7 +2185,6 @@ async def test_models_page_refreshes_binding_state_after_saving_bound_preset(tmp
 
         assert result["bindingState"] == "resolved"
         assert result["effectiveModel"] == "gpt-4.1-refreshed"
-        assert result["modelFieldValue"] == "gpt-4.1-refreshed"
         assert any("已保存" in item for item in result["statusTexts"])
     finally:
         await server.stop()
@@ -1878,24 +2214,29 @@ async def test_models_page_keeps_existing_binding_id_when_saving_binding(tmp_pat
             wait_ms=2200,
             script="""
               return new Promise((resolve) => {
-                const bindingInput = document.querySelector('.binding-editor input[readonly]');
-                if (bindingInput) {
-                  bindingInput.value = 'binding:renamed';
-                  bindingInput.dispatchEvent(new Event('input', { bubbles: true }));
-                }
-                const saveButton = Array.from(document.querySelectorAll('.binding-editor .ds-actions button'))
-                  .find((item) => item.textContent?.trim() === '保存 Binding');
-                saveButton?.click();
-                    setTimeout(() => {
-                      resolve({
-                        bindingIdValue: bindingInput?.value || '',
-                        isReadonly: Boolean(bindingInput?.readOnly),
-                        errorTexts: Array.from(document.querySelectorAll('.ds-status.is-error')).map((item) => item.textContent?.trim() || ''),
-                      });
-                    }, 1200);
-                  });
-                """,
-            )
+                const openButton = Array.from(document.querySelectorAll('.binding-editor button'))
+                  .find((item) => item.textContent?.trim() === '打开 Binding 设置');
+                openButton?.click();
+                setTimeout(() => {
+                  const bindingInput = document.querySelector('.modal-shell input[readonly]');
+                  if (bindingInput) {
+                    bindingInput.value = 'binding:renamed';
+                    bindingInput.dispatchEvent(new Event('input', { bubbles: true }));
+                  }
+                  const saveButton = Array.from(document.querySelectorAll('.modal-actions button'))
+                    .find((item) => item.textContent?.trim() === '保存 Binding');
+                  saveButton?.click();
+                  setTimeout(() => {
+                    resolve({
+                      bindingIdValue: bindingInput?.value || '',
+                      isReadonly: Boolean(bindingInput?.readOnly),
+                      errorTexts: Array.from(document.querySelectorAll('.ds-status.is-error')).map((item) => item.textContent?.trim() || ''),
+                    });
+                  }, 1200);
+                }, 100);
+              });
+            """,
+        )
         bindings = await asyncio.to_thread(request_json, base_url, "/api/models/bindings")
         agent_binding = next(item for item in bindings["data"] if item["binding"]["target_id"] == "agent:aca")
 

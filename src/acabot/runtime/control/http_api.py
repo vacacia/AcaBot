@@ -262,6 +262,10 @@ class RuntimeHttpApiServer:
             return self._ok(self._await(self.control_plane.get_gateway_status()))
         if segments == ["gateway", "config"] and method == "PUT":
             return self._ok(self._await(self.control_plane.upsert_gateway_config(payload)))
+        if segments == ["filesystem", "config"] and method == "GET":
+            return self._ok(self._await(self.control_plane.get_filesystem_scan_config()))
+        if segments == ["filesystem", "config"] and method == "PUT":
+            return self._ok(self._await(self.control_plane.upsert_filesystem_scan_config(payload)))
         if segments == ["approvals"] and method == "GET":
             status = self._await(self.control_plane.get_status())
             return self._ok(status.pending_approvals)
@@ -418,8 +422,10 @@ class RuntimeHttpApiServer:
             return self._ok(self._await(self.control_plane.list_skills()))
         if len(segments) == 3 and segments[0] == "agents" and segments[2] == "skills" and method == "GET":
             return self._ok(self._await(self.control_plane.list_agent_skills(segments[1])))
+        if segments == ["subagents"] and method == "GET":
+            return self._ok(self._await(self.control_plane.list_subagents()))
         if segments == ["subagents", "executors"] and method == "GET":
-            return self._ok(self._await(self.control_plane.list_subagent_executors()))
+            return self._ok(self._await(self.control_plane.list_subagents()))
 
         if segments == ["bot"] and method == "GET":
             return 501, {"ok": False, "error": "bot shell redesign pending"}
