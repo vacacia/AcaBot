@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: planning
-stopped_at: Phase 1 planned
-last_updated: "2026-03-29T14:30:00.000Z"
-last_activity: 2026-03-29 — 完成 Phase 1 的 context、research、UI-SPEC、PLAN 和 VALIDATION 规划产物
+status: executing
+stopped_at: Completed 01-01 plan
+last_updated: "2026-03-29T16:30:58Z"
+last_activity: 2026-03-30 — 完成 01-01 后端系统配置契约与验证，下一步进入 01-02
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 3
-  completed_plans: 0
-  percent: 0
+  completed_plans: 1
+  percent: 33
 ---
 
 # Project State
@@ -21,34 +21,34 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-29)
 
 **Core value:** 操作者必须能通过一个真实可用的 WebUI 稳定地理解并控制 AcaBot 的行为。
-**Current focus:** Phase 1 — 系统页与运行时路径统一
+**Current focus:** Phase 01 — system-runtime-paths
 
 ## Current Position
 
-Phase: 1 of 7 (系统页与运行时路径统一)
-Plan: 0 of 3 in current phase
-Status: 已完成规划，可进入执行
-Last activity: 2026-03-29 — 完成 Phase 1 的 context、research、UI-SPEC、PLAN 和 VALIDATION 规划产物
+Phase: 01 (system-runtime-paths) — EXECUTING
+Plan: 2 of 3
+Status: 01-01 已完成，准备执行 01-02
+Last activity: 2026-03-30 — 完成 01-01 后端系统配置契约与验证，下一步进入 01-02
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [███░░░░░░░] 33%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 0
-- Average duration: -
-- Total execution time: 0.0 hours
+- Total plans completed: 1
+- Average duration: 26min
+- Total execution time: 0.4 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
+| 01 | 1 | 26min | 26min |
 
 **Recent Trend:**
 
-- Last 5 plans: -
+- Last 5 plans: 26min
 - Trend: Stable
 
 ## Accumulated Context
@@ -61,6 +61,8 @@ Recent decisions affecting current work:
 - [Init]: 先以 WebUI 可用性为最高优先级
 - [Init]: 先统一 runtime 路径 / 配置 / 数据目录，再继续铺页面生效链
 - [Init]: Session 页必须围绕新的 session/runtime 契约重做
+- [01-01]: 系统页统一从 `/api/system/configuration` 读取共享系统配置快照
+- [01-01]: gateway/filesystem/admins 保存结果统一采用 apply-result 语义
 
 ### Pending Todos
 
@@ -75,5 +77,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-29T13:25:29.224Z
-Stopped at: Phase 1 planned
-Resume file: .planning/phases/01-system-runtime-paths/01-03-PLAN.md
+Stopped at: Completed 01-01 plan
+Resume file: .planning/phases/01-system-runtime-paths/01-02-PLAN.md
