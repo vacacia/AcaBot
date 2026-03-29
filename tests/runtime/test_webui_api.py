@@ -2291,6 +2291,27 @@ def test_webui_real_pages_admins_view_uses_editable_list_field() -> None:
     assert '<textarea class="ds-textarea ds-mono"' not in admins_view_source
 
 
+def test_webui_real_pages_system_view_becomes_shared_system_entrypoint() -> None:
+    system_view_source = Path("webui/src/views/SystemView.vue").read_text(encoding="utf-8")
+    router_source = Path("webui/src/router.ts").read_text(encoding="utf-8")
+    sidebar_source = Path("webui/src/components/AppSidebar.vue").read_text(encoding="utf-8")
+    api_source = Path("webui/src/lib/api.ts").read_text(encoding="utf-8")
+
+    assert "/api/system/configuration" in system_view_source
+    assert "EditableListField" in system_view_source
+    assert "高级信息 / 路径总览" in system_view_source
+    assert "保存并尝试生效" in system_view_source
+    assert "/api/runtime/reload-config" in system_view_source
+    assert "apply_status" in system_view_source
+
+    assert 'redirect: "/system"' in router_source
+    assert 'to="/config/admins"' not in sidebar_source
+    assert 'to="/system"' in sidebar_source
+
+    assert "/api/system/configuration" in api_source
+    assert '"/api/runtime/reload-config"' in api_source
+
+
 async def test_models_page_renders_seeded_registry_targets_and_bindings(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     _write_config(config_path, webui_enabled=True, port=0)

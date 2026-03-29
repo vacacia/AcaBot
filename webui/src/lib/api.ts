@@ -132,7 +132,16 @@ function cachePrefixesForPath(path: string): string[] {
     return ["/api/prompt", "/api/prompts"]
   }
   if (path.startsWith("/api/admins")) {
-    return ["/api/admins"]
+    return ["/api/admins", "/api/system/configuration"]
+  }
+  if (path.startsWith("/api/gateway/config")) {
+    return ["/api/gateway/config", "/api/system/configuration"]
+  }
+  if (path.startsWith("/api/filesystem/config")) {
+    return ["/api/filesystem/config", "/api/system/configuration"]
+  }
+  if (path.startsWith("/api/runtime/reload-config")) {
+    return ["/api/runtime/reload-config", "/api/system/configuration", "/api/admins"]
   }
   if (path.startsWith("/api/system/plugins/config") || path.startsWith("/api/plugins/reload")) {
     return ["/api/system/plugins/config", "/api/status"]

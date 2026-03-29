@@ -3,7 +3,6 @@ import { createRouter, createWebHistory } from "vue-router"
 import HomeView from "./views/HomeView.vue"
 import SoulView from "./views/SoulView.vue"
 import MemoryView from "./views/MemoryView.vue"
-import AdminsView from "./views/AdminsView.vue"
 import ProvidersView from "./views/ProvidersView.vue"
 import ModelsView from "./views/ModelsView.vue"
 import PromptsView from "./views/PromptsView.vue"
@@ -20,8 +19,8 @@ export const router = createRouter({
     { path: "/", name: "home", component: HomeView },
     { path: "/config/soul", name: "soul", component: SoulView },
     { path: "/config/memory", name: "memory", component: MemoryView },
-    { path: "/config/admins", name: "admins", component: AdminsView },
-    { path: "/config/bot", redirect: "/config/admins" },
+    { path: "/config/admins", redirect: "/system" },
+    { path: "/config/bot", redirect: "/system" },
     { path: "/config/providers", name: "providers", component: ProvidersView },
     { path: "/config/models", name: "models", component: ModelsView },
     { path: "/config/prompts", name: "prompts", component: PromptsView },

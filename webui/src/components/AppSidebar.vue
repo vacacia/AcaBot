@@ -48,7 +48,6 @@
       <div class="group-title">配置</div>
       <RouterLink class="nav-item" to="/config/soul">Soul</RouterLink>
       <RouterLink class="nav-item" to="/config/memory">记忆</RouterLink>
-      <RouterLink class="nav-item" to="/config/admins">管理员</RouterLink>
       <RouterLink class="nav-item" to="/config/providers">模型供应商</RouterLink>
       <RouterLink class="nav-item" to="/config/models">模型</RouterLink>
       <RouterLink class="nav-item" to="/config/prompts">提示词</RouterLink>
