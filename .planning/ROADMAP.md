@@ -12,7 +12,7 @@
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: 系统页与运行时路径统一** - 收敛系统级配置、扫描根和运行时数据路径，建立正式真源
+- [x] **Phase 1: 系统页与运行时路径统一** - 收敛系统级配置、扫描根和运行时数据路径，建立正式真源
 - [ ] **Phase 2: 首页、日志与全局反馈可用化** - 让首页和日志页成为真实可靠的运维入口
 - [ ] **Phase 3: 模型与提示词控制面生效** - 打通 provider / model / prompt 页到正式配置链
 - [ ] **Phase 4: 插件与 catalog 页面生效** - 让插件、技能、SubAgent 页连接真实运行态与目录真源
@@ -37,7 +37,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 Plans:
 - [x] Plan 01 — 后端系统配置契约与路径总览
 - [x] Plan 02 — 可复用列表编辑器与管理员页迁移
-- [ ] Plan 03 — 系统页重构与导航收敛
+- [x] Plan 03 — 系统页重构与导航收敛
 
 ### Phase 2: 首页、日志与全局反馈可用化
 **Goal**: 让首页和日志页真正承担运维入口，而不是只保留展示壳
@@ -130,7 +130,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. 系统页与运行时路径统一 | 2/3 | In Progress | - |
+| 1. 系统页与运行时路径统一 | 3/3 | Completed | 2026-03-30 |
 | 2. 首页、日志与全局反馈可用化 | 0/0 | Not started | - |
 | 3. 模型与提示词控制面生效 | 0/0 | Not started | - |
 | 4. 插件与 catalog 页面生效 | 0/0 | Not started | - |
