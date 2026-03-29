@@ -32,10 +32,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. runtime 配置、数据目录、catalog、workspace、sticky notes、LTM 路径有统一解析链，不再依赖分散硬编码
   3. 操作者可以清楚知道当前系统实际使用的配置路径与数据位置
   4. WebUI 对保存失败、校验失败和应用失败给出明确反馈
-**Plans**: 0 plans
+**Plans**: 3 plans
 
 Plans:
-- [ ] TBD (run `$gsd-plan-phase 1` to break down)
+- [ ] Plan 01 — 后端系统配置契约与路径总览
+- [ ] Plan 02 — 可复用列表编辑器与管理员页迁移
+- [ ] Plan 03 — 系统页重构与导航收敛
 
 ### Phase 2: 首页、日志与全局反馈可用化
 **Goal**: 让首页和日志页真正承担运维入口，而不是只保留展示壳
@@ -128,7 +130,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. 系统页与运行时路径统一 | 0/0 | Not started | - |
+| 1. 系统页与运行时路径统一 | 0/3 | 已规划 | - |
 | 2. 首页、日志与全局反馈可用化 | 0/0 | Not started | - |
 | 3. 模型与提示词控制面生效 | 0/0 | Not started | - |
 | 4. 插件与 catalog 页面生效 | 0/0 | Not started | - |
