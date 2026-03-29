@@ -2272,6 +2272,25 @@ def test_webui_real_pages_migrate_to_shared_design_system() -> None:
         assert 'class="panel"' not in source, path
 
 
+def test_webui_real_pages_admins_view_uses_editable_list_field() -> None:
+    component_path = Path("webui/src/components/EditableListField.vue")
+    admins_view_path = Path("webui/src/views/AdminsView.vue")
+
+    assert component_path.exists()
+    component_source = component_path.read_text(encoding="utf-8")
+    admins_view_source = admins_view_path.read_text(encoding="utf-8")
+
+    assert "defineProps" in component_source
+    assert "@keydown.enter" in component_source
+    assert "ds-field" in component_source
+    assert 'textarea class="ds-textarea ds-mono"' not in component_source
+
+    assert "EditableListField" in admins_view_source
+    assert "admin_actor_ids" in admins_view_source
+    assert 'split("\\n")' not in admins_view_source
+    assert '<textarea class="ds-textarea ds-mono"' not in admins_view_source
+
+
 async def test_models_page_renders_seeded_registry_targets_and_bindings(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     _write_config(config_path, webui_enabled=True, port=0)

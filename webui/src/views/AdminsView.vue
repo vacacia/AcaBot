@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue"
+import { computed, onMounted, ref } from "vue"
 
+import EditableListField from "../components/EditableListField.vue"
 import { apiGet, apiPut, peekCachedGet } from "../lib/api"
 
 type AdminsPayload = {
   admin_actor_ids: string[]
+  apply_status?: string
+  restart_required?: boolean
+  message?: string
 }
 
 const cachedAdmins = peekCachedGet<AdminsPayload>("/api/admins")
@@ -15,10 +19,23 @@ const draft = ref<AdminsPayload | null>(
       }
     : null,
 )
-const adminActorIdsText = ref(cachedAdmins?.admin_actor_ids.join("\n") ?? "")
 const saveMessage = ref("")
 const errorMessage = ref("")
 const loading = ref(!cachedAdmins)
+
+const adminActorIds = computed<string[]>({
+  get() {
+    return draft.value?.admin_actor_ids ?? []
+  },
+  set(value) {
+    if (!draft.value) {
+      return
+    }
+    draft.value = {
+      admin_actor_ids: [...value],
+    }
+  },
+})
 
 async function loadPage(): Promise<void> {
   loading.value = true
@@ -28,7 +45,6 @@ async function loadPage(): Promise<void> {
     draft.value = {
       admin_actor_ids: [...payload.admin_actor_ids],
     }
-    adminActorIdsText.value = payload.admin_actor_ids.join("\n")
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "加载失败"
   } finally {
@@ -44,16 +60,12 @@ async function saveAdmins(): Promise<void> {
   errorMessage.value = ""
   try {
     const saved = await apiPut<AdminsPayload>("/api/admins", {
-      admin_actor_ids: adminActorIdsText.value
-        .split("\n")
-        .map((item) => item.trim())
-        .filter(Boolean),
+      admin_actor_ids: draft.value.admin_actor_ids,
     })
     draft.value = {
       admin_actor_ids: [...saved.admin_actor_ids],
     }
-    adminActorIdsText.value = saved.admin_actor_ids.join("\n")
-    saveMessage.value = "已保存"
+    saveMessage.value = saved.message || "已保存"
   } catch (error) {
     saveMessage.value = ""
     errorMessage.value = error instanceof Error ? error.message : "保存失败"
@@ -87,14 +99,19 @@ onMounted(() => {
         <div class="ds-section-title">
           <div>
             <h2>共享管理员列表</h2>
-            <p class="ds-summary">系统权限判断也读这一份列表。</p>
+            <p class="ds-summary">系统权限判断会直接读取这一份共享管理员列表。</p>
           </div>
         </div>
       </div>
-      <label class="ds-field">
-        <span>管理员</span>
-        <textarea class="ds-textarea ds-mono" v-model="adminActorIdsText" rows="10"></textarea>
-      </label>
+      <EditableListField
+        v-model="adminActorIds"
+        label="管理员"
+        helper="一次添加一个标识，例如 qq:private:123456。保存后系统权限判断会立即使用这一份列表。"
+        placeholder="添加新项，按回车确认添加"
+        empty-title="还没有配置任何管理员"
+        empty-description="先添加一项，AcaBot 保存后会立刻把它纳入共享管理员列表。"
+        :disabled="loading || !draft"
+      />
     </article>
   </section>
 </template>
