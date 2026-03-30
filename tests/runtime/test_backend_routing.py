@@ -12,7 +12,7 @@ from acabot.runtime.storage.runs import InMemoryRunManager
 from acabot.runtime.storage.threads import InMemoryThreadManager
 from acabot.types import ActionType, EventSource, MsgSegment, StandardEvent
 
-from .test_bootstrap import FakeAgent, FakeAgentResponse
+from ._agent_fakes import FakeAgent, FakeAgentResponse
 from .test_outbox import FakeGateway
 
 

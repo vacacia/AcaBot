@@ -11,7 +11,7 @@ from acabot.runtime import (
 )
 
 from .test_model_agent_runtime import FakeAgent, _context
-from .test_bootstrap import FakeAgentResponse
+from ._agent_fakes import FakeAgentResponse
 from .test_outbox import FakeGateway
 
 

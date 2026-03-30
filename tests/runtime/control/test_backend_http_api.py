@@ -23,7 +23,7 @@ from acabot.runtime import (
 )
 from acabot.runtime.control.http_api import _to_jsonable
 
-from tests.runtime.test_bootstrap import FakeAgent, FakeAgentResponse
+from tests.runtime._agent_fakes import FakeAgent, FakeAgentResponse
 from tests.runtime.test_control_plane import _profile_loader
 from tests.runtime.test_outbox import FakeGateway, FakeMessageStore
 from tests.runtime.test_pipeline_runtime import FakeAgentRuntime

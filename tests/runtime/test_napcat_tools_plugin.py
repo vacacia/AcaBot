@@ -20,7 +20,7 @@ from acabot.runtime import (
     build_runtime_components,
 )
 
-from .test_bootstrap import FakeAgent, FakeAgentResponse
+from ._agent_fakes import FakeAgent, FakeAgentResponse
 from .test_model_agent_runtime import _context
 from .test_outbox import FakeGateway
 

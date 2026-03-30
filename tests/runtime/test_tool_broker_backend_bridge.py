@@ -6,7 +6,7 @@ from acabot.config import Config
 from acabot.runtime import AgentProfile, BackendBridge, BackendSessionService, ToolBroker, build_runtime_components
 from acabot.runtime.backend.contracts import BackendRequest
 
-from tests.runtime.test_bootstrap import FakeAgent, FakeAgentResponse
+from tests.runtime._agent_fakes import FakeAgent, FakeAgentResponse
 from tests.runtime.test_outbox import FakeGateway
 
 

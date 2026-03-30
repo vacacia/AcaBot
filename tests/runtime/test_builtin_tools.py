@@ -19,7 +19,7 @@ from acabot.runtime.builtin_tools.computer import BuiltinComputerToolSurface
 from acabot.types import EventSource
 
 from tests.runtime.runtime_plugin_samples import SampleConfiguredRuntimePlugin
-from tests.runtime.test_bootstrap import FakeAgent, FakeAgentResponse
+from tests.runtime._agent_fakes import FakeAgent, FakeAgentResponse
 from tests.runtime.test_outbox import FakeGateway
 
 

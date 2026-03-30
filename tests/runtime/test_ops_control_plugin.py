@@ -2,7 +2,7 @@ from acabot.config import Config
 from acabot.runtime import build_runtime_components
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
-from .test_bootstrap import FakeAgent, FakeAgentResponse
+from ._agent_fakes import FakeAgent, FakeAgentResponse
 from .test_outbox import FakeGateway
 
 

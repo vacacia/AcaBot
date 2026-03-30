@@ -12,7 +12,7 @@ from acabot.runtime import (
 from acabot.runtime.tool_broker import ToolExecutionContext
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
-from .test_bootstrap import FakeAgent, FakeAgentResponse
+from ._agent_fakes import FakeAgent, FakeAgentResponse
 from .test_outbox import FakeGateway
 
 
