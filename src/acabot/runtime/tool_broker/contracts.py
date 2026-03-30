@@ -73,21 +73,11 @@ class ToolExecutionContext:
     actor_id: str
     agent_id: str
     target: EventSource
-    profile: ResolvedAgent
+    agent: ResolvedAgent
     world_view: "WorldView | None" = None
     state: "ToolRuntimeState | None" = None
     visible_subagents: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def agent(self) -> ResolvedAgent:
-        """当前 tool execution 使用的正式 agent 快照."""
-
-        return self.profile
-
-    @agent.setter
-    def agent(self, value: ResolvedAgent) -> None:
-        self.profile = value
 
 
 @dataclass(slots=True)

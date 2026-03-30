@@ -8,9 +8,11 @@ import subprocess
 import textwrap
 from typing import Any
 from urllib.error import HTTPError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 import pytest
+import yaml
 
 from acabot.config import Config
 from acabot.runtime import (
@@ -572,30 +574,93 @@ def _session_event(
     )
 
 
-def _write_config(path: Path, *, webui_enabled: bool = False, port: int = 0) -> None:
+def _write_config(
+    path: Path,
+    *,
+    webui_enabled: bool = False,
+    port: int = 0,
+    filesystem_enabled: bool = False,
+    base_dir: Path | None = None,
+    backend_admin_actor_ids: list[str] | None = None,
+) -> None:
+    runtime: dict[str, Any] = {
+        "default_agent_id": "aca",
+        "default_agent_name": "Aca",
+        "default_prompt_ref": "prompt/default",
+        "prompts": {
+            "prompt/default": "hello",
+        },
+        "webui": {
+            "enabled": bool(webui_enabled),
+            "host": "127.0.0.1",
+            "port": port,
+        },
+    }
+    if filesystem_enabled:
+        resolved_base_dir = base_dir or path.parent
+        runtime["filesystem"] = {
+            "enabled": True,
+            "base_dir": str(resolved_base_dir),
+            "sessions_dir": "sessions",
+        }
+    if backend_admin_actor_ids:
+        runtime["backend"] = {
+            "admin_actor_ids": list(backend_admin_actor_ids),
+        }
     path.write_text(
+        yaml.safe_dump(
+            {
+                "gateway": {
+                    "host": "127.0.0.1",
+                    "port": 8080,
+                },
+                "agent": {},
+                "runtime": runtime,
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_session_bundle(
+    root: Path,
+    *,
+    session_id: str,
+    prompt_ref: str = "prompt/default",
+    visible_tools: list[str] | None = None,
+    visible_skills: list[str] | None = None,
+    visible_subagents: list[str] | None = None,
+) -> str:
+    platform, scope, identifier = session_id.split(":", 2)
+    session_dir = root / "sessions" / platform / scope / identifier
+    session_dir.mkdir(parents=True, exist_ok=True)
+    agent_id = f"session:{session_id}:frontstage"
+    (session_dir / "session.yaml").write_text(
         f"""
-gateway:
-  host: "127.0.0.1"
-  port: 8080
-
-agent:
-
-runtime:
-  default_agent_id: "aca"
-  profiles:
-    aca:
-      name: "Aca"
-      prompt_ref: "prompt/default"
-  prompts:
-    prompt/default: "hello"
-  webui:
-    enabled: {str(webui_enabled).lower()}
-    host: "127.0.0.1"
-    port: {port}
+session:
+  id: {session_id}
+frontstage:
+  agent_id: {agent_id}
 """.strip(),
         encoding="utf-8",
     )
+    lines = [
+        f"agent_id: {agent_id}",
+        f"prompt_ref: {prompt_ref}",
+    ]
+    for key, values in (
+        ("visible_tools", visible_tools or []),
+        ("visible_skills", visible_skills or []),
+        ("visible_subagents", visible_subagents or []),
+    ):
+        if not values:
+            continue
+        lines.append(f"{key}:")
+        lines.extend(f"  - {value}" for value in values)
+    (session_dir / "agent.yaml").write_text("\n".join(lines), encoding="utf-8")
+    return agent_id
 
 
 def _write_subagent(
@@ -637,15 +702,11 @@ agent:
 
 runtime:
   default_agent_id: "aca"
-  profiles:
-    aca:
-      name: "Aca"
-      prompt_ref: "prompt/aca"
-      admin_actor_ids:
-        - "qq:private:1"
-    worker:
-      name: "Worker"
-      prompt_ref: "prompt/worker"
+  default_agent_name: "Aca"
+  default_prompt_ref: "prompt/aca"
+  backend:
+    admin_actor_ids:
+      - "qq:private:1"
   prompts:
     prompt/aca: "hello aca"
     prompt/worker: "hello worker"
@@ -673,15 +734,11 @@ agent:
 
 runtime:
   default_agent_id: "worker"
-  profiles:
-    aca:
-      name: "Aca"
-      prompt_ref: "prompt/aca"
-    worker:
-      name: "Worker"
-      prompt_ref: "prompt/worker"
-      admin_actor_ids:
-        - "qq:private:2"
+  default_agent_name: "Worker"
+  default_prompt_ref: "prompt/worker"
+  backend:
+    admin_actor_ids:
+      - "qq:private:2"
   prompts:
     prompt/aca: "hello aca"
     prompt/worker: "hello worker"
@@ -697,9 +754,59 @@ runtime:
     assert components.app.backend_admin_actor_ids == {"qq:private:2"}
 
 
-async def test_runtime_config_control_plane_upserts_profile_and_prompt(tmp_path: Path) -> None:
+async def test_runtime_reload_rebinds_agent_loader_when_storage_mode_changes(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
-    _write_config(config_path)
+    _write_config(config_path, filesystem_enabled=False)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    _write_session_bundle(tmp_path, session_id="qq:user:10001")
+
+    inline_agent = components.agent_loader(
+        RouteDecision(
+            thread_id="thread:1",
+            actor_id="actor:1",
+            agent_id="aca",
+            channel_scope="qq:user:10001",
+        )
+    )
+    assert inline_agent.agent_id == "aca"
+
+    _write_config(config_path, filesystem_enabled=True, base_dir=tmp_path)
+    reloaded = await components.control_plane.reload_runtime_configuration()
+    fs_agent = components.agent_loader(
+        RouteDecision(
+            thread_id="thread:1",
+            actor_id="actor:1",
+            agent_id="ignored",
+            channel_scope="qq:user:10001",
+        )
+    )
+
+    assert reloaded["storage_mode"] == "filesystem"
+    assert fs_agent.agent_id == "session:qq:user:10001:frontstage"
+
+    _write_config(config_path, filesystem_enabled=False)
+    reloaded = await components.control_plane.reload_runtime_configuration()
+    inline_agent = components.agent_loader(
+        RouteDecision(
+            thread_id="thread:1",
+            actor_id="actor:1",
+            agent_id="aca",
+            channel_scope="qq:user:10001",
+        )
+    )
+
+    assert reloaded["storage_mode"] == "inline"
+    assert inline_agent.agent_id == "aca"
+
+
+async def test_runtime_config_control_plane_creates_session_and_updates_agent_prompt(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, filesystem_enabled=True, base_dir=tmp_path)
     config = Config.from_file(str(config_path))
     components = build_runtime_components(
         config,
@@ -707,36 +814,39 @@ async def test_runtime_config_control_plane_upserts_profile_and_prompt(tmp_path:
         agent=FakeAgent(FakeAgentResponse(text="ok")),
         log_buffer=InMemoryLogBuffer(),
     )
-
-    profile = await components.control_plane.upsert_profile(
-        {
-            "agent_id": "worker",
-            "name": "Worker",
-            "prompt_ref": "prompt/worker",
-            "enabled_tools": ["read"],
-            "skills": ["sample_configured_skill"],
-        }
-    )
-    assert profile["agent_id"] == "worker"
-    assert profile["skills"] == ["sample_configured_skill"]
-    loaded = components.profile_loader.load(
-        RouteDecision(
-            thread_id="thread:1",
-            actor_id="actor:1",
-            agent_id="worker",
-            channel_scope="qq:user:10001",
-        )
-    )
-    assert loaded.agent_id == "worker"
-    assert components.subagent_catalog.get("worker") is None
-
-    prompt = await components.control_plane.upsert_prompt(
+    await components.control_plane.upsert_prompt(
         prompt_ref="prompt/worker",
         content="you are worker",
     )
+
+    created = await components.control_plane.create_session(
+        {"session_id": "qq:user:10001", "title": "Worker Session"}
+    )
+    agent = await components.control_plane.update_session_agent(
+        "qq:user:10001",
+        {
+            "prompt_ref": "prompt/worker",
+            "visible_tools": ["read"],
+        },
+    )
+    assert created["session"]["session_id"] == "qq:user:10001"
+    assert agent["prompt_ref"] == "prompt/worker"
+    loaded = components.agent_loader(
+        RouteDecision(
+            thread_id="thread:1",
+            actor_id="actor:1",
+            agent_id=created["session"]["frontstage_agent_id"],
+            channel_scope="qq:user:10001",
+        )
+    )
+    assert loaded.agent_id == created["agent"]["agent_id"]
+    assert components.subagent_catalog.get("worker") is None
+
+    prompt = await components.control_plane.get_prompt("prompt/worker")
+    assert prompt is not None
     assert prompt["prompt_ref"] == "prompt/worker"
     assert components.prompt_loader.load("prompt/worker") == "you are worker"
-    assert "worker" in config_path.read_text(encoding="utf-8")
+    assert (tmp_path / "prompts" / "worker.md").exists()
 
 
 async def test_webui_subagents_endpoint_returns_catalog_items(tmp_path: Path) -> None:
@@ -778,6 +888,10 @@ runtime:
         gateway=FakeGateway(),
         agent=FakeAgent(FakeAgentResponse(text="ok")),
         log_buffer=InMemoryLogBuffer(),
+    )
+    await components.control_plane.upsert_prompt(
+        prompt_ref="prompt/worker",
+        content="you are worker",
     )
     server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
 
@@ -858,6 +972,10 @@ runtime:
         agent=FakeAgent(FakeAgentResponse(text="ok")),
         log_buffer=InMemoryLogBuffer(),
     )
+    await components.control_plane.upsert_prompt(
+        prompt_ref="prompt/worker",
+        content="you are worker",
+    )
     server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
 
     await server.start()
@@ -874,11 +992,11 @@ runtime:
     assert [item["effective"] for item in payload["data"]] == [True, False]
 
 
-async def test_runtime_config_control_plane_blocks_profile_delete_when_model_binding_exists(
+async def test_runtime_config_control_plane_rejects_updating_internal_session_agent_ids(
     tmp_path: Path,
 ) -> None:
     config_path = tmp_path / "config.yaml"
-    _write_config(config_path)
+    _write_config(config_path, filesystem_enabled=True, base_dir=tmp_path)
     config = Config.from_file(str(config_path))
     components = build_runtime_components(
         config,
@@ -886,43 +1004,54 @@ async def test_runtime_config_control_plane_blocks_profile_delete_when_model_bin
         agent=FakeAgent(FakeAgentResponse(text="ok")),
     )
 
-    await components.control_plane.upsert_profile(
-        {
-            "agent_id": "worker",
-            "name": "Worker",
-            "prompt_ref": "prompt/worker",
-        }
-    )
-    await components.control_plane.upsert_model_provider(
-        ModelProvider(
-            provider_id="openai-main",
-            kind="openai_compatible",
-            config=OpenAICompatibleProviderConfig(
-                base_url="https://llm.example.com/v1",
-                api_key_env="OPENAI_API_KEY",
-            ),
-        )
-    )
-    await components.control_plane.upsert_model_preset(
-        ModelPreset(
-            preset_id="worker-main",
-            provider_id="openai-main",
-            model="gpt-worker",
-            task_kind="chat",
-            capabilities=["tool_calling"],
-            context_window=64000,
-        )
-    )
-    await components.control_plane.upsert_model_binding(
-        ModelBinding(
-            binding_id="binding:worker",
-            target_id="agent:worker",
-            preset_ids=["worker-main"],
-        )
+    await components.control_plane.create_session(
+        {"session_id": "qq:user:10001", "title": "Worker Session"}
     )
 
-    with pytest.raises(ValueError, match="profile still has model binding"):
-        await components.config_control_plane.delete_profile("worker")
+    with pytest.raises(ValueError, match="internal readonly fields"):
+        await components.control_plane.update_session(
+            "qq:user:10001",
+            {"frontstage_agent_id": "changed"},
+        )
+
+
+def test_runtime_components_keep_inline_session_mode_when_filesystem_is_disabled(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "gateway": {"host": "127.0.0.1", "port": 8080},
+                "agent": {},
+                "runtime": {
+                    "default_agent_id": "aca",
+                    "default_agent_name": "Aca",
+                    "default_prompt_ref": "prompt/default",
+                    "prompts": {"prompt/default": "hello"},
+                    "filesystem": {
+                        "enabled": False,
+                        "base_dir": str(tmp_path),
+                        "sessions_dir": "sessions",
+                    },
+                },
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    _write_session_bundle(tmp_path, session_id="qq:user:10001")
+    config = Config.from_file(str(config_path))
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+
+    assert components.config_control_plane.storage_mode() == "inline"
+    assert components.config_control_plane.session_bundle_loader is None
+    assert components.config_control_plane.list_sessions() == []
+    assert components.router.session_runtime.loader.__class__.__name__ == "ConfigBackedSessionConfigLoader"
 
 
 def test_runtime_http_api_server_default_static_dir_points_to_src_acabot_webui() -> None:
@@ -948,15 +1077,25 @@ def test_runtime_http_api_server_default_static_dir_points_to_src_acabot_webui()
     assert server.static_dir == Path("src/acabot/webui").resolve()
 
 
-async def test_runtime_http_api_server_serves_status_and_profile_crud(tmp_path: Path) -> None:
+async def test_runtime_http_api_server_serves_status_and_session_crud(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
-    _write_config(config_path, webui_enabled=True, port=0)
+    _write_config(
+        config_path,
+        webui_enabled=True,
+        port=0,
+        filesystem_enabled=True,
+        base_dir=tmp_path,
+    )
     config = Config.from_file(str(config_path))
     components = build_runtime_components(
         config,
         gateway=FakeGateway(),
         agent=FakeAgent(FakeAgentResponse(text="ok")),
         log_buffer=InMemoryLogBuffer(),
+    )
+    await components.control_plane.upsert_prompt(
+        prompt_ref="prompt/worker",
+        content="you are worker",
     )
     server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
 
@@ -967,7 +1106,7 @@ async def test_runtime_http_api_server_serves_status_and_profile_crud(tmp_path: 
 
         meta = await asyncio.to_thread(request_json, base_url, "/api/meta")
         assert meta["ok"] is True
-        assert meta["data"]["storage_mode"] == "inline"
+        assert meta["data"]["storage_mode"] == "filesystem"
 
         status = await asyncio.to_thread(request_json, base_url, "/api/status")
         assert status["ok"] is True
@@ -1025,27 +1164,91 @@ async def test_runtime_http_api_server_serves_status_and_profile_crud(tmp_path: 
             assert any(item["path"] == first["path"] and item["enabled"] is False for item in toggled["data"]["items"])
             assert first["name"] not in [plugin.name for plugin in components.plugin_manager.loaded]
 
-        put_result = await asyncio.to_thread(
+        created = await asyncio.to_thread(
             request_json,
             base_url,
-            "/api/profiles/worker",
-            method="PUT",
+            "/api/sessions",
+            method="POST",
             payload={
-                "name": "Worker",
-                "prompt_ref": "prompt/worker",
-                "enabled_tools": ["read"],
-                "skills": [],
+                "session_id": "qq:user:10001",
+                "title": "Worker Session",
             },
         )
-        assert put_result["ok"] is True
-        get_result = await asyncio.to_thread(request_json, base_url, "/api/profiles/worker")
-        assert get_result["data"]["agent_id"] == "worker"
+        assert created["ok"] is True
+        listed = await asyncio.to_thread(request_json, base_url, "/api/sessions")
+        assert listed["data"][0]["session_id"] == "qq:user:10001"
+        session_detail = await asyncio.to_thread(request_json, base_url, "/api/sessions/qq%3Auser%3A10001")
+        assert session_detail["data"]["session"]["session_id"] == "qq:user:10001"
+        agent_saved = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/sessions/qq%3Auser%3A10001/agent",
+            method="PUT",
+            payload={
+                "prompt_ref": "prompt/worker",
+                "visible_tools": ["read"],
+            },
+        )
+        assert agent_saved["data"]["prompt_ref"] == "prompt/worker"
+        agent_detail = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/sessions/qq%3Auser%3A10001/agent",
+        )
+        assert agent_detail["data"]["agent_id"] == "session:qq:user:10001:frontstage"
 
         workspaces_result = await asyncio.to_thread(request_json, base_url, "/api/workspaces")
         assert workspaces_result["ok"] is True
 
         references_result = await asyncio.to_thread(request_json, base_url, "/api/references/spaces")
         assert references_result["ok"] is True
+    finally:
+        await server.stop()
+
+
+async def test_runtime_http_api_server_rejects_path_traversal_session_ids(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(
+        config_path,
+        webui_enabled=True,
+        port=0,
+        filesystem_enabled=True,
+        base_dir=tmp_path,
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+        log_buffer=InMemoryLogBuffer(),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+
+        status, created = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/sessions",
+            method="POST",
+            payload={"session_id": "qq:user:..\\evil"},
+        )
+        assert status == 400
+        assert created["ok"] is False
+        assert "invalid session_id" in created["error"]
+
+        encoded = quote("qq:user:..\\evil", safe=":")
+        status, fetched = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            f"/api/sessions/{encoded}",
+        )
+        assert status == 400
+        assert fetched["ok"] is False
+        assert "invalid session_id" in fetched["error"]
     finally:
         await server.stop()
 
@@ -1066,15 +1269,15 @@ agent:
 
 runtime:
   default_agent_id: "aca"
+  default_agent_name: "Aca"
+  default_prompt_ref: "prompt/default"
   filesystem:
     enabled: true
     base_dir: "{tmp_path}"
-  profiles:
-    aca:
-      name: "Aca"
-      prompt_ref: "prompt/default"
-      admin_actor_ids:
-        - "qq:private:123456"
+    sessions_dir: "sessions"
+  backend:
+    admin_actor_ids:
+      - "qq:private:123456"
   prompts:
     prompt/default: "hello"
   webui:
@@ -1126,7 +1329,6 @@ runtime:
     assert snapshot["data"]["paths"]["config_path"] == str(config_path.resolve())
     assert snapshot["data"]["paths"]["storage_mode"] == "filesystem"
     assert snapshot["data"]["paths"]["filesystem_base_dir"] == str(tmp_path.resolve())
-    assert snapshot["data"]["paths"]["profiles_dir"] == str((tmp_path / "profiles").resolve())
     assert snapshot["data"]["paths"]["prompts_dir"] == str((tmp_path / "prompts").resolve())
     assert snapshot["data"]["paths"]["sessions_dir"] == str((tmp_path / "sessions").resolve())
     assert snapshot["data"]["paths"]["computer_root_dir"] == str((Path.home() / ".acabot" / "workspaces").resolve())
@@ -1148,7 +1350,6 @@ runtime:
     for key in (
         "config_path",
         "filesystem_base_dir",
-        "profiles_dir",
         "prompts_dir",
         "sessions_dir",
         "computer_root_dir",
@@ -1906,7 +2107,8 @@ async def test_runtime_http_api_server_persists_model_preset_task_kind_and_capab
         await server.stop()
 
 
-async def test_runtime_http_api_server_serves_product_shaped_bot_settings_and_admin_actor_ids_apply_status(
+async def test_runtime_http_api_server_health_check_prefixes_provider_model_for_litellm(
+    monkeypatch,
     tmp_path: Path,
 ) -> None:
     config_path = tmp_path / "config.yaml"
@@ -1917,15 +2119,80 @@ async def test_runtime_http_api_server_serves_product_shaped_bot_settings_and_ad
         gateway=FakeGateway(),
         agent=FakeAgent(FakeAgentResponse(text="ok")),
     )
-    await components.control_plane.upsert_profile(
-        {
-            "agent_id": "aca",
-            "name": "Aca",
-            "prompt_ref": "prompt/default",
-            "admin_actor_ids": ["qq:private:123456"],
-            "enabled_tools": ["read"],
-            "skills": ["sample_configured_skill"],
-        }
+    await components.control_plane.upsert_model_provider(
+        ModelProvider(
+            provider_id="glm",
+            name="GLM",
+            kind="anthropic",
+            config=AnthropicProviderConfig(
+                base_url="https://open.bigmodel.cn/api/anthropic",
+                api_key_env="GLM_API_KEY",
+                anthropic_version="2023-06-01",
+            ),
+        )
+    )
+    await components.control_plane.upsert_model_preset(
+        ModelPreset(
+            preset_id="glm-main",
+            provider_id="glm",
+            model="glm-4.7",
+            task_kind="chat",
+            capabilities=["tool_calling"],
+            context_window=128000,
+        )
+    )
+
+    async def fake_complete(self, system_prompt, messages, model=None, request_options=None):
+        _ = self, system_prompt, messages, request_options
+        return type(
+            "Response",
+            (),
+            {
+                "error": None,
+                "model_used": model or "",
+            },
+        )()
+
+    monkeypatch.setattr("acabot.agent.agent.LitellmAgent.complete", fake_complete)
+
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+
+        result = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/models/presets/glm-main/health-check",
+            method="POST",
+            payload={},
+        )
+
+        assert result["ok"] is True
+        assert result["data"]["ok"] is True
+        assert result["data"]["model"] == "anthropic/glm-4.7"
+        assert result["data"]["metadata"]["model_used"] == "anthropic/glm-4.7"
+    finally:
+        await server.stop()
+
+
+async def test_runtime_http_api_server_serves_product_shaped_bot_settings_and_admin_actor_ids_apply_status(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(
+        config_path,
+        webui_enabled=True,
+        port=0,
+        backend_admin_actor_ids=["qq:private:123456"],
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
     )
     await components.control_plane.upsert_prompt(
         prompt_ref="prompt/friendlier",
@@ -2037,15 +2304,9 @@ async def test_runtime_http_api_server_serves_product_shaped_bot_settings_and_ad
         assert saved["data"]["restart_required"] is False
         assert saved["data"]["message"] == "已保存并已生效"
 
-        profile = await components.control_plane.get_profile("aca")
-        assert profile is not None
-        assert profile["admin_actor_ids"] == ["qq:private:123456", "napcat:private:42"]
-        assert profile["name"] == "Aca"
-        assert profile["prompt_ref"] == "prompt/default"
-        assert "default_model" not in profile
-        assert "summary_model_preset_id" not in profile
-        assert profile["enabled_tools"] == ["read"]
-        assert profile["skills"] == ["sample_configured_skill"]
+        runtime_conf = dict(components.config_control_plane.config.to_dict().get("runtime", {}) or {})
+        backend_conf = dict(runtime_conf.get("backend", {}) or {})
+        assert backend_conf["admin_actor_ids"] == ["qq:private:123456", "napcat:private:42"]
 
         backend_status = await asyncio.to_thread(request_json, base_url, "/api/backend/status")
         assert backend_status["ok"] is True
@@ -2083,7 +2344,13 @@ async def test_runtime_http_api_server_serves_product_shaped_bot_settings_and_ad
 
 async def test_runtime_http_api_server_reports_unimplemented_or_unknown_shell_endpoints(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
-    _write_config(config_path, webui_enabled=True, port=0)
+    _write_config(
+        config_path,
+        webui_enabled=True,
+        port=0,
+        filesystem_enabled=True,
+        base_dir=tmp_path,
+    )
     config = Config.from_file(str(config_path))
     components = build_runtime_components(
         config,
@@ -2102,16 +2369,16 @@ async def test_runtime_http_api_server_reports_unimplemented_or_unknown_shell_en
             base_url,
             "/api/sessions",
         )
-        assert status == 501
-        assert sessions["ok"] is False
-        assert "redesign pending" in sessions["error"]
+        assert status == 200
+        assert sessions["ok"] is True
+        assert sessions["data"] == []
 
         status, session_detail = await asyncio.to_thread(
             request_json_with_status,
             base_url,
             "/api/sessions/qq%3Agroup%3A42",
         )
-        assert status == 501
+        assert status == 404
         assert session_detail["ok"] is False
 
         status, session_put = await asyncio.to_thread(
@@ -2121,7 +2388,7 @@ async def test_runtime_http_api_server_reports_unimplemented_or_unknown_shell_en
             method="PUT",
             payload={"display_name": "ignored"},
         )
-        assert status == 501
+        assert status == 404
         assert session_put["ok"] is False
 
         status, missing_rules_surface = await asyncio.to_thread(
@@ -2145,7 +2412,13 @@ async def test_runtime_http_api_server_reports_unimplemented_or_unknown_shell_en
 
 async def test_runtime_http_api_server_blocks_deleting_prompt_that_is_still_referenced(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
-    _write_config(config_path, webui_enabled=True, port=0)
+    _write_config(
+        config_path,
+        webui_enabled=True,
+        port=0,
+        filesystem_enabled=True,
+        base_dir=tmp_path,
+    )
     config = Config.from_file(str(config_path))
     components = build_runtime_components(
         config,
@@ -2156,12 +2429,12 @@ async def test_runtime_http_api_server_blocks_deleting_prompt_that_is_still_refe
         prompt_ref="prompt/in-use",
         content="still referenced",
     )
-    await components.control_plane.upsert_profile(
-        {
-            "agent_id": "worker",
-            "name": "Worker",
-            "prompt_ref": "prompt/in-use",
-        }
+    await components.control_plane.create_session(
+        {"session_id": "qq:user:10001", "title": "Worker Session"}
+    )
+    await components.control_plane.update_session_agent(
+        "qq:user:10001",
+        {"prompt_ref": "prompt/in-use"},
     )
     server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
 
@@ -2178,7 +2451,7 @@ async def test_runtime_http_api_server_blocks_deleting_prompt_that_is_still_refe
 
         assert status == 400
         assert payload["ok"] is False
-        assert "worker" in payload["error"]
+        assert "qq:user:10001" in payload["error"]
 
         prompt = await components.control_plane.get_prompt("prompt/in-use")
         assert prompt is not None
@@ -2312,6 +2585,74 @@ def test_webui_real_pages_system_view_becomes_shared_system_entrypoint() -> None
     assert '"/api/runtime/reload-config"' in api_source
 
 
+async def test_system_page_renders_when_filesystem_configured_dirs_are_null(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""
+gateway:
+  host: "127.0.0.1"
+  port: 8080
+
+agent:
+
+runtime:
+  default_agent_id: "aca"
+  filesystem:
+    enabled: true
+    base_dir: "{tmp_path}"
+  profiles:
+    aca:
+      name: "Aca"
+      prompt_ref: "prompt/default"
+      admin_actor_ids:
+        - "qq:private:123456"
+  prompts:
+    prompt/default: "hello"
+  webui:
+    enabled: true
+    host: "127.0.0.1"
+    port: 0
+""".strip(),
+        encoding="utf-8",
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        result = await asyncio.to_thread(
+            run_page_script,
+            url=f"{base_url}/system",
+            width=1440,
+            height=1200,
+            wait_ms=2200,
+            script="""
+              return {
+                title: document.querySelector('h1')?.textContent?.trim() || '',
+                bodyText: document.body.textContent || '',
+                hasLoadFailure: (document.body.textContent || '').includes('系统页加载失败'),
+                hasGatewayPanel: (document.body.textContent || '').includes('共享网关设置'),
+                hasAdvancedSection: (document.body.textContent || '').includes('高级信息 / 路径总览'),
+              };
+            """,
+        )
+
+        assert result["title"] == "系统设置"
+        assert result["hasLoadFailure"] is False
+        assert result["hasGatewayPanel"] is True
+        assert result["hasAdvancedSection"] is True
+        assert "not iterable" not in result["bodyText"]
+    finally:
+        await server.stop()
+
+
 async def test_models_page_renders_seeded_registry_targets_and_bindings(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     _write_config(config_path, webui_enabled=True, port=0)
@@ -2355,6 +2696,142 @@ async def test_models_page_renders_seeded_registry_targets_and_bindings(tmp_path
         assert "resolved" in result["statusChips"]
         assert "gpt-4.1" in result["selectedModel"]
         assert "fallback" in result["bodyText"].lower()
+    finally:
+        await server.stop()
+
+
+async def test_models_page_new_preset_flow_surfaces_draft_state_and_saves(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    await _seed_model_registry(components.control_plane)
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        result = await asyncio.to_thread(
+            run_page_script,
+            url=f"{base_url}/config/models",
+            width=1440,
+            height=1200,
+            wait_ms=2200,
+            script="""
+              return new Promise((resolve) => {
+                const addButton = Array.from(document.querySelectorAll('.sidebar-column button'))
+                  .find((item) => item.textContent?.trim() === '+');
+                  addButton?.click();
+                  setTimeout(() => {
+                    const summaryTitleOnCreate = document.querySelector('.summary-column h2')?.textContent?.trim() || '';
+                    const modalOpen = Boolean(document.querySelector('.modal-shell'));
+                    const sideSheetOpen = Boolean(document.querySelector('.side-sheet-shell'));
+                    const sideSheetPosition = document.querySelector('.side-sheet-shell')
+                      ? window.getComputedStyle(document.querySelector('.side-sheet-shell')).position
+                      : '';
+                    const fieldByLabel = (text) => Array.from(document.querySelectorAll('.modal-shell .ds-field'))
+                      .find((field) => (field.querySelector('span')?.textContent || '').includes(text));
+                  const saveButton = Array.from(document.querySelectorAll('.modal-actions button'))
+                    .find((item) => item.textContent?.trim() === '保存');
+                  const saveButtonRect = saveButton?.getBoundingClientRect();
+                  const saveButtonVisible = Boolean(
+                    saveButtonRect
+                    && saveButtonRect.top >= 0
+                    && saveButtonRect.bottom <= window.innerHeight
+                  );
+                  const presetIdInput = fieldByLabel('Preset ID')?.querySelector('input');
+                  const modelInput = fieldByLabel('模型名')?.querySelector('input');
+                  if (presetIdInput) {
+                    presetIdInput.value = 'new-chat-main';
+                    presetIdInput.dispatchEvent(new Event('input', { bubbles: true }));
+                  }
+                  if (modelInput) {
+                    modelInput.value = 'gpt-4.1-mini';
+                    modelInput.dispatchEvent(new Event('input', { bubbles: true }));
+                  }
+                  saveButton?.click();
+                  setTimeout(() => {
+                        resolve({
+                          summaryTitleOnCreate,
+                          modalOpen,
+                          sideSheetOpen,
+                          sideSheetPosition,
+                          saveButtonVisible,
+                          selectedTitleAfterSave: document.querySelector('.summary-column h2')?.textContent?.trim() || '',
+                          presetIds: Array.from(document.querySelectorAll('.sidebar-column .list-item strong'))
+                            .map((item) => item.textContent?.trim() || ''),
+                      statusTexts: Array.from(document.querySelectorAll('.ds-status')).map((item) => item.textContent?.trim() || ''),
+                    });
+                  }, 1600);
+                  }, 300);
+                });
+            """,
+        )
+
+        assert result["summaryTitleOnCreate"] == "新建模型 Preset"
+        assert result["modalOpen"] is True
+        assert result["sideSheetOpen"] is True
+        assert result["sideSheetPosition"] == "fixed"
+        assert result["saveButtonVisible"] is True
+        assert result["selectedTitleAfterSave"] == "new-chat-main"
+        assert "new-chat-main" in result["presetIds"]
+        assert any("已保存" in item for item in result["statusTexts"])
+    finally:
+        await server.stop()
+
+
+async def test_models_page_drawer_tones_down_ambient_glow_layers(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    await _seed_model_registry(components.control_plane)
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        result = await asyncio.to_thread(
+            run_page_script,
+            url=f"{base_url}/config/models",
+            width=1440,
+            height=1200,
+            wait_ms=2200,
+            script="""
+              return new Promise((resolve) => {
+                const openButton = Array.from(document.querySelectorAll('.summary-column button'))
+                  .find((item) => (item.textContent || '').includes('打开 Preset 设置'));
+                openButton?.click();
+                setTimeout(() => {
+                  const backdrop = document.querySelector('.side-sheet-backdrop');
+                  const main = document.querySelector('.main');
+                  const bodyBefore = getComputedStyle(document.body, '::before');
+                  const mainBefore = main ? getComputedStyle(main, '::before') : null;
+                  resolve({
+                    overlayActive: document.body.classList.contains('overlay-active'),
+                    backdropBackground: backdrop ? getComputedStyle(backdrop).backgroundImage : '',
+                    bodyBeforeOpacity: bodyBefore.opacity || '',
+                    mainBeforeOpacity: mainBefore?.opacity || '',
+                  });
+                }, 520);
+              });
+            """,
+        )
+
+        assert result["overlayActive"] is True
+        assert "linear-gradient" not in result["backdropBackground"]
+        assert float(result["bodyBeforeOpacity"]) <= 0.28
+        assert float(result["mainBeforeOpacity"]) <= 0.24
     finally:
         await server.stop()
 
@@ -2486,6 +2963,7 @@ async def test_models_page_keeps_existing_binding_id_when_saving_binding(tmp_pat
 
 
 async def test_memory_page_surfaces_long_term_memory_binding_health(tmp_path: Path) -> None:
+    pytest.importorskip("lancedb")
     config_path = tmp_path / "config.yaml"
     _write_config(config_path, webui_enabled=True, port=0)
     config = Config.from_file(str(config_path))

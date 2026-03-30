@@ -258,7 +258,7 @@ class RoutingDomainConfig(DomainConfig):
     """路由域配置.
 
     Attributes:
-        default (dict[str, Any]): 默认路由配置, 常见字段是 `profile` 和 `actor_lane`.
+        default (dict[str, Any]): 默认路由配置, 常见字段是 `agent_id` 和 `actor_lane`.
         cases (list[DomainCase]): 路由域下的局部 case.
     """
 
@@ -484,7 +484,7 @@ class ComputerPolicyDecision:
         allow_sessions (bool): 是否允许开启 shell session.
         roots (dict[str, dict[str, bool]]): 每个 world root 的可见性定义.
         visible_skills (list[str] | None): 当前 actor 真正可见的技能列表.
-            传入 `None` 表示继续沿用 profile / capability 默认值.
+            传入 `None` 表示继续沿用 agent / capability 默认值.
         visible_subagents (list[str]): 当前 actor 真正可见的 subagent 列表.
         notes (list[str]): 其他说明.
         reason (str): 这次决策为什么是这个结果.

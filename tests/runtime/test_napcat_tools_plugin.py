@@ -13,14 +13,14 @@ from typing import Any
 
 from acabot.config import Config
 from acabot.runtime import (
-    AgentProfile,
+    ResolvedAgent,
     NapCatToolsPlugin,
     RuntimePluginManager,
     ToolBroker,
     build_runtime_components,
 )
 
-from .test_bootstrap import FakeAgent, FakeAgentResponse
+from ._agent_fakes import FakeAgent, FakeAgentResponse
 from .test_model_agent_runtime import _context
 from .test_outbox import FakeGateway
 
@@ -102,17 +102,17 @@ class ToolGateway(FakeGateway):
 # endregion
 
 
-def _profile(*, enabled_tools: list[str]) -> AgentProfile:
+def _profile(*, enabled_tools: list[str]) -> ResolvedAgent:
     """构造最小 profile.
 
     Args:
-        enabled_tools: 当前 profile 启用的工具列表.
+        enabled_tools: 当前 agent 启用的工具列表.
 
     Returns:
-        一份 AgentProfile.
+        一份 ResolvedAgent.
     """
 
-    return AgentProfile(
+    return ResolvedAgent(
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
@@ -134,7 +134,7 @@ async def test_napcat_tools_plugin_registers_runtime_tools() -> None:
     await manager.ensure_started()
 
     ctx = _context()
-    ctx.profile = _profile(
+    ctx.agent = _profile(
         enabled_tools=[
             "get_user_info",
             "get_group_info",
@@ -259,7 +259,7 @@ async def test_build_runtime_components_can_load_napcat_tools_plugin_from_config
 
     visible = components.tool_broker.visible_tools(_profile(enabled_tools=["get_group_info"]))
     ctx = _context()
-    ctx.profile = _profile(enabled_tools=["get_group_info"])
+    ctx.agent = _profile(enabled_tools=["get_group_info"])
     result = await components.tool_broker.execute(
         tool_name="get_group_info",
         arguments={"group_id": 20002},

@@ -168,18 +168,20 @@
 
 影响 plugin 的加载和插件私有配置。
 
-## profile / prompt / session 现在分别从哪里来
+## session bundle / prompt / session 现在分别从哪里来
 
 关键文件:
 
-- `src/acabot/runtime/control/profile_loader.py`
+- `src/acabot/runtime/control/session_bundle_loader.py`
+- `src/acabot/runtime/control/session_agent_loader.py`
+- `src/acabot/runtime/control/prompt_loader.py`
 - `src/acabot/runtime/control/session_loader.py`
 - `src/acabot/runtime/control/session_runtime.py`
 - `src/acabot/runtime/control/config_control_plane.py`
 
-### profile
+### frontstage agent
 
-profile 现在主要描述:
+frontstage agent 现在主要描述:
 
 - prompt_ref
 - enabled_tools
@@ -340,7 +342,7 @@ NapCat 自己的配置和登录态, 不属于 AcaBot 的业务配置。
 
 1. `src/acabot/config.py`
 2. `src/acabot/runtime/control/config_control_plane.py`
-3. `src/acabot/runtime/control/profile_loader.py`
+3. `src/acabot/runtime/control/session_bundle_loader.py`
 4. `src/acabot/runtime/control/session_loader.py`
 5. `src/acabot/runtime/control/session_runtime.py`
 6. `src/acabot/runtime/bootstrap/`

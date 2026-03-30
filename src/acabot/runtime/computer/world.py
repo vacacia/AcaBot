@@ -34,7 +34,7 @@ class _WorldViewImpl(WorldView):
     Attributes:
         thread_id (str): 当前 thread ID.
         actor_kind (str): 当前 actor 的 world 身份.
-        profile_id (str): 当前 profile ID.
+        agent_id (str): 当前 agent ID.
         root_policies (dict[str, WorldRootPolicy]): 当前可见 roots 的权限表.
         workspace_root_host_path (str): `/workspace` 对应的宿主机目录.
         skills_root_host_path (str): `/skills` 对应的宿主机目录.
@@ -45,7 +45,7 @@ class _WorldViewImpl(WorldView):
 
     thread_id: str
     actor_kind: str
-    profile_id: str
+    agent_id: str
     root_policies: dict[str, WorldRootPolicy]
     workspace_root_host_path: str
     skills_root_host_path: str
@@ -266,7 +266,7 @@ class WorkWorldBuilder:
         return _WorldViewImpl(
             thread_id=bundle.thread_id,
             actor_kind=bundle.actor_kind,
-            profile_id=bundle.profile_id,
+            agent_id=bundle.agent_id,
             root_policies=root_policies,
             workspace_root_host_path=str(workspace_root),
             skills_root_host_path=str(skills_root),
@@ -325,7 +325,7 @@ class WorkWorldBuilder:
         """
 
         joined = ",".join(visible_skill_names)
-        return f"{bundle.actor_kind}:{bundle.profile_id}:{joined}"
+        return f"{bundle.actor_kind}:{bundle.agent_id}:{joined}"
 
     @staticmethod
     def _execution_view(

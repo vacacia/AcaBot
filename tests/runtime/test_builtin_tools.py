@@ -14,12 +14,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from acabot.config import Config
-from acabot.runtime import AgentProfile, ComputerPolicy, ToolBroker, ToolExecutionContext, build_runtime_components
+from acabot.runtime import ResolvedAgent, ComputerPolicy, ToolBroker, ToolExecutionContext, build_runtime_components
 from acabot.runtime.builtin_tools.computer import BuiltinComputerToolSurface
 from acabot.types import EventSource
 
 from tests.runtime.runtime_plugin_samples import SampleConfiguredRuntimePlugin
-from tests.runtime.test_bootstrap import FakeAgent, FakeAgentResponse
+from tests.runtime._agent_fakes import FakeAgent, FakeAgentResponse
 from tests.runtime.test_outbox import FakeGateway
 
 
@@ -220,7 +220,7 @@ def _tool_execution_context(*, enabled_tools: list[str]) -> ToolExecutionContext
             user_id="10001",
             group_id=None,
         ),
-        profile=AgentProfile(
+        agent=ResolvedAgent(
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/aca",
@@ -651,7 +651,7 @@ async def test_builtin_computer_surface_uses_bash_world_interface() -> None:
             "command": "printf 'hello from bash'",
             "timeout": 9,
             "world_view": ctx.world_view,
-            "policy": ctx.profile.computer_policy,
+            "policy": ctx.agent.computer_policy,
         }
     ]
     assert "hello from bash" in result.llm_content

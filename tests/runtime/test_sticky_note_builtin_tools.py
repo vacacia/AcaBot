@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from acabot.runtime import AgentProfile, ToolBroker, ToolExecutionContext
+from acabot.runtime import ResolvedAgent, ToolBroker, ToolExecutionContext
 from acabot.runtime.builtin_tools.sticky_notes import (
     BUILTIN_STICKY_NOTE_TOOL_SOURCE,
     BuiltinStickyNoteToolSurface,
@@ -28,7 +28,7 @@ def _context(*, enabled_tools: list[str]) -> ToolExecutionContext:
             user_id="10001",
             group_id="20002",
         ),
-        profile=AgentProfile(
+        agent=ResolvedAgent(
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",

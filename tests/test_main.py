@@ -15,7 +15,7 @@ from acabot.main import build_runtime_app, create_message_store, wait_for_shutdo
 from acabot.runtime import (
     ComputerRuntime,
     ComputerRuntimeConfig,
-    AgentProfile,
+    ResolvedAgent,
     ContextAssembler,
     ContextCompactionConfig,
     ContextCompactor,
@@ -182,12 +182,8 @@ def test_build_runtime_app_uses_factories_and_runtime_config() -> None:
             },
             "runtime": {
                 "default_agent_id": "aca",
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                    }
-                },
+                "default_agent_name": "Aca",
+                "default_prompt_ref": "prompt/aca",
                 "prompts": {
                     "prompt/aca": "You are Aca."
                 },
@@ -200,7 +196,7 @@ def test_build_runtime_app_uses_factories_and_runtime_config() -> None:
         gateway_factory=gateway_factory,
         agent_factory=agent_factory,
     )
-    profile = components.profile_loader.load(
+    profile = components.agent_loader(
         RouteDecision(
             thread_id="qq:user:10001",
             actor_id="qq:user:10001",
@@ -227,12 +223,8 @@ def test_build_runtime_app_keeps_bootstrap_sqlite_selection(tmp_path) -> None:
             },
             "runtime": {
                 "default_agent_id": "aca",
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                    }
-                },
+                "default_agent_name": "Aca",
+                "default_prompt_ref": "prompt/aca",
                 "prompts": {
                     "prompt/aca": "You are Aca."
                 },
@@ -337,7 +329,7 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
             thread_manager=None,  # type: ignore[arg-type]
             run_manager=None,  # type: ignore[arg-type]
             pipeline=None,  # type: ignore[arg-type]
-            profile_loader=lambda decision: None,  # type: ignore[return-value]
+            agent_loader=lambda decision: None,  # type: ignore[return-value]
         ),
         memory_broker=MemoryBroker(),
         context_compactor=ContextCompactor(ContextCompactionConfig()),
@@ -362,7 +354,7 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
         control_plane=None,  # type: ignore[arg-type]
         config_control_plane=None,  # type: ignore[arg-type]
         prompt_loader=None,  # type: ignore[arg-type]
-        profile_loader=None,  # type: ignore[arg-type]
+        agent_loader=lambda decision: None,  # type: ignore[return-value]
         tool_broker=None,  # type: ignore[arg-type]
         agent_runtime=None,  # type: ignore[arg-type]
         approval_resumer=NoopApprovalResumer(),

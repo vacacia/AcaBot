@@ -5,14 +5,14 @@ from acabot.runtime import build_runtime_components
 from acabot.runtime.app import RuntimeApp
 from acabot.runtime.backend.contracts import BackendRequest
 from acabot.runtime.backend.mode_registry import BackendModeRegistry
-from acabot.runtime.contracts import AgentProfile, RouteDecision
+from acabot.runtime.contracts import ResolvedAgent, RouteDecision
 from acabot.runtime.router import RuntimeRouter
 from acabot.runtime.storage.event_store import InMemoryChannelEventStore
 from acabot.runtime.storage.runs import InMemoryRunManager
 from acabot.runtime.storage.threads import InMemoryThreadManager
 from acabot.types import ActionType, EventSource, MsgSegment, StandardEvent
 
-from .test_bootstrap import FakeAgent, FakeAgentResponse
+from ._agent_fakes import FakeAgent, FakeAgentResponse
 from .test_outbox import FakeGateway
 
 
@@ -43,8 +43,8 @@ class FakeBackendBridge:
         raise AssertionError("frontstage bridge should not be used in task 6")
 
 
-def _profile_loader(decision: RouteDecision) -> AgentProfile:
-    return AgentProfile(
+def _agent_loader(decision: RouteDecision) -> ResolvedAgent:
+    return ResolvedAgent(
         agent_id=decision.agent_id,
         name="Aca",
         prompt_ref="prompt/default",
@@ -85,7 +85,7 @@ def _build_app(
         run_manager=InMemoryRunManager(),
         channel_event_store=InMemoryChannelEventStore(),
         pipeline=pipeline,
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
         backend_bridge=backend_bridge,
         backend_mode_registry=backend_mode_registry,
         backend_admin_actor_ids=backend_admin_actor_ids,

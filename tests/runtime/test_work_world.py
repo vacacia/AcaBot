@@ -63,7 +63,7 @@ def _bundle(*, actor_kind: str) -> WorldInputBundle:
     }
     return WorldInputBundle(
         thread_id="qq:group:123",
-        profile_id="aca.qq.group.default",
+        agent_id="aca.qq.group.default",
         actor_kind=actor_kind,
         self_scope_id="aca.qq.group.default",
         visible_skill_names=["sample_skill"],
@@ -181,7 +181,7 @@ def test_world_respects_explicit_empty_visible_skill_list(tmp_path: Path) -> Non
     bundle = _bundle(actor_kind="frontstage_agent")
     bundle = WorldInputBundle(
         thread_id=bundle.thread_id,
-        profile_id=bundle.profile_id,
+        agent_id=bundle.agent_id,
         actor_kind=bundle.actor_kind,
         self_scope_id=bundle.self_scope_id,
         visible_skill_names=[],

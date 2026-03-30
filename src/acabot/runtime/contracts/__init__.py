@@ -36,7 +36,7 @@ from .records import (
     ThreadRecord,
     ThreadState,
 )
-from .routing import AgentProfile, ResolvedAgent, RouteDecision
+from .routing import ResolvedAgent, RouteDecision
 from .session_agent import SessionAgent, SessionBundle, SessionBundlePaths
 from .session_config import (
     AdmissionDecision,
@@ -64,7 +64,6 @@ from .session_config import (
 __all__ = [
     "AdmissionDecision",
     "AdmissionDomainConfig",
-    "AgentProfile",
     "AgentRuntimeResult",
     "ApprovalDecision",
     "ApprovalDecisionResult",

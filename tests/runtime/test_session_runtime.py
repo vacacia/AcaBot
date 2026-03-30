@@ -1,6 +1,8 @@
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from acabot.config import Config
 from acabot.runtime import RuntimeRouter
 from acabot.runtime.control.session_loader import ConfigBackedSessionConfigLoader
@@ -35,9 +37,6 @@ selectors:
     sender_roles: [admin]
 surfaces:
   message.mention:
-    routing:
-      default:
-        agent_id: aca.qq.group.default
     admission:
       default:
         mode: respond
@@ -180,6 +179,33 @@ def test_session_runtime_resolves_domain_decisions_from_surface_cases(tmp_path: 
     assert admission.mode == "respond"
     assert computer.backend == "host"
     assert computer.source_case_id == "admin_host"
+
+
+def test_session_loader_rejects_surface_routing_agent_override(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "sessions/qq/group/123"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "session.yaml").write_text(
+        """
+session:
+  id: qq:group:123
+frontstage:
+  agent_id: aca.qq.group.default
+surfaces:
+  message.mention:
+    routing:
+      default:
+        agent_id: should.be.ignored
+        actor_lane: backstage
+    admission:
+      default:
+        mode: respond
+""".strip(),
+        encoding="utf-8",
+    )
+    loader = SessionConfigLoader(config_root=tmp_path / "sessions")
+
+    with pytest.raises(ValueError, match="routing agent_id override is not supported"):
+        loader.load_by_session_id("qq:group:123")
 
 
 def test_session_runtime_reads_visible_subagents_from_computer_block(tmp_path: Path) -> None:

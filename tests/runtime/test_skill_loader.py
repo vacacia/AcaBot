@@ -4,7 +4,7 @@ import pytest
 
 from acabot.config import Config
 from acabot.runtime import (
-    AgentProfile,
+    ResolvedAgent,
     FileSystemSkillPackageLoader,
     SkillPackageFormatError,
 )
@@ -260,7 +260,7 @@ def test_build_skill_catalog_visible_skills_prefers_project_scope_for_duplicate_
 
     catalog = build_skill_catalog(config)
     visible = catalog.visible_skills(
-        AgentProfile(
+        ResolvedAgent(
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",

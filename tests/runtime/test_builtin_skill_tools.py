@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from acabot.runtime import (
-    AgentProfile,
+    ResolvedAgent,
     ComputerPolicyDecision,
     ComputerRuntime,
     ComputerRuntimeConfig,
@@ -48,7 +48,7 @@ async def test_builtin_skill_tool_uses_doc18_name_schema_and_description(tmp_pat
     broker, _ = _broker_with_builtin_skill_tool(tmp_path)
 
     hidden_tools = broker.visible_tools(
-        AgentProfile(
+        ResolvedAgent(
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",
@@ -58,7 +58,7 @@ async def test_builtin_skill_tool_uses_doc18_name_schema_and_description(tmp_pat
     assert not any(tool.name == "Skill" for tool in hidden_tools)
 
     visible_tools = broker.visible_tools(
-        AgentProfile(
+        ResolvedAgent(
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",
@@ -83,7 +83,7 @@ async def test_builtin_skill_tool_returns_launch_message_base_dir_and_marks_load
     broker, computer_runtime = _broker_with_builtin_skill_tool(tmp_path)
 
     ctx = _context()
-    ctx.profile = AgentProfile(
+    ctx.agent = ResolvedAgent(
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
@@ -111,7 +111,7 @@ async def test_builtin_skill_tool_rejects_invisible_skill(tmp_path: Path) -> Non
     broker, _ = _broker_with_builtin_skill_tool(tmp_path)
 
     ctx = _context()
-    ctx.profile = AgentProfile(
+    ctx.agent = ResolvedAgent(
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
@@ -131,7 +131,7 @@ async def test_builtin_skill_tool_respects_world_visible_skills(tmp_path: Path) 
     broker, computer_runtime = _broker_with_builtin_skill_tool(tmp_path)
 
     ctx = _context()
-    ctx.profile = AgentProfile(
+    ctx.agent = ResolvedAgent(
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
@@ -177,7 +177,7 @@ async def test_builtin_skill_tool_disappears_when_visible_skills_is_explicitly_e
     broker, computer_runtime = _broker_with_builtin_skill_tool(tmp_path)
 
     ctx = _context()
-    ctx.profile = AgentProfile(
+    ctx.agent = ResolvedAgent(
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
@@ -212,7 +212,7 @@ async def test_builtin_skill_tool_disappears_when_skills_root_is_hidden(tmp_path
     broker, computer_runtime = _broker_with_builtin_skill_tool(tmp_path)
 
     ctx = _context()
-    ctx.profile = AgentProfile(
+    ctx.agent = ResolvedAgent(
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",

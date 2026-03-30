@@ -23,8 +23,8 @@ from acabot.runtime import (
 )
 from acabot.runtime.control.http_api import _to_jsonable
 
-from tests.runtime.test_bootstrap import FakeAgent, FakeAgentResponse
-from tests.runtime.test_control_plane import _profile_loader
+from tests.runtime._agent_fakes import FakeAgent, FakeAgentResponse
+from tests.runtime.test_control_plane import _agent_loader
 from tests.runtime.test_outbox import FakeGateway, FakeMessageStore
 from tests.runtime.test_pipeline_runtime import FakeAgentRuntime
 
@@ -46,7 +46,7 @@ def _build_control_plane(tmp_path: Path) -> RuntimeControlPlane:
             run_manager=InMemoryRunManager(),
             thread_manager=InMemoryThreadManager(),
         ),
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
         backend_bridge=BackendBridge(session=session_service),
         backend_mode_registry=BackendModeRegistry(),
         backend_admin_actor_ids={"qq:user:10001"},

@@ -11,7 +11,7 @@ from acabot.runtime.memory.long_term_memory.contracts import MemoryEntry, Memory
 from acabot.runtime.memory.long_term_memory.source import CoreSimpleMemMemorySource
 from acabot.runtime.memory.long_term_memory.storage import LanceDbLongTermMemoryStore
 from acabot.runtime.contracts import (
-    AgentProfile,
+    ResolvedAgent,
     RetrievalPlan,
     RouteDecision,
     RunRecord,
@@ -107,7 +107,7 @@ def _ctx() -> RunContext:
             working_summary="群里最近在讨论机器人设定",
             last_event_at=123,
         ),
-        profile=AgentProfile(
+        agent=ResolvedAgent(
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",

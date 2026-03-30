@@ -457,7 +457,7 @@ computer:
 ### `RoutingDecision`
 
 - `actor_lane`
-- `profile_id`
+- `agent_id`
 - `reason`
 - `source_case_id`
 - `priority`

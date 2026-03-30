@@ -2,7 +2,7 @@ from pathlib import Path
 
 from acabot.config import Config
 from acabot.runtime import (
-    AgentProfile,
+    ResolvedAgent,
     LocalReferenceBackend,
     ReferenceToolsPlugin,
     RuntimePluginManager,
@@ -11,12 +11,12 @@ from acabot.runtime import (
 )
 
 from .test_model_agent_runtime import FakeAgent, _context
-from .test_bootstrap import FakeAgentResponse
+from ._agent_fakes import FakeAgentResponse
 from .test_outbox import FakeGateway
 
 
-def _profile() -> AgentProfile:
-    return AgentProfile(
+def _profile() -> ResolvedAgent:
+    return ResolvedAgent(
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
@@ -52,7 +52,7 @@ async def test_reference_tools_plugin_can_add_search_and_read(tmp_path: Path) ->
     await manager.ensure_started()
 
     ctx = _context()
-    ctx.profile = _profile()
+    ctx.agent = _profile()
     execution_ctx = broker._build_execution_context(ctx)
 
     created = await broker.execute(
@@ -124,7 +124,7 @@ async def test_build_runtime_components_can_load_reference_tools_plugin_from_con
     await components.plugin_manager.ensure_started()
 
     ctx = _context()
-    ctx.profile = _profile()
+    ctx.agent = _profile()
     execution_ctx = components.tool_broker._build_execution_context(ctx)
     result = await components.tool_broker.execute(
         tool_name="reference_add_document",

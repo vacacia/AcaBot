@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Iterable, Literal
 
 if TYPE_CHECKING:
-    from ..contracts.routing import AgentProfile
+    from ..contracts.routing import ResolvedAgent
 
 
 ModelTaskKind = Literal[
@@ -63,16 +63,16 @@ SUPPORTED_MODEL_CAPABILITIES: tuple[str, ...] = (
 @dataclass(slots=True)
 class ModelTarget:
     """ModelTarget 表示系统里的一个正式模型消费位点.
-
+    
     Attributes:
         target_id (str): 正式 target 标识, 例如 `agent:aca`.
-        task_kind (ModelTaskKind): 这个位点的主任务类型.
+        task_kind (ModelTaskKind): 这个位点的主任务类型.如 'chat', 'embedding'
         source_kind (ModelTargetSourceKind): 这个 target 的来源分类.
         owner_id (str): 拥有这个 target 的对象 ID.
         description (str): 给控制面展示的人类可读说明.
         required (bool): 这个位点是否属于必填.
-        allow_fallbacks (bool): 是否允许绑定 fallback 链.
-        required_capabilities (list[ModelCapability]): 这个位点额外要求的能力集合.
+        allow_fallbacks (bool): 是否允许绑定 fallback 链(是否允许发生降级).
+        required_capabilities (list[ModelCapability]): 挂载在这个位点上的所有模型必须有什么能力.
         metadata (dict[str, str]): 额外元数据.
     """
 
@@ -171,18 +171,18 @@ SYSTEM_MODEL_TARGETS: tuple[ModelTarget, ...] = (
 )
 
 
-def build_agent_model_targets(profiles: Iterable["AgentProfile"]) -> list[ModelTarget]:
-    """根据当前 profile 集合构建 `agent:<agent_id>` target 列表.
+def build_agent_model_targets(agents: Iterable["ResolvedAgent"]) -> list[ModelTarget]:
+    """根据当前 agent 集合构建 `agent:<agent_id>` target 列表.
 
     Args:
-        profiles: 当前 profile 快照集合.
+        agents: 当前 agent 快照集合.
 
     Returns:
         一组按 agent_id 排序的 target.
     """
 
     items = sorted(
-        {str(profile.agent_id): profile for profile in profiles if str(getattr(profile, "agent_id", "") or "")}.items()
+        {str(agent.agent_id): agent for agent in agents if str(getattr(agent, "agent_id", "") or "")}.items()
     )
     return [
         ModelTarget(
@@ -194,7 +194,7 @@ def build_agent_model_targets(profiles: Iterable["AgentProfile"]) -> list[ModelT
             required=True,
             allow_fallbacks=True,
         )
-        for agent_id, _profile in items
+        for agent_id, _agent in items
     ]
 
 
@@ -209,7 +209,7 @@ class MutableModelTargetCatalog:
 
     Attributes:
         _system_targets (dict[str, ModelTarget]): 固定 system target.
-        _agent_targets (dict[str, ModelTarget]): 当前 profile 派生出的 agent target.
+        _agent_targets (dict[str, ModelTarget]): 当前 agent 派生出的 agent target.
         _plugin_targets (dict[str, ModelTarget]): 当前已加载插件注册的 target.
     """
 

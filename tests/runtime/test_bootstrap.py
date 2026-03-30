@@ -15,7 +15,7 @@ from acabot.agent import ToolDef, ToolSpec
 from acabot.config import Config
 from acabot.runtime import (
     ApprovalRequired,
-    AgentProfile,
+    ResolvedAgent,
     CoreSimpleMemMemorySource,
     ContextAssembler,
     ContextCompactor,
@@ -193,7 +193,7 @@ async def _model_registry_manager(
     manager.target_catalog.replace_agent_targets(
         build_agent_model_targets(
             [
-                AgentProfile(
+                ResolvedAgent(
                     agent_id=agent_id,
                     name=agent_id,
                     prompt_ref=f"prompt/{agent_id}",
@@ -266,7 +266,7 @@ def test_build_runtime_components_uses_runtime_profiles_and_prompts() -> None:
         agent_id="aca",
         channel_scope="qq:user:10001",
     )
-    profile = components.profile_loader.load(decision)
+    profile = components.agent_loader(decision)
 
     assert components.router.default_agent_id == "aca"
     assert components.prompt_loader.load("prompt/aca") == "You are Aca."
@@ -447,7 +447,7 @@ async def test_build_runtime_components_exposes_skill_tool_and_empty_subagent_ca
     )
     await components.plugin_manager.ensure_started()
 
-    profile = components.profile_loader.load(
+    profile = components.agent_loader(
         RouteDecision(
             thread_id="qq:user:10001",
             actor_id="qq:user:10001",
@@ -511,7 +511,7 @@ async def test_build_runtime_components_loads_profiles_and_prompts_from_filesyst
         channel_scope="qq:user:10001",
     )
 
-    profile = components.profile_loader.load(decision)
+    profile = components.agent_loader(decision)
     prompt = components.prompt_loader.load("prompt/aca")
 
     assert profile.name == "Aca Filesystem"
@@ -926,7 +926,7 @@ async def test_build_runtime_components_registers_builtin_computer_tools() -> No
         agent=FakeAgent(FakeAgentResponse(text="ok")),
     )
     await components.plugin_manager.ensure_started()
-    profile = components.profile_loader.load(
+    profile = components.agent_loader(
         RouteDecision(
             thread_id="qq:user:10001",
             actor_id="qq:user:10001",
@@ -995,7 +995,7 @@ async def test_build_runtime_components_drops_stale_tools_from_removed_computer_
         agent=FakeAgent(FakeAgentResponse(text="ok")),
         tool_broker=broker,
     )
-    profile = components.profile_loader.load(
+    profile = components.agent_loader(
         RouteDecision(
             thread_id="qq:user:10001",
             actor_id="qq:user:10001",
@@ -1067,7 +1067,7 @@ async def test_build_runtime_components_drops_stale_builtin_plugins_from_reused_
         plugin_manager=plugin_manager,
     )
     await components.plugin_manager.ensure_started()
-    profile = components.profile_loader.load(
+    profile = components.agent_loader(
         RouteDecision(
             thread_id="qq:user:10001",
             actor_id="qq:user:10001",
@@ -1156,7 +1156,7 @@ async def test_build_runtime_components_full_plugin_reload_keeps_builtin_plugins
 
     await components.plugin_manager.ensure_started()
     loaded_names, missing = await components.app.reload_plugins()
-    profile = components.profile_loader.load(
+    profile = components.agent_loader(
         RouteDecision(
             thread_id="qq:user:10001",
             actor_id="qq:user:10001",
@@ -1217,7 +1217,14 @@ async def test_build_runtime_components_reload_keeps_conditional_subagent_delega
 
     await components.plugin_manager.ensure_started()
     loaded_names, missing = await components.app.reload_plugins()
-    profile = components.profile_loader.profiles["aca"]
+    profile = components.agent_loader(
+        RouteDecision(
+            thread_id="qq:user:10001",
+            actor_id="qq:user:10001",
+            agent_id="aca",
+            channel_scope="qq:user:10001",
+        )
+    )
     visible = components.tool_broker.visible_tools(profile)
     sources = {
         item["name"]: item["source"]
@@ -1604,7 +1611,7 @@ async def test_build_runtime_components_memory_broker_reads_self_and_sticky_file
         event=event,
         decision=decision,
         thread=thread,
-        profile=components.profile_loader.load(decision),
+        agent=components.agent_loader(decision),
         retrieval_plan=RetrievalPlan(
             sticky_note_targets=["qq:user:10001"],
             retained_history=[],

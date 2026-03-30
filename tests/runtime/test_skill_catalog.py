@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from acabot.config import Config
-from acabot.runtime import AgentProfile, FileSystemSkillPackageLoader, SkillCatalog
+from acabot.runtime import ResolvedAgent, FileSystemSkillPackageLoader, SkillCatalog
 from acabot.runtime.bootstrap.builders import build_skill_catalog
 
 
@@ -9,8 +9,8 @@ def _fixtures_root() -> Path:
     return Path(__file__).resolve().parent.parent / "fixtures" / "skills"
 
 
-def _profile(skills: list[str]) -> AgentProfile:
-    return AgentProfile(
+def _profile(skills: list[str]) -> ResolvedAgent:
+    return ResolvedAgent(
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",

@@ -62,7 +62,6 @@ class RuntimeApp:
         channel_event_store: ChannelEventStore,
         pipeline: ThreadPipeline,
         agent_loader: Callable[[RouteDecision], ResolvedAgent] | None = None,
-        profile_loader: Callable[[RouteDecision], ResolvedAgent] | None = None,
         approval_resumer: ApprovalResumer | None = None,
         reference_backend: ReferenceBackend | None = None,
         plugin_manager: RuntimePluginManager | None = None,
@@ -83,7 +82,6 @@ class RuntimeApp:
             channel_event_store: inbound event log 持久化组件.
             pipeline: 真正执行一次 run 的 ThreadPipeline.
             agent_loader: 根据 RouteDecision 加载当前 run agent 快照的回调.
-            profile_loader: 旧 profile loader 兼容入口.
             approval_resumer: approval 通过后的续执行器.
             reference_backend: `reference / notebook` provider. 默认允许 lazy init.
             plugin_manager: runtime world 的插件管理器.
@@ -102,7 +100,6 @@ class RuntimeApp:
         self.channel_event_store = channel_event_store
         self.pipeline = pipeline
         self.agent_loader = agent_loader
-        self.profile_loader = profile_loader
         self.approval_resumer = approval_resumer or NoopApprovalResumer()
         self.reference_backend = reference_backend
         self.plugin_manager = plugin_manager
@@ -280,7 +277,7 @@ class RuntimeApp:
                 event=event,
                 decision=decision,
                 thread=thread,
-                profile=agent,
+                agent=agent,
                 model_request=model_request,
                 summary_model_request=summary_model_request,
                 event_facts=decision.event_facts,
@@ -463,8 +460,6 @@ class RuntimeApp:
             )
         if self.agent_loader is not None:
             return self.agent_loader(decision)
-        if self.profile_loader is not None:
-            return self.profile_loader(decision)
         raise RuntimeError("agent loader is not configured")
 
     def _resolve_model_requests(

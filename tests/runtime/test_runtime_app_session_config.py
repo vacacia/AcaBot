@@ -70,9 +70,6 @@ selectors:
     sender_roles: [admin]
 surfaces:
   message.mention:
-    routing:
-      default:
-        agent_id: aca.qq.group.default
     admission:
       default:
         mode: respond
@@ -92,9 +89,6 @@ surfaces:
           use:
             backend: host
   message.plain:
-    routing:
-      default:
-        agent_id: aca.qq.group.default
     admission:
       default:
         mode: record_only

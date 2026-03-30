@@ -2,7 +2,7 @@ from pathlib import Path
 
 from acabot.config import Config
 from acabot.runtime import (
-    AgentProfile,
+    ResolvedAgent,
     AgentRuntimeResult,
     FileSystemModelRegistryManager,
     InMemoryToolAudit,
@@ -20,7 +20,7 @@ from acabot.agent import ToolSpec
 from acabot.runtime.tool_broker import ToolExecutionContext
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
-from .test_bootstrap import FakeAgent, FakeAgentResponse
+from ._agent_fakes import FakeAgent, FakeAgentResponse
 from .test_outbox import FakeGateway
 
 
@@ -59,6 +59,43 @@ def _write_subagent(
     (subagent_dir / "SUBAGENT.md").write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_session_bundle(
+    tmp_path: Path,
+    *,
+    session_id: str,
+    agent_id: str,
+    prompt_ref: str,
+    visible_skills: list[str] | None = None,
+) -> None:
+    platform, scope_kind, identifier = session_id.split(":", 2)
+    bundle_dir = tmp_path / "sessions" / platform / scope_kind / identifier
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "session.yaml").write_text(
+        "\n".join(
+            [
+                "session:",
+                f"  id: {session_id}",
+                "frontstage:",
+                f"  agent_id: {agent_id}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (bundle_dir / "agent.yaml").write_text(
+        "\n".join(
+            [
+                f"agent_id: {agent_id}",
+                f"prompt_ref: {prompt_ref}",
+                "visible_tools: []",
+                "visible_skills:",
+                *[f"  - {item}" for item in list(visible_skills or [])],
+                "visible_subagents: []",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def _event(*, event_id: str = "evt:parent") -> StandardEvent:
     return StandardEvent(
         event_id=event_id,
@@ -78,19 +115,19 @@ def _event(*, event_id: str = "evt:parent") -> StandardEvent:
     )
 
 
-def _tool_ctx(*, run_id: str, profile) -> ToolExecutionContext:
+def _tool_ctx(*, run_id: str, agent) -> ToolExecutionContext:
     return ToolExecutionContext(
         run_id=run_id,
         thread_id="qq:user:10001",
         actor_id="qq:user:10001",
-        agent_id=profile.agent_id,
+        agent_id=agent.agent_id,
         target=EventSource(
             platform="qq",
             message_type="private",
             user_id="10001",
             group_id=None,
         ),
-        profile=profile,
+        agent=agent,
         visible_subagents=["excel-worker"],
         metadata={
             "channel_scope": "qq:user:10001",
@@ -104,7 +141,28 @@ def _tool_ctx(*, run_id: str, profile) -> ToolExecutionContext:
     )
 
 
+def _parent_agent(agent_id: str = "aca") -> ResolvedAgent:
+    return ResolvedAgent(
+        agent_id=agent_id,
+        name=agent_id,
+        prompt_ref=f"prompt/{agent_id}",
+    )
+
+
 def _runtime_config(tmp_path: Path) -> Config:
+    _write_session_bundle(
+        tmp_path,
+        session_id="qq:user:10001",
+        agent_id="aca",
+        prompt_ref="prompt/aca",
+        visible_skills=["sample_configured_skill"],
+    )
+    _write_session_bundle(
+        tmp_path,
+        session_id="qq:user:20002",
+        agent_id="worker",
+        prompt_ref="prompt/worker",
+    )
     return Config(
         {
             "agent": {
@@ -112,22 +170,15 @@ def _runtime_config(tmp_path: Path) -> Config:
             },
             "runtime": {
                 "default_agent_id": "aca",
+                "default_agent_name": "Aca",
+                "default_prompt_ref": "prompt/aca",
                 "filesystem": {
                     "enabled": True,
                     "base_dir": str(tmp_path),
+                    "sessions_dir": "sessions",
                     "skill_catalog_dirs": [_skills_dir()],
                 },
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                        "skills": ["sample_configured_skill"],
-                    },
-                    "worker": {
-                        "name": "Worker",
-                        "prompt_ref": "prompt/worker",
-                    },
-                },
+                "skills": ["sample_configured_skill"],
                 "prompts": {
                     "prompt/aca": "You are Aca.",
                     "prompt/worker": "You are Worker.",
@@ -154,7 +205,7 @@ async def _model_registry_manager(
     manager.target_catalog.replace_agent_targets(
         build_agent_model_targets(
             [
-                AgentProfile(
+                ResolvedAgent(
                     agent_id=agent_id,
                     name=agent_id,
                     prompt_ref=f"prompt/{agent_id}",
@@ -228,7 +279,7 @@ async def test_delegate_subagent_uses_subagent_prompt_body(tmp_path) -> None:
             channel_scope="qq:user:10001",
         ),
     )
-    profile = components.profile_loader.profiles["aca"]
+    profile = _parent_agent("aca")
 
     result = await components.tool_broker.execute(
         tool_name="delegate_subagent",
@@ -236,13 +287,13 @@ async def test_delegate_subagent_uses_subagent_prompt_body(tmp_path) -> None:
             "delegate_agent_id": "excel-worker",
             "task": "整理 Excel 文件并总结",
         },
-        ctx=_tool_ctx(run_id=parent_run.run_id, profile=profile),
+        ctx=_tool_ctx(run_id=parent_run.run_id, agent=profile),
     )
 
     assert result.raw["ok"] is True
     assert "You are Excel Worker." in agent.calls[-1]["system_prompt"]
     assert "Legacy prompt file should never win." not in agent.calls[-1]["system_prompt"]
-    assert agent.calls[-1]["model"] == "gpt-parent"
+    assert agent.calls[-1]["model"] == "openai/gpt-parent"
     child_run = await components.run_manager.get(str(result.raw["delegated_run_id"]))
     assert child_run is not None
     assert child_run.agent_id == "subagent:excel-worker"
@@ -278,7 +329,7 @@ async def test_delegate_subagent_uses_manifest_model_target_override(
             channel_scope="qq:user:10001",
         ),
     )
-    profile = components.profile_loader.profiles["aca"]
+    profile = _parent_agent("aca")
 
     result = await components.tool_broker.execute(
         tool_name="delegate_subagent",
@@ -286,7 +337,7 @@ async def test_delegate_subagent_uses_manifest_model_target_override(
             "delegate_agent_id": "excel-worker",
             "task": "整理 Excel 文件并总结",
         },
-        ctx=_tool_ctx(run_id=parent_run.run_id, profile=profile),
+        ctx=_tool_ctx(run_id=parent_run.run_id, agent=profile),
     )
 
     child_run = await components.run_manager.get(str(result.raw["delegated_run_id"]))
@@ -295,7 +346,7 @@ async def test_delegate_subagent_uses_manifest_model_target_override(
     assert child_run.metadata["model_snapshot"]["binding_id"] == "binding:worker"
     assert child_run.metadata["model_snapshot"]["provider_id"] == "openai-main"
     assert child_run.metadata["model_snapshot"]["preset_id"] == "worker-main"
-    assert agent.calls[-1]["model"] == "gpt-worker"
+    assert agent.calls[-1]["model"] == "openai/gpt-worker"
     assert agent.calls[-1]["request_options"]["api_base"] == "https://example.invalid/v1"
     assert agent.calls[-1]["request_options"]["provider_kind"] == "openai_compatible"
 
@@ -334,7 +385,7 @@ async def test_delegate_subagent_builds_subagent_computer_policy(tmp_path) -> No
             channel_scope="qq:user:10001",
         ),
     )
-    profile = components.profile_loader.profiles["aca"]
+    profile = _parent_agent("aca")
 
     result = await components.tool_broker.execute(
         tool_name="delegate_subagent",
@@ -342,14 +393,14 @@ async def test_delegate_subagent_builds_subagent_computer_policy(tmp_path) -> No
             "delegate_agent_id": "excel-worker",
             "task": "整理 Excel 文件并总结",
         },
-        ctx=_tool_ctx(run_id=parent_run.run_id, profile=profile),
+        ctx=_tool_ctx(run_id=parent_run.run_id, agent=profile),
     )
 
     assert result.raw["ok"] is True
     child_ctx = captured["ctx"]
-    assert child_ctx.profile.agent_id == "subagent:excel-worker"
-    assert child_ctx.profile.prompt_ref == "subagent/excel-worker"
-    assert child_ctx.profile.enabled_tools == ["sample_configured_tool"]
+    assert child_ctx.agent.agent_id == "subagent:excel-worker"
+    assert child_ctx.agent.prompt_ref == "subagent/excel-worker"
+    assert child_ctx.agent.enabled_tools == ["sample_configured_tool"]
     assert child_ctx.computer_policy_decision is not None
     assert child_ctx.computer_policy_decision.actor_kind == "subagent"
     assert child_ctx.computer_policy_decision.roots["self"]["visible"] is False
@@ -408,7 +459,7 @@ async def test_subagent_can_use_plugin_tool_when_subagent_definition_enables_it(
             channel_scope="qq:user:10001",
         ),
     )
-    profile = components.profile_loader.profiles["aca"]
+    profile = _parent_agent("aca")
 
     result = await components.tool_broker.execute(
         tool_name="delegate_subagent",
@@ -416,7 +467,7 @@ async def test_subagent_can_use_plugin_tool_when_subagent_definition_enables_it(
             "delegate_agent_id": "excel-worker",
             "task": "调用 plugin tool",
         },
-        ctx=_tool_ctx(run_id=parent_run.run_id, profile=profile),
+        ctx=_tool_ctx(run_id=parent_run.run_id, agent=profile),
     )
 
     assert result.raw["ok"] is True
@@ -493,7 +544,7 @@ async def test_subagent_child_run_cannot_enter_waiting_approval(tmp_path: Path) 
             channel_scope="qq:user:10001",
         ),
     )
-    profile = components.profile_loader.profiles["aca"]
+    profile = _parent_agent("aca")
 
     result = await components.tool_broker.execute(
         tool_name="delegate_subagent",
@@ -501,7 +552,7 @@ async def test_subagent_child_run_cannot_enter_waiting_approval(tmp_path: Path) 
             "delegate_agent_id": "excel-worker",
             "task": "触发审批工具",
         },
-        ctx=_tool_ctx(run_id=parent_run.run_id, profile=profile),
+        ctx=_tool_ctx(run_id=parent_run.run_id, agent=profile),
     )
 
     restricted_record = next(

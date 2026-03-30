@@ -1,7 +1,7 @@
 from dataclasses import asdict
 
 from acabot.runtime import (
-    AgentProfile,
+    ResolvedAgent,
     ContextDecision,
     ExtractionDecision,
     RetrievalPlanner,
@@ -59,7 +59,7 @@ def _ctx() -> RunContext:
             working_summary="",
             last_event_at=123,
         ),
-        profile=AgentProfile(
+        agent=ResolvedAgent(
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",

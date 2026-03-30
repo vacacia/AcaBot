@@ -29,8 +29,55 @@ class SessionBundleLoader:
         self.skill_names = None if skill_names is None else set(skill_names)
         self.subagent_names = None if subagent_names is None else set(subagent_names)
 
+    def replace_catalog_refs(
+        self,
+        *,
+        prompt_refs: set[str],
+        tool_names: set[str],
+        skill_names: set[str],
+        subagent_names: set[str],
+    ) -> None:
+        """原子替换 bundle 校验所需的 catalog 快照."""
+
+        self.prompt_refs = set(prompt_refs)
+        self.tool_names = set(tool_names)
+        self.skill_names = set(skill_names)
+        self.subagent_names = set(subagent_names)
+
+    def replace_root(self, config_root: str | Path) -> None:
+        """替换 session bundle 根目录."""
+
+        self.config_root = Path(config_root)
+        self.session_loader = SessionConfigLoader(config_root=self.config_root)
+
     def session_dir_for_session_id(self, session_id: str) -> Path:
         return self.session_loader.path_for_session_id(session_id).parent
+
+    def list_session_ids(self) -> list[str]:
+        """扫描当前 `sessions/` 根目录下的完整 bundle 列表."""
+
+        if not self.config_root.exists():
+            return []
+        session_ids: list[str] = []
+        for session_path in sorted(self.config_root.glob("*/*/*/session.yaml")):
+            session_dir = session_path.parent
+            agent_path = session_dir / "agent.yaml"
+            if not agent_path.exists():
+                continue
+            try:
+                relative = session_dir.relative_to(self.config_root)
+            except ValueError:
+                continue
+            parts = relative.parts
+            if len(parts) != 3:
+                continue
+            session_ids.append(f"{parts[0]}:{parts[1]}:{parts[2]}")
+        return session_ids
+
+    def list_bundles(self) -> list[SessionBundle]:
+        """返回当前可成功解析的全部 session bundles."""
+
+        return [self.load_by_session_id(session_id) for session_id in self.list_session_ids()]
 
     def load_by_session_id(self, session_id: str) -> SessionBundle:
         session_config_path = self.session_loader.path_for_session_id(session_id)

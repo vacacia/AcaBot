@@ -157,6 +157,8 @@ class RuntimeHttpApiServer:
                     )
                 except KeyError as exc:
                     status, result = 404, {"ok": False, "error": f"not found: {exc}"}
+                except FileNotFoundError as exc:
+                    status, result = 404, {"ok": False, "error": str(exc)}
                 except ValueError as exc:
                     status, result = 400, {"ok": False, "error": str(exc)}
                 except Exception as exc:  # pragma: no cover - 兜底保护
@@ -415,11 +417,28 @@ class RuntimeHttpApiServer:
                 return 404, {"ok": False, "error": "sticky note not found"}
             return self._ok({"deleted": True})
         if segments == ["sessions"] and method == "GET":
-            return 501, {"ok": False, "error": "session shell redesign pending"}
-        if len(segments) == 2 and segments[0] == "sessions" and method == "GET":
-            return 501, {"ok": False, "error": "session shell redesign pending"}
-        if len(segments) == 2 and segments[0] == "sessions" and method == "PUT":
-            return 501, {"ok": False, "error": "session shell redesign pending"}
+            return self._ok(self._await(self.control_plane.list_sessions()))
+        if segments == ["sessions"] and method == "POST":
+            created = self._await(self.control_plane.create_session(payload))
+            return 201, {"ok": True, "data": _to_jsonable(created)}
+        if len(segments) == 2 and segments[0] == "sessions":
+            session_id = segments[1]
+            if method == "GET":
+                result = self._await(self.control_plane.get_session(session_id))
+                if result is None:
+                    return 404, {"ok": False, "error": "session not found"}
+                return self._ok(result)
+            if method == "PUT":
+                return self._ok(self._await(self.control_plane.update_session(session_id, payload)))
+        if len(segments) == 3 and segments[0] == "sessions" and segments[2] == "agent":
+            session_id = segments[1]
+            if method == "GET":
+                result = self._await(self.control_plane.get_session_agent(session_id))
+                if result is None:
+                    return 404, {"ok": False, "error": "session not found"}
+                return self._ok(result)
+            if method == "PUT":
+                return self._ok(self._await(self.control_plane.update_session_agent(session_id, payload)))
         if segments == ["skills"] and method == "GET":
             return self._ok(self._await(self.control_plane.list_skills()))
         if len(segments) == 3 and segments[0] == "agents" and segments[2] == "skills" and method == "GET":
@@ -437,23 +456,6 @@ class RuntimeHttpApiServer:
             return self._ok(self._await(self.control_plane.get_admins()))
         if segments == ["admins"] and method == "PUT":
             return self._ok(self._await(self.control_plane.put_admins(payload=payload)))
-
-        if segments == ["profiles"] and method == "GET":
-            return self._ok(self._await(self.control_plane.list_profiles()))
-        if len(segments) == 2 and segments[0] == "profiles":
-            agent_id = segments[1]
-            if method == "GET":
-                result = self._await(self.control_plane.get_profile(agent_id))
-                if result is None:
-                    return 404, {"ok": False, "error": "profile not found"}
-                return self._ok(result)
-            if method == "PUT":
-                return self._ok(self._await(self.control_plane.upsert_profile({**payload, "agent_id": agent_id})))
-            if method == "DELETE":
-                deleted = self._await(self.control_plane.delete_profile(agent_id))
-                if not deleted:
-                    return 404, {"ok": False, "error": "profile not found"}
-                return self._ok({"deleted": True})
 
         if segments == ["prompts"] and method == "GET":
             return self._ok(self._await(self.control_plane.list_prompts()))

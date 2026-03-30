@@ -435,7 +435,7 @@ class ToolBroker:
         return summaries
 
     def _should_expose_backend_bridge_tool(self, agent: ResolvedAgent) -> bool:
-        """判断当前 profile 是否应看到 frontstage backend bridge tool."""
+        """判断当前 agent 是否应看到 frontstage backend bridge tool."""
 
         if self.backend_bridge is None:
             return False
@@ -791,7 +791,7 @@ class ToolBroker:
             actor_id=ctx.decision.actor_id,
             agent_id=ctx.agent.agent_id,
             target=ctx.event.source,
-            profile=ctx.agent,
+            agent=ctx.agent,
             world_view=ctx.world_view,
             state=state,
             visible_subagents=visible_subagents,

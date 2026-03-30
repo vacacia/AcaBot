@@ -1,5 +1,5 @@
 from acabot.runtime import (
-    AgentProfile,
+    ResolvedAgent,
     MutableModelTargetCatalog,
     RuntimePluginModelSlot,
     SYSTEM_MODEL_TARGETS,
@@ -7,8 +7,8 @@ from acabot.runtime import (
 )
 
 
-def _profile(agent_id: str) -> AgentProfile:
-    return AgentProfile(
+def _profile(agent_id: str) -> ResolvedAgent:
+    return ResolvedAgent(
         agent_id=agent_id,
         name=agent_id.upper(),
         prompt_ref="prompt/default",

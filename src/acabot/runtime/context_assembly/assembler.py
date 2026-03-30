@@ -61,7 +61,7 @@ class ContextAssembler:
 
         Args:
             ctx: 当前 run 的执行上下文.
-            base_prompt: 当前 profile 的基础 prompt.
+            base_prompt: 当前 agent 的基础 prompt.
             tool_runtime: 当前 run 的 tool runtime 视图.
 
         Returns:
@@ -86,7 +86,7 @@ class ContextAssembler:
 
         Args:
             ctx: 当前 run 的执行上下文.
-            base_prompt: 当前 profile 的基础 prompt.
+            base_prompt: 当前 agent 的基础 prompt.
             tool_runtime: 当前 run 的 tool runtime 视图.
 
         Returns:

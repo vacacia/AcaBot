@@ -2,7 +2,7 @@ from pathlib import Path
 
 from acabot.agent.response import AgentResponse
 from acabot.runtime import (
-    AgentProfile,
+    ResolvedAgent,
     ComputerPolicy,
     ComputerRuntime,
     ComputerRuntimeConfig,
@@ -142,7 +142,7 @@ def _ctx(tmp_path: Path, *, run_mode: str = "respond", include_reply: bool = Tru
             thread_id="qq:group:20002",
             channel_scope="qq:group:20002",
         ),
-        profile=AgentProfile(
+        agent=ResolvedAgent(
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",
@@ -237,7 +237,7 @@ async def test_message_preparation_service_record_only_uses_fallback_caption_req
 
 async def test_message_preparation_service_still_builds_projection_when_caption_disabled(tmp_path: Path) -> None:
     computer, ctx, _current_image, _reply_image = _ctx(tmp_path, include_reply=False)
-    ctx.profile.config["image_caption"]["enabled"] = False
+    ctx.agent.config["image_caption"]["enabled"] = False
     await computer.prepare_run_context(ctx)
     agent = FakeCaptionAgent()
     service = _service(

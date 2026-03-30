@@ -175,7 +175,6 @@ from .model.model_targets import (
 from .contracts import (
     AdmissionDecision,
     AdmissionDomainConfig,
-    AgentProfile,
     ResolvedAgent,
     DelegationMode,
     ApprovalRequired,
@@ -246,15 +245,11 @@ from .plugins import (
     OpsControlPlugin,
     ReferenceToolsPlugin,
 )
-from .control.profile_loader import (
-    AgentProfileRegistry,
+from .control.prompt_loader import (
     ChainedPromptLoader,
-    FileSystemProfileLoader,
     FileSystemPromptLoader,
-    ProfileLoader,
     PromptLoader,
     ReloadablePromptLoader,
-    StaticProfileLoader,
     StaticPromptLoader,
 )
 from .control.session_loader import ConfigBackedSessionConfigLoader, SessionConfigLoader, StaticSessionConfigLoader
@@ -326,7 +321,6 @@ __all__ = [
     "AdmissionDomainConfig",
     "AgentRuntime",
     "AgentRuntimeResult",
-    "AgentProfile",
     "ResolvedAgent",
     "BackendBridge",
     "BackendModeRegistry",
@@ -338,7 +332,6 @@ __all__ = [
     "ConfiguredBackendSessionService",
     "BackendSourceRef",
     "BackendStatusSnapshot",
-    "AgentProfileRegistry",
     "ApprovalRequired",
     "ApprovalDecisionResult",
     "ApprovalResumeResult",
@@ -406,7 +399,6 @@ __all__ = [
     "MessagePreparationService",
     "MessageProjectionService",
     "MessageResolutionService",
-    "FileSystemProfileLoader",
     "FileSystemPromptLoader",
     "FailedWindowRecord",
     "FactWindow",
@@ -473,7 +465,6 @@ __all__ = [
     "PendingApproval",
     "PendingApprovalRecord",
     "PlannedAction",
-    "ProfileLoader",
     "PromptLoader",
     "PayloadJsonWriter",
     "ReloadablePromptLoader",
@@ -557,7 +548,6 @@ __all__ = [
     "ReferenceProviderMode",
     "ReferenceSpace",
     "LocalReferenceBackend",
-    "StaticProfileLoader",
     "StaticPromptLoader",
     "StoreBackedRunManager",
     "StoreBackedThreadManager",

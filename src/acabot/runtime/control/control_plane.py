@@ -42,7 +42,6 @@ from ..model.model_registry import (
 )
 from ..contracts import ChannelEventRecord, MessageRecord, RunRecord
 from ..plugin_manager import RuntimePluginManager
-from .profile_loader import AgentProfileRegistry
 from ..references import (
     ReferenceBackend,
     ReferenceBodyLevel,
@@ -106,7 +105,6 @@ class RuntimeControlPlane:
         soul_source: SoulSource | None = None,
         sticky_notes_source: StickyNoteFileStore | None = None,
         sticky_notes: StickyNoteService | None = None,
-        profile_registry: AgentProfileRegistry | None = None,
         plugin_manager: RuntimePluginManager | None = None,
         skill_catalog: SkillCatalog | None = None,
         subagent_catalog: SubagentCatalog | None = None,
@@ -128,7 +126,6 @@ class RuntimeControlPlane:
             soul_source: 可选的 soul 文件真源服务.
             sticky_notes_source: 可选的 sticky note 文件真源服务.
             sticky_notes: 可选的 sticky note 服务层.
-            profile_registry: 可选的 profile registry, 用于校验 agent 是否存在.
             plugin_manager: 可选的 runtime plugin manager.
             skill_catalog: 可选的统一 skill catalog.
             subagent_catalog: 可选的 subagent catalog.
@@ -147,7 +144,6 @@ class RuntimeControlPlane:
         self.soul_source = soul_source
         self.sticky_notes_source = sticky_notes_source
         self.sticky_notes = sticky_notes
-        self.profile_registry = profile_registry
         self.plugin_manager = plugin_manager
         self.skill_catalog = skill_catalog
         self.subagent_catalog = subagent_catalog
@@ -159,7 +155,6 @@ class RuntimeControlPlane:
         self.log_buffer = log_buffer
         self.model_ops = RuntimeModelControlOps(
             model_registry_manager=model_registry_manager,
-            profile_registry=profile_registry,
         )
         self.workspace_ops = RuntimeWorkspaceControlOps(
             run_manager=run_manager,
@@ -256,20 +251,38 @@ class RuntimeControlPlane:
             metadata=metadata,
         )
 
-    async def list_profiles(self) -> list[dict[str, object]]:
+    async def list_sessions(self) -> list[dict[str, object]]:
         if self.config_control_plane is None:
             return []
-        return self.config_control_plane.list_profiles()
+        return self.config_control_plane.list_sessions()
 
-    async def get_profile(self, agent_id: str) -> dict[str, object] | None:
-        if self.config_control_plane is None:
-            return None
-        return self.config_control_plane.get_profile(agent_id)
-
-    async def upsert_profile(self, payload: dict[str, object]) -> dict[str, object]:
+    async def create_session(self, payload: dict[str, object]) -> dict[str, object]:
         if self.config_control_plane is None:
             raise RuntimeError("config control plane unavailable")
-        return await self.config_control_plane.upsert_profile(payload)
+        return await self.config_control_plane.create_session(payload)
+
+    async def get_session(self, session_id: str) -> dict[str, object] | None:
+        if self.config_control_plane is None:
+            return None
+        return self.config_control_plane.get_session_bundle(session_id)
+
+    async def update_session(self, session_id: str, payload: dict[str, object]) -> dict[str, object]:
+        if self.config_control_plane is None:
+            raise RuntimeError("config control plane unavailable")
+        return await self.config_control_plane.update_session(session_id, payload)
+
+    async def get_session_agent(self, session_id: str) -> dict[str, object] | None:
+        if self.config_control_plane is None:
+            return None
+        bundle = self.config_control_plane.get_session_bundle(session_id)
+        if bundle is None:
+            return None
+        return dict(bundle["agent"])
+
+    async def update_session_agent(self, session_id: str, payload: dict[str, object]) -> dict[str, object]:
+        if self.config_control_plane is None:
+            raise RuntimeError("config control plane unavailable")
+        return await self.config_control_plane.update_session_agent(session_id, payload)
 
     async def get_gateway_config(self) -> dict[str, object]:
         if self.config_control_plane is None:
@@ -324,11 +337,6 @@ class RuntimeControlPlane:
             raise RuntimeError("config control plane unavailable")
         return await self.config_control_plane.upsert_long_term_memory_config(payload)
 
-    async def delete_profile(self, agent_id: str) -> bool:
-        if self.config_control_plane is None:
-            return False
-        return await self.config_control_plane.delete_profile(agent_id)
-
     async def list_prompts(self) -> list[dict[str, object]]:
         if self.config_control_plane is None:
             return []
@@ -349,24 +357,25 @@ class RuntimeControlPlane:
             return False
         references = await self.list_prompt_references(prompt_ref)
         if references:
-            names = ", ".join(sorted(str(item["agent_id"]) for item in references))
-            raise ValueError(f"prompt 仍被这些 profile 引用: {names}")
+            names = ", ".join(sorted(str(item["session_id"]) for item in references))
+            raise ValueError(f"prompt 仍被这些 session agents 引用: {names}")
         return await self.config_control_plane.delete_prompt(prompt_ref)
 
     async def list_prompt_references(self, prompt_ref: str) -> list[dict[str, object]]:
-        """列出仍在引用某个 prompt 的 profile 摘要."""
+        """列出仍在引用某个 prompt 的 session-owned agent 摘要."""
 
         normalized = str(prompt_ref or "").strip()
         if not normalized or self.config_control_plane is None:
             return []
         items: list[dict[str, object]] = []
-        for profile in self.config_control_plane.list_profiles():
-            if str(profile.get("prompt_ref", "") or "").strip() != normalized:
+        for bundle in self.config_control_plane.list_session_bundles():
+            agent = dict(bundle.get("agent", {}) or {})
+            if str(agent.get("prompt_ref", "") or "").strip() != normalized:
                 continue
             items.append(
                 {
-                    "agent_id": str(profile.get("agent_id", "") or ""),
-                    "name": str(profile.get("name", "") or ""),
+                    "session_id": str(bundle.get("session", {}).get("session_id", "") or ""),
+                    "agent_id": str(agent.get("agent_id", "") or ""),
                 }
             )
         return items
@@ -404,14 +413,14 @@ class RuntimeControlPlane:
             AgentSkillSnapshot 列表.
         """
 
-        if self.profile_registry is None or self.skill_catalog is None:
+        if self.config_control_plane is None or self.skill_catalog is None:
             return []
-        if not self.profile_registry.has_agent(agent_id):
+        agent = self.config_control_plane.find_session_agent(agent_id)
+        if agent is None:
             return []
-        profile = self.profile_registry.profiles[agent_id]
         return [
             self._to_agent_skill_snapshot(agent_id, item)
-            for item in self.skill_catalog.visible_skills(profile)
+            for item in self.skill_catalog.visible_skills(agent)
         ]
 
     async def list_subagents(self) -> list[SubagentSnapshot]:
@@ -692,19 +701,17 @@ class RuntimeControlPlane:
             只包含共享管理员列表的设置对象.
         """
 
-        if self.profile_registry is None:
+        if self.config_control_plane is None:
             return {"admin_actor_ids": sorted(self.app.backend_admin_actor_ids)}
-        agent_id = str(getattr(self.profile_registry, "default_agent_id", "") or "")
-        profile = self.profile_registry.profiles.get(agent_id)
-        if profile is None:
-            return {"admin_actor_ids": sorted(self.app.backend_admin_actor_ids)}
-        profile_admins = [
+        runtime_conf = dict(self.config_control_plane.config.get("runtime", {}) or {})
+        backend_conf = dict(runtime_conf.get("backend", {}) or {})
+        configured = [
             str(value)
-            for value in list(profile.config.get("admin_actor_ids", []) or [])
+            for value in list(backend_conf.get("admin_actor_ids", []) or [])
             if str(value)
         ]
-        if profile_admins:
-            return {"admin_actor_ids": profile_admins}
+        if configured:
+            return {"admin_actor_ids": configured}
         return {"admin_actor_ids": sorted(self.app.backend_admin_actor_ids)}
 
     async def put_bot(self, *, payload: dict[str, object]) -> dict[str, object]:
@@ -730,69 +737,30 @@ class RuntimeControlPlane:
             保存后的管理员设置对象.
         """
 
-        if self.profile_registry is None or self.config_control_plane is None:
-            raise RuntimeError("profile/config control plane unavailable")
-        agent_id = str(getattr(self.profile_registry, "default_agent_id", "") or "")
-        profile = self.config_control_plane.get_profile(agent_id)
-        if profile is None:
-            raise RuntimeError("default bot profile unavailable")
-        updated = dict(profile)
-        updated["admin_actor_ids"] = [
+        if self.config_control_plane is None:
+            raise RuntimeError("config control plane unavailable")
+        admin_actor_ids = [
             str(value)
             for value in list(payload.get("admin_actor_ids", []) or [])
             if str(value)
         ]
-        saved = await self.config_control_plane.upsert_profile(updated)
-        admin_actor_ids = {str(value) for value in list(saved.get("admin_actor_ids", []) or []) if str(value)}
-        self.app.backend_admin_actor_ids = admin_actor_ids
+        data = self.config_control_plane.config.to_dict()
+        runtime_conf = dict(data.get("runtime", {}) or {})
+        backend_conf = dict(runtime_conf.get("backend", {}) or {})
+        backend_conf["admin_actor_ids"] = admin_actor_ids
+        runtime_conf["backend"] = backend_conf
+        data["runtime"] = runtime_conf
+        self.config_control_plane.config.replace(data)
+        self.config_control_plane.config.save()
+        self.app.backend_admin_actor_ids = set(admin_actor_ids)
         return self.config_control_plane.with_apply_result(
             {
-                "admin_actor_ids": [
-                    str(value)
-                    for value in list(saved.get("admin_actor_ids", []) or [])
-                    if str(value)
-                ],
+                "admin_actor_ids": list(admin_actor_ids),
             },
             apply_status="applied",
             restart_required=False,
             message="已保存并已生效",
         )
-
-    async def list_sessions(self) -> dict[str, object]:
-        """返回 session shell 已下线的提示.
-
-        Returns:
-            dict[str, object]: 固定抛错, 提示 session shell 正在重设计.
-        """
-
-        raise NotImplementedError("session shell redesign pending; legacy /api/sessions removed")
-
-    async def get_session(self, *, channel_scope: str) -> dict[str, object] | None:
-        """返回 session shell 的当前状态提示.
-
-        Args:
-            channel_scope: Session 对应的 channel scope.
-
-        Returns:
-            dict[str, object] | None: 固定抛错.
-        """
-
-        _ = channel_scope
-        raise NotImplementedError("session shell redesign pending")
-
-    async def put_session(self, *, channel_scope: str, payload: dict[str, object]) -> dict[str, object]:
-        """返回 session shell 的当前状态提示.
-
-        Args:
-            channel_scope: Session 对应的 channel scope.
-            payload: 前端提交的数据.
-
-        Returns:
-            dict[str, object]: 固定抛错.
-        """
-
-        _ = channel_scope, payload
-        raise NotImplementedError("session shell redesign pending")
 
     async def get_backend_status(self) -> BackendStatusSnapshot:
         """返回后台维护面的最小状态快照."""
@@ -841,13 +809,42 @@ class RuntimeControlPlane:
         """返回 WebUI 表单所需的选择项元数据."""
 
         prompts = await self.list_prompts()
-        profiles = await self.list_profiles()
-        default_agent_id = ""
-        if self.profile_registry is not None:
-            default_agent_id = str(getattr(self.profile_registry, "default_agent_id", "") or "")
-        if not default_agent_id and profiles:
-            default_agent_id = str(profiles[0].get("agent_id", "") or "")
-        bot_profile = next((item for item in profiles if item.get("agent_id") == default_agent_id), None)
+        session_bundles = (
+            self.config_control_plane.list_session_bundles()
+            if self.config_control_plane is not None
+            else []
+        )
+        default_agent_id = (
+            str(self.config_control_plane.default_frontstage_agent.agent_id or "")
+            if self.config_control_plane is not None
+            else ""
+        )
+        agent_items: list[dict[str, object]] = []
+        seen_agent_ids: set[str] = set()
+        for bundle in session_bundles:
+            session = dict(bundle.get("session", {}) or {})
+            agent = dict(bundle.get("agent", {}) or {})
+            agent_id = str(agent.get("agent_id", "") or "")
+            if not agent_id or agent_id in seen_agent_ids:
+                continue
+            agent_items.append(
+                {
+                    "agent_id": agent_id,
+                    "name": str(session.get("title", "") or session.get("session_id", "") or agent_id),
+                }
+            )
+            seen_agent_ids.add(agent_id)
+        if (
+            self.config_control_plane is not None
+            and default_agent_id
+            and default_agent_id not in seen_agent_ids
+        ):
+            agent_items.append(
+                {
+                    "agent_id": default_agent_id,
+                    "name": str(self.config_control_plane.default_frontstage_agent.name or default_agent_id),
+                }
+            )
         skills = await self.list_skills()
         subagents = await self.list_subagents()
         providers = await self.list_model_providers()
@@ -856,15 +853,13 @@ class RuntimeControlPlane:
         return {
             "bot": {
                 "agent_id": default_agent_id,
-                "name": bot_profile.get("name", default_agent_id) if bot_profile is not None else default_agent_id,
+                "name": (
+                    str(self.config_control_plane.default_frontstage_agent.name or default_agent_id)
+                    if self.config_control_plane is not None
+                    else default_agent_id
+                ),
             },
-            "agents": [
-                {
-                    "agent_id": item["agent_id"],
-                    "name": item.get("name", item["agent_id"]),
-                }
-                for item in profiles
-            ],
+            "agents": agent_items,
             "prompts": [
                 {
                     "prompt_ref": item.get("prompt_ref", ""),

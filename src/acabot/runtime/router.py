@@ -37,7 +37,7 @@ class RuntimeRouter:
         """初始化最小路由器.
 
         Args:
-            default_agent_id: 没有显式 session 文件时使用的默认 profile.
+            default_agent_id: 没有显式 session 文件时使用的默认 agent.
             session_runtime: 会话配置驱动的决策运行时.
         """
 
@@ -172,7 +172,7 @@ def _default_session_config(default_agent_id: str) -> SessionConfig:
 
     def _surface() -> SurfaceConfig:
         return SurfaceConfig(
-            routing=RoutingDomainConfig(default={"agent_id": default_agent_id}),
+            routing=RoutingDomainConfig(default={}),
             admission=AdmissionDomainConfig(default={"mode": "respond"}),
             context=ContextDomainConfig(default={}),
             persistence=PersistenceDomainConfig(default={"persist_event": True}),

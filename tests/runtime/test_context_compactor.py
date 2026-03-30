@@ -3,7 +3,7 @@ from unittest.mock import patch
 import pytest
 
 from acabot.runtime import (
-    AgentProfile,
+    ResolvedAgent,
     ContextCompactionConfig,
     ContextCompactor,
     ModelContextSummarizer,
@@ -92,7 +92,7 @@ def _ctx(messages: list[dict[str, object]]) -> RunContext:
             working_summary="",
             last_event_at=123,
         ),
-        profile=AgentProfile(
+        agent=ResolvedAgent(
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",
@@ -233,7 +233,7 @@ async def test_context_compactor_truncates_by_token_budget() -> None:
 @pytest.mark.usefixtures("_mock_litellm")
 async def test_context_compactor_honors_session_strategy_override() -> None:
     ctx = _ctx(_make_messages(15, content_len=45))
-    ctx.profile.config["context_management"] = {"strategy": "summarize"}
+    ctx.agent.config["context_management"] = {"strategy": "summarize"}
     ctx.summary_model_request = _summary_request("session-summary-model")
     summary_agent = _SummaryAgent(text="session summary")
     config = ContextCompactionConfig(

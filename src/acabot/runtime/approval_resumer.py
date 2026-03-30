@@ -121,12 +121,12 @@ class ToolApprovalResumer(ApprovalResumer):
         self,
         *,
         thread_manager: ThreadManager,
-        profile_loader,
+        agent_loader,
         tool_broker: ToolBroker,
         computer_runtime: ComputerRuntime | None = None,
     ) -> None:
         self.thread_manager = thread_manager
-        self.profile_loader = profile_loader
+        self.agent_loader = agent_loader
         self.tool_broker = tool_broker
         self.computer_runtime = computer_runtime
 
@@ -169,11 +169,11 @@ class ToolApprovalResumer(ApprovalResumer):
             metadata=dict(run.metadata),
         )
         try:
-            profile = self.profile_loader(decision)
+            agent = self.agent_loader(decision)
         except Exception as exc:
             return ApprovalResumeResult(
                 status="failed",
-                message=f"failed to load profile for approval replay: {exc}",
+                message=f"failed to load agent for approval replay: {exc}",
                 approval_context=dict(approval_context),
                 metadata={"tool_name": pending.tool_name},
             )
@@ -183,7 +183,7 @@ class ToolApprovalResumer(ApprovalResumer):
             event=self._build_resume_event(run=run, thread=thread),
             decision=decision,
             thread=thread,
-            profile=profile,
+            agent=agent,
             metadata={
                 "approval_resume": True,
                 "approval_decision_metadata": dict(metadata),

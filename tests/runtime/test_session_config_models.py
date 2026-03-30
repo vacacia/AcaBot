@@ -63,7 +63,7 @@ def test_surface_config_keeps_domain_defaults_and_cases() -> None:
 def test_decision_objects_keep_reason_and_case_identity() -> None:
     routing = RoutingDecision(
         actor_lane="frontstage",
-        profile_id="aca.qq.group.default",
+        agent_id="aca.qq.group.default",
         reason="surface default",
         source_case_id="",
         priority=100,
@@ -90,7 +90,7 @@ def test_decision_objects_keep_reason_and_case_identity() -> None:
         specificity=2,
     )
 
-    assert routing.profile_id == "aca.qq.group.default"
+    assert routing.agent_id == "aca.qq.group.default"
     assert computer.roots["skills"]["visible"] is True
     assert admission.source_case_id == "reply_messages"
 

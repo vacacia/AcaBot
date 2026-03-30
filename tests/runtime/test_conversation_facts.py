@@ -1,5 +1,5 @@
 from acabot.runtime import (
-    AgentProfile,
+    ResolvedAgent,
     ChannelEventRecord,
     InMemoryChannelEventStore,
     InMemoryMessageStore,
@@ -256,7 +256,7 @@ async def test_store_backed_conversation_fact_reader_preserves_channel_scope_fro
             thread_id="thread:custom",
             channel_scope="qq:user:10001",
         ),
-        profile=AgentProfile(
+        agent=ResolvedAgent(
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",

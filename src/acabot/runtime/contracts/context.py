@@ -213,7 +213,7 @@ class RunContext:
     event: StandardEvent
     decision: RouteDecision
     thread: ThreadState
-    profile: ResolvedAgent
+    agent: ResolvedAgent
     model_request: "RuntimeModelRequest | None" = None
     summary_model_request: "RuntimeModelRequest | None" = None
     event_facts: "EventFacts | None" = None
@@ -243,19 +243,6 @@ class RunContext:
     actions: list[PlannedAction] = field(default_factory=list)
     delivery_report: DispatchReport | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def agent(self) -> ResolvedAgent:
-        """当前 run 使用的正式 agent 快照.
-
-        TODO(session-owned-agent hard cut): 构造入口全部迁完后把底层字段也改成 `agent`.
-        """
-
-        return self.profile
-
-    @agent.setter
-    def agent(self, value: ResolvedAgent) -> None:
-        self.profile = value
 
 
 __all__ = [

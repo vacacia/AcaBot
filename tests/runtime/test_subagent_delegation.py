@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from acabot.runtime import (
-    AgentProfile,
+    ResolvedAgent,
     FileSystemSubagentPackageLoader,
     SubagentCatalog,
     SubagentDelegationBroker,
@@ -44,8 +44,8 @@ def _catalog(tmp_path: Path) -> SubagentCatalog:
     return catalog
 
 
-def _profile() -> AgentProfile:
-    return AgentProfile(
+def _profile() -> ResolvedAgent:
+    return ResolvedAgent(
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
@@ -66,7 +66,7 @@ async def test_subagent_delegation_broker_rejects_missing_catalog_subagent(
         actor_id="qq:user:10001",
         channel_scope="qq:user:10001",
         parent_agent_id="aca",
-        profile=_profile(),
+        agent=_profile(),
         delegate_agent_id="excel_worker",
         payload={"task": "整理表格"},
         visible_subagents=["excel_worker"],
@@ -91,7 +91,7 @@ async def test_subagent_delegation_broker_rejects_target_not_in_session_allowlis
         actor_id="qq:user:10001",
         channel_scope="qq:user:10001",
         parent_agent_id="aca",
-        profile=_profile(),
+        agent=_profile(),
         delegate_agent_id="excel-worker",
         payload={"task": "整理表格"},
         visible_subagents=["search-worker"],
@@ -128,7 +128,7 @@ async def test_subagent_delegation_broker_calls_catalog_execution_service(
         actor_id="qq:user:10001",
         channel_scope="qq:user:10001",
         parent_agent_id="aca",
-        profile=_profile(),
+        agent=_profile(),
         delegate_agent_id="excel-worker",
         payload={"task": "整理表格"},
         visible_subagents=["excel-worker"],
@@ -158,7 +158,7 @@ async def test_subagent_delegation_broker_rejects_self_delegate(
         actor_id="qq:user:10001",
         channel_scope="qq:user:10001",
         parent_agent_id="aca",
-        profile=_profile(),
+        agent=_profile(),
         delegate_agent_id="aca",
         payload={"task": "整理表格"},
         visible_subagents=["aca"],

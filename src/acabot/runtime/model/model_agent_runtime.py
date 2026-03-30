@@ -34,7 +34,7 @@ from acabot.types import Action, ActionType
 from ..agent_runtime import AgentRuntime
 from ..context_assembly import ContextAssembler, PayloadJsonWriter
 from ..contracts import AgentRuntimeResult, ApprovalRequired, PendingApproval, PlannedAction, RunContext
-from ..control.profile_loader import PromptLoader
+from ..control.prompt_loader import PromptLoader
 
 
 # region tool runtime
@@ -312,7 +312,7 @@ class ModelAgentRuntime(AgentRuntime):
 
     @staticmethod
     def _resolve_max_tool_rounds(ctx: RunContext) -> int | None:
-        """按当前 profile 解析本次 run 的 tool loop 上限."""
+        """按当前 agent 解析本次 run 的 tool loop 上限."""
 
         raw = ctx.agent.config.get("max_tool_rounds")
         if raw not in {None, ""}:

@@ -122,13 +122,13 @@ when:
 ```yaml
 then:
   actor_lane: frontstage
-  profile_id: aca.main
+  agent_id: aca.main
 ```
 
 我这里故意不用 `agent_id` 当唯一核心输出，而更愿意先输出：
 
 - `actor_lane`
-- `profile_id`
+- `agent_id`
 
 因为以后 actor lane 会直接影响 Work World 的构造。
 

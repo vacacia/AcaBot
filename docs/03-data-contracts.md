@@ -239,7 +239,7 @@
 - `session_id`
 - `template_id`
 - `title`
-- `frontstage_profile`
+- `frontstage_agent_id`
 - `selectors`
 - `surfaces`
 - `metadata`
@@ -468,7 +468,7 @@
 
 ---
 
-## `AgentProfile`
+## `ResolvedAgent`
 
 定义在：
 
@@ -490,7 +490,7 @@
 
 ### 它的边界
 
-`AgentProfile` 是静态配置快照，不是运行中的状态对象。
+`ResolvedAgent` 是静态配置快照，不是运行中的状态对象。
 
 它不该承载：
 
@@ -985,7 +985,7 @@
 
 ### 一次执行的现场
 
-- `AgentProfile`
+- `ResolvedAgent`
 - `ThreadState`
 - `RunRecord`
 - `RunContext`

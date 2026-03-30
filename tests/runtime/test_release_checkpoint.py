@@ -23,7 +23,7 @@ from typing import Any
 from acabot.agent import AgentResponse, BaseAgent, ToolSpec
 from acabot.config import Config
 from acabot.runtime import (
-    AgentProfile,
+    ResolvedAgent,
     FileSystemModelRegistryManager,
     ModelBinding,
     ModelPreset,
@@ -277,7 +277,7 @@ async def _model_registry_manager(tmp_path: Path) -> FileSystemModelRegistryMana
     manager.target_catalog.replace_agent_targets(
         build_agent_model_targets(
             [
-                AgentProfile(
+                ResolvedAgent(
                     agent_id="aca",
                     name="Aca",
                     prompt_ref="prompt/default",

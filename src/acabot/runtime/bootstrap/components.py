@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 from ..agent_runtime import AgentRuntime
 from ..app import RuntimeApp
@@ -25,7 +26,8 @@ from ..model.model_registry import FileSystemModelRegistryManager
 from ..outbox import Outbox
 from ..pipeline import ThreadPipeline
 from ..plugin_manager import RuntimePluginManager
-from ..control.profile_loader import ProfileLoader, PromptLoader
+from ..contracts import ResolvedAgent, RouteDecision
+from ..control.prompt_loader import PromptLoader
 from ..references import ReferenceBackend
 from ..router import RuntimeRouter
 from ..skills import SkillCatalog
@@ -70,7 +72,7 @@ class RuntimeComponents:
     control_plane: RuntimeControlPlane
     config_control_plane: RuntimeConfigControlPlane
     prompt_loader: PromptLoader
-    profile_loader: ProfileLoader
+    agent_loader: Callable[[RouteDecision], ResolvedAgent]
     tool_broker: ToolBroker
     agent_runtime: AgentRuntime
     approval_resumer: ApprovalResumer

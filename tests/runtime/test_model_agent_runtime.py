@@ -18,7 +18,7 @@ from acabot.agent import (
     ToolSpec,
 )
 from acabot.runtime import (
-    AgentProfile,
+    ResolvedAgent,
     InMemoryToolAudit,
     MessageProjection,
     ModelAgentRuntime,
@@ -206,7 +206,7 @@ def _context() -> RunContext:
             thread_id="qq:user:10001",
             channel_scope="qq:user:10001",
         ),
-        profile=AgentProfile(
+        agent=ResolvedAgent(
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",
@@ -311,7 +311,7 @@ async def test_model_agent_runtime_passes_profile_max_tool_rounds_override() -> 
         prompt_loader=StaticPromptLoader({"prompt/default": "You are Aca."}),
     )
     ctx = _context()
-    ctx.profile.config["max_tool_rounds"] = 9
+    ctx.agent.config["max_tool_rounds"] = 9
 
     await runtime.execute(ctx)
 
@@ -421,7 +421,7 @@ async def test_model_agent_runtime_can_use_tool_broker() -> None:
         tool_runtime_resolver=broker.build_tool_runtime,
     )
     ctx = _context()
-    ctx.profile.enabled_tools = ["get_time"]
+    ctx.agent.enabled_tools = ["get_time"]
 
     result = await runtime.execute(ctx)
     execution = await agent.calls[0]["tool_executor"](
@@ -473,7 +473,7 @@ async def test_model_agent_runtime_merges_tool_user_actions_artifacts_and_audit(
         tool_runtime_resolver=broker.build_tool_runtime,
     )
     ctx = _context()
-    ctx.profile.enabled_tools = ["announce"]
+    ctx.agent.enabled_tools = ["announce"]
 
     result = await runtime.execute(ctx)
 
@@ -530,7 +530,7 @@ async def test_model_agent_runtime_filters_tool_actions_for_failed_response() ->
         tool_runtime_resolver=broker.build_tool_runtime,
     )
     ctx = _context()
-    ctx.profile.enabled_tools = ["announce"]
+    ctx.agent.enabled_tools = ["announce"]
 
     result = await runtime.execute(ctx)
 
@@ -596,7 +596,7 @@ async def test_model_agent_runtime_builds_waiting_approval_result() -> None:
         tool_runtime_resolver=broker.build_tool_runtime,
     )
     ctx = _context()
-    ctx.profile.enabled_tools = ["announce"]
+    ctx.agent.enabled_tools = ["announce"]
 
     result = await runtime.execute(ctx)
 

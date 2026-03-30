@@ -95,7 +95,12 @@ class SessionConfigLoader:
         parts = session_id.split(":", 2)
         if len(parts) != 3:
             raise ValueError(f"invalid session_id: {session_id}")
-        return parts[0], parts[1], parts[2]
+        platform, scope_kind, identifier = parts
+        return (
+            _validate_session_id_part(platform, session_id=session_id),
+            _validate_session_id_part(scope_kind, session_id=session_id),
+            _validate_session_id_part(identifier, session_id=session_id),
+        )
 
     def _parse_session_config(self, raw: dict[str, Any], *, path: Path, session_id: str) -> SessionConfig:
         """把原始 YAML 数据解析成 `SessionConfig`.
@@ -192,15 +197,30 @@ class SessionConfigLoader:
         if raw in (None, ""):
             return None
         mapping = _require_mapping(raw, label=label, path=path)
+        default_payload = _require_mapping(mapping.get("default", {}), label=f"{label}.default", path=path)
+        if config_type is RoutingDomainConfig:
+            _reject_routing_agent_override(default_payload, label=f"{label}.default", path=path)
         return config_type(
-            default=_require_mapping(mapping.get("default", {}), label=f"{label}.default", path=path),
+            default=default_payload,
             cases=[
-                self._parse_case(item, label=f"{label}.cases[{index}]", path=path)
+                self._parse_case(
+                    item,
+                    label=f"{label}.cases[{index}]",
+                    path=path,
+                    for_routing=(config_type is RoutingDomainConfig),
+                )
                 for index, item in enumerate(_require_list(mapping.get("cases", []), label=f"{label}.cases", path=path))
             ],
         )
 
-    def _parse_case(self, raw: object, *, label: str, path: Path) -> DomainCase:
+    def _parse_case(
+        self,
+        raw: object,
+        *,
+        label: str,
+        path: Path,
+        for_routing: bool = False,
+    ) -> DomainCase:
         """解析单条局部 case.
 
         Args:
@@ -217,11 +237,14 @@ class SessionConfigLoader:
             if when_conf not in (None, "")
             else None
         )
+        use_payload = _require_mapping(mapping.get("use", {}), label=f"{label}.use", path=path)
+        if for_routing:
+            _reject_routing_agent_override(use_payload, label=f"{label}.use", path=path)
         return DomainCase(
             case_id=str(mapping.get("case_id", "") or ""),
             when=when,
             when_ref=str(mapping.get("when_ref", "") or ""),
-            use=_require_mapping(mapping.get("use", {}), label=f"{label}.use", path=path),
+            use=use_payload,
             priority=int(mapping.get("priority", 100)),
             metadata=_require_mapping(mapping.get("metadata", {}), label=f"{label}.metadata", path=path),
         )
@@ -334,20 +357,18 @@ class ConfigBackedSessionConfigLoader(StaticSessionConfigLoader):
             title="Inline Default Session",
             frontstage_agent_id=default_agent_id,
             selectors={},
-            surfaces=_default_surfaces(default_agent_id, computer_default),
+            surfaces=_default_surfaces(computer_default),
             metadata={"config_path": "<inline-session:default>"},
         )
         super().__init__(session)
 
 
 def _default_surfaces(
-    default_agent_id: str,
     computer_default: dict[str, Any],
 ) -> dict[str, SurfaceConfig]:
     """构造最小默认 surface 集合.
 
     Args:
-        default_agent_id: 默认前台 agent.
         computer_default: 默认 computer 配置.
 
     Returns:
@@ -356,7 +377,7 @@ def _default_surfaces(
 
     def _surface(mode: str = "respond") -> SurfaceConfig:
         return SurfaceConfig(
-            routing=RoutingDomainConfig(default={"agent_id": default_agent_id}),
+            routing=RoutingDomainConfig(default={}),
             admission=AdmissionDomainConfig(default={"mode": mode}),
             context=ContextDomainConfig(default={}),
             persistence=PersistenceDomainConfig(default={"persist_event": True}),
@@ -410,6 +431,26 @@ def _optional_bool(value: object) -> bool | None:
         if normalized in {"false", "0", "no", "off"}:
             return False
     return bool(value)
+
+
+def _validate_session_id_part(part: str, *, session_id: str) -> str:
+    """校验单段 session_id 片段，避免路径穿越和歧义值."""
+
+    normalized = str(part or "").strip()
+    if not normalized:
+        raise ValueError(f"invalid session_id: {session_id}")
+    if normalized in {".", ".."}:
+        raise ValueError(f"invalid session_id: {session_id}")
+    if "/" in normalized or "\\" in normalized or "\x00" in normalized:
+        raise ValueError(f"invalid session_id: {session_id}")
+    return normalized
+
+
+def _reject_routing_agent_override(payload: dict[str, Any], *, label: str, path: Path) -> None:
+    """硬拒绝旧的 routing.agent_id 语义，避免静默失效."""
+
+    if "agent_id" in payload:
+        raise ValueError(f"routing agent_id override is not supported: {label} ({path})")
 
 
 def _require_mapping(raw: object, *, label: str, path: Path) -> dict[str, Any]:

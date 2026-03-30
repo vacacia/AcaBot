@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 
 from acabot.agent import ToolSpec
 from acabot.runtime import (
-    AgentProfile,
+    ResolvedAgent,
     AgentRuntime,
     AgentRuntimeResult,
     ContextCompactionConfig,
@@ -181,8 +181,8 @@ def _event(event_type: str = "message") -> StandardEvent:
     )
 
 
-def _profile() -> AgentProfile:
-    return AgentProfile(
+def _profile() -> ResolvedAgent:
+    return ResolvedAgent(
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
@@ -248,7 +248,7 @@ async def test_thread_pipeline_runs_minimal_text_flow() -> None:
         event=event,
         decision=decision,
         thread=thread,
-        profile=_profile(),
+        agent=_profile(),
         summary_model_request=_summary_request(),
     )
 
@@ -311,7 +311,7 @@ async def test_thread_pipeline_projects_reply_and_attachment_into_working_memory
         event=event,
         decision=decision,
         thread=thread,
-        profile=_profile(),
+        agent=_profile(),
         summary_model_request=_summary_request(),
     )
 
@@ -373,7 +373,7 @@ async def test_thread_pipeline_injects_memory_blocks_before_agent_runtime() -> N
         event=event,
         decision=decision,
         thread=thread,
-        profile=_profile(),
+        agent=_profile(),
     )
 
     await pipeline.execute(ctx)
@@ -446,7 +446,7 @@ async def test_thread_pipeline_keeps_summary_and_memory_blocks_for_runtime_later
         event=event,
         decision=decision,
         thread=thread,
-        profile=_profile(),
+        agent=_profile(),
     )
 
     await pipeline.execute(ctx)
@@ -492,7 +492,7 @@ async def test_thread_pipeline_keeps_context_labels_in_retrieval_plan_only() -> 
         event=event,
         decision=decision,
         thread=thread,
-        profile=_profile(),
+        agent=_profile(),
         context_decision=ContextDecision(
             context_labels=["admin_message"],
         ),
@@ -553,7 +553,7 @@ async def test_thread_pipeline_compresses_working_memory_before_model_call() -> 
         event=event,
         decision=decision,
         thread=thread,
-        profile=_profile(),
+        agent=_profile(),
         summary_model_request=_summary_request(),
     )
 
@@ -646,7 +646,7 @@ async def test_thread_pipeline_uses_compaction_override_when_thread_apply_is_ski
         event=event,
         decision=decision,
         thread=thread,
-        profile=_profile(),
+        agent=_profile(),
         summary_model_request=_summary_request(),
     )
 
@@ -737,7 +737,7 @@ async def test_pipeline_and_model_runtime_produce_final_context_and_payload_json
         event=event,
         decision=decision,
         thread=thread,
-        profile=_profile(),
+        agent=_profile(),
         model_request=_model_request(),
         message_projection=MessageProjection(
             history_text="[acacia/10001] hello",
@@ -784,7 +784,7 @@ async def test_thread_pipeline_finishes_run_without_memory_writeback_hook() -> N
         event=event,
         decision=decision,
         thread=thread,
-        profile=_profile(),
+        agent=_profile(),
     )
 
     with patch("acabot.runtime.pipeline.logger.exception") as log_exception:
@@ -821,7 +821,7 @@ async def test_thread_pipeline_marks_run_failed_when_agent_runtime_crashes() -> 
         event=event,
         decision=decision,
         thread=thread,
-        profile=_profile(),
+        agent=_profile(),
     )
 
     await pipeline.execute(ctx)
@@ -861,7 +861,7 @@ async def test_thread_pipeline_projects_notice_event_into_working_memory() -> No
         event=event,
         decision=decision,
         thread=thread,
-        profile=_profile(),
+        agent=_profile(),
     )
 
     await pipeline.execute(ctx)
@@ -895,7 +895,7 @@ async def test_thread_pipeline_dispatches_failure_actions_before_marking_failed(
         event=event,
         decision=decision,
         thread=thread,
-        profile=_profile(),
+        agent=_profile(),
     )
 
     await pipeline.execute(ctx)
@@ -963,10 +963,10 @@ async def test_thread_pipeline_enters_waiting_approval_after_prompt_delivery() -
         event=event,
         decision=decision,
         thread=thread,
-        profile=_profile(),
+        agent=_profile(),
         model_request=_model_request(),
     )
-    ctx.profile.enabled_tools = ["restricted"]
+    ctx.agent.enabled_tools = ["restricted"]
 
     await pipeline.execute(ctx)
 
@@ -1034,10 +1034,10 @@ async def test_thread_pipeline_fails_when_approval_prompt_not_delivered() -> Non
         event=event,
         decision=decision,
         thread=thread,
-        profile=_profile(),
+        agent=_profile(),
         model_request=_model_request(),
     )
-    ctx.profile.enabled_tools = ["restricted"]
+    ctx.agent.enabled_tools = ["restricted"]
 
     await pipeline.execute(ctx)
 
@@ -1084,7 +1084,7 @@ async def test_thread_pipeline_record_only_skips_compaction_and_retrieval() -> N
         event=event,
         decision=decision,
         thread=thread,
-        profile=_profile(),
+        agent=_profile(),
     )
 
     await pipeline.execute(ctx)

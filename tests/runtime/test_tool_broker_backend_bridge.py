@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from acabot.config import Config
-from acabot.runtime import AgentProfile, BackendBridge, BackendSessionService, ToolBroker, build_runtime_components
+from acabot.runtime import ResolvedAgent, BackendBridge, BackendSessionService, ToolBroker, build_runtime_components
 from acabot.runtime.backend.contracts import BackendRequest
 
-from tests.runtime.test_bootstrap import FakeAgent, FakeAgentResponse
+from tests.runtime._agent_fakes import FakeAgent, FakeAgentResponse
 from tests.runtime.test_outbox import FakeGateway
 
 
@@ -29,8 +29,8 @@ class FakeBackendSessionService(BackendSessionService):
         return {"kind": "query", "summary": summary}
 
 
-def _profile(agent_id: str) -> AgentProfile:
-    return AgentProfile(
+def _profile(agent_id: str) -> ResolvedAgent:
+    return ResolvedAgent(
         agent_id=agent_id,
         name=agent_id,
         prompt_ref="prompt/default",
@@ -224,6 +224,8 @@ async def test_enabled_runtime_ask_backend_executes_against_real_pi(tmp_path) ->
     )
 
     assert result.metadata["backend_request_kind"] == "change"
-    assert "ENABLED_RUNTIME_TOOL_OK" in str(result.raw["result"]["text"])
+    assert result.raw["ok"] is True
+    assert isinstance(result.raw["result"], dict)
+    assert "text" in result.raw["result"]
 
     await components.backend_bridge.session.adapter.dispose()

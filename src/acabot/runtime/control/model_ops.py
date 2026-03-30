@@ -15,7 +15,6 @@ from ..model.model_registry import (
     ModelRegistryStatusSnapshot,
     ModelReloadSnapshot,
 )
-from .profile_loader import AgentProfileRegistry
 from ..model.model_targets import ModelTarget
 
 
@@ -26,10 +25,8 @@ class RuntimeModelControlOps:
         self,
         *,
         model_registry_manager: FileSystemModelRegistryManager | None,
-        profile_registry: AgentProfileRegistry | None,
     ) -> None:
         self.model_registry_manager = model_registry_manager
-        self.profile_registry = profile_registry
 
     async def list_model_providers(self) -> list[ModelProvider]:
         if self.model_registry_manager is None:

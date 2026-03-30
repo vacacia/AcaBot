@@ -17,7 +17,8 @@ def _write_session_bundle(
     visible_skills: list[str] | None = None,
     visible_subagents: list[str] | None = None,
 ) -> Path:
-    bundle_dir = tmp_path / "sessions" / "qq" / "group" / "123456"
+    platform, scope_kind, identifier = session_id.split(":", 2)
+    bundle_dir = tmp_path / "sessions" / platform / scope_kind / identifier
     bundle_dir.mkdir(parents=True, exist_ok=True)
     (bundle_dir / "session.yaml").write_text(
         "\n".join(
@@ -66,6 +67,25 @@ def test_session_bundle_loader_reads_session_and_agent_yaml(tmp_path: Path) -> N
     assert bundle.frontstage_agent.prompt_ref == "prompt/aca/default"
     assert bundle.paths.session_dir == bundle.paths.session_config_path.parent
     assert bundle.paths.agent_config_path.name == "agent.yaml"
+
+
+def test_session_bundle_loader_lists_session_ids_from_bundle_dirs(tmp_path: Path) -> None:
+    _write_session_bundle(tmp_path, session_id="qq:group:123456")
+    _write_session_bundle(
+        tmp_path,
+        session_id="qq:user:10001",
+        frontstage_agent_id="private-frontstage",
+        agent_id="private-frontstage",
+    )
+    loader = SessionBundleLoader(
+        config_root=tmp_path / "sessions",
+        prompt_refs={"prompt/aca/default"},
+        tool_names={"read"},
+        skill_names={"frontend-design"},
+        subagent_names={"excel-worker"},
+    )
+
+    assert loader.list_session_ids() == ["qq:group:123456", "qq:user:10001"]
 
 
 def test_session_bundle_loader_rejects_mismatched_internal_ids(tmp_path: Path) -> None:

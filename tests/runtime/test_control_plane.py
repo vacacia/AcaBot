@@ -4,8 +4,7 @@ import pytest
 
 from acabot.config import Config
 from acabot.runtime import (
-    AgentProfile,
-    AgentProfileRegistry,
+    ResolvedAgent,
     BackendBridge,
     BackendModeRegistry,
     BackendSessionBindingStore,
@@ -50,8 +49,8 @@ def _catalog() -> SkillCatalog:
     return catalog
 
 
-def _profile_loader(decision: RouteDecision) -> AgentProfile:
-    return AgentProfile(
+def _agent_loader(decision: RouteDecision) -> ResolvedAgent:
+    return ResolvedAgent(
         agent_id=decision.agent_id,
         name="Aca",
         prompt_ref="prompt/default",
@@ -81,20 +80,6 @@ def _event(*, event_id: str = "evt-1") -> StandardEvent:
         raw_message_id=f"msg-{event_id}",
         sender_nickname="acacia",
         sender_role=None,
-    )
-
-
-def _profile_registry() -> AgentProfileRegistry:
-    return AgentProfileRegistry(
-        profiles={
-            "aca": AgentProfile(
-                agent_id="aca",
-                name="Aca",
-                prompt_ref="prompt/default",
-                skills=["sample_configured_skill"],
-            )
-        },
-        default_agent_id="aca",
     )
 
 
@@ -179,7 +164,7 @@ async def test_runtime_control_plane_reports_status_snapshot(tmp_path: Path) -> 
             thread_manager=thread_manager,
             plugin_manager=plugin_manager,
         ),
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
         plugin_manager=plugin_manager,
     )
     control_plane = RuntimeControlPlane(
@@ -244,7 +229,7 @@ async def test_runtime_control_plane_status_exposes_delegate_agent_id() -> None:
                 run_manager=run_manager,
                 thread_manager=thread_manager,
             ),
-            profile_loader=_profile_loader,
+            agent_loader=_agent_loader,
         ),
         run_manager=run_manager,
     )
@@ -267,29 +252,52 @@ async def test_runtime_control_plane_status_exposes_delegate_agent_id() -> None:
 
 async def test_runtime_control_plane_lists_catalog_skills_and_agent_assignments(tmp_path: Path) -> None:
     skill_catalog = _catalog()
-    profile_registry = _profile_registry()
-    control_plane = RuntimeControlPlane(
-        app=RuntimeApp(
-            gateway=FakeGateway(),
-            router=RuntimeRouter(default_agent_id="aca"),
-            thread_manager=InMemoryThreadManager(),
-            run_manager=InMemoryRunManager(),
-            channel_event_store=InMemoryChannelEventStore(),
-            pipeline=ThreadPipeline(
-                agent_runtime=FakeAgentRuntime(),
-                outbox=Outbox(gateway=FakeGateway(), store=FakeMessageStore()),
-                run_manager=InMemoryRunManager(),
-                thread_manager=InMemoryThreadManager(),
-            ),
-            profile_loader=_profile_loader,
+    bundle_dir = tmp_path / "sessions" / "qq" / "user" / "10001"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "session.yaml").write_text(
+        """
+session:
+  id: qq:user:10001
+frontstage:
+  agent_id: session:qq:user:10001:frontstage
+""".strip(),
+        encoding="utf-8",
+    )
+    (bundle_dir / "agent.yaml").write_text(
+        """
+agent_id: session:qq:user:10001:frontstage
+prompt_ref: prompt/default
+visible_skills:
+  - sample_configured_skill
+""".strip(),
+        encoding="utf-8",
+    )
+    components = build_runtime_components(
+        Config(
+            {
+                "agent": {
+                    "system_prompt": "You are Aca.",
+                },
+                "runtime": {
+                    "default_agent_id": "aca",
+                    "prompts": {
+                        "prompt/default": "You are Aca.",
+                    },
+                    "filesystem": {
+                        "enabled": True,
+                        "base_dir": str(tmp_path),
+                        "sessions_dir": "sessions",
+                    },
+                },
+            }
         ),
-        run_manager=InMemoryRunManager(),
-        profile_registry=profile_registry,
+        gateway=FakeGateway(),
+        agent=FakeAgentRuntime(),
         skill_catalog=skill_catalog,
     )
 
-    skills = await control_plane.list_skills()
-    agent_skills = await control_plane.list_agent_skills("aca")
+    skills = await components.control_plane.list_skills()
+    agent_skills = await components.control_plane.list_agent_skills("session:qq:user:10001:frontstage")
 
     assert [item.skill_name for item in skills] == [
         "excel_processing",
@@ -319,7 +327,7 @@ async def test_runtime_control_plane_lists_catalog_subagents(tmp_path: Path) -> 
                 run_manager=InMemoryRunManager(),
                 thread_manager=InMemoryThreadManager(),
             ),
-            profile_loader=_profile_loader,
+            agent_loader=_agent_loader,
         ),
         run_manager=InMemoryRunManager(),
         subagent_catalog=subagent_catalog,
@@ -372,7 +380,7 @@ async def test_runtime_control_plane_lists_duplicate_subagent_names_with_unique_
                 run_manager=InMemoryRunManager(),
                 thread_manager=InMemoryThreadManager(),
             ),
-            profile_loader=_profile_loader,
+            agent_loader=_agent_loader,
         ),
         run_manager=InMemoryRunManager(),
         subagent_catalog=subagent_catalog,
@@ -409,7 +417,7 @@ async def test_runtime_control_plane_lists_mirrored_skills(tmp_path: Path) -> No
                 run_manager=InMemoryRunManager(),
                 thread_manager=InMemoryThreadManager(),
             ),
-            profile_loader=_profile_loader,
+            agent_loader=_agent_loader,
         ),
         run_manager=InMemoryRunManager(),
         skill_catalog=skill_catalog,
@@ -450,7 +458,7 @@ async def test_runtime_control_plane_reports_backend_status(tmp_path: Path) -> N
             run_manager=InMemoryRunManager(),
             thread_manager=InMemoryThreadManager(),
         ),
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
         backend_bridge=BackendBridge(session=BackendSessionService(binding_store)),
         backend_mode_registry=backend_mode_registry,
         backend_admin_actor_ids={"qq:user:10001"},

@@ -18,6 +18,7 @@ from ..backend.session import (
 )
 from ..builtin_tools import register_core_builtin_tools
 from ..context_assembly import ContextAssembler
+from ..contracts import ResolvedAgent
 from ..control.config_control_plane import RuntimeConfigControlPlane
 from ..control.control_plane import RuntimeControlPlane
 from ..gateway_protocol import GatewayProtocol
@@ -41,7 +42,7 @@ from ..plugin_manager import (
     load_runtime_plugins_from_config,
     load_runtime_plugins_from_config_with_failures,
 )
-from ..control.profile_loader import AgentProfileRegistry, ProfileLoader, PromptLoader, ReloadablePromptLoader
+from ..control.prompt_loader import PromptLoader, ReloadablePromptLoader
 from ..router import RuntimeRouter
 from ..subagents import SubagentDelegationBroker
 from ..subagents.execution import LocalSubagentExecutionService
@@ -70,42 +71,27 @@ from .builders import (
 from .config import resolve_runtime_path
 from .components import RuntimeComponents
 from .loaders import (
-    build_filesystem_profiles,
-    build_profiles,
+    build_default_frontstage_agent,
+    build_prompt_refs,
     build_prompt_loader,
+    build_session_bundle_loader,
     build_session_runtime,
 )
 
 
 def _resolve_shared_admin_actor_ids(
     *,
-    profiles: dict[str, object],
-    default_agent_id: str,
     backend_conf: dict[str, object],
 ) -> set[str]:
     """解析共享管理员列表.
 
-    解析顺序:
-    1. 默认 Bot profile 里的 `admin_actor_ids`
-    2. `runtime.backend.admin_actor_ids`
-
     Args:
-        profiles: 当前已加载的 profile 映射.
-        default_agent_id: 默认 Bot 的 agent id.
         backend_conf: `runtime.backend` 配置块.
 
     Returns:
         规范化后的管理员 actor 集合.
     """
 
-    profile = profiles.get(str(default_agent_id or "").strip())
-    profile_config = dict(getattr(profile, "config", {}) or {}) if profile is not None else {}
-    if "admin_actor_ids" in profile_config:
-        return {
-            str(value)
-            for value in list(profile_config.get("admin_actor_ids", []) or [])
-            if str(value)
-        }
     return {
         str(value)
         for value in list(backend_conf.get("admin_actor_ids", []) or [])
@@ -141,30 +127,22 @@ def build_runtime_components(
     """根据配置和注入依赖组装一套最小 runtime 组件."""
 
     runtime_conf = config.get("runtime", {})
-    fs_conf = dict(runtime_conf.get("filesystem", {}))
     default_computer_policy = build_default_computer_policy(config)
-    profiles = build_profiles(config, default_computer_policy=default_computer_policy)
-    filesystem_profiles = build_filesystem_profiles(
+    default_frontstage_agent = build_default_frontstage_agent(
         config,
         default_computer_policy=default_computer_policy,
     )
-    profiles.update(filesystem_profiles)
     runtime_subagent_catalog = subagent_catalog or build_subagent_catalog(config)
     prompt_loader = ReloadablePromptLoader(
         build_prompt_loader(
             config,
-            profiles,
+            prompt_refs={default_frontstage_agent.prompt_ref},
             subagent_catalog=runtime_subagent_catalog,
         )
     )
-    default_agent_id = runtime_conf.get("default_agent_id", next(iter(profiles))) or next(iter(profiles))
-
-    profile_registry = AgentProfileRegistry(
-        profiles=profiles,
-        default_agent_id=default_agent_id,
-    )
+    default_agent_id = str(default_frontstage_agent.agent_id or "default")
     runtime_model_target_catalog = MutableModelTargetCatalog()
-    runtime_model_target_catalog.replace_agent_targets(build_agent_model_targets(profiles.values()))
+    runtime_model_target_catalog.replace_agent_targets(build_agent_model_targets([default_frontstage_agent]))
     session_runtime = build_session_runtime(config)
     runtime_router = router or RuntimeRouter(
         default_agent_id=default_agent_id,
@@ -209,10 +187,6 @@ def build_runtime_components(
         config,
         target_catalog=runtime_model_target_catalog,
     )
-    runtime_model_registry_manager.target_catalog.replace_agent_targets(
-        build_agent_model_targets(profiles.values())
-    )
-    runtime_model_registry_manager.reload_now()
     long_term_memory_conf = dict(runtime_conf.get("long_term_memory", {}))
     long_term_memory_enabled = bool(long_term_memory_conf.get("enabled", False))
     runtime_long_term_memory_source = None
@@ -279,8 +253,6 @@ def build_runtime_components(
         runtime_backend_session_service = BackendSessionService(backend_binding_store)
     runtime_backend_bridge = BackendBridge(session=runtime_backend_session_service)
     runtime_backend_admin_actor_ids = _resolve_shared_admin_actor_ids(
-        profiles=profiles,
-        default_agent_id=str(default_agent_id or ""),
         backend_conf=backend_conf,
     )
     runtime_image_context_service = ImageContextService(
@@ -316,7 +288,56 @@ def build_runtime_components(
         sticky_note_service=runtime_sticky_notes,
         subagent_delegator=runtime_subagent_delegator,
     )
-    builtin_plugins = build_builtin_runtime_plugins(profiles)
+    runtime_session_bundle_loader = build_session_bundle_loader(
+        config,
+        prompt_refs=build_prompt_refs(
+            config,
+            prompt_refs={default_frontstage_agent.prompt_ref},
+            subagent_catalog=runtime_subagent_catalog,
+        ),
+        tool_names={
+            str(item.get("name", "") or "")
+            for item in runtime_tool_broker.list_registered_tools()
+            if str(item.get("name", "") or "")
+        },
+        skill_names={item.skill_name for item in runtime_skill_catalog.list_all()},
+        subagent_names={item.subagent_name for item in runtime_subagent_catalog.list_all()},
+    )
+
+    runtime_frontstage_agents = (
+        [
+            ResolvedAgent.from_session_agent(bundle.frontstage_agent)
+            for bundle in runtime_session_bundle_loader.list_bundles()
+        ]
+        if runtime_session_bundle_loader is not None
+        else [default_frontstage_agent]
+    )
+    runtime_model_target_catalog.replace_agent_targets(build_agent_model_targets(runtime_frontstage_agents))
+    runtime_model_registry_manager.target_catalog.replace_agent_targets(
+        build_agent_model_targets(runtime_frontstage_agents)
+    )
+    runtime_model_registry_manager.reload_now()
+
+    runtime_agent_loader_state = {
+        "default_frontstage_agent": default_frontstage_agent,
+        "session_bundle_loader": runtime_session_bundle_loader,
+    }
+
+    def runtime_agent_loader(decision):
+        session_bundle_loader = runtime_agent_loader_state["session_bundle_loader"]
+        if session_bundle_loader is not None:
+            bundle = session_bundle_loader.load_by_session_id(decision.channel_scope)
+            return ResolvedAgent.from_session_agent(bundle.frontstage_agent)
+        return runtime_agent_loader_state["default_frontstage_agent"]
+
+    def rebind_agent_loader(
+        next_default_frontstage_agent: ResolvedAgent,
+        next_session_bundle_loader,
+    ) -> None:
+        runtime_agent_loader_state["default_frontstage_agent"] = next_default_frontstage_agent
+        runtime_agent_loader_state["session_bundle_loader"] = next_session_bundle_loader
+
+    builtin_plugins = build_builtin_runtime_plugins()
     failed_plugin_import_paths: list[str] = []
     configured_plugins = plugins
     if configured_plugins is None:
@@ -346,7 +367,7 @@ def build_runtime_components(
     runtime_plugin_manager.failed_plugin_import_paths = list(failed_plugin_import_paths)
     runtime_approval_resumer = approval_resumer or ToolApprovalResumer(
         thread_manager=runtime_thread_manager,
-        profile_loader=profile_registry.load,
+        agent_loader=runtime_agent_loader,
         tool_broker=runtime_tool_broker,
         computer_runtime=runtime_computer_runtime,
     )
@@ -381,7 +402,7 @@ def build_runtime_components(
         thread_manager=runtime_thread_manager,
         run_manager=runtime_run_manager,
         pipeline=pipeline,
-        profile_loader=profile_registry.load,
+        agent_loader=runtime_agent_loader,
         model_registry_manager=runtime_model_registry_manager,
         subagent_catalog=runtime_subagent_catalog,
     )
@@ -389,7 +410,8 @@ def build_runtime_components(
     config_control_plane = RuntimeConfigControlPlane(
         config=config,
         router=runtime_router,
-        profile_registry=profile_registry,
+        default_frontstage_agent=default_frontstage_agent,
+        session_bundle_loader=runtime_session_bundle_loader,
         prompt_loader=prompt_loader,
         model_registry_manager=runtime_model_registry_manager,
         skill_catalog=runtime_skill_catalog,
@@ -398,6 +420,7 @@ def build_runtime_components(
         tool_broker=runtime_tool_broker,
         subagent_delegator=runtime_subagent_delegator,
         builtin_plugin_factory=build_builtin_runtime_plugins,
+        rebind_agent_loader=rebind_agent_loader,
     )
     app = RuntimeApp(
         gateway=gateway,
@@ -406,7 +429,7 @@ def build_runtime_components(
         run_manager=runtime_run_manager,
         channel_event_store=runtime_channel_event_store,
         pipeline=pipeline,
-        profile_loader=profile_registry.load,
+        agent_loader=runtime_agent_loader,
         approval_resumer=runtime_approval_resumer,
         reference_backend=runtime_reference_backend,
         plugin_manager=runtime_plugin_manager,
@@ -426,7 +449,6 @@ def build_runtime_components(
         soul_source=runtime_soul_source,
         sticky_notes_source=runtime_sticky_notes_source,
         sticky_notes=runtime_sticky_notes,
-        profile_registry=profile_registry,
         plugin_manager=runtime_plugin_manager,
         skill_catalog=runtime_skill_catalog,
         subagent_catalog=runtime_subagent_catalog,
@@ -468,7 +490,7 @@ def build_runtime_components(
         control_plane=control_plane,
         config_control_plane=config_control_plane,
         prompt_loader=prompt_loader,
-        profile_loader=profile_registry,
+        agent_loader=runtime_agent_loader,
         tool_broker=runtime_tool_broker,
         agent_runtime=agent_runtime,
         approval_resumer=runtime_approval_resumer,

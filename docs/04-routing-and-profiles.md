@@ -286,14 +286,16 @@ profile 现在更像“agent 身份卡”，里面放的是：
 
 但决定它们的来源已经变了。现在不是旧 inbound rule, 而是 session surface 里的 admission 决策。
 
-## profile 现在怎么装配
+## frontstage agent 现在怎么装配
 
 关键文件:
 
-- `src/acabot/runtime/control/profile_loader.py`
+- `src/acabot/runtime/control/session_bundle_loader.py`
+- `src/acabot/runtime/control/session_agent_loader.py`
+- `src/acabot/runtime/control/prompt_loader.py`
 - `src/acabot/runtime/control/config_control_plane.py`
 
-profile 现在只负责这些事:
+frontstage agent 现在只负责这些事:
 
 - agent_id
 - name
@@ -302,31 +304,33 @@ profile 现在只负责这些事:
 - skills
 - computer policy
 
-模型不在 profile 里配置；主回复和 system 能力都通过 `model_target / model_binding` 进入 runtime。
+模型不在 session 里直接配置；主回复和 system 能力都通过 `model_target / model_binding` 进入 runtime。
 
-### profile 的两个来源
+### frontstage agent 的两个来源
 
-#### 1. inline 配置
+#### 1. inline 默认 agent
 
 来自:
 
-- `runtime.profiles`
-- 或 runtime / agent 默认配置
+- `runtime.default_agent_id`
+- `runtime.default_prompt_ref`
+- 以及 runtime / agent 默认配置
 
-#### 2. 文件系统 profile
+#### 2. 文件系统 session bundle
 
 如果开了 `runtime.filesystem.enabled = true`, 会从运行时目录继续加载:
 
-- `profiles/`
+- `sessions/<platform>/<scope>/<id>/session.yaml`
+- `sessions/<platform>/<scope>/<id>/agent.yaml`
 - `prompts/`
 
-现在 profile loader 这层已经不再承载旧 binding routing 语义了。它就是 profile / prompt 的读取层。
+现在 session bundle loader 这层承载前台 session-owned agent 真源；prompt loader 只负责 prompt 解析。
 
 ## prompt 现在怎么解析
 
 关键文件:
 
-- `src/acabot/runtime/control/profile_loader.py`
+- `src/acabot/runtime/control/prompt_loader.py`
 
 `prompt_ref` 最后由 `PromptLoader` 解析。
 
@@ -372,7 +376,7 @@ profile 现在只负责这些事:
 
 当前 `RuntimeConfigControlPlane` 主要处理:
 
-- profiles
+- session bundles
 - prompts
 - gateway
 - runtime plugins
@@ -408,9 +412,10 @@ profile 现在只负责这些事:
 
 先看:
 
-- `profile_loader.py`
+- `session_bundle_loader.py`
+- `prompt_loader.py`
 - `config_control_plane.py`
-- 对应的 profile / prompt 文件
+- 对应的 session bundle / prompt 文件
 
 ## 常见误区
 
@@ -420,17 +425,17 @@ profile 现在只负责这些事:
 
 ### 2. 还把旧 rule 文件当成当前真源
 
-现在真正生效的是 session config 决策和 profile / prompt 装配。
+现在真正生效的是 session config 决策和 session-owned agent / prompt 装配。
 
 ### 3. 改 profile 但忘了 filesystem 模式
 
-如果 runtime 开了 filesystem, 很多值不是从主 YAML 里直接读的。你只改 inline 配置, 线上不一定生效。
+如果 runtime 开了 filesystem, 很多值不是从主 YAML 里直接读的。你只改 inline 默认配置, 线上不一定生效。
 
 ## 读源码顺序建议
 
 1. `src/acabot/runtime/control/session_runtime.py`
 2. `src/acabot/runtime/router.py`
 3. `src/acabot/runtime/control/session_loader.py`
-4. `src/acabot/runtime/control/profile_loader.py`
+4. `src/acabot/runtime/control/session_bundle_loader.py`
 5. `src/acabot/runtime/control/config_control_plane.py`
 6. `src/acabot/runtime/bootstrap/`

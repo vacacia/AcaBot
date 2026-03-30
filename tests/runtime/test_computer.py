@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from acabot.runtime import (
-    AgentProfile,
+    ResolvedAgent,
     ComputerPolicy,
     ComputerPolicyDecision,
     ComputerRuntime,
@@ -71,7 +71,7 @@ def _ctx(tmp_path: Path) -> tuple[ComputerRuntime, RunContext]:
             thread_id="qq:user:10001",
             channel_scope="qq:user:10001",
         ),
-        profile=AgentProfile(
+        agent=ResolvedAgent(
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",
@@ -149,7 +149,7 @@ async def test_computer_runtime_supports_exec_and_shell_session(tmp_path: Path) 
     )
     session = await service.open_session(
         thread_id=ctx.thread.thread_id,
-        agent_id=ctx.profile.agent_id,
+        agent_id=ctx.agent.agent_id,
         policy=policy,
         world_view=ctx.world_view,
     )
@@ -584,7 +584,7 @@ async def test_computer_runtime_read_world_path_replaces_invalid_utf8_bytes(tmp_
 
 async def test_computer_runtime_read_world_path_can_materialize_visible_skill(tmp_path: Path) -> None:
     service, ctx = _ctx(tmp_path)
-    ctx.profile.skills = ["sample_skill"]
+    ctx.agent.skills = ["sample_skill"]
     source_skill = tmp_path / "catalog" / "sample_skill"
     source_skill.mkdir(parents=True, exist_ok=True)
     (source_skill / "SKILL.md").write_text("sample skill", encoding="utf-8")
@@ -609,7 +609,7 @@ async def test_computer_runtime_read_world_path_can_materialize_visible_skill(tm
 
 async def test_computer_runtime_write_world_path_updates_canonical_skill_file(tmp_path: Path) -> None:
     service, ctx = _ctx(tmp_path)
-    ctx.profile.skills = ["sample_skill"]
+    ctx.agent.skills = ["sample_skill"]
     source_skill = tmp_path / "catalog" / "sample_skill"
     source_skill.mkdir(parents=True, exist_ok=True)
     (source_skill / "SKILL.md").write_text("sample skill", encoding="utf-8")
@@ -643,7 +643,7 @@ async def test_computer_runtime_write_world_path_updates_canonical_skill_file(tm
 
 async def test_computer_runtime_write_world_path_creates_new_file_inside_visible_skill(tmp_path: Path) -> None:
     service, ctx = _ctx(tmp_path)
-    ctx.profile.skills = ["sample_skill"]
+    ctx.agent.skills = ["sample_skill"]
     source_skill = tmp_path / "catalog" / "sample_skill"
     source_skill.mkdir(parents=True, exist_ok=True)
     (source_skill / "SKILL.md").write_text("sample skill", encoding="utf-8")
@@ -732,7 +732,7 @@ async def test_computer_runtime_bash_world_passes_timeout_to_backend(tmp_path: P
 
 async def test_computer_runtime_world_view_respects_decision_visible_skills(tmp_path: Path) -> None:
     service, ctx = _ctx(tmp_path)
-    ctx.profile.skills = ["profile_skill"]
+    ctx.agent.skills = ["profile_skill"]
     ctx.computer_policy_decision = ComputerPolicyDecision(
         actor_kind="frontstage_agent",
         backend="host",
@@ -765,7 +765,7 @@ async def test_computer_runtime_world_view_respects_decision_visible_skills(tmp_
 
 async def test_computer_runtime_refreshes_skills_world_view_after_mirroring(tmp_path: Path) -> None:
     service, ctx = _ctx(tmp_path)
-    ctx.profile.skills = ["sample_skill"]
+    ctx.agent.skills = ["sample_skill"]
     source_skill = tmp_path / "catalog" / "sample_skill"
     source_skill.mkdir(parents=True, exist_ok=True)
     (source_skill / "SKILL.md").write_text("sample skill", encoding="utf-8")

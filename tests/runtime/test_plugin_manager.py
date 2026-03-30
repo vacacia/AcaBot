@@ -6,7 +6,7 @@ import pytest
 from acabot.agent import ToolDef
 from acabot.config import Config
 from acabot.runtime import (
-    AgentProfile,
+    ResolvedAgent,
     ComputerRuntime,
     ComputerRuntimeConfig,
     FileSystemSkillPackageLoader,
@@ -195,8 +195,8 @@ def _decision() -> RouteDecision:
     )
 
 
-def _profile() -> AgentProfile:
-    return AgentProfile(
+def _profile() -> ResolvedAgent:
+    return ResolvedAgent(
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
@@ -348,7 +348,7 @@ async def test_thread_pipeline_can_be_short_circuited_by_runtime_plugin() -> Non
         event=event,
         decision=decision,
         thread=thread,
-        profile=_profile(),
+        agent=_profile(),
     )
 
     await pipeline.execute(ctx)
@@ -401,7 +401,7 @@ async def test_runtime_plugin_manager_reload_clears_old_tools_and_reloads() -> N
         tool_broker=tool_broker,
         skill_catalog=catalog,
     )
-    sample_profile = AgentProfile(
+    sample_profile = ResolvedAgent(
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
@@ -526,7 +526,7 @@ async def test_runtime_plugin_manager_selected_reload_keeps_builtin_plugins(
     )
 
     loaded_names, missing = await manager.reload_from_config()
-    builtin_profile = AgentProfile(
+    builtin_profile = ResolvedAgent(
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",

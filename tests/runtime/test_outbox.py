@@ -1,5 +1,5 @@
 from acabot.runtime import (
-    AgentProfile,
+    ResolvedAgent,
     MessageStore,
     MessageRecord,
     Outbox,
@@ -336,7 +336,7 @@ async def test_outbox_dispatch_persists_real_channel_scope_metadata() -> None:
             thread_id="thread:custom",
             channel_scope="qq:user:10001",
         ),
-        profile=AgentProfile(
+        agent=ResolvedAgent(
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",

@@ -177,11 +177,10 @@ class SessionRuntime:
             selectors=session.selectors,
             domain=domain,
         )
-        agent_id = str(payload.get("agent_id", session.frontstage_agent_id) or session.frontstage_agent_id)
         actor_lane = str(payload.get("actor_lane", "frontstage") or "frontstage")
         return RoutingDecision(
             actor_lane=actor_lane,
-            agent_id=agent_id,
+            agent_id=session.frontstage_agent_id,
             reason="surface case" if case_id else "surface default",
             source_case_id=case_id,
             priority=priority,

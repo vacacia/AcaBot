@@ -61,7 +61,7 @@ class LocalSubagentExecutionService:
         thread_manager: ThreadManager,
         run_manager: RunManager,
         pipeline: ThreadPipeline,
-        agent_loader,
+        agent_loader=None,
         model_registry_manager: FileSystemModelRegistryManager | None = None,
         subagent_catalog: SubagentCatalog | None = None,
     ) -> None:
@@ -120,7 +120,7 @@ class LocalSubagentExecutionService:
             event=event,
             decision=decision,
             thread=thread,
-            profile=agent,
+            agent=agent,
             model_request=model_request,
             summary_model_request=summary_model_request,
             computer_policy_decision=ComputerPolicyDecision(

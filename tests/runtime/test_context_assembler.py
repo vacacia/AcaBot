@@ -1,7 +1,7 @@
 """ContextAssembler 测试."""
 
 from acabot.runtime import (
-    AgentProfile,
+    ResolvedAgent,
     MemoryBlock,
     MemoryAssemblySpec,
     MessageProjection,
@@ -71,7 +71,7 @@ def _assembler_ctx(
             thread_id="qq:user:10001",
             channel_scope="qq:user:10001",
         ),
-        profile=AgentProfile(
+        agent=ResolvedAgent(
             agent_id="aca",
             name="Aca",
             prompt_ref="prompt/default",

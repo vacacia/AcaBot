@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from acabot.agent import ToolSpec
-from acabot.runtime import AgentProfile, SkillCatalog, ToolBroker
+from acabot.runtime import ResolvedAgent, SkillCatalog, ToolBroker
 from acabot.runtime.skills import FileSystemSkillPackageLoader
 
 
@@ -15,8 +15,8 @@ def _catalog() -> SkillCatalog:
     return catalog
 
 
-def _profile(*, skills: list[str]) -> AgentProfile:
-    return AgentProfile(
+def _profile(*, skills: list[str]) -> ResolvedAgent:
+    return ResolvedAgent(
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",

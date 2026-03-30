@@ -347,9 +347,6 @@ frontstage:
   agent_id: aca
 surfaces:
   message.private:
-    routing:
-      default:
-        agent_id: aca
     admission:
       default:
         mode: silent_drop
@@ -394,9 +391,6 @@ frontstage:
   agent_id: aca
 surfaces:
   message.private:
-    routing:
-      default:
-        agent_id: aca
     admission:
       default:
         mode: record_only
@@ -443,9 +437,6 @@ frontstage:
   agent_id: aca
 surfaces:
   message.private:
-    routing:
-      default:
-        agent_id: aca
     admission:
       default:
         mode: respond
@@ -479,7 +470,7 @@ surfaces:
     assert await channel_event_store.get_thread_events("qq:user:10001") == []
 
 
-async def test_runtime_app_marks_run_failed_when_profile_loader_crashes() -> None:
+async def test_runtime_app_marks_run_failed_when_agent_loader_crashes() -> None:
     gateway = FakeGateway()
     thread_manager = InMemoryThreadManager()
     run_manager = InMemoryRunManager()

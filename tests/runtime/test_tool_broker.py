@@ -17,7 +17,7 @@ import pytest
 from acabot.agent import ToolDef, ToolExecutionResult, ToolSpec
 from acabot.config import Config
 from acabot.runtime import (
-    AgentProfile,
+    ResolvedAgent,
     ApprovalRequired,
     BackendBridge,
     BackendSessionService,
@@ -47,17 +47,17 @@ class Marker:
     value: str
 
 
-def _profile(*, enabled_tools: list[str]) -> AgentProfile:
-    """构造最小 AgentProfile.
+def _profile(*, enabled_tools: list[str]) -> ResolvedAgent:
+    """构造最小 ResolvedAgent.
 
     Args:
-        enabled_tools: 当前 profile 允许的工具列表.
+        enabled_tools: 当前 agent 允许的工具列表.
 
     Returns:
-        一份最小 AgentProfile.
+        一份最小 ResolvedAgent.
     """
 
-    return AgentProfile(
+    return ResolvedAgent(
         agent_id="aca",
         name="Aca",
         prompt_ref="prompt/default",
@@ -116,7 +116,7 @@ async def test_tool_broker_build_tool_runtime_returns_executor() -> None:
         get_time,
     )
     ctx = _context()
-    ctx.profile.enabled_tools = ["get_time"]
+    ctx.agent.enabled_tools = ["get_time"]
 
     tool_runtime = broker.build_tool_runtime(ctx)
     execution = await tool_runtime.tool_executor("get_time", {"timezone": "Asia/Shanghai"})
@@ -142,10 +142,10 @@ async def test_tool_broker_filters_computer_tools_by_run_policy() -> None:
     broker.register_tool(ToolSpec(name="write", description="write", parameters={"type": "object", "properties": {}}), write_tool)
 
     ctx = _context()
-    ctx.profile.enabled_tools = ["read", "write", "exec"]
+    ctx.agent.enabled_tools = ["read", "write", "exec"]
     ctx.workspace_state = WorkspaceState(
         thread_id=ctx.thread.thread_id,
-        agent_id=ctx.profile.agent_id,
+        agent_id=ctx.agent.agent_id,
         backend_kind="host",
         workspace_host_path="/tmp/workspace",
         workspace_visible_root="/workspace",
@@ -173,10 +173,10 @@ async def test_tool_broker_rejects_run_hidden_tool_on_direct_execute() -> None:
         write_tool,
     )
     ctx = _context()
-    ctx.profile.enabled_tools = ["write"]
+    ctx.agent.enabled_tools = ["write"]
     ctx.workspace_state = WorkspaceState(
         thread_id=ctx.thread.thread_id,
-        agent_id=ctx.profile.agent_id,
+        agent_id=ctx.agent.agent_id,
         backend_kind="host",
         workspace_host_path="/tmp/workspace",
         workspace_visible_root="/workspace",
@@ -213,7 +213,7 @@ async def test_tool_broker_normalizes_legacy_tool_def_result() -> None:
         )
     )
     ctx = _context()
-    ctx.profile.enabled_tools = ["get_user_info"]
+    ctx.agent.enabled_tools = ["get_user_info"]
     result = await broker.execute(
         tool_name="get_user_info",
         arguments={},
@@ -256,7 +256,7 @@ async def test_tool_broker_keeps_builtin_tool_when_plugin_tries_to_shadow_it() -
     )
 
     ctx = _context()
-    ctx.profile.enabled_tools = ["read"]
+    ctx.agent.enabled_tools = ["read"]
     result = await broker.execute(
         tool_name="read",
         arguments={},
@@ -285,7 +285,7 @@ async def test_tool_broker_returns_error_when_tool_not_enabled() -> None:
         handler,
     )
     ctx = _context()
-    ctx.profile.enabled_tools = []
+    ctx.agent.enabled_tools = []
 
     result = await broker.execute(
         tool_name="dangerous_tool",
@@ -322,7 +322,7 @@ async def test_tool_broker_policy_can_reject_tool() -> None:
         handler,
     )
     ctx = _context()
-    ctx.profile.enabled_tools = ["restricted"]
+    ctx.agent.enabled_tools = ["restricted"]
 
     result = await broker.execute(
         tool_name="restricted",
@@ -372,7 +372,7 @@ async def test_tool_broker_only_exposes_backend_bridge_tool_to_default_agent() -
 
     default_visible = broker.visible_tools(_profile(enabled_tools=[]))
     worker_visible = broker.visible_tools(
-        AgentProfile(
+        ResolvedAgent(
             agent_id="worker",
             name="Worker",
             prompt_ref="prompt/default",
@@ -411,7 +411,7 @@ async def test_tool_broker_policy_can_request_approval() -> None:
         handler,
     )
     ctx = _context()
-    ctx.profile.enabled_tools = ["restricted"]
+    ctx.agent.enabled_tools = ["restricted"]
     state = ToolRuntimeState()
 
     with pytest.raises(ApprovalRequired) as exc_info:

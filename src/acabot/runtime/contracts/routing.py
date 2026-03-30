@@ -66,11 +66,6 @@ class ResolvedAgent:
             config=dict(session_agent.config),
         )
 
-
-# TODO(session-owned-agent hard cut): bootstrap/control-plane 清完后删掉这个旧别名.
-AgentProfile = ResolvedAgent
-
-
 @dataclass(slots=True)
 class RouteDecision:
     """router 的统一解析结果.
@@ -108,4 +103,4 @@ class RouteDecision:
     computer_policy_decision: ComputerPolicyDecision | None = None
 
 
-__all__ = ["AgentProfile", "ResolvedAgent", "RouteDecision"]
+__all__ = ["ResolvedAgent", "RouteDecision"]

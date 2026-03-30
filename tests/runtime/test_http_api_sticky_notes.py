@@ -10,7 +10,8 @@ from urllib.request import Request, urlopen
 from acabot.config import Config
 from acabot.runtime import RuntimeHttpApiServer, build_runtime_components
 
-from .test_bootstrap import FakeAgent, FakeAgentResponse, FakeGateway
+from ._agent_fakes import FakeAgent, FakeAgentResponse
+from .test_outbox import FakeGateway
 
 
 def _request_json(base_url: str, path: str, *, method: str = "GET", payload: dict | None = None) -> tuple[int, dict]:

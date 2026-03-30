@@ -2,7 +2,7 @@
 
 当前这个控制面只保留运行时真正还在使用的配置能力:
 
-- profiles
+- session bundles
 - prompts
 - gateway
 - runtime plugins
@@ -22,8 +22,14 @@ import yaml
 from acabot.config import Config
 
 from ..bootstrap.config import resolve_runtime_path as _resolve_runtime_path
+from ..bootstrap.loaders import (
+    build_default_frontstage_agent as _build_default_frontstage_agent_from_config,
+    build_prompt_loader as _build_runtime_prompt_loader,
+    build_prompt_refs as _build_runtime_prompt_refs,
+    build_session_bundle_loader as _build_runtime_session_bundle_loader,
+)
 from ..computer import ComputerPolicy, parse_computer_policy
-from ..contracts import AgentProfile
+from ..contracts import ResolvedAgent, SessionBundle
 from ..model.model_registry import FileSystemModelRegistryManager
 from ..model.model_targets import build_agent_model_targets
 from ..plugin_manager import RuntimePluginManager, RuntimePluginSpec, load_runtime_plugin
@@ -32,18 +38,11 @@ from ..skills import FileSystemSkillPackageLoader, SkillCatalog
 from ..skills.loader import SkillDiscoveryRoot
 from ..subagents import FileSystemSubagentPackageLoader, SubagentCatalog
 from ..subagents.loader import SubagentDiscoveryRoot
-from .profile_loader import (
-    AgentProfileRegistry,
-    ChainedPromptLoader,
-    FileSystemProfileLoader,
+from .prompt_loader import (
     FileSystemPromptLoader,
-    PromptLoader,
     ReloadablePromptLoader,
-    StaticPromptLoader,
-    normalize_enabled_tools,
-    normalize_profile_config,
-    resolve_profile_skills,
 )
+from .session_bundle_loader import SessionBundleLoader
 from .session_loader import ConfigBackedSessionConfigLoader, SessionConfigLoader
 from .session_runtime import SessionRuntime
 
@@ -129,7 +128,7 @@ def _build_session_runtime(config: Config) -> SessionRuntime:
 
     runtime_conf = config.get("runtime", {})
     fs_conf = dict(runtime_conf.get("filesystem", {}))
-    if "sessions_dir" in fs_conf:
+    if _session_bundle_storage_enabled(fs_conf):
         sessions_dir = _resolve_filesystem_path(
             config,
             fs_conf,
@@ -141,7 +140,7 @@ def _build_session_runtime(config: Config) -> SessionRuntime:
 
 
 def _default_computer_policy(config: Config) -> ComputerPolicy:
-    """读取 profile 默认 computer policy.
+    """读取默认前台 agent 的 computer policy.
 
     Args:
         config: 当前 runtime 配置.
@@ -162,169 +161,10 @@ def _default_computer_policy(config: Config) -> ComputerPolicy:
     return parse_computer_policy(computer_conf, defaults=defaults)
 
 
-def _build_profiles(config: Config) -> dict[str, AgentProfile]:
-    """从运行配置构造 inline profiles.
+def _session_bundle_storage_enabled(fs_conf: dict[str, object]) -> bool:
+    """是否显式启用了 session bundle 文件真源."""
 
-    Args:
-        config: 当前 runtime 配置.
-
-    Returns:
-        dict[str, AgentProfile]: 解析后的 profile 映射.
-    """
-
-    runtime_conf = dict(config.get("runtime", {}) or {})
-    agent_conf = dict(config.get("agent", {}) or {})
-    profiles_conf = runtime_conf.get("profiles", {})
-    default_policy = _default_computer_policy(config)
-    if profiles_conf:
-        profiles: dict[str, AgentProfile] = {}
-        for agent_id, profile_conf in dict(profiles_conf).items():
-            profile_map = normalize_profile_config(dict(profile_conf or {}))
-            profiles[agent_id] = AgentProfile(
-                agent_id=agent_id,
-                name=str(profile_map.get("name", agent_id) or agent_id),
-                prompt_ref=str(profile_map.get("prompt_ref", f"prompt/{agent_id}") or f"prompt/{agent_id}"),
-                enabled_tools=[str(item) for item in list(profile_map.get("enabled_tools", []) or [])],
-                skills=resolve_profile_skills(profile_map),
-                computer_policy=parse_computer_policy(
-                    profile_map.get("computer"),
-                    defaults=default_policy,
-                ),
-                config=dict(profile_map),
-            )
-        return profiles
-
-    default_agent_id = str(runtime_conf.get("default_agent_id", "default") or "default")
-    return {
-        default_agent_id: AgentProfile(
-            agent_id=default_agent_id,
-            name=str(runtime_conf.get("default_agent_name", default_agent_id) or default_agent_id),
-            prompt_ref=str(runtime_conf.get("default_prompt_ref", "prompt/default") or "prompt/default"),
-            enabled_tools=normalize_enabled_tools(runtime_conf.get("enabled_tools", [])),
-            skills=resolve_profile_skills(dict(runtime_conf)),
-            computer_policy=default_policy,
-            config=dict(agent_conf),
-        )
-    }
-
-
-def _build_filesystem_profiles(config: Config) -> dict[str, AgentProfile]:
-    """从文件系统加载 profiles.
-
-    Args:
-        config: 当前 runtime 配置.
-
-    Returns:
-        dict[str, AgentProfile]: 文件系统 profile 映射.
-    """
-
-    runtime_conf = dict(config.get("runtime", {}) or {})
-    fs_conf = dict(runtime_conf.get("filesystem", {}))
-    if not bool(fs_conf.get("enabled", False)):
-        return {}
-    profiles_dir = _resolve_filesystem_path(config, fs_conf, key="profiles_dir", default="profiles")
-    loader = FileSystemProfileLoader(
-        profiles_dir,
-        default_computer_policy=_default_computer_policy(config),
-    )
-    return loader.load_all()
-
-
-def _build_prompt_map(config: Config, profiles: dict[str, AgentProfile]) -> dict[str, str]:
-    """构造 inline prompt 映射.
-
-    Args:
-        config: 当前 runtime 配置.
-        profiles: 当前 profile 映射.
-
-    Returns:
-        dict[str, str]: `prompt_ref -> text` 映射.
-    """
-
-    runtime_conf = dict(config.get("runtime", {}) or {})
-    agent_conf = dict(config.get("agent", {}) or {})
-    prompts = dict(runtime_conf.get("prompts", {}) or {})
-    default_prompt_text = str(agent_conf.get("system_prompt", "") or "")
-    for profile in profiles.values():
-        prompts.setdefault(profile.prompt_ref, default_prompt_text)
-    return prompts
-
-
-def _build_subagent_prompt_map(subagent_catalog: SubagentCatalog | None) -> dict[str, str]:
-    """构造 subagent prompt 映射."""
-
-    if subagent_catalog is None:
-        return {}
-
-    prompts: dict[str, str] = {}
-    seen: set[str] = set()
-    for manifest in subagent_catalog.list_all():
-        subagent_name = manifest.subagent_name
-        if subagent_name in seen:
-            continue
-        prompts[f"subagent/{subagent_name}"] = subagent_catalog.read(subagent_name).body_markdown
-        seen.add(subagent_name)
-    return prompts
-
-
-def _build_prompt_loader(
-    config: Config,
-    profiles: dict[str, AgentProfile],
-    *,
-    subagent_catalog: SubagentCatalog | None = None,
-) -> PromptLoader:
-    """构造 prompt loader.
-
-    Args:
-        config: 当前 runtime 配置.
-        profiles: 当前 profile 映射.
-        subagent_catalog: 可选的 subagent catalog.
-
-    Returns:
-        PromptLoader: 当前有效 prompt loader.
-    """
-
-    runtime_conf = config.get("runtime", {})
-    fs_conf = dict(runtime_conf.get("filesystem", {}))
-    prompt_map = _build_prompt_map(config, profiles)
-    prompt_map.update(_build_subagent_prompt_map(subagent_catalog))
-    static_loader = StaticPromptLoader(prompt_map)
-    if not bool(fs_conf.get("enabled", False)):
-        return static_loader
-    prompts_dir = _resolve_filesystem_path(config, fs_conf, key="prompts_dir", default="prompts")
-    return ChainedPromptLoader([
-        FileSystemPromptLoader(prompts_dir),
-        static_loader,
-    ])
-
-
-def _profile_to_config(profile: AgentProfile) -> dict[str, Any]:
-    """把 profile 对象转成可写回/可展示配置.
-
-    Args:
-        profile: 当前 profile.
-
-    Returns:
-        dict[str, Any]: 适合控制面展示的 profile 配置.
-    """
-
-    data = dict(profile.config)
-    data.pop("skill_assignments", None)
-    data["agent_id"] = profile.agent_id
-    data["name"] = profile.name
-    data["prompt_ref"] = profile.prompt_ref
-    data["enabled_tools"] = list(profile.enabled_tools)
-    data["skills"] = list(profile.skills)
-    if profile.computer_policy is not None:
-        data["computer"] = {
-            "backend": profile.computer_policy.backend,
-            "allow_exec": profile.computer_policy.allow_exec,
-            "allow_sessions": profile.computer_policy.allow_sessions,
-            "auto_stage_attachments": profile.computer_policy.auto_stage_attachments,
-            "network_mode": profile.computer_policy.network_mode,
-        }
-    return data
-
+    return bool(fs_conf.get("enabled", False)) and "sessions_dir" in fs_conf
 
 class RuntimeConfigControlPlane:
     """面向 WebUI 的 runtime 配置读写与热刷新服务."""
@@ -334,7 +174,8 @@ class RuntimeConfigControlPlane:
         *,
         config: Config,
         router: RuntimeRouter,
-        profile_registry: AgentProfileRegistry,
+        default_frontstage_agent: ResolvedAgent,
+        session_bundle_loader: SessionBundleLoader | None,
         prompt_loader: ReloadablePromptLoader,
         model_registry_manager: FileSystemModelRegistryManager | None = None,
         skill_catalog: SkillCatalog | None = None,
@@ -342,14 +183,16 @@ class RuntimeConfigControlPlane:
         plugin_manager: RuntimePluginManager | None = None,
         tool_broker=None,
         subagent_delegator=None,
-        builtin_plugin_factory: Callable[[dict[str, AgentProfile]], list[Any]] | None = None,
+        builtin_plugin_factory: Callable[[], list[Any]] | None = None,
+        rebind_agent_loader: Callable[[ResolvedAgent, SessionBundleLoader | None], None] | None = None,
     ) -> None:
         """初始化 RuntimeConfigControlPlane.
 
         Args:
             config: 当前 runtime 配置.
             router: 当前 runtime router.
-            profile_registry: profile registry.
+            default_frontstage_agent: inline 模式默认前台 agent.
+            session_bundle_loader: session bundle 真源 loader.
             prompt_loader: 可热刷新的 prompt loader.
             skill_catalog: 可选 skill catalog.
             subagent_catalog: 可选 subagent catalog.
@@ -361,7 +204,8 @@ class RuntimeConfigControlPlane:
 
         self.config = config
         self.router = router
-        self.profile_registry = profile_registry
+        self.default_frontstage_agent = default_frontstage_agent
+        self.session_bundle_loader = session_bundle_loader
         self.prompt_loader = prompt_loader
         self.model_registry_manager = model_registry_manager
         self.skill_catalog = skill_catalog
@@ -370,6 +214,7 @@ class RuntimeConfigControlPlane:
         self.tool_broker = tool_broker
         self.subagent_delegator = subagent_delegator
         self.builtin_plugin_factory = builtin_plugin_factory
+        self.rebind_agent_loader = rebind_agent_loader
 
     def storage_mode(self) -> str:
         """返回当前配置存储模式.
@@ -380,7 +225,7 @@ class RuntimeConfigControlPlane:
 
         runtime_conf = self.config.get("runtime", {})
         fs_conf = dict(runtime_conf.get("filesystem", {}))
-        return "filesystem" if bool(fs_conf.get("enabled", False)) else "inline"
+        return "filesystem" if _session_bundle_storage_enabled(fs_conf) else "inline"
 
     async def reload_runtime_configuration(self) -> dict[str, Any]:
         """重新加载 runtime 配置并热更新相关组件.
@@ -390,75 +235,229 @@ class RuntimeConfigControlPlane:
         """
 
         self.config.reload_from_file()
-        runtime_conf = dict(self.config.get("runtime", {}) or {})
-        profiles = _build_profiles(self.config)
-        profiles.update(_build_filesystem_profiles(self.config))
-        if not profiles:
-            raise ValueError("runtime configuration must contain at least one profile")
-        default_agent_id = str(runtime_conf.get("default_agent_id", next(iter(profiles))) or next(iter(profiles)))
-
-        if self.model_registry_manager is not None:
-            previous_agent_targets = [
-                target
-                for target in self.model_registry_manager.target_catalog.list_targets()
-                if target.source_kind == "agent"
-            ]
-            self.model_registry_manager.target_catalog.replace_agent_targets(
-                build_agent_model_targets(profiles.values())
-            )
-            reload_snapshot = await self.model_registry_manager.reload()
-            if not reload_snapshot.ok:
-                self.model_registry_manager.target_catalog.replace_agent_targets(previous_agent_targets)
-                rollback_snapshot = await self.model_registry_manager.reload()
-                if not rollback_snapshot.ok:
-                    raise ValueError(rollback_snapshot.error or reload_snapshot.error or "model registry reload failed")
-                raise ValueError(reload_snapshot.error or "model registry reload failed")
-        self.profile_registry.reload(
-            profiles=profiles,
-            default_agent_id=default_agent_id,
+        default_policy = _default_computer_policy(self.config)
+        self.default_frontstage_agent = _build_default_frontstage_agent_from_config(
+            self.config,
+            default_computer_policy=default_policy,
         )
         if self.subagent_catalog is not None:
             self.subagent_catalog.replace_loader(self._subagent_catalog_loader())
             self.subagent_catalog.reload()
-        self.prompt_loader.replace_loader(
-            _build_prompt_loader(
-                self.config,
-                profiles,
-                subagent_catalog=self.subagent_catalog,
-            )
-        )
-        self.router.default_agent_id = default_agent_id
-        self.router.session_runtime = _build_session_runtime(self.config)
-
-        if self.tool_broker is not None:
-            self.tool_broker.default_agent_id = default_agent_id
-        if self.subagent_delegator is not None:
-            self.subagent_delegator.default_agent_id = default_agent_id
         if self.skill_catalog is not None:
             self.skill_catalog.replace_loader(self._skill_catalog_loader())
             self.skill_catalog.reload()
+        self._refresh_session_bundle_loader()
+        self.prompt_loader.replace_loader(
+            _build_runtime_prompt_loader(
+                self.config,
+                prompt_refs={self.default_frontstage_agent.prompt_ref},
+                subagent_catalog=self.subagent_catalog,
+            )
+        )
+        self._rebind_agent_loader()
+        self.router.default_agent_id = self.default_frontstage_agent.agent_id
+        self.router.session_runtime = _build_session_runtime(self.config)
+
+        if self.tool_broker is not None:
+            self.tool_broker.default_agent_id = self.default_frontstage_agent.agent_id
+        if self.subagent_delegator is not None:
+            self.subagent_delegator.default_agent_id = self.default_frontstage_agent.agent_id
         if self.plugin_manager is not None:
             builtin_plugins = (
-                self.builtin_plugin_factory(profiles)
+                self.builtin_plugin_factory()
                 if self.builtin_plugin_factory is not None
                 else []
             )
             await self.plugin_manager.replace_builtin_plugins(builtin_plugins)
             await self.plugin_manager.reload_from_config()
+        await self._refresh_session_agent_targets()
         return {
-            "default_agent_id": default_agent_id,
-            "profile_count": len(profiles),
+            "default_agent_id": self.default_frontstage_agent.agent_id,
+            "session_count": len(self.list_sessions()),
             "storage_mode": self.storage_mode(),
         }
 
-    def list_profiles(self) -> list[dict[str, Any]]:
-        """列出全部 profiles.
+    def list_sessions(self) -> list[dict[str, Any]]:
+        """列出全部 session 摘要."""
 
-        Returns:
-            list[dict[str, Any]]: 当前全部 profile 配置.
-        """
+        if self.session_bundle_loader is None:
+            return []
+        return [self._session_summary_from_bundle(bundle) for bundle in self.session_bundle_loader.list_bundles()]
 
-        return [_profile_to_config(item) for item in self.profile_registry.list_profiles()]
+    def list_session_bundles(self) -> list[dict[str, Any]]:
+        """列出全部完整 session bundle 视图."""
+
+        if self.session_bundle_loader is None:
+            return []
+        return [self._bundle_to_view(bundle) for bundle in self.session_bundle_loader.list_bundles()]
+
+    def get_session_bundle(self, session_id: str) -> dict[str, Any] | None:
+        """读取单个 session bundle."""
+
+        if self.session_bundle_loader is None:
+            return None
+        try:
+            bundle = self.session_bundle_loader.load_by_session_id(session_id)
+        except FileNotFoundError:
+            return None
+        return self._bundle_to_view(bundle)
+
+    def find_session_agent(self, agent_id: str) -> ResolvedAgent | None:
+        """按 agent_id 查找当前已配置的 session-owned agent."""
+
+        normalized = str(agent_id or "").strip()
+        if not normalized:
+            return None
+        if self.session_bundle_loader is not None:
+            for bundle in self.session_bundle_loader.list_bundles():
+                if bundle.frontstage_agent.agent_id == normalized:
+                    return ResolvedAgent.from_session_agent(bundle.frontstage_agent)
+        if normalized == self.default_frontstage_agent.agent_id:
+            return self.default_frontstage_agent
+        return None
+
+    async def create_session(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """创建一份新的 session bundle."""
+
+        if self.session_bundle_loader is None:
+            raise RuntimeError("session bundle storage is unavailable")
+        session_id = str(payload.get("session_id", "") or "").strip()
+        if not session_id:
+            raise ValueError("session_id is required")
+        if "frontstage_agent_id" in payload or "agent_id" in payload:
+            raise ValueError("frontstage_agent_id and agent_id are internal readonly fields")
+        session_dir = self.session_bundle_loader.session_dir_for_session_id(session_id)
+        if session_dir.exists():
+            raise ValueError(f"session already exists: {session_id}")
+        agent_id = self._session_agent_id(session_id)
+        session_payload = self._build_session_payload(
+            session_id=session_id,
+            frontstage_agent_id=agent_id,
+            title=str(payload.get("title", "") or ""),
+            template_id=str(payload.get("template_id", "") or ""),
+            selectors=dict(payload.get("selectors", {}) or {}),
+            surfaces=dict(payload.get("surfaces", {}) or {}),
+        )
+        agent_payload = self._build_agent_payload_from_agent(
+            agent_id=agent_id,
+            agent=self.default_frontstage_agent,
+        )
+        self._write_yaml(session_dir / "session.yaml", session_payload)
+        self._write_yaml(session_dir / "agent.yaml", agent_payload)
+        try:
+            self._refresh_session_bundle_loader()
+            bundle = self.session_bundle_loader.load_by_session_id(session_id)
+            await self._refresh_session_agent_targets()
+            return self._bundle_to_view(bundle)
+        except Exception:
+            for path in (session_dir / "session.yaml", session_dir / "agent.yaml"):
+                if path.exists():
+                    path.unlink()
+            if session_dir.exists() and not any(session_dir.iterdir()):
+                session_dir.rmdir()
+            raise
+
+    async def update_session(self, session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """更新 `session.yaml`."""
+
+        if self.session_bundle_loader is None:
+            raise RuntimeError("session bundle storage is unavailable")
+        if "frontstage_agent_id" in payload or "agent_id" in payload:
+            raise ValueError("frontstage_agent_id and agent_id are internal readonly fields")
+        bundle = self.session_bundle_loader.load_by_session_id(session_id)
+        raw = yaml.safe_load(bundle.paths.session_config_path.read_text(encoding="utf-8")) or {}
+        previous = dict(raw)
+        session_block = dict(raw.get("session", {}) or {})
+        if "title" in payload:
+            session_block["title"] = str(payload.get("title", "") or "")
+        if "template_id" in payload:
+            session_block["template"] = str(payload.get("template_id", "") or "")
+        if "selectors" in payload:
+            raw["selectors"] = dict(payload.get("selectors", {}) or {})
+        if "surfaces" in payload:
+            raw["surfaces"] = dict(payload.get("surfaces", {}) or {})
+        raw["session"] = session_block
+        self._write_yaml(bundle.paths.session_config_path, raw)
+        try:
+            self._refresh_session_bundle_loader()
+            refreshed = self.session_bundle_loader.load_by_session_id(session_id)
+            return self._bundle_to_view(refreshed)
+        except Exception:
+            self._write_yaml(bundle.paths.session_config_path, previous)
+            raise
+
+    async def update_session_agent(self, session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """更新 `agent.yaml`."""
+
+        if self.session_bundle_loader is None:
+            raise RuntimeError("session bundle storage is unavailable")
+        if "frontstage_agent_id" in payload or "agent_id" in payload:
+            raise ValueError("frontstage_agent_id and agent_id are internal readonly fields")
+        bundle = self.session_bundle_loader.load_by_session_id(session_id)
+        raw = yaml.safe_load(bundle.paths.agent_config_path.read_text(encoding="utf-8")) or {}
+        previous = dict(raw)
+        for key in ("prompt_ref", "visible_tools", "visible_skills", "visible_subagents"):
+            if key in payload:
+                raw[key] = payload[key]
+        if "computer_policy" in payload:
+            raw["computer_policy"] = dict(payload.get("computer_policy", {}) or {})
+        self._write_yaml(bundle.paths.agent_config_path, raw)
+        try:
+            self._refresh_session_bundle_loader()
+            refreshed = self.session_bundle_loader.load_by_session_id(session_id)
+            return dict(self._bundle_to_view(refreshed)["agent"])
+        except Exception:
+            self._write_yaml(bundle.paths.agent_config_path, previous)
+            raise
+
+    def _refresh_session_bundle_loader(self) -> None:
+        """同步 session bundle loader 的根目录和 catalog 快照."""
+
+        tool_names = set()
+        if self.tool_broker is not None:
+            tool_names = {
+                str(item.get("name", "") or "")
+                for item in self.tool_broker.list_registered_tools()
+                if str(item.get("name", "") or "")
+            }
+        skill_names = {item.skill_name for item in self.skill_catalog.list_all()} if self.skill_catalog is not None else set()
+        subagent_names = (
+            {item.subagent_name for item in self.subagent_catalog.list_all()}
+            if self.subagent_catalog is not None
+            else set()
+        )
+        self.session_bundle_loader = _build_runtime_session_bundle_loader(
+            self.config,
+            prompt_refs=_build_runtime_prompt_refs(
+                self.config,
+                prompt_refs={self.default_frontstage_agent.prompt_ref},
+                subagent_catalog=self.subagent_catalog,
+            ),
+            tool_names=tool_names,
+            skill_names=skill_names,
+            subagent_names=subagent_names,
+        )
+        self._rebind_agent_loader()
+
+    async def _refresh_session_agent_targets(self) -> None:
+        """按当前 session bundle 刷新 agent model targets."""
+
+        if self.model_registry_manager is None:
+            return
+        agents = (
+            [
+                ResolvedAgent.from_session_agent(bundle.frontstage_agent)
+                for bundle in self.session_bundle_loader.list_bundles()
+            ]
+            if self.session_bundle_loader is not None
+            else [self.default_frontstage_agent]
+        )
+        self.model_registry_manager.target_catalog.replace_agent_targets(
+            build_agent_model_targets(agents)
+        )
+        reload_snapshot = await self.model_registry_manager.reload()
+        if not reload_snapshot.ok:
+            raise ValueError(reload_snapshot.error or "model registry reload failed")
 
     def get_gateway_config(self) -> dict[str, Any]:
         """读取 gateway 配置视图.
@@ -650,96 +649,6 @@ class RuntimeConfigControlPlane:
         self.config.replace(data)
         self.config.save()
         return self.get_long_term_memory_config()
-
-    def get_profile(self, agent_id: str) -> dict[str, Any] | None:
-        """读取单个 profile.
-
-        Args:
-            agent_id: 目标 agent_id.
-
-        Returns:
-            dict[str, Any] | None: 命中的 profile 配置.
-        """
-
-        profile = self.profile_registry.profiles.get(agent_id)
-        if profile is None:
-            return None
-        return _profile_to_config(profile)
-
-    async def upsert_profile(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """新增或更新一个 profile.
-
-        Args:
-            payload: profile 配置片段.
-
-        Returns:
-            dict[str, Any]: 写回后的 profile 配置.
-        """
-
-        agent_id = str(payload.get("agent_id", "") or "").strip()
-        if not agent_id:
-            raise ValueError("agent_id is required")
-        normalized = normalize_profile_config(dict(payload))
-        normalized["agent_id"] = agent_id
-        normalized.setdefault("name", agent_id)
-        normalized.setdefault("prompt_ref", f"prompt/{agent_id}")
-        normalized.setdefault("enabled_tools", [])
-        normalized.setdefault("skills", [])
-        if self.storage_mode() == "filesystem":
-            path = self._profiles_dir() / f"{agent_id}.yaml"
-            self._write_yaml(path, normalized)
-        else:
-            data = self.config.to_dict()
-            runtime_conf = dict(data.get("runtime", {}) or {})
-            profiles_conf = dict(runtime_conf.get("profiles", {}) or {})
-            profile_payload = dict(normalized)
-            profile_payload.pop("agent_id", None)
-            profiles_conf[agent_id] = profile_payload
-            runtime_conf["profiles"] = profiles_conf
-            data["runtime"] = runtime_conf
-            self.config.replace(data)
-            self.config.save()
-        await self.reload_runtime_configuration()
-        result = self.get_profile(agent_id)
-        if result is None:
-            raise RuntimeError("profile reload failed")
-        return result
-
-    async def delete_profile(self, agent_id: str) -> bool:
-        """删除一个 profile.
-
-        Args:
-            agent_id: 目标 agent_id.
-
-        Returns:
-            bool: 是否真的删除了对象.
-        """
-
-        if self.model_registry_manager is not None:
-            binding = self.model_registry_manager.active_registry.binding_for_target(f"agent:{agent_id}")
-            if binding is not None:
-                raise ValueError(f"profile still has model binding: agent:{agent_id}")
-
-        existed = False
-        if self.storage_mode() == "filesystem":
-            path = self._profiles_dir() / f"{agent_id}.yaml"
-            if path.exists():
-                path.unlink()
-                existed = True
-        else:
-            data = self.config.to_dict()
-            runtime_conf = dict(data.get("runtime", {}) or {})
-            profiles_conf = dict(runtime_conf.get("profiles", {}) or {})
-            if agent_id in profiles_conf:
-                existed = True
-                profiles_conf.pop(agent_id, None)
-                runtime_conf["profiles"] = profiles_conf
-                data["runtime"] = runtime_conf
-                self.config.replace(data)
-                self.config.save()
-        if existed:
-            await self.reload_runtime_configuration()
-        return existed
 
     def list_prompts(self) -> list[dict[str, Any]]:
         """列出全部 prompts.
@@ -985,6 +894,117 @@ class RuntimeConfigControlPlane:
             return words
         return raw_name
 
+    @staticmethod
+    def _session_agent_id(session_id: str) -> str:
+        """为一个 session 派生稳定的内部 frontstage agent_id."""
+
+        normalized = str(session_id or "").strip()
+        if not normalized:
+            raise ValueError("session_id is required")
+        SessionConfigLoader._split_session_id(normalized)
+        return f"session:{normalized}:frontstage"
+
+    @staticmethod
+    def _build_session_payload(
+        *,
+        session_id: str,
+        frontstage_agent_id: str,
+        title: str,
+        template_id: str,
+        selectors: dict[str, Any],
+        surfaces: dict[str, Any],
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "session": {
+                "id": session_id,
+            },
+            "frontstage": {
+                "agent_id": frontstage_agent_id,
+            },
+        }
+        if title:
+            payload["session"]["title"] = title
+        if template_id:
+            payload["session"]["template"] = template_id
+        if selectors:
+            payload["selectors"] = selectors
+        if surfaces:
+            payload["surfaces"] = surfaces
+        return payload
+
+    @staticmethod
+    def _build_agent_payload_from_agent(
+        *,
+        agent_id: str,
+        agent: ResolvedAgent,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "agent_id": agent_id,
+            "prompt_ref": agent.prompt_ref,
+            "visible_tools": list(agent.enabled_tools),
+            "visible_skills": list(agent.skills),
+            "visible_subagents": list(agent.visible_subagents),
+        }
+        if agent.computer_policy is not None:
+            payload["computer_policy"] = {
+                "backend": agent.computer_policy.backend,
+                "allow_exec": agent.computer_policy.allow_exec,
+                "allow_sessions": agent.computer_policy.allow_sessions,
+                "auto_stage_attachments": agent.computer_policy.auto_stage_attachments,
+                "network_mode": agent.computer_policy.network_mode,
+            }
+        return payload
+
+    @staticmethod
+    def _session_summary_from_bundle(bundle: SessionBundle) -> dict[str, Any]:
+        return {
+            "session_id": bundle.session_config.session_id,
+            "title": bundle.session_config.title,
+            "template_id": bundle.session_config.template_id,
+            "frontstage_agent_id": bundle.session_config.frontstage_agent_id,
+        }
+
+    @staticmethod
+    def _bundle_to_view(bundle: SessionBundle) -> dict[str, Any]:
+        agent = bundle.frontstage_agent
+        session = bundle.session_config
+        payload: dict[str, Any] = {
+            "session": {
+                "session_id": session.session_id,
+                "title": session.title,
+                "template_id": session.template_id,
+                "frontstage_agent_id": session.frontstage_agent_id,
+            },
+            "agent": {
+                "agent_id": agent.agent_id,
+                "prompt_ref": agent.prompt_ref,
+                "visible_tools": list(agent.visible_tools),
+                "visible_skills": list(agent.visible_skills),
+                "visible_subagents": list(agent.visible_subagents),
+            },
+            "paths": {
+                "session_dir": str(bundle.paths.session_dir),
+                "session_config_path": str(bundle.paths.session_config_path),
+                "agent_config_path": str(bundle.paths.agent_config_path),
+            },
+        }
+        if agent.computer_policy is not None:
+            payload["agent"]["computer_policy"] = {
+                "backend": agent.computer_policy.backend,
+                "allow_exec": agent.computer_policy.allow_exec,
+                "allow_sessions": agent.computer_policy.allow_sessions,
+                "auto_stage_attachments": agent.computer_policy.auto_stage_attachments,
+                "network_mode": agent.computer_policy.network_mode,
+            }
+        return payload
+
+    def _rebind_agent_loader(self) -> None:
+        """把当前 frontstage agent 真源同步给运行时 loader 闭包."""
+
+        if self.rebind_agent_loader is None:
+            return
+        self.rebind_agent_loader(self.default_frontstage_agent, self.session_bundle_loader)
+
     def _filesystem_conf(self) -> dict[str, object]:
         """读取 `runtime.filesystem` 配置块.
 
@@ -1077,15 +1097,6 @@ class RuntimeConfigControlPlane:
             return None
         return _normalize_catalog_dir_values(raw_value, defaults=[])
 
-    def _profiles_dir(self) -> Path:
-        """返回 filesystem profiles 目录.
-
-        Returns:
-            Path: profiles 目录.
-        """
-
-        return _resolve_filesystem_path(self.config, self._filesystem_conf(), key="profiles_dir", default="profiles")
-
     def _prompts_dir(self) -> Path:
         """返回 filesystem prompts 目录.
 
@@ -1151,7 +1162,6 @@ class RuntimeConfigControlPlane:
             "config_path": str(config_path),
             "storage_mode": self.storage_mode(),
             "filesystem_base_dir": str(base_dir.resolve()),
-            "profiles_dir": str(self._profiles_dir().resolve()),
             "prompts_dir": str(self._prompts_dir().resolve()),
             "sessions_dir": str(self._sessions_dir().resolve()),
             "computer_root_dir": str(self._computer_root_dir().resolve()),

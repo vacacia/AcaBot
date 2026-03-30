@@ -8,7 +8,7 @@ from .model_registry import (
     RuntimeModelRequest,
     snapshot_from_runtime_request,
 )
-from ..contracts import AgentProfile, ResolvedAgent, RouteDecision
+from ..contracts import ResolvedAgent, RouteDecision
 
 
 def resolve_run_request_for_agent(
@@ -94,28 +94,6 @@ def resolve_model_requests_for_agent(
     return model_request, model_snapshot, summary_model_request
 
 
-def resolve_model_requests_for_profile(
-    manager: FileSystemModelRegistryManager | None,
-    *,
-    decision: RouteDecision,
-    profile: AgentProfile,
-) -> tuple[
-    RuntimeModelRequest | None,
-    PersistedModelSnapshot | None,
-    RuntimeModelRequest | None,
-]:
-    """兼容旧调用方的别名.
-
-    TODO(session-owned-agent hard cut): 调用方全部迁完后删除.
-    """
-
-    return resolve_model_requests_for_agent(
-        manager,
-        decision=decision,
-        agent=profile,
-    )
-
-
 def resolve_image_caption_request_for_agent(
     manager: FileSystemModelRegistryManager | None,
     *,
@@ -124,23 +102,8 @@ def resolve_image_caption_request_for_agent(
 ) -> RuntimeModelRequest | None:
     """为图片转述解析一份独立的模型请求.
 
-    这里不再读取 profile 私有模型字段, 只认固定 system target。
+    这里不再读取旧前台身份入口, 只认固定 system target。
     """
 
     _ = agent, primary_request
     return resolve_image_caption_request(manager)
-
-
-def resolve_image_caption_request_for_profile(
-    manager: FileSystemModelRegistryManager | None,
-    *,
-    profile: AgentProfile,
-    primary_request: RuntimeModelRequest | None,
-) -> RuntimeModelRequest | None:
-    """兼容旧调用方的别名."""
-
-    return resolve_image_caption_request_for_agent(
-        manager,
-        agent=profile,
-        primary_request=primary_request,
-    )

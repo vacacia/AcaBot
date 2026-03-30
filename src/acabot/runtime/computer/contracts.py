@@ -97,7 +97,7 @@ class WorldView(Protocol):
 
     thread_id: str
     actor_kind: str
-    profile_id: str
+    agent_id: str
     root_policies: dict[str, WorldRootPolicy]
     workspace_root_host_path: str
     skills_root_host_path: str
@@ -117,7 +117,7 @@ class WorldInputBundle:
 
     Attributes:
         thread_id (str): 当前 thread ID.
-        profile_id (str): 当前 profile ID.
+        agent_id (str): 当前 agent ID.
         actor_kind (str): 当前 actor 的 world 身份.
         self_scope_id (str): `/self` 对应的宿主机 scope 标识.
         visible_skill_names (list[str] | None): 当前 actor 真正可见的 skill 名.
@@ -126,7 +126,7 @@ class WorldInputBundle:
     """
 
     thread_id: str
-    profile_id: str
+    agent_id: str
     actor_kind: str
     self_scope_id: str
     visible_skill_names: list[str] | None = None

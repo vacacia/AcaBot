@@ -251,7 +251,7 @@ surfaces:
   - `frontstage`
   - `subagent`
   - `maintainer`
-- `profile_id`
+- `agent_id`
 - `reason`
 - `source_case_id`
 - `priority`
@@ -515,7 +515,7 @@ surfaces:
 最终进入 Work World 的，不应该是 Session Config 本身，也不应该是某个 case 本身，而应该是：
 
 - `actor_kind`
-- `profile_id`
+- `agent_id`
 - `thread_id` / `channel_scope`
 - `ComputerPolicyDecision`
 - 当前附件来源（`OriginHandles`）

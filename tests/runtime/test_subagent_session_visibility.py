@@ -2,7 +2,7 @@ from pathlib import Path
 
 from acabot.config import Config
 from acabot.runtime import (
-    AgentProfile,
+    ResolvedAgent,
     AgentRuntimeResult,
     ComputerPolicyDecision,
     FileSystemModelRegistryManager,
@@ -20,8 +20,16 @@ from acabot.runtime import (
 from acabot.runtime.tool_broker import ToolExecutionContext
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
-from .test_bootstrap import FakeAgent, FakeAgentResponse
+from ._agent_fakes import FakeAgent, FakeAgentResponse
 from .test_outbox import FakeGateway
+
+
+def _frontstage_agent(agent_id: str) -> ResolvedAgent:
+    return ResolvedAgent(
+        agent_id=agent_id,
+        name=agent_id,
+        prompt_ref=f"prompt/{agent_id}",
+    )
 
 
 def _write_subagent(
@@ -52,6 +60,41 @@ def _write_subagent(
     (subagent_dir / "SUBAGENT.md").write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_session_bundle(
+    tmp_path: Path,
+    *,
+    session_id: str,
+    agent_id: str,
+    prompt_ref: str,
+) -> None:
+    platform, scope_kind, identifier = session_id.split(":", 2)
+    bundle_dir = tmp_path / "sessions" / platform / scope_kind / identifier
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "session.yaml").write_text(
+        "\n".join(
+            [
+                "session:",
+                f"  id: {session_id}",
+                "frontstage:",
+                f"  agent_id: {agent_id}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (bundle_dir / "agent.yaml").write_text(
+        "\n".join(
+            [
+                f"agent_id: {agent_id}",
+                f"prompt_ref: {prompt_ref}",
+                "visible_tools: []",
+                "visible_skills: []",
+                "visible_subagents: []",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def _event() -> StandardEvent:
     return StandardEvent(
         event_id="evt:parent",
@@ -72,6 +115,18 @@ def _event() -> StandardEvent:
 
 
 def _runtime_config(tmp_path: Path) -> Config:
+    _write_session_bundle(
+        tmp_path,
+        session_id="qq:user:10001",
+        agent_id="aca",
+        prompt_ref="prompt/aca",
+    )
+    _write_session_bundle(
+        tmp_path,
+        session_id="qq:user:20002",
+        agent_id="worker",
+        prompt_ref="prompt/worker",
+    )
     return Config(
         {
             "agent": {
@@ -79,19 +134,12 @@ def _runtime_config(tmp_path: Path) -> Config:
             },
             "runtime": {
                 "default_agent_id": "aca",
+                "default_agent_name": "Aca",
+                "default_prompt_ref": "prompt/aca",
                 "filesystem": {
                     "enabled": True,
                     "base_dir": str(tmp_path),
-                },
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                    },
-                    "worker": {
-                        "name": "Worker",
-                        "prompt_ref": "prompt/worker",
-                    },
+                    "sessions_dir": "sessions",
                 },
                 "prompts": {
                     "prompt/aca": "You are Aca.",
@@ -116,7 +164,7 @@ async def _model_registry_manager(
     manager.target_catalog.replace_agent_targets(
         build_agent_model_targets(
             [
-                AgentProfile(
+                ResolvedAgent(
                     agent_id=agent_id,
                     name=agent_id,
                     prompt_ref=f"prompt/{agent_id}",
@@ -160,7 +208,7 @@ async def _model_registry_manager(
 def _run_ctx(
     components,
     *,
-    profile: AgentProfile,
+    agent: ResolvedAgent,
     visible_subagents: list[str],
     actor_kind: str = "frontstage_agent",
 ) -> RunContext:
@@ -168,7 +216,7 @@ def _run_ctx(
     decision = RouteDecision(
         thread_id="qq:user:10001",
         actor_id="qq:user:10001",
-        agent_id=profile.agent_id,
+        agent_id=agent.agent_id,
         channel_scope="qq:user:10001",
         computer_policy_decision=ComputerPolicyDecision(
             actor_kind=actor_kind,
@@ -188,7 +236,7 @@ def _run_ctx(
             run_id="run:1",
             thread_id="qq:user:10001",
             actor_id="qq:user:10001",
-            agent_id=profile.agent_id,
+            agent_id=agent.agent_id,
             trigger_event_id=event.event_id,
             status="running",
             started_at=event.timestamp,
@@ -199,28 +247,28 @@ def _run_ctx(
             thread_id="qq:user:10001",
             channel_scope="qq:user:10001",
         ),
-        profile=profile,
+        agent=agent,
         computer_policy_decision=decision.computer_policy_decision,
     )
 
 
 def _tool_ctx(
     *,
-    profile: AgentProfile,
+    agent: ResolvedAgent,
     visible_subagents: list[str],
 ) -> ToolExecutionContext:
     return ToolExecutionContext(
         run_id="run:1",
         thread_id="qq:user:10001",
         actor_id="qq:user:10001",
-        agent_id=profile.agent_id,
+        agent_id=agent.agent_id,
         target=EventSource(
             platform="qq",
             message_type="private",
             user_id="10001",
             group_id=None,
         ),
-        profile=profile,
+        agent=agent,
         visible_subagents=list(visible_subagents),
         metadata={
             "channel_scope": "qq:user:10001",
@@ -244,10 +292,10 @@ async def test_delegate_subagent_hidden_when_session_visible_subagents_is_empty(
         gateway=FakeGateway(),
         agent=FakeAgent(FakeAgentResponse(text="ok")),
     )
-    profile = components.profile_loader.profiles["aca"]
+    profile = _frontstage_agent("aca")
 
     tool_runtime = components.tool_broker.build_tool_runtime(
-        _run_ctx(components, profile=profile, visible_subagents=[])
+        _run_ctx(components, agent=profile, visible_subagents=[])
     )
 
     assert "delegate_subagent" not in [tool.name for tool in tool_runtime.tools]
@@ -267,7 +315,7 @@ async def test_delegate_subagent_rejects_target_not_in_session_allowlist(tmp_pat
         gateway=FakeGateway(),
         agent=FakeAgent(FakeAgentResponse(text="ok")),
     )
-    profile = components.profile_loader.profiles["aca"]
+    profile = _frontstage_agent("aca")
 
     result = await components.tool_broker.execute(
         tool_name="delegate_subagent",
@@ -275,7 +323,7 @@ async def test_delegate_subagent_rejects_target_not_in_session_allowlist(tmp_pat
             "delegate_agent_id": "excel-worker",
             "task": "整理 Excel 文件并总结",
         },
-        ctx=_tool_ctx(profile=profile, visible_subagents=["search-worker"]),
+        ctx=_tool_ctx(agent=profile, visible_subagents=["search-worker"]),
     )
 
     assert result.raw["ok"] is False
@@ -305,7 +353,7 @@ async def test_subagent_child_run_hides_delegate_subagent(tmp_path: Path) -> Non
         await components.run_manager.mark_completed(ctx.run.run_id)
 
     components.pipeline.execute = fake_execute  # type: ignore[method-assign]
-    profile = components.profile_loader.profiles["aca"]
+    profile = _frontstage_agent("aca")
 
     await components.tool_broker.execute(
         tool_name="delegate_subagent",
@@ -313,7 +361,7 @@ async def test_subagent_child_run_hides_delegate_subagent(tmp_path: Path) -> Non
             "delegate_agent_id": "excel-worker",
             "task": "整理 Excel 文件并总结",
         },
-        ctx=_tool_ctx(profile=profile, visible_subagents=["excel-worker"]),
+        ctx=_tool_ctx(agent=profile, visible_subagents=["excel-worker"]),
     )
 
     tool_runtime = components.tool_broker.build_tool_runtime(captured["ctx"])
@@ -335,7 +383,7 @@ async def test_non_default_frontstage_agent_can_delegate_when_session_allows_it(
         agent=FakeAgent(FakeAgentResponse(text="worker summary")),
         model_registry_manager=await _model_registry_manager(tmp_path),
     )
-    profile = components.profile_loader.profiles["worker"]
+    profile = _frontstage_agent("worker")
 
     result = await components.tool_broker.execute(
         tool_name="delegate_subagent",
@@ -343,7 +391,7 @@ async def test_non_default_frontstage_agent_can_delegate_when_session_allows_it(
             "delegate_agent_id": "excel-worker",
             "task": "整理 Excel 文件并总结",
         },
-        ctx=_tool_ctx(profile=profile, visible_subagents=["excel-worker"]),
+        ctx=_tool_ctx(agent=profile, visible_subagents=["excel-worker"]),
     )
 
     assert result.raw["ok"] is True

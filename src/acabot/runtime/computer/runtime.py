@@ -185,7 +185,7 @@ class ComputerRuntime:
         return self.world_builder.build(
             WorldInputBundle(
                 thread_id=ctx.thread.thread_id,
-                profile_id=ctx.agent.agent_id,
+                agent_id=ctx.agent.agent_id,
                 actor_kind=(
                     ctx.computer_policy_decision.actor_kind
                     if ctx.computer_policy_decision is not None

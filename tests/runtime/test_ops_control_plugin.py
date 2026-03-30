@@ -2,7 +2,7 @@ from acabot.config import Config
 from acabot.runtime import build_runtime_components
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
-from .test_bootstrap import FakeAgent, FakeAgentResponse
+from ._agent_fakes import FakeAgent, FakeAgentResponse
 from .test_outbox import FakeGateway
 
 
@@ -64,22 +64,14 @@ def _ops_config(tmp_path) -> Config:
             },
             "runtime": {
                 "default_agent_id": "aca",
+                "default_agent_name": "Aca",
+                "default_prompt_ref": "prompt/aca",
                 "filesystem": {
                     "enabled": True,
                     "base_dir": str(tmp_path),
                     "skill_catalog_dirs": [_skills_dir()],
                 },
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                        "skills": ["sample_configured_skill"],
-                    },
-                    "ops": {
-                        "name": "Ops",
-                        "prompt_ref": "prompt/ops",
-                    },
-                },
+                "skills": ["sample_configured_skill"],
                 "prompts": {
                     "prompt/aca": "You are Aca.",
                     "prompt/ops": "You are the operator agent.",

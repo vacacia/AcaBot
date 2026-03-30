@@ -11,7 +11,6 @@ from acabot.config import Config
 
 from ..context_assembly import PayloadJsonWriter
 from ..computer import ComputerPolicy, ComputerRuntime, ComputerRuntimeConfig, parse_computer_policy
-from ..contracts import AgentProfile
 from ..gateway_protocol import GatewayProtocol
 from ..memory.context_compactor import (
     ContextCompactionConfig,
@@ -72,17 +71,12 @@ if TYPE_CHECKING:
     from ..memory.long_term_memory.storage import LanceDbLongTermMemoryStore
 
 
-def build_builtin_runtime_plugins(profiles: dict[str, AgentProfile]) -> list[RuntimePlugin]:
+def build_builtin_runtime_plugins(_agents: object | None = None) -> list[RuntimePlugin]:
     """组装当前仍然走 plugin 生命周期的内置插件.
-
-    Args:
-        profiles: 当前 profile 映射. 这里暂时不需要使用它, 但保留签名不改调用方.
 
     Returns:
         list[RuntimePlugin]: 仍然通过 plugin manager 装配的内置插件列表.
     """
-
-    _ = profiles
     return [BackendBridgeToolPlugin()]
 
 def build_model_registry_manager(
