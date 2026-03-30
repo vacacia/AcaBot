@@ -127,7 +127,7 @@ class ComputerRuntime:
         ctx.attachment_snapshots = list(staged.snapshots)
         ctx.workspace_state = WorkspaceState(
             thread_id=ctx.thread.thread_id,
-            agent_id=ctx.profile.agent_id,
+            agent_id=ctx.agent.agent_id,
             backend_kind=backend.kind,
             workspace_host_path=str(workspace_dir),
             workspace_visible_root="/workspace",
@@ -159,7 +159,7 @@ class ComputerRuntime:
             ComputerPolicy: 当前 run 的有效 computer policy.
         """
 
-        base = parse_computer_policy(ctx.profile.config.get("computer"), defaults=ctx.profile.computer_policy)
+        base = parse_computer_policy(ctx.agent.config.get("computer"), defaults=ctx.agent.computer_policy)
         if ctx.computer_policy_decision is None:
             return base
         decision = ctx.computer_policy_decision
@@ -185,7 +185,7 @@ class ComputerRuntime:
         return self.world_builder.build(
             WorldInputBundle(
                 thread_id=ctx.thread.thread_id,
-                profile_id=ctx.profile.agent_id,
+                profile_id=ctx.agent.agent_id,
                 actor_kind=(
                     ctx.computer_policy_decision.actor_kind
                     if ctx.computer_policy_decision is not None
@@ -195,12 +195,12 @@ class ComputerRuntime:
                         else "frontstage_agent"
                     )
                 ),
-                self_scope_id=ctx.profile.agent_id,
+                self_scope_id=ctx.agent.agent_id,
                 visible_skill_names=(
                     list(ctx.computer_policy_decision.visible_skills)
                     if ctx.computer_policy_decision is not None
                     and ctx.computer_policy_decision.visible_skills is not None
-                    else list(ctx.profile.skills)
+                    else list(ctx.agent.skills)
                 ),
                 computer_policy=(
                     ctx.computer_policy_decision

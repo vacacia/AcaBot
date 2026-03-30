@@ -2,7 +2,6 @@ from pathlib import Path
 
 from acabot.config import Config
 from acabot.runtime import (
-    AgentProfile,
     AgentRuntime,
     AgentRuntimeResult,
     ApprovalResumeResult,
@@ -13,6 +12,7 @@ from acabot.runtime import (
     Outbox,
     PlannedAction,
     RouteDecision,
+    ResolvedAgent,
     RuntimeApp,
     RuntimeHook,
     RuntimeHookPoint,
@@ -51,22 +51,34 @@ def _event() -> StandardEvent:
     )
 
 
-def _profile_loader(decision: RouteDecision) -> AgentProfile:
-    return AgentProfile(
+def _agent_loader(decision: RouteDecision) -> ResolvedAgent:
+    return ResolvedAgent(
         agent_id=decision.agent_id,
-        name="Aca",
         prompt_ref="prompt/default",
     )
 
 
-def _broken_profile_loader(decision: RouteDecision) -> AgentProfile:
-    raise RuntimeError("profile loader exploded")
+def _broken_agent_loader(decision: RouteDecision) -> ResolvedAgent:
+    raise RuntimeError("agent loader exploded")
 
 
-def _session_router(tmp_path: Path, body: str) -> RuntimeRouter:
-    sessions_dir = tmp_path / "sessions/qq/user"
-    sessions_dir.mkdir(parents=True, exist_ok=True)
-    (sessions_dir / "10001.yaml").write_text(body.strip(), encoding="utf-8")
+def _session_router(
+    tmp_path: Path,
+    session_body: str,
+    *,
+    agent_body: str = """
+agent_id: aca
+prompt_ref: prompt/default
+visible_tools:
+  - read
+visible_skills: []
+visible_subagents: []
+""",
+) -> RuntimeRouter:
+    bundle_dir = tmp_path / "sessions/qq/user/10001"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "session.yaml").write_text(session_body.strip(), encoding="utf-8")
+    (bundle_dir / "agent.yaml").write_text(agent_body.strip(), encoding="utf-8")
     return RuntimeRouter(
         default_agent_id="aca",
         session_runtime=SessionRuntime(SessionConfigLoader(config_root=tmp_path / "sessions")),
@@ -76,6 +88,19 @@ def _session_router(tmp_path: Path, body: str) -> RuntimeRouter:
 class BrokenAgentRuntime(AgentRuntime):
     async def execute(self, ctx):
         raise RuntimeError("agent runtime exploded")
+
+
+async def test_runtime_router_silent_drops_unconfigured_session(tmp_path: Path) -> None:
+    router = RuntimeRouter(
+        default_agent_id="aca",
+        session_runtime=SessionRuntime(SessionConfigLoader(config_root=tmp_path / "sessions")),
+    )
+
+    decision = await router.route(_event())
+
+    assert decision.run_mode == "silent_drop"
+    assert decision.metadata["route_source"] == "unconfigured_session"
+    assert "warning" in decision.metadata["drop_reason"]
 
 
 class TrackingGateway(FakeGateway):
@@ -218,7 +243,7 @@ async def test_runtime_app_installs_handler_and_processes_event() -> None:
         run_manager=run_manager,
         channel_event_store=channel_event_store,
         pipeline=pipeline,
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
     )
 
     app.install()
@@ -253,7 +278,7 @@ async def test_runtime_app_marks_ltm_dirty_after_channel_event_persist() -> None
         run_manager=run_manager,
         channel_event_store=channel_event_store,
         pipeline=pipeline,
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
         long_term_memory_ingestor=ltm,
     )
 
@@ -285,7 +310,7 @@ async def test_runtime_app_mark_dirty_failure_does_not_break_event_processing() 
         run_manager=run_manager,
         channel_event_store=channel_event_store,
         pipeline=pipeline,
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
         long_term_memory_ingestor=ExplodingIngestor(),
     )
 
@@ -319,12 +344,12 @@ session:
   id: qq:user:10001
   template: qq_user
 frontstage:
-  profile: aca
+  agent_id: aca
 surfaces:
   message.private:
     routing:
       default:
-        profile: aca
+        agent_id: aca
     admission:
       default:
         mode: silent_drop
@@ -334,7 +359,7 @@ surfaces:
         run_manager=run_manager,
         channel_event_store=channel_event_store,
         pipeline=pipeline,
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
     )
 
     app.install()
@@ -345,7 +370,7 @@ surfaces:
     assert await channel_event_store.get_thread_events("qq:user:10001") == []
 
 
-async def test_runtime_app_records_record_only_event_without_loading_profile(tmp_path: Path) -> None:
+async def test_runtime_app_records_record_only_event_without_loading_agent_snapshot(tmp_path: Path) -> None:
     gateway = FakeGateway()
     thread_manager = InMemoryThreadManager()
     run_manager = InMemoryRunManager()
@@ -366,12 +391,12 @@ session:
   id: qq:user:10001
   template: qq_user
 frontstage:
-  profile: aca
+  agent_id: aca
 surfaces:
   message.private:
     routing:
       default:
-        profile: aca
+        agent_id: aca
     admission:
       default:
         mode: record_only
@@ -381,7 +406,7 @@ surfaces:
         run_manager=run_manager,
         channel_event_store=channel_event_store,
         pipeline=pipeline,
-        profile_loader=_broken_profile_loader,
+        agent_loader=_broken_agent_loader,
     )
 
     app.install()
@@ -415,12 +440,12 @@ session:
   id: qq:user:10001
   template: qq_user
 frontstage:
-  profile: aca
+  agent_id: aca
 surfaces:
   message.private:
     routing:
       default:
-        profile: aca
+        agent_id: aca
     admission:
       default:
         mode: respond
@@ -436,7 +461,7 @@ surfaces:
         run_manager=run_manager,
         channel_event_store=channel_event_store,
         pipeline=pipeline,
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
     )
 
     app.install()
@@ -473,7 +498,7 @@ async def test_runtime_app_marks_run_failed_when_profile_loader_crashes() -> Non
         run_manager=run_manager,
         channel_event_store=channel_event_store,
         pipeline=pipeline,
-        profile_loader=_broken_profile_loader,
+        agent_loader=_broken_agent_loader,
     )
 
     app.install()
@@ -484,7 +509,7 @@ async def test_runtime_app_marks_run_failed_when_profile_loader_crashes() -> Non
     assert "runtime app crashed" in (run.error or "")
 
 
-async def test_runtime_app_marks_ltm_dirty_when_profile_loader_crashes_after_event_persist() -> None:
+async def test_runtime_app_marks_ltm_dirty_when_agent_loader_crashes_after_event_persist() -> None:
     gateway = FakeGateway()
     thread_manager = InMemoryThreadManager()
     run_manager = InMemoryRunManager()
@@ -504,7 +529,7 @@ async def test_runtime_app_marks_ltm_dirty_when_profile_loader_crashes_after_eve
         run_manager=run_manager,
         channel_event_store=channel_event_store,
         pipeline=pipeline,
-        profile_loader=_broken_profile_loader,
+        agent_loader=_broken_agent_loader,
         long_term_memory_ingestor=ltm,
     )
 
@@ -537,7 +562,7 @@ async def test_runtime_app_stops_ltm_ingestor_when_gateway_start_crashes() -> No
         run_manager=run_manager,
         channel_event_store=channel_event_store,
         pipeline=pipeline,
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
         long_term_memory_ingestor=ltm,
     )
 
@@ -574,7 +599,7 @@ async def test_runtime_app_tears_down_plugins_when_gateway_start_crashes() -> No
             thread_manager=InMemoryThreadManager(),
             plugin_manager=plugin_manager,
         ),
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
         plugin_manager=plugin_manager,
     )
 
@@ -608,7 +633,7 @@ async def test_runtime_app_tears_down_plugins_when_plugin_start_fails() -> None:
             run_manager=InMemoryRunManager(),
             thread_manager=InMemoryThreadManager(),
         ),
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
         plugin_manager=plugin_manager,
     )
 
@@ -645,7 +670,7 @@ async def test_runtime_app_tears_down_plugins_when_ltm_start_fails() -> None:
             thread_manager=InMemoryThreadManager(),
             plugin_manager=plugin_manager,
         ),
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
         plugin_manager=plugin_manager,
         long_term_memory_ingestor=ExplodingStartIngestor(),
     )
@@ -680,7 +705,7 @@ async def test_runtime_app_keeps_failed_run_terminal_when_pipeline_crashes() -> 
         run_manager=run_manager,
         channel_event_store=channel_event_store,
         pipeline=pipeline,
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
     )
 
     app.install()
@@ -710,7 +735,7 @@ async def test_runtime_app_recovery_interrupts_stale_running_runs_on_start() -> 
         run_manager=run_manager,
         channel_event_store=channel_event_store,
         pipeline=pipeline,
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
     )
     run = await run_manager.open(event=_event(), decision=RouteDecision(
         thread_id="qq:user:10001",
@@ -748,7 +773,7 @@ async def test_runtime_app_recovery_keeps_pending_approval_visible() -> None:
         run_manager=run_manager,
         channel_event_store=channel_event_store,
         pipeline=pipeline,
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
     )
     run = await run_manager.open(event=_event(), decision=RouteDecision(
         thread_id="qq:user:10001",
@@ -797,7 +822,7 @@ async def test_runtime_app_approve_pending_approval_completes_run() -> None:
             run_manager=run_manager,
             thread_manager=thread_manager,
         ),
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
         approval_resumer=resumer,
     )
     run = await run_manager.open(
@@ -864,7 +889,7 @@ async def test_runtime_app_approve_pending_approval_can_reenter_waiting_state() 
             run_manager=run_manager,
             thread_manager=thread_manager,
         ),
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
         approval_resumer=resumer,
     )
     run = await run_manager.open(
@@ -913,7 +938,7 @@ async def test_runtime_app_reject_pending_approval_cancels_run() -> None:
             run_manager=run_manager,
             thread_manager=thread_manager,
         ),
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
     )
     run = await run_manager.open(
         event=_event(),
@@ -960,7 +985,7 @@ async def test_runtime_app_stop_closes_reference_backend() -> None:
             run_manager=InMemoryRunManager(),
             thread_manager=InMemoryThreadManager(),
         ),
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
         reference_backend=reference_backend,
     )
 
@@ -996,7 +1021,7 @@ async def test_runtime_app_lazily_starts_plugins_on_first_event() -> None:
         run_manager=run_manager,
         channel_event_store=channel_event_store,
         pipeline=pipeline,
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
         plugin_manager=plugin_manager,
     )
 
@@ -1029,7 +1054,7 @@ async def test_runtime_app_stop_tears_down_runtime_plugins() -> None:
             run_manager=InMemoryRunManager(),
             thread_manager=InMemoryThreadManager(),
         ),
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
         plugin_manager=plugin_manager,
     )
 
@@ -1061,7 +1086,7 @@ async def test_runtime_app_stop_still_stops_ltm_after_plugin_teardown_failure() 
             thread_manager=InMemoryThreadManager(),
             plugin_manager=plugin_manager,
         ),
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
         plugin_manager=plugin_manager,
         long_term_memory_ingestor=ltm,
     )
@@ -1102,7 +1127,7 @@ async def test_runtime_app_tears_down_plugins_when_lazy_plugin_start_fails_on_ev
         run_manager=run_manager,
         channel_event_store=channel_event_store,
         pipeline=pipeline,
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
         plugin_manager=plugin_manager,
     )
 
@@ -1144,7 +1169,7 @@ async def test_runtime_app_can_reload_plugins_from_config() -> None:
             thread_manager=InMemoryThreadManager(),
             plugin_manager=plugin_manager,
         ),
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
         plugin_manager=plugin_manager,
     )
 

@@ -8,7 +8,7 @@ Runtime 层是将 AcaBot 各大组件拼装起来
 1. 编排与调度 (Orchestration): `RuntimeApp`, `AgentRuntime`, `ThreadManager`, `RunManager`
 2. 认知与记忆 (Cognition & Memory): `ModelRegistry` (模型调度), `MemoryBroker` (上下文压缩与存储)
 3. 交互与沙箱 (Tools & Compute): `ToolBroker` (工具收发), `ComputerService` (终端执行与工作区隔离)
-4. 身份与委派 (Identity & Delegation): `AgentProfile` (人格设定), `SubagentExecutionService` (主副 Agent 委派)
+4. 身份与委派 (Identity & Delegation): `ResolvedAgent` (当前 run 的前台 agent 快照), `SubagentExecutionService` (主副 Agent 委派)
 
 由于依赖反转, `computer` 作为物理沙箱抽象在此处定义.
 前台基础工具的注册入口位于 `runtime.builtin_tools`.
@@ -176,6 +176,7 @@ from .contracts import (
     AdmissionDecision,
     AdmissionDomainConfig,
     AgentProfile,
+    ResolvedAgent,
     DelegationMode,
     ApprovalRequired,
     ApprovalDecisionResult,
@@ -326,6 +327,7 @@ __all__ = [
     "AgentRuntime",
     "AgentRuntimeResult",
     "AgentProfile",
+    "ResolvedAgent",
     "BackendBridge",
     "BackendModeRegistry",
     "BackendModeState",

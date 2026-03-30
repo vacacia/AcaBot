@@ -14,7 +14,7 @@ from acabot.types import Action, ActionType
 
 from ..backend.bridge import BackendBridge
 from ..backend.contracts import BackendRequest, BackendSourceRef
-from ..contracts import AgentProfile, ApprovalRequired, DispatchReport, PendingApproval, PlannedAction, RunContext
+from ..contracts import ApprovalRequired, DispatchReport, PendingApproval, PlannedAction, ResolvedAgent, RunContext
 from ..model.model_agent_runtime import ToolRuntime, ToolRuntimeState
 from ..skills import SkillCatalog
 from ..subagents import SubagentCatalog
@@ -150,16 +150,16 @@ class ToolBroker:
             )
         return items
 
-    def visible_tools(self, profile: AgentProfile) -> list[ToolSpec]:
-        """按 profile 解析当前模型可见的工具列表."""
+    def visible_tools(self, agent: ResolvedAgent) -> list[ToolSpec]:
+        """按 agent 解析当前模型可见的工具列表."""
 
-        return self._visible_tools_from_names(profile, self._allowed_tool_names(profile))
+        return self._visible_tools_from_names(agent, self._allowed_tool_names(agent))
 
-    def _visible_tools_from_names(self, profile: AgentProfile, tool_names: list[str]) -> list[ToolSpec]:
+    def _visible_tools_from_names(self, agent: ResolvedAgent, tool_names: list[str]) -> list[ToolSpec]:
         """按工具名列表构造最终可见工具描述.
 
         Args:
-            profile: 当前 profile.
+            agent: 当前 agent 快照.
             tool_names: 已经过滤后的工具名列表.
 
         Returns:
@@ -174,7 +174,7 @@ class ToolBroker:
             registered = self._tools.get(tool_name)
             if registered is None:
                 continue
-            visible.append(self._build_visible_spec(profile, registered))
+            visible.append(self._build_visible_spec(agent, registered))
         return visible
 
     def _visible_tools_for_run(self, ctx: RunContext, tool_names: list[str]) -> list[ToolSpec]:
@@ -205,18 +205,18 @@ class ToolBroker:
                     )
                 )
                 continue
-            visible.append(self._build_visible_spec(ctx.profile, registered))
+            visible.append(self._build_visible_spec(ctx.agent, registered))
         return visible
 
     def _build_visible_spec(
         self,
-        profile: AgentProfile,
+        agent: ResolvedAgent,
         registered: RegisteredTool,
     ) -> ToolSpec:
         if registered.spec.name == "Skill":
             return ToolSpec(
                 name=registered.spec.name,
-                description=self._skill_tool_description(profile),
+                description=self._skill_tool_description(agent),
                 parameters=dict(registered.spec.parameters),
             )
         if registered.spec.name == "ask_backend":
@@ -231,15 +231,15 @@ class ToolBroker:
             parameters=dict(registered.spec.parameters),
         )
 
-    def _allowed_tool_names(self, profile: AgentProfile) -> list[str]:
+    def _allowed_tool_names(self, agent: ResolvedAgent) -> list[str]:
         tool_names: list[str] = []
-        for tool_name in profile.enabled_tools:
+        for tool_name in agent.enabled_tools:
             if tool_name in tool_names:
                 continue
             tool_names.append(tool_name)
-        if self._should_expose_skill_tool(profile) and "Skill" not in tool_names:
+        if self._should_expose_skill_tool(agent) and "Skill" not in tool_names:
             tool_names.append("Skill")
-        if self._should_expose_backend_bridge_tool(profile) and "ask_backend" not in tool_names:
+        if self._should_expose_backend_bridge_tool(agent) and "ask_backend" not in tool_names:
             tool_names.append("ask_backend")
         return tool_names
 
@@ -254,7 +254,7 @@ class ToolBroker:
         """
 
         tool_names: list[str] = []
-        for tool_name in ctx.profile.enabled_tools:
+        for tool_name in ctx.agent.enabled_tools:
             if tool_name in tool_names:
                 continue
             tool_names.append(tool_name)
@@ -272,7 +272,7 @@ class ToolBroker:
                 tool_names.append("delegate_subagent")
         else:
             tool_names = [tool_name for tool_name in tool_names if tool_name != "delegate_subagent"]
-        if self._should_expose_backend_bridge_tool(ctx.profile) and "ask_backend" not in tool_names:
+        if self._should_expose_backend_bridge_tool(ctx.agent) and "ask_backend" not in tool_names:
             tool_names.append("ask_backend")
 
         if ctx.workspace_state is None:
@@ -284,18 +284,18 @@ class ToolBroker:
             if tool_name in allowed or tool_name not in {"read", "write", "edit", "bash"}
         ]
 
-    def _should_expose_skill_tool(self, profile: AgentProfile) -> bool:
+    def _should_expose_skill_tool(self, agent: ResolvedAgent) -> bool:
         if self.skill_catalog is None:
             return False
         if "Skill" not in self._tools:
             return False
-        return bool(self.skill_catalog.visible_skills(profile))
+        return bool(self.skill_catalog.visible_skills(agent))
 
-    def _skill_tool_description(self, profile: AgentProfile) -> str:
-        """为 profile 视角构造 Skill 工具说明.
+    def _skill_tool_description(self, agent: ResolvedAgent) -> str:
+        """为 agent 视角构造 Skill 工具说明.
 
         Args:
-            profile: 当前 profile.
+            agent: 当前 agent 快照.
 
         Returns:
             str: 给模型看的 Skill 工具说明.
@@ -305,7 +305,7 @@ class ToolBroker:
             "Use Skill(skill=...) to load an assigned skill by name. "
             "The runtime reads SKILL.md and returns the skill base directory under /skills/."
         )
-        visible = self._visible_skills(profile)
+        visible = self._visible_skills(agent)
         if not visible:
             return base
         details = "; ".join(
@@ -335,10 +335,10 @@ class ToolBroker:
         )
         return f"{base} Available skills: {details}"
 
-    def _visible_skills(self, profile: AgentProfile):
+    def _visible_skills(self, agent: ResolvedAgent):
         if self.skill_catalog is None:
             return []
-        return self.skill_catalog.visible_skills(profile)
+        return self.skill_catalog.visible_skills(agent)
 
     def _visible_skills_for_run(self, ctx: RunContext):
         """按当前 run 的 world 视图过滤可见 skills.
@@ -353,7 +353,7 @@ class ToolBroker:
         if self.skill_catalog is None:
             return []
         if ctx.world_view is None:
-            return self.skill_catalog.visible_skills(ctx.profile)
+            return self.skill_catalog.visible_skills(ctx.agent)
         skills_policy = ctx.world_view.root_policies.get("skills")
         if skills_policy is None or not skills_policy.visible:
             return []
@@ -365,11 +365,11 @@ class ToolBroker:
             manifests.append(manifest)
         return manifests
 
-    def _visible_skill_summaries(self, profile: AgentProfile) -> list[dict[str, Any]]:
+    def _visible_skill_summaries(self, agent: ResolvedAgent) -> list[dict[str, Any]]:
         if self.skill_catalog is None:
             return []
         summaries: list[dict[str, Any]] = []
-        for item in self.skill_catalog.visible_skills(profile):
+        for item in self.skill_catalog.visible_skills(agent):
             summaries.append(
                 {
                     "skill_name": item.skill_name,
@@ -434,7 +434,7 @@ class ToolBroker:
             )
         return summaries
 
-    def _should_expose_backend_bridge_tool(self, profile: AgentProfile) -> bool:
+    def _should_expose_backend_bridge_tool(self, agent: ResolvedAgent) -> bool:
         """判断当前 profile 是否应看到 frontstage backend bridge tool."""
 
         if self.backend_bridge is None:
@@ -451,7 +451,7 @@ class ToolBroker:
         visible_to_default_only = bool(
             registered.metadata.get("visible_to_default_agent_only", False)
         )
-        if visible_to_default_only and self.default_agent_id and profile.agent_id != self.default_agent_id:
+        if visible_to_default_only and self.default_agent_id and agent.agent_id != self.default_agent_id:
             return False
         return True
 
@@ -553,7 +553,7 @@ class ToolBroker:
         if "visible_tools" in ctx.metadata:
             visible_tools = list(ctx.metadata.get("visible_tools", []))
         else:
-            visible_tools = self._allowed_tool_names(ctx.profile)
+            visible_tools = self._allowed_tool_names(ctx.agent)
         if tool_name not in visible_tools:
             return await self._reject(
                 message=f"Tool not enabled for current run: {tool_name}",
@@ -644,7 +644,7 @@ class ToolBroker:
         if "visible_tools" in ctx.metadata:
             visible_tools = list(ctx.metadata.get("visible_tools", []))
         else:
-            visible_tools = self._allowed_tool_names(ctx.profile)
+            visible_tools = self._allowed_tool_names(ctx.agent)
         if pending.tool_name not in visible_tools:
             result = self._error_result(
                 f"Tool not enabled for current run: {pending.tool_name}",
@@ -789,9 +789,9 @@ class ToolBroker:
             run_id=ctx.run.run_id,
             thread_id=ctx.thread.thread_id,
             actor_id=ctx.decision.actor_id,
-            agent_id=ctx.profile.agent_id,
+            agent_id=ctx.agent.agent_id,
             target=ctx.event.source,
-            profile=ctx.profile,
+            profile=ctx.agent,
             world_view=ctx.world_view,
             state=state,
             visible_subagents=visible_subagents,

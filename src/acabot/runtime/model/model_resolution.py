@@ -8,7 +8,7 @@ from .model_registry import (
     RuntimeModelRequest,
     snapshot_from_runtime_request,
 )
-from ..contracts import AgentProfile, RouteDecision
+from ..contracts import AgentProfile, ResolvedAgent, RouteDecision
 
 
 def resolve_run_request_for_agent(
@@ -58,22 +58,22 @@ def resolve_image_caption_request(
     return manager.resolve_target_request("system:image_caption")
 
 
-def resolve_model_requests_for_profile(
+def resolve_model_requests_for_agent(
     manager: FileSystemModelRegistryManager | None,
     *,
     decision: RouteDecision,
-    profile: AgentProfile,
+    agent: ResolvedAgent,
 ) -> tuple[
     RuntimeModelRequest | None,
     PersistedModelSnapshot | None,
     RuntimeModelRequest | None,
 ]:
-    """为当前 profile 解析本次 run 与 summary 的模型请求配置."""
+    """为当前 agent 快照解析本次 run 与 summary 的模型请求配置."""
 
     if manager is None:
         return None, None, None
 
-    model_target = str(profile.config.get("model_target", "") or "").strip()
+    model_target = str(agent.config.get("model_target", "") or "").strip()
     if decision.run_mode == "record_only":
         model_request = None
         model_snapshot = None
@@ -88,10 +88,47 @@ def resolve_model_requests_for_profile(
         model_request, model_snapshot = resolve_run_request_for_agent(
             manager,
             run_mode=decision.run_mode,
-            agent_id=profile.agent_id,
+            agent_id=agent.agent_id,
         )
     summary_model_request = resolve_summary_request(manager)
     return model_request, model_snapshot, summary_model_request
+
+
+def resolve_model_requests_for_profile(
+    manager: FileSystemModelRegistryManager | None,
+    *,
+    decision: RouteDecision,
+    profile: AgentProfile,
+) -> tuple[
+    RuntimeModelRequest | None,
+    PersistedModelSnapshot | None,
+    RuntimeModelRequest | None,
+]:
+    """兼容旧调用方的别名.
+
+    TODO(session-owned-agent hard cut): 调用方全部迁完后删除.
+    """
+
+    return resolve_model_requests_for_agent(
+        manager,
+        decision=decision,
+        agent=profile,
+    )
+
+
+def resolve_image_caption_request_for_agent(
+    manager: FileSystemModelRegistryManager | None,
+    *,
+    agent: ResolvedAgent,
+    primary_request: RuntimeModelRequest | None,
+) -> RuntimeModelRequest | None:
+    """为图片转述解析一份独立的模型请求.
+
+    这里不再读取 profile 私有模型字段, 只认固定 system target。
+    """
+
+    _ = agent, primary_request
+    return resolve_image_caption_request(manager)
 
 
 def resolve_image_caption_request_for_profile(
@@ -100,10 +137,10 @@ def resolve_image_caption_request_for_profile(
     profile: AgentProfile,
     primary_request: RuntimeModelRequest | None,
 ) -> RuntimeModelRequest | None:
-    """为图片转述解析一份独立的模型请求.
+    """兼容旧调用方的别名."""
 
-    这里不再读取 profile 私有模型字段, 只认固定 system target。
-    """
-
-    _ = profile, primary_request
-    return resolve_image_caption_request(manager)
+    return resolve_image_caption_request_for_agent(
+        manager,
+        agent=profile,
+        primary_request=primary_request,
+    )

@@ -57,7 +57,25 @@ class RuntimeRouter:
         """
 
         facts = self.session_runtime.build_facts(event)
-        session = self.session_runtime.load_session(facts)
+        try:
+            session = self.session_runtime.load_session(facts)
+        except FileNotFoundError:
+            return RouteDecision(
+                thread_id=facts.thread_id,
+                actor_id=facts.actor_id,
+                agent_id="",
+                channel_scope=facts.channel_scope,
+                run_mode="silent_drop",
+                metadata={
+                    "bot_relation": event.bot_relation,
+                    "target_reasons": list(event.target_reasons),
+                    "mentions_self": event.mentions_self,
+                    "reply_targets_self": event.reply_targets_self,
+                    "route_source": "unconfigured_session",
+                    "drop_reason": f"warning: session is not configured for {facts.channel_scope}",
+                },
+                event_facts=facts,
+            )
         surface = self.session_runtime.resolve_surface(facts, session)
         routing = self.session_runtime.resolve_routing(facts, session, surface)
         admission = self.session_runtime.resolve_admission(facts, session, surface)

@@ -1,10 +1,10 @@
-"""runtime.skills 定义 skill catalog 和 profile 可见 skill 边界."""
+"""runtime.skills 定义 skill catalog 和 agent 可见 skill 边界."""
 
 from __future__ import annotations
 
 from collections import defaultdict
 
-from ..contracts import AgentProfile
+from ..contracts import ResolvedAgent
 from .loader import FileSystemSkillPackageLoader
 from .package import SkillPackageDocument, SkillPackageManifest
 
@@ -69,12 +69,12 @@ class SkillCatalog:
             raise KeyError(skill_name)
         return self.loader.read_document_for_manifest(manifest)
 
-    def visible_skills(self, profile: AgentProfile) -> list[SkillPackageManifest]:
-        """按 profile 技能可见性和 scope 优先级选出可见 skills."""
+    def visible_skills(self, agent: ResolvedAgent) -> list[SkillPackageManifest]:
+        """按 agent 技能可见性和 scope 优先级选出可见 skills."""
 
         visible: list[SkillPackageManifest] = []
         seen: set[str] = set()
-        for skill_name in profile.skills:
+        for skill_name in agent.skills:
             if skill_name in seen:
                 continue
             manifest = self.get(skill_name)

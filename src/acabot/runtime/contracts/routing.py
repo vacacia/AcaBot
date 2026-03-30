@@ -2,7 +2,7 @@
 
 这个模块保留两类契约:
 
-- `AgentProfile`: profile 静态快照
+- `ResolvedAgent`: 当前 run 使用的前台 agent 快照
 - `RouteDecision`: router 输出给 app / pipeline 的统一决策对象
 """
 
@@ -25,29 +25,50 @@ from .session_config import (
 
 if TYPE_CHECKING:
     from ..computer import ComputerPolicy
+    from .session_agent import SessionAgent
 
 
 @dataclass(slots=True)
-class AgentProfile:
-    """agent 的静态配置快照.
+class ResolvedAgent:
+    """当前 run 使用的 agent 配置快照.
 
     Attributes:
-        agent_id (str): profile 的稳定 ID.
-        name (str): 展示名.
+        agent_id (str): 当前 agent 的稳定 ID.
         prompt_ref (str): 关联的 prompt 引用.
-        enabled_tools (list[str]): profile 允许的工具列表.
-        skills (list[str]): profile 默认可见 skill 列表.
-        computer_policy (ComputerPolicy | None): profile 默认 computer policy.
+        enabled_tools (list[str]): 当前 agent 允许的工具列表.
+        skills (list[str]): 当前 agent 默认可见 skill 列表.
+        visible_subagents (list[str]): 当前 agent 默认可见 subagent 列表.
+        computer_policy (ComputerPolicy | None): 当前 agent 默认 computer policy.
         config (dict[str, Any]): 原始配置补充字段.
     """
 
     agent_id: str
-    name: str
     prompt_ref: str
+    name: str = ""
     enabled_tools: list[str] = field(default_factory=list)
     skills: list[str] = field(default_factory=list)
+    visible_subagents: list[str] = field(default_factory=list)
     computer_policy: "ComputerPolicy | None" = None
     config: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_session_agent(cls, session_agent: "SessionAgent") -> "ResolvedAgent":
+        """把 session 真源对象投影成当前 run 的只读 agent 快照."""
+
+        return cls(
+            agent_id=session_agent.agent_id,
+            prompt_ref=session_agent.prompt_ref,
+            name=session_agent.agent_id,
+            enabled_tools=list(session_agent.visible_tools),
+            skills=list(session_agent.visible_skills),
+            visible_subagents=list(session_agent.visible_subagents),
+            computer_policy=session_agent.computer_policy,
+            config=dict(session_agent.config),
+        )
+
+
+# TODO(session-owned-agent hard cut): bootstrap/control-plane 清完后删掉这个旧别名.
+AgentProfile = ResolvedAgent
 
 
 @dataclass(slots=True)
@@ -57,7 +78,7 @@ class RouteDecision:
     Attributes:
         thread_id (str): 当前消息落到的 thread.
         actor_id (str): 当前消息的 canonical actor.
-        agent_id (str): 当前消息最终使用的前台 profile ID.
+        agent_id (str): 当前消息最终使用的前台 agent ID.
         channel_scope (str): 当前消息的 canonical 会话范围.
         run_mode (RunMode): 当前消息的准入模式.
         metadata (dict[str, Any]): 供 app / store / UI 使用的轻量元数据.
@@ -87,4 +108,4 @@ class RouteDecision:
     computer_policy_decision: ComputerPolicyDecision | None = None
 
 
-__all__ = ["AgentProfile", "RouteDecision"]
+__all__ = ["AgentProfile", "ResolvedAgent", "RouteDecision"]

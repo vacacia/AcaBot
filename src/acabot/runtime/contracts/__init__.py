@@ -36,7 +36,7 @@ from .records import (
     ThreadRecord,
     ThreadState,
 )
-from .routing import AgentProfile, RouteDecision
+from .routing import AgentProfile, ResolvedAgent, RouteDecision
 from .session_agent import SessionAgent, SessionBundle, SessionBundlePaths
 from .session_config import (
     AdmissionDecision,
@@ -95,6 +95,7 @@ __all__ = [
     "PersistenceDecision",
     "PersistenceDomainConfig",
     "RecoveryReport",
+    "ResolvedAgent",
     "ResolvedImageInput",
     "ResolvedMessage",
     "RetrievalPlan",

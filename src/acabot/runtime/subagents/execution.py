@@ -12,7 +12,7 @@
 
 目标:
 - 用 runtime 自己的 child run 执行 delegated skill
-- 复用现有 profile, memory, tool 和 prompt 主线
+- 复用现有 agent, memory, tool 和 prompt 主线
 - 不把 child run 的动作直接发到外部平台
 
 如何把脏活外包给sub agent?
@@ -31,9 +31,9 @@ import uuid
 
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
-from ..model.model_resolution import resolve_model_requests_for_profile
+from ..model.model_resolution import resolve_model_requests_for_agent
 from ..model.model_registry import FileSystemModelRegistryManager
-from ..contracts import AgentProfile, ComputerPolicyDecision, RouteDecision, RunContext, RunRecord, RunStep
+from ..contracts import ComputerPolicyDecision, ResolvedAgent, RouteDecision, RunContext, RunRecord, RunStep
 from ..pipeline import ThreadPipeline
 from ..storage.runs import RunManager
 from ..storage.threads import ThreadManager
@@ -52,7 +52,7 @@ class LocalSubagentExecutionService:
         thread_manager (ThreadManager): thread 状态管理器.
         run_manager (RunManager): run 生命周期管理器.
         pipeline (ThreadPipeline): runtime 主线执行器.
-        profile_loader: 根据 RouteDecision 加载 AgentProfile 的回调.
+        agent_loader: 根据 RouteDecision 加载当前 child run agent 快照的回调.
     """
 
     def __init__(
@@ -61,7 +61,7 @@ class LocalSubagentExecutionService:
         thread_manager: ThreadManager,
         run_manager: RunManager,
         pipeline: ThreadPipeline,
-        profile_loader,
+        agent_loader,
         model_registry_manager: FileSystemModelRegistryManager | None = None,
         subagent_catalog: SubagentCatalog | None = None,
     ) -> None:
@@ -71,7 +71,7 @@ class LocalSubagentExecutionService:
         self.thread_manager = thread_manager
         self.run_manager = run_manager
         self.pipeline = pipeline
-        self.profile_loader = profile_loader
+        self.agent_loader = agent_loader
         self.model_registry_manager = model_registry_manager
         self.subagent_catalog = subagent_catalog
     # region execute
@@ -95,8 +95,8 @@ class LocalSubagentExecutionService:
 
         # 伪造一个内部事件
         event = self._build_event(request)
-        profile = self._build_profile(request, document)
-        decision = self._build_decision(request, profile)
+        agent = self._build_agent(request, document)
+        decision = self._build_decision(request, agent)
         thread = await self.thread_manager.get_or_create(
             thread_id=decision.thread_id,
             channel_scope=decision.channel_scope,
@@ -105,10 +105,10 @@ class LocalSubagentExecutionService:
         )
         thread.metadata.setdefault("parent_run_id", request.parent_run_id)
         thread.metadata.setdefault("delegate_agent_id", request.delegate_agent_id)
-        model_request, model_snapshot, summary_model_request = resolve_model_requests_for_profile(
+        model_request, model_snapshot, summary_model_request = resolve_model_requests_for_agent(
             self.model_registry_manager,
             decision=decision,
-            profile=profile,
+            agent=agent,
         )
         run = await self.run_manager.open(
             event=event,
@@ -120,20 +120,20 @@ class LocalSubagentExecutionService:
             event=event,
             decision=decision,
             thread=thread,
-            profile=profile,
+            profile=agent,
             model_request=model_request,
             summary_model_request=summary_model_request,
             computer_policy_decision=ComputerPolicyDecision(
                 actor_kind="subagent",
-                backend=(profile.computer_policy.backend if profile.computer_policy is not None else "host"),
-                allow_exec=(profile.computer_policy.allow_exec if profile.computer_policy is not None else True),
-                allow_sessions=(profile.computer_policy.allow_sessions if profile.computer_policy is not None else True),
+                backend=(agent.computer_policy.backend if agent.computer_policy is not None else "host"),
+                allow_exec=(agent.computer_policy.allow_exec if agent.computer_policy is not None else True),
+                allow_sessions=(agent.computer_policy.allow_sessions if agent.computer_policy is not None else True),
                 roots={
                     "workspace": {"visible": True},
                     "skills": {"visible": True},
                     "self": {"visible": False},
                 },
-                visible_skills=list(profile.skills),
+                visible_skills=list(agent.skills),
                 visible_subagents=[],
             ),
             metadata={
@@ -196,13 +196,13 @@ class LocalSubagentExecutionService:
     def _build_decision(
         self,
         request: SubagentDelegationRequest,
-        profile: AgentProfile,
+        agent: ResolvedAgent,
     ) -> RouteDecision:
         """构造 child run 使用的 RouteDecision.
 
         Args:
             request: 标准化后的 delegation request.
-            profile: 当前 subagent 使用的 synthetic profile.
+            agent: 当前 subagent 使用的 synthetic agent.
 
         Returns:
             一份绑定到 delegate agent 的 RouteDecision.
@@ -211,7 +211,7 @@ class LocalSubagentExecutionService:
         return RouteDecision(
             thread_id=f"subagent:{request.parent_run_id}:{request.delegate_agent_id}:{uuid.uuid4().hex[:8]}",
             actor_id=request.actor_id,
-            agent_id=profile.agent_id,
+            agent_id=agent.agent_id,
             channel_scope=request.channel_scope,
             metadata={
                 "run_kind": "subagent",
@@ -238,14 +238,14 @@ class LocalSubagentExecutionService:
             return None
 
     @staticmethod
-    def _build_profile(
+    def _build_agent(
         request: SubagentDelegationRequest,
         document: SubagentPackageDocument,
-    ) -> AgentProfile:
-        """从 subagent 文档构造 synthetic child profile."""
+    ) -> ResolvedAgent:
+        """从 subagent 文档构造 synthetic child agent."""
 
         resolved_model_target = document.manifest.model_target or f"agent:{request.parent_agent_id}"
-        return AgentProfile(
+        return ResolvedAgent(
             agent_id=f"subagent:{document.manifest.subagent_name}",
             name=document.manifest.subagent_name,
             prompt_ref=f"subagent/{document.manifest.subagent_name}",

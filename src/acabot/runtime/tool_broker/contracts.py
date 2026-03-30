@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
 from acabot.agent import Attachment, ToolExecutionResult, ToolSpec
 from acabot.types import EventSource
 
-from ..contracts import AgentProfile, PlannedAction
+from ..contracts import PlannedAction, ResolvedAgent
 
 if TYPE_CHECKING:
     from ..computer import WorldView
@@ -61,7 +61,7 @@ class ToolExecutionContext:
         actor_id (str): 当前 actor_id.
         agent_id (str): 当前 agent_id.
         target (EventSource): 当前动作目标.
-        profile (AgentProfile): 当前 profile.
+        agent (ResolvedAgent): 当前 agent 快照.
         world_view (WorldView | None): 当前 run 的 Work World 视图.
         state (ToolRuntimeState | None): 当前 tool runtime 状态.
         visible_subagents (list[str]): 当前 run 真正允许访问的 subagent 列表.
@@ -73,11 +73,21 @@ class ToolExecutionContext:
     actor_id: str
     agent_id: str
     target: EventSource
-    profile: AgentProfile
+    profile: ResolvedAgent
     world_view: "WorldView | None" = None
     state: "ToolRuntimeState | None" = None
     visible_subagents: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def agent(self) -> ResolvedAgent:
+        """当前 tool execution 使用的正式 agent 快照."""
+
+        return self.profile
+
+    @agent.setter
+    def agent(self, value: ResolvedAgent) -> None:
+        self.profile = value
 
 
 @dataclass(slots=True)

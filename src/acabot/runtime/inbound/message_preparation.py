@@ -39,7 +39,7 @@ class MessagePreparationService:
             ctx: 当前 run 的执行上下文.
         """
 
-        settings = parse_image_caption_settings(ctx.profile.config.get("image_caption"))
+        settings = parse_image_caption_settings(ctx.agent.config.get("image_caption"))
         resolved = await self.resolution_service.resolve(
             ctx,
             include_reply_images=settings.enabled and settings.include_reply_images,

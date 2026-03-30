@@ -155,7 +155,7 @@ class Outbox:
             OutboxItem(
                 thread_id=ctx.thread.thread_id,
                 run_id=ctx.run.run_id,
-                agent_id=ctx.profile.agent_id,
+                agent_id=ctx.agent.agent_id,
                 plan=plan,
                 metadata={"channel_scope": ctx.thread.channel_scope},
             )

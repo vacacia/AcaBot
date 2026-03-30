@@ -541,7 +541,7 @@ class ContextCompactor:
     def _effective_config(self, ctx: RunContext) -> ContextCompactionConfig:
         """返回当前 run 生效的 compaction 配置."""
 
-        context_management = dict(ctx.profile.config.get("context_management", {}) or {})
+        context_management = dict(ctx.agent.config.get("context_management", {}) or {})
         strategy = str(context_management.get("strategy", "") or "").strip()
         if strategy in {"truncate", "summarize"}:
             return replace(self.config, strategy=strategy)

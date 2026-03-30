@@ -18,7 +18,7 @@ from typing import Any
 from acabot.agent.base import BaseAgent
 
 from ..model.model_registry import FileSystemModelRegistryManager
-from ..model.model_resolution import resolve_image_caption_request_for_profile
+from ..model.model_resolution import resolve_image_caption_request_for_agent
 from ..contracts import ResolvedImageInput, RunContext
 
 logger = logging.getLogger("acabot.runtime.image_context")
@@ -37,7 +37,7 @@ class ImageCaptionSettings:
 
 
 def parse_image_caption_settings(raw: object) -> ImageCaptionSettings:
-    """把 profile 配置里的 image_caption 块归一化."""
+    """把 agent 配置里的 image_caption 块归一化."""
 
     data = dict(raw or {}) if isinstance(raw, dict) else {}
     prompt = str(data.get("caption_prompt", "") or "").strip() or DEFAULT_IMAGE_CAPTION_PROMPT
@@ -71,9 +71,9 @@ class ImageContextService:
 
         if not resolved_images:
             return
-        caption_request = resolve_image_caption_request_for_profile(
+        caption_request = resolve_image_caption_request_for_agent(
             self.model_registry_manager,
-            profile=ctx.profile,
+            agent=ctx.agent,
             primary_request=ctx.model_request,
         )
         await self._caption_images(

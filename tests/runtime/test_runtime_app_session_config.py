@@ -1,11 +1,11 @@
 from pathlib import Path
 
 from acabot.runtime import (
-    AgentProfile,
     InMemoryChannelEventStore,
     InMemoryRunManager,
     InMemoryThreadManager,
     Outbox,
+    ResolvedAgent,
     RuntimeApp,
     RuntimeRouter,
     SessionConfigLoader,
@@ -56,15 +56,15 @@ def _write_session(tmp_path: Path) -> Path:
         Path: 配置文件路径.
     """
 
-    config_path = tmp_path / "sessions/qq/group/123.yaml"
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(
+    bundle_dir = tmp_path / "sessions/qq/group/123"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "session.yaml").write_text(
         """
 session:
   id: qq:group:123
   template: qq_group
 frontstage:
-  profile: aca.qq.group.default
+  agent_id: aca.qq.group.default
 selectors:
   sender_is_admin:
     sender_roles: [admin]
@@ -72,7 +72,7 @@ surfaces:
   message.mention:
     routing:
       default:
-        profile: aca.qq.group.default
+        agent_id: aca.qq.group.default
     admission:
       default:
         mode: respond
@@ -94,7 +94,7 @@ surfaces:
   message.plain:
     routing:
       default:
-        profile: aca.qq.group.default
+        agent_id: aca.qq.group.default
     admission:
       default:
         mode: record_only
@@ -104,7 +104,18 @@ surfaces:
 """.strip(),
         encoding="utf-8",
     )
-    return config_path
+    (bundle_dir / "agent.yaml").write_text(
+        """
+agent_id: aca.qq.group.default
+prompt_ref: prompt/aca.qq.group.default
+visible_tools:
+  - read
+visible_skills: []
+visible_subagents: []
+""".strip(),
+        encoding="utf-8",
+    )
+    return bundle_dir
 
 
 
@@ -136,19 +147,18 @@ def _group_event(*, text: str, mentions_self: bool, sender_role: str | None = No
 
 
 
-def _profile_loader(decision) -> AgentProfile:
-    """根据 route decision 构造最小 profile.
+def _agent_loader(decision) -> ResolvedAgent:
+    """根据 route decision 构造最小 agent 快照.
 
     Args:
         decision: 当前事件对应的路由结果.
 
     Returns:
-        AgentProfile: 测试使用的 profile.
+        ResolvedAgent: 测试使用的 agent 快照.
     """
 
-    return AgentProfile(
+    return ResolvedAgent(
         agent_id=decision.agent_id,
-        name=decision.agent_id,
         prompt_ref=f"prompt/{decision.agent_id}",
     )
 
@@ -185,7 +195,7 @@ def _build_app(
             run_manager=run_manager,
             thread_manager=thread_manager,
         ),
-        profile_loader=_profile_loader,
+        agent_loader=_agent_loader,
     )
     return app, run_manager, gateway, agent_runtime
 
@@ -193,7 +203,7 @@ def _build_app(
 # endregion
 
 
-async def test_runtime_app_uses_session_config_for_profile_and_run_mode(tmp_path: Path) -> None:
+async def test_runtime_app_builds_run_context_with_agent_snapshot(tmp_path: Path) -> None:
     app, run_manager, gateway, agent_runtime = _build_app(tmp_path)
 
     await app.handle_event(_group_event(text="hello @bot", mentions_self=True, sender_role="admin"))
@@ -213,6 +223,8 @@ async def test_runtime_app_uses_session_config_for_profile_and_run_mode(tmp_path
         "event_tags": [],
     }
     assert agent_runtime.last_ctx is not None
+    assert agent_runtime.last_ctx.agent.agent_id == "aca.qq.group.default"
+    assert agent_runtime.last_ctx.agent.prompt_ref == "prompt/aca.qq.group.default"
     assert agent_runtime.last_ctx.computer_policy_decision is not None
     assert agent_runtime.last_ctx.computer_policy_decision.backend == "host"
     assert gateway.sent[0].payload["text"] == "hello back"

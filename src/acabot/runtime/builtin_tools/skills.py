@@ -111,7 +111,7 @@ class BuiltinSkillToolSurface:
             else:
                 allowed = set(ctx.world_view.visible_skill_names)
         else:
-            allowed = {item.skill_name for item in catalog.visible_skills(ctx.profile)}
+            allowed = {item.skill_name for item in catalog.visible_skills(ctx.agent)}
         if not skill_name or skill_name not in allowed:
             return ToolResult(
                 llm_content=f"Skill not assigned to current agent: {skill_name or '-'}",

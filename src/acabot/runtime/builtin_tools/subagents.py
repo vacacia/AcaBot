@@ -101,7 +101,7 @@ class BuiltinSubagentToolSurface:
             actor_id=ctx.actor_id,
             channel_scope=str(ctx.metadata.get("channel_scope", "") or ""),
             parent_agent_id=ctx.agent_id,
-            profile=ctx.profile,
+            agent=ctx.agent,
             delegate_agent_id=delegate_agent_id,
             visible_subagents=list(ctx.visible_subagents),
             payload=payload,

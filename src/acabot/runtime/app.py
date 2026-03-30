@@ -20,14 +20,14 @@ from .backend.mode_registry import BackendModeRegistry
 from .computer import ComputerRuntime
 from .gateway_protocol import GatewayProtocol
 from .memory.long_term_ingestor import LongTermMemoryIngestor
-from .model.model_resolution import resolve_model_requests_for_profile
+from .model.model_resolution import resolve_model_requests_for_agent
 from .model.model_registry import FileSystemModelRegistryManager, PersistedModelSnapshot, RuntimeModelRequest
 from .contracts import (
     ApprovalDecisionResult,
-    AgentProfile,
     ChannelEventRecord,
     PendingApprovalRecord,
     RecoveryReport,
+    ResolvedAgent,
     RouteDecision,
     RunContext,
     RunRecord,
@@ -61,7 +61,8 @@ class RuntimeApp:
         run_manager: RunManager,
         channel_event_store: ChannelEventStore,
         pipeline: ThreadPipeline,
-        profile_loader: Callable[[RouteDecision], AgentProfile],
+        agent_loader: Callable[[RouteDecision], ResolvedAgent] | None = None,
+        profile_loader: Callable[[RouteDecision], ResolvedAgent] | None = None,
         approval_resumer: ApprovalResumer | None = None,
         reference_backend: ReferenceBackend | None = None,
         plugin_manager: RuntimePluginManager | None = None,
@@ -81,7 +82,8 @@ class RuntimeApp:
             run_manager: run 生命周期管理器.
             channel_event_store: inbound event log 持久化组件.
             pipeline: 真正执行一次 run 的 ThreadPipeline.
-            profile_loader: 根据 RouteDecision 加载 AgentProfile 的回调.
+            agent_loader: 根据 RouteDecision 加载当前 run agent 快照的回调.
+            profile_loader: 旧 profile loader 兼容入口.
             approval_resumer: approval 通过后的续执行器.
             reference_backend: `reference / notebook` provider. 默认允许 lazy init.
             plugin_manager: runtime world 的插件管理器.
@@ -99,6 +101,7 @@ class RuntimeApp:
         self.run_manager = run_manager
         self.channel_event_store = channel_event_store
         self.pipeline = pipeline
+        self.agent_loader = agent_loader
         self.profile_loader = profile_loader
         self.approval_resumer = approval_resumer or NoopApprovalResumer()
         self.reference_backend = reference_backend
@@ -226,15 +229,15 @@ class RuntimeApp:
             )
             try:
                 # 先契约, 后执行
-                profile = self._load_profile_for_event(decision)
+                agent = self._load_agent_for_event(decision)
                 model_request, model_snapshot, summary_model_request = self._resolve_model_requests(
                     decision=decision,
-                    profile=profile,
+                    agent=agent,
                 )
                 logger.debug(
-                    "Profile/model resolved: event_id=%s agent=%s run_model=%s summary_target_model=%s",
+                    "Agent/model resolved: event_id=%s agent=%s run_model=%s summary_target_model=%s",
                     event.event_id,
-                    profile.agent_id,
+                    agent.agent_id,
                     getattr(model_request, "model", "") or "-",
                     getattr(summary_model_request, "model", "") or "-",
                 )
@@ -277,7 +280,7 @@ class RuntimeApp:
                 event=event,
                 decision=decision,
                 thread=thread,
-                profile=profile,
+                profile=agent,
                 model_request=model_request,
                 summary_model_request=summary_model_request,
                 event_facts=decision.event_facts,
@@ -442,29 +445,33 @@ class RuntimeApp:
         return f"{text[:max_len]}..."
 
     # region inbound事件
-    def _load_profile_for_event(self, decision: RouteDecision) -> AgentProfile:
-        """按事件模式加载当前 run 使用的 profile.
+    def _load_agent_for_event(self, decision: RouteDecision) -> ResolvedAgent:
+        """按事件模式加载当前 run 使用的 agent 快照.
 
         Args:
             decision: 当前事件对应的 RouteDecision.
 
         Returns:
-            一份 AgentProfile.
+            一份 ResolvedAgent.
         """
 
         if decision.run_mode == "record_only":
-            return AgentProfile(
+            return ResolvedAgent(
                 agent_id=decision.agent_id,
-                name=decision.agent_id,
                 prompt_ref="prompt/record_only",
+                name=decision.agent_id,
             )
-        return self.profile_loader(decision)
+        if self.agent_loader is not None:
+            return self.agent_loader(decision)
+        if self.profile_loader is not None:
+            return self.profile_loader(decision)
+        raise RuntimeError("agent loader is not configured")
 
     def _resolve_model_requests(
         self,
         *,
         decision: RouteDecision,
-        profile: AgentProfile,
+        agent: ResolvedAgent,
     ) -> tuple[
         RuntimeModelRequest | None,
         PersistedModelSnapshot | None,
@@ -479,10 +486,10 @@ class RuntimeApp:
 
         """
 
-        return resolve_model_requests_for_profile(
+        return resolve_model_requests_for_agent(
             self.model_registry_manager,
             decision=decision,
-            profile=profile,
+            agent=agent,
         )
 
     def _mark_long_term_memory_dirty(self, thread_id: str) -> None:

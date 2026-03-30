@@ -150,7 +150,7 @@ class ModelAgentRuntime(AgentRuntime):
         tool_runtime = await self._resolve_tool_runtime(ctx)
         assembled = self.context_assembler.assemble(
             ctx,
-            base_prompt=self.prompt_loader.load(ctx.profile.prompt_ref),
+            base_prompt=self.prompt_loader.load(ctx.agent.prompt_ref),
             tool_runtime=tool_runtime,
         )
         ctx.system_prompt = assembled.system_prompt
@@ -314,7 +314,7 @@ class ModelAgentRuntime(AgentRuntime):
     def _resolve_max_tool_rounds(ctx: RunContext) -> int | None:
         """按当前 profile 解析本次 run 的 tool loop 上限."""
 
-        raw = ctx.profile.config.get("max_tool_rounds")
+        raw = ctx.agent.config.get("max_tool_rounds")
         if raw not in {None, ""}:
             try:
                 return int(raw)

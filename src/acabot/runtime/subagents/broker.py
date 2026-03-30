@@ -12,7 +12,7 @@ from __future__ import annotations
 from inspect import isawaitable
 from typing import Any
 
-from ..contracts import AgentProfile
+from ..contracts import ResolvedAgent
 from .catalog import SubagentCatalog
 from .contracts import SubagentDelegationRequest, SubagentDelegationResult
 
@@ -47,7 +47,7 @@ class SubagentDelegationBroker:
         actor_id: str,
         channel_scope: str,
         parent_agent_id: str,
-        profile: AgentProfile,
+        agent: ResolvedAgent,
         delegate_agent_id: str = "",
         visible_subagents: list[str] | None = None,
         payload: dict[str, Any] | None = None,
@@ -61,7 +61,7 @@ class SubagentDelegationBroker:
             actor_id: 当前 actor 标识.
             channel_scope: 当前 channel scope.
             parent_agent_id: 发起 delegation 的 agent 标识.
-            profile: 当前父 agent 的 profile.
+            agent: 当前父 agent 的快照.
             delegate_agent_id: 目标 subagent id.
             visible_subagents: 当前 run 允许访问的 subagent allowlist.
             payload: 委派载荷.
@@ -74,7 +74,7 @@ class SubagentDelegationBroker:
         resolved_delegate_agent_id = str(delegate_agent_id or "").strip()
         if not resolved_delegate_agent_id:
             return self._failed("", "delegate_agent_id is required")
-        if resolved_delegate_agent_id == profile.agent_id:
+        if resolved_delegate_agent_id == agent.agent_id:
             return self._failed(resolved_delegate_agent_id, "current agent cannot delegate to itself")
         if visible_subagents is not None:
             allowed_subagents = [
