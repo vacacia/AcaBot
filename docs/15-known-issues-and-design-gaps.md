@@ -10,6 +10,10 @@
 - 对应专题文档
 - 必要时 `10-change-playbooks.md`
 
+## 0. fallback 链
+目前只有 ContextCompactor 里手写了这个生成器
+在执行层到处“手写 Generator 隧道”显然违反了 DRY (Don't Repeat Yourself) 原则
+
 ## 1. subagent 第一版还不支持递归和 approval resume
 
 ### 现象
