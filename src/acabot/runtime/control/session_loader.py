@@ -2,7 +2,7 @@
 
 这个模块现在支持两类来源:
 
-- `SessionConfigLoader`: 从 `sessions/**/*.yaml` 读取正式会话配置
+- `SessionConfigLoader`: 从 `sessions/<platform>/<scope>/<id>/session.yaml` 读取正式会话配置
 - `ConfigBackedSessionConfigLoader`: 在纯内存配置场景下生成最小 SessionConfig
 
 两者输出的都是同一套 `SessionConfig` / `SurfaceConfig` / `MatchSpec` 契约.
@@ -45,17 +45,17 @@ class SessionConfigLoader:
         self.config_root = Path(config_root)
 
     def path_for_session_id(self, session_id: str) -> Path:
-        """根据 `session_id` 计算配置文件路径.
+        """根据 `session_id` 计算 `session.yaml` 路径.
 
         Args:
             session_id: 会话 ID, 例如 `qq:group:123456`.
 
         Returns:
-            Path: 当前会话应该落到的 YAML 文件路径.
+            Path: 当前会话目录里的 `session.yaml` 路径.
         """
 
         platform, scope_kind, identifier = self._split_session_id(session_id)
-        return self.config_root / platform / scope_kind / f"{identifier}.yaml"
+        return self.config_root / platform / scope_kind / identifier / "session.yaml"
 
     def load_by_session_id(self, session_id: str) -> SessionConfig:
         """按 `session_id` 读取并解析一份会话配置.
@@ -74,6 +74,8 @@ class SessionConfigLoader:
         if not path.exists():
             raise FileNotFoundError(f"session config not found: {session_id}")
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if not isinstance(raw, dict):
+            raise ValueError(f"Session config file must be a mapping: {path}")
         return self._parse_session_config(raw, path=path, session_id=session_id)
 
     @staticmethod
@@ -107,27 +109,41 @@ class SessionConfigLoader:
             SessionConfig: 规范化后的会话配置对象.
         """
 
-        session_block = dict(raw.get("session", {}))
-        frontstage_block = dict(raw.get("frontstage", {}))
+        session_block = _require_mapping(raw.get("session", {}), label="session", path=path)
+        frontstage_block = _require_mapping(raw.get("frontstage", {}), label="frontstage", path=path)
         selectors = {
-            selector_id: self._parse_match_spec(selector_conf)
-            for selector_id, selector_conf in dict(raw.get("selectors", {})).items()
+            selector_id: self._parse_match_spec(
+                selector_conf,
+                label=f"selectors.{selector_id}",
+                path=path,
+            )
+            for selector_id, selector_conf in _require_mapping(raw.get("selectors", {}), label="selectors", path=path).items()
         }
         surfaces = {
-            surface_id: self._parse_surface_config(surface_conf)
-            for surface_id, surface_conf in dict(raw.get("surfaces", {})).items()
+            surface_id: self._parse_surface_config(
+                surface_conf,
+                label=f"surfaces.{surface_id}",
+                path=path,
+            )
+            for surface_id, surface_conf in _require_mapping(raw.get("surfaces", {}), label="surfaces", path=path).items()
         }
+        frontstage_agent_id = str(frontstage_block.get("agent_id", "") or "").strip()
+        if not frontstage_agent_id:
+            raise ValueError(f"frontstage.agent_id is required: {path}")
+        declared_session_id = str(session_block.get("id", session_id) or session_id)
+        if declared_session_id != session_id:
+            raise ValueError(f"session.id does not match requested session_id: {path}")
         return SessionConfig(
-            session_id=str(session_block.get("id", session_id) or session_id),
+            session_id=declared_session_id,
             template_id=str(session_block.get("template", "") or ""),
             title=str(session_block.get("title", "") or ""),
-            frontstage_profile=str(frontstage_block.get("profile", "") or ""),
+            frontstage_agent_id=frontstage_agent_id,
             selectors=selectors,
             surfaces=surfaces,
             metadata={"config_path": str(path)},
         )
 
-    def _parse_surface_config(self, raw: object) -> SurfaceConfig:
+    def _parse_surface_config(self, raw: object, *, label: str, path: Path) -> SurfaceConfig:
         """解析一个 surface 配置块.
 
         Args:
@@ -137,17 +153,32 @@ class SessionConfigLoader:
             SurfaceConfig: 规范化后的 surface 配置.
         """
 
-        mapping = dict(raw or {})
+        mapping = _require_mapping(raw, label=label, path=path)
         return SurfaceConfig(
-            routing=self._parse_domain_config(mapping.get("routing"), RoutingDomainConfig),
-            admission=self._parse_domain_config(mapping.get("admission"), AdmissionDomainConfig),
-            context=self._parse_domain_config(mapping.get("context"), ContextDomainConfig),
-            persistence=self._parse_domain_config(mapping.get("persistence"), PersistenceDomainConfig),
-            extraction=self._parse_domain_config(mapping.get("extraction"), ExtractionDomainConfig),
-            computer=self._parse_domain_config(mapping.get("computer"), ComputerDomainConfig),
+            routing=self._parse_domain_config(mapping.get("routing"), RoutingDomainConfig, label=f"{label}.routing", path=path),
+            admission=self._parse_domain_config(
+                mapping.get("admission"),
+                AdmissionDomainConfig,
+                label=f"{label}.admission",
+                path=path,
+            ),
+            context=self._parse_domain_config(mapping.get("context"), ContextDomainConfig, label=f"{label}.context", path=path),
+            persistence=self._parse_domain_config(
+                mapping.get("persistence"),
+                PersistenceDomainConfig,
+                label=f"{label}.persistence",
+                path=path,
+            ),
+            extraction=self._parse_domain_config(
+                mapping.get("extraction"),
+                ExtractionDomainConfig,
+                label=f"{label}.extraction",
+                path=path,
+            ),
+            computer=self._parse_domain_config(mapping.get("computer"), ComputerDomainConfig, label=f"{label}.computer", path=path),
         )
 
-    def _parse_domain_config(self, raw: object, config_type: type) -> object | None:
+    def _parse_domain_config(self, raw: object, config_type: type, *, label: str, path: Path) -> object | None:
         """解析某个决策域的 `default + cases`.
 
         Args:
@@ -160,13 +191,16 @@ class SessionConfigLoader:
 
         if raw in (None, ""):
             return None
-        mapping = dict(raw or {})
+        mapping = _require_mapping(raw, label=label, path=path)
         return config_type(
-            default=dict(mapping.get("default", {}) or {}),
-            cases=[self._parse_case(item) for item in list(mapping.get("cases", []))],
+            default=_require_mapping(mapping.get("default", {}), label=f"{label}.default", path=path),
+            cases=[
+                self._parse_case(item, label=f"{label}.cases[{index}]", path=path)
+                for index, item in enumerate(_require_list(mapping.get("cases", []), label=f"{label}.cases", path=path))
+            ],
         )
 
-    def _parse_case(self, raw: object) -> DomainCase:
+    def _parse_case(self, raw: object, *, label: str, path: Path) -> DomainCase:
         """解析单条局部 case.
 
         Args:
@@ -176,20 +210,24 @@ class SessionConfigLoader:
             DomainCase: 规范化后的 case 对象.
         """
 
-        mapping = dict(raw or {})
+        mapping = _require_mapping(raw, label=label, path=path)
         when_conf = mapping.get("when")
-        when = self._parse_match_spec(when_conf) if when_conf not in (None, "") else None
+        when = (
+            self._parse_match_spec(when_conf, label=f"{label}.when", path=path)
+            if when_conf not in (None, "")
+            else None
+        )
         return DomainCase(
             case_id=str(mapping.get("case_id", "") or ""),
             when=when,
             when_ref=str(mapping.get("when_ref", "") or ""),
-            use=dict(mapping.get("use", {}) or {}),
+            use=_require_mapping(mapping.get("use", {}), label=f"{label}.use", path=path),
             priority=int(mapping.get("priority", 100)),
-            metadata=dict(mapping.get("metadata", {}) or {}),
+            metadata=_require_mapping(mapping.get("metadata", {}), label=f"{label}.metadata", path=path),
         )
 
     @staticmethod
-    def _parse_match_spec(raw: object) -> MatchSpec:
+    def _parse_match_spec(raw: object, *, label: str, path: Path) -> MatchSpec:
         """解析 `MatchSpec`.
 
         Args:
@@ -199,7 +237,7 @@ class SessionConfigLoader:
             MatchSpec: 规范化后的匹配条件对象.
         """
 
-        mapping = dict(raw or {})
+        mapping = _require_mapping(raw, label=label, path=path)
         return MatchSpec(
             platform=_optional_str(mapping.get("platform")),
             event_kind=_optional_str(mapping.get("event_kind")),
@@ -211,9 +249,13 @@ class SessionConfigLoader:
             mentions_self=_optional_bool(mapping.get("mentions_self")),
             reply_targets_self=_optional_bool(mapping.get("reply_targets_self")),
             mentioned_everyone=_optional_bool(mapping.get("mentioned_everyone")),
-            sender_roles=[str(item) for item in list(mapping.get("sender_roles", []))],
+            sender_roles=_require_string_list(mapping.get("sender_roles", []), label=f"{label}.sender_roles", path=path),
             attachments_present=_optional_bool(mapping.get("attachments_present")),
-            attachment_kinds=[str(item) for item in list(mapping.get("attachment_kinds", []))],
+            attachment_kinds=_require_string_list(
+                mapping.get("attachment_kinds", []),
+                label=f"{label}.attachment_kinds",
+                path=path,
+            ),
             message_subtype=_optional_str(mapping.get("message_subtype")),
             notice_type=_optional_str(mapping.get("notice_type")),
             notice_subtype=_optional_str(mapping.get("notice_subtype")),
@@ -290,7 +332,7 @@ class ConfigBackedSessionConfigLoader(StaticSessionConfigLoader):
             session_id="inline:default",
             template_id="inline_default",
             title="Inline Default Session",
-            frontstage_profile=default_agent_id,
+            frontstage_agent_id=default_agent_id,
             selectors={},
             surfaces=_default_surfaces(default_agent_id, computer_default),
             metadata={"config_path": "<inline-session:default>"},
@@ -299,13 +341,13 @@ class ConfigBackedSessionConfigLoader(StaticSessionConfigLoader):
 
 
 def _default_surfaces(
-    default_profile: str,
+    default_agent_id: str,
     computer_default: dict[str, Any],
 ) -> dict[str, SurfaceConfig]:
     """构造最小默认 surface 集合.
 
     Args:
-        default_profile: 默认前台 profile.
+        default_agent_id: 默认前台 agent.
         computer_default: 默认 computer 配置.
 
     Returns:
@@ -314,7 +356,7 @@ def _default_surfaces(
 
     def _surface(mode: str = "respond") -> SurfaceConfig:
         return SurfaceConfig(
-            routing=RoutingDomainConfig(default={"profile": default_profile}),
+            routing=RoutingDomainConfig(default={"agent_id": default_agent_id}),
             admission=AdmissionDomainConfig(default={"mode": mode}),
             context=ContextDomainConfig(default={}),
             persistence=PersistenceDomainConfig(default={"persist_event": True}),
@@ -368,6 +410,39 @@ def _optional_bool(value: object) -> bool | None:
         if normalized in {"false", "0", "no", "off"}:
             return False
     return bool(value)
+
+
+def _require_mapping(raw: object, *, label: str, path: Path) -> dict[str, Any]:
+    """把 YAML 子块校验为 mapping."""
+
+    if raw in (None, ""):
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"{label} block must be a mapping: {path}")
+    return dict(raw)
+
+
+def _require_list(raw: object, *, label: str, path: Path) -> list[Any]:
+    """把 YAML 子块校验为 list."""
+
+    if raw in (None, ""):
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"{label} must be a list: {path}")
+    return list(raw)
+
+
+def _require_string_list(raw: object, *, label: str, path: Path) -> list[str]:
+    """把 YAML 子块校验为字符串列表."""
+
+    items = _require_list(raw, label=label, path=path)
+    normalized: list[str] = []
+    for item in items:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        normalized.append(text)
+    return normalized
 
 
 __all__ = [

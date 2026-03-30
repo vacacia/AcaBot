@@ -177,11 +177,11 @@ class SessionRuntime:
             selectors=session.selectors,
             domain=domain,
         )
-        profile_id = str(payload.get("profile", session.frontstage_profile) or session.frontstage_profile)
+        agent_id = str(payload.get("agent_id", session.frontstage_agent_id) or session.frontstage_agent_id)
         actor_lane = str(payload.get("actor_lane", "frontstage") or "frontstage")
         return RoutingDecision(
             actor_lane=actor_lane,
-            profile_id=profile_id,
+            agent_id=agent_id,
             reason="surface case" if case_id else "surface default",
             source_case_id=case_id,
             priority=priority,
@@ -244,15 +244,15 @@ class SessionRuntime:
             domain=domain,
         )
         sticky_note_targets = (
-            list(payload.get("sticky_note_targets", []))
+            self._require_string_list(payload.get("sticky_note_targets", []), field_name="sticky_note_targets")
             if "sticky_note_targets" in payload
             else self._default_sticky_note_targets(facts)
         )
         return ContextDecision(
             sticky_note_targets=sticky_note_targets,
-            retrieval_tags=list(payload.get("retrieval_tags", [])),
-            context_labels=list(payload.get("context_labels", [])),
-            notes=list(payload.get("notes", [])),
+            retrieval_tags=self._require_string_list(payload.get("retrieval_tags", []), field_name="retrieval_tags"),
+            context_labels=self._require_string_list(payload.get("context_labels", []), field_name="context_labels"),
+            notes=self._require_string_list(payload.get("notes", []), field_name="notes"),
         )
 
     def resolve_persistence(
@@ -310,7 +310,7 @@ class SessionRuntime:
             domain=domain,
         )
         return ExtractionDecision(
-            tags=list(payload.get("tags", [])),
+            tags=self._require_string_list(payload.get("tags", []), field_name="tags"),
             reason="surface case" if case_id else "surface default",
             source_case_id=case_id,
             priority=priority,
@@ -343,12 +343,12 @@ class SessionRuntime:
         actor_kind = str(payload.get("actor_kind", "frontstage_agent") or "frontstage_agent")
         roots = dict(payload.get("roots", {}) or {}) or self._default_roots(actor_kind)
         visible_skills = (
-            list(payload.get("visible_skills", []))
+            self._require_string_list(payload.get("visible_skills", []), field_name="visible_skills")
             if "visible_skills" in payload
             else None
         )
         visible_subagents = (
-            list(payload.get("visible_subagents", []))
+            self._require_string_list(payload.get("visible_subagents", []), field_name="visible_subagents")
             if "visible_subagents" in payload
             else []
         )
@@ -586,11 +586,27 @@ class SessionRuntime:
             list[str]: 当前决策附带的说明列表.
         """
 
-        notes = list(payload.get("notes", []))
+        notes = SessionRuntime._require_string_list(payload.get("notes", []), field_name="notes")
         preset = str(payload.get("preset", "") or "")
         if preset:
             notes.append(f"preset:{preset}")
         return notes
+
+    @staticmethod
+    def _require_string_list(raw: object, *, field_name: str) -> list[str]:
+        """把 domain payload 里的列表字段校验成字符串列表."""
+
+        if raw in (None, ""):
+            return []
+        if not isinstance(raw, list):
+            raise ValueError(f"{field_name} must be a list")
+        items: list[str] = []
+        for item in raw:
+            text = str(item or "").strip()
+            if not text:
+                continue
+            items.append(text)
+        return items
 
     @staticmethod
     def _parse_admission_mode(raw: object) -> str:

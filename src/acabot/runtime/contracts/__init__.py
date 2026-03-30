@@ -37,6 +37,7 @@ from .records import (
     ThreadState,
 )
 from .routing import AgentProfile, RouteDecision
+from .session_agent import SessionAgent, SessionBundle, SessionBundlePaths
 from .session_config import (
     AdmissionDecision,
     AdmissionDomainConfig,
@@ -105,6 +106,9 @@ __all__ = [
     "RunRecord",
     "RunStatus",
     "RunStep",
+    "SessionAgent",
+    "SessionBundle",
+    "SessionBundlePaths",
     "SequencedChannelEventRecord",
     "SequencedMessageRecord",
     "SessionConfig",

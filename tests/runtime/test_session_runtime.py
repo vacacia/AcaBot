@@ -20,16 +20,16 @@ def _write_session(tmp_path: Path, *, plain_mode: str = "record_only") -> Path:
         Path: 写入后的配置文件路径.
     """
 
-    config_path = tmp_path / "sessions/qq/group/123.yaml"
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(
+    bundle_dir = tmp_path / "sessions/qq/group/123"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "session.yaml").write_text(
         f"""
 session:
   id: qq:group:123
   template: qq_group
   title: Example Group
 frontstage:
-  profile: aca.qq.group.default
+  agent_id: aca.qq.group.default
 selectors:
   sender_is_admin:
     sender_roles: [admin]
@@ -37,7 +37,7 @@ surfaces:
   message.mention:
     routing:
       default:
-        profile: aca.qq.group.default
+        agent_id: aca.qq.group.default
     admission:
       default:
         mode: respond
@@ -58,7 +58,20 @@ surfaces:
 """.strip(),
         encoding="utf-8",
     )
-    return config_path
+    (bundle_dir / "agent.yaml").write_text(
+        """
+agent_id: aca.qq.group.default
+prompt_ref: prompt/aca/default
+visible_tools:
+  - read
+visible_skills:
+  - frontend-design
+visible_subagents:
+  - excel-worker
+""".strip(),
+        encoding="utf-8",
+    )
+    return bundle_dir
 
 
 def _group_mention_event(*, sender_role: str = "admin") -> StandardEvent:
@@ -93,6 +106,7 @@ def test_session_loader_reads_surface_matrix_and_selectors(tmp_path: Path) -> No
     session = loader.load_by_session_id("qq:group:123")
 
     assert session.template_id == "qq_group"
+    assert session.frontstage_agent_id == "aca.qq.group.default"
     assert session.selectors["sender_is_admin"].sender_roles == ["admin"]
     assert session.surfaces["message.mention"].computer is not None
     assert session.surfaces["message.mention"].computer.cases[0].use["backend"] == "host"
@@ -162,22 +176,22 @@ def test_session_runtime_resolves_domain_decisions_from_surface_cases(tmp_path: 
     admission = runtime.resolve_admission(facts, session, surface)
     computer = runtime.resolve_computer(facts, session, surface)
 
-    assert routing.profile_id == "aca.qq.group.default"
+    assert routing.agent_id == "aca.qq.group.default"
     assert admission.mode == "respond"
     assert computer.backend == "host"
     assert computer.source_case_id == "admin_host"
 
 
 def test_session_runtime_reads_visible_subagents_from_computer_block(tmp_path: Path) -> None:
-    config_path = tmp_path / "sessions/qq/group/123.yaml"
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(
+    bundle_dir = tmp_path / "sessions/qq/group/123"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "session.yaml").write_text(
         """
 session:
   id: qq:group:123
   template: qq_group
 frontstage:
-  profile: aca.qq.group.default
+  agent_id: aca.qq.group.default
 surfaces:
   message.mention:
     admission:
@@ -188,6 +202,20 @@ surfaces:
         visible_subagents:
           - excel-worker
           - search-worker
+""".strip(),
+        encoding="utf-8",
+    )
+    (bundle_dir / "agent.yaml").write_text(
+        """
+agent_id: aca.qq.group.default
+prompt_ref: prompt/aca/default
+visible_tools:
+  - read
+visible_skills:
+  - frontend-design
+visible_subagents:
+  - excel-worker
+  - search-worker
 """.strip(),
         encoding="utf-8",
     )
@@ -237,15 +265,15 @@ def test_session_runtime_defaults_sticky_note_targets_from_group_scene(tmp_path:
 
 
 def test_session_runtime_preserves_explicit_empty_sticky_note_targets(tmp_path: Path) -> None:
-    config_path = tmp_path / "sessions/qq/group/123.yaml"
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(
+    bundle_dir = tmp_path / "sessions/qq/group/123"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "session.yaml").write_text(
         """
 session:
   id: qq:group:123
   template: qq_group
 frontstage:
-  profile: aca.qq.group.default
+  agent_id: aca.qq.group.default
 surfaces:
   message.mention:
     context:
@@ -254,6 +282,19 @@ surfaces:
     admission:
       default:
         mode: respond
+""".strip(),
+        encoding="utf-8",
+    )
+    (bundle_dir / "agent.yaml").write_text(
+        """
+agent_id: aca.qq.group.default
+prompt_ref: prompt/aca/default
+visible_tools:
+  - read
+visible_skills:
+  - frontend-design
+visible_subagents:
+  - excel-worker
 """.strip(),
         encoding="utf-8",
     )
@@ -285,15 +326,15 @@ def test_session_runtime_rejects_invalid_admission_mode(tmp_path: Path) -> None:
 
 
 def test_session_runtime_does_not_fall_from_mention_into_command_surface(tmp_path: Path) -> None:
-    config_path = tmp_path / "sessions/qq/group/123.yaml"
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(
+    bundle_dir = tmp_path / "sessions/qq/group/123"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "session.yaml").write_text(
         """
 session:
   id: qq:group:123
   template: qq_group
 frontstage:
-  profile: aca.qq.group.default
+  agent_id: aca.qq.group.default
 surfaces:
   message.command:
     admission:
@@ -303,6 +344,19 @@ surfaces:
     admission:
       default:
         mode: record_only
+""".strip(),
+        encoding="utf-8",
+    )
+    (bundle_dir / "agent.yaml").write_text(
+        """
+agent_id: aca.qq.group.default
+prompt_ref: prompt/aca/default
+visible_tools:
+  - read
+visible_skills:
+  - frontend-design
+visible_subagents:
+  - excel-worker
 """.strip(),
         encoding="utf-8",
     )
@@ -317,15 +371,15 @@ surfaces:
 
 
 def test_session_runtime_rejects_unknown_when_ref(tmp_path: Path) -> None:
-    config_path = tmp_path / "sessions/qq/group/123.yaml"
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(
+    bundle_dir = tmp_path / "sessions/qq/group/123"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "session.yaml").write_text(
         """
 session:
   id: qq:group:123
   template: qq_group
 frontstage:
-  profile: aca.qq.group.default
+  agent_id: aca.qq.group.default
 surfaces:
   message.mention:
     computer:
@@ -336,6 +390,19 @@ surfaces:
           when_ref: missing_selector
           use:
             backend: host
+""".strip(),
+        encoding="utf-8",
+    )
+    (bundle_dir / "agent.yaml").write_text(
+        """
+agent_id: aca.qq.group.default
+prompt_ref: prompt/aca/default
+visible_tools:
+  - read
+visible_skills:
+  - frontend-design
+visible_subagents:
+  - excel-worker
 """.strip(),
         encoding="utf-8",
     )
@@ -350,3 +417,47 @@ surfaces:
         assert "unknown selector" in str(exc)
     else:
         raise AssertionError("unknown when_ref should fail")
+
+
+def test_session_runtime_rejects_scalar_context_lists(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "sessions/qq/group/123"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "session.yaml").write_text(
+        """
+session:
+  id: qq:group:123
+  template: qq_group
+frontstage:
+  agent_id: aca.qq.group.default
+surfaces:
+  message.mention:
+    context:
+      default:
+        retrieval_tags: urgent
+""".strip(),
+        encoding="utf-8",
+    )
+    (bundle_dir / "agent.yaml").write_text(
+        """
+agent_id: aca.qq.group.default
+prompt_ref: prompt/aca/default
+visible_tools:
+  - read
+visible_skills:
+  - frontend-design
+visible_subagents:
+  - excel-worker
+""".strip(),
+        encoding="utf-8",
+    )
+    runtime = SessionRuntime(SessionConfigLoader(config_root=tmp_path / "sessions"))
+    facts = runtime.build_facts(_group_mention_event(sender_role="admin"))
+    session = runtime.load_session(facts)
+    surface = runtime.resolve_surface(facts, session)
+
+    try:
+        runtime.resolve_context(facts, session, surface)
+    except ValueError as exc:
+        assert "retrieval_tags" in str(exc)
+    else:
+        raise AssertionError("scalar retrieval_tags should fail")

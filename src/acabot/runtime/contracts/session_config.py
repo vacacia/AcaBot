@@ -342,7 +342,7 @@ class SessionConfig:
         session_id (str): 当前会话配置的稳定 ID.
         template_id (str): 使用的模板 ID.
         title (str): 可读标题.
-        frontstage_profile (str): 会话默认前台 profile.
+        frontstage_agent_id (str): 会话默认前台 agent.
         selectors (dict[str, MatchSpec]): 可复用的匹配条件表.
         surfaces (dict[str, SurfaceConfig]): 按 surface 划分的配置矩阵.
         metadata (dict[str, Any]): 加载来源等补充信息.
@@ -351,7 +351,7 @@ class SessionConfig:
     session_id: str
     template_id: str
     title: str = ""
-    frontstage_profile: str = ""
+    frontstage_agent_id: str = ""
     selectors: dict[str, MatchSpec] = field(default_factory=dict)
     surfaces: dict[str, SurfaceConfig] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -384,7 +384,7 @@ class RoutingDecision:
 
     Attributes:
         actor_lane (str): 当前消息进入哪个 actor lane.
-        profile_id (str): 当前消息使用哪个 profile.
+        agent_id (str): 当前消息使用哪个 agent.
         reason (str): 这次决策为什么是这个结果.
         source_case_id (str): 命中的 case ID. 没命中时为空.
         priority (int): 命中 case 的优先级.
@@ -392,7 +392,7 @@ class RoutingDecision:
     """
 
     actor_lane: str = "frontstage"
-    profile_id: str = ""
+    agent_id: str = ""
     reason: str = ""
     source_case_id: str = ""
     priority: int = 100

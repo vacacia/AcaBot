@@ -68,7 +68,7 @@ class RuntimeRouter:
         return RouteDecision(
             thread_id=facts.thread_id,
             actor_id=facts.actor_id,
-            agent_id=routing.profile_id,
+            agent_id=routing.agent_id,
             channel_scope=facts.channel_scope,
             run_mode=admission.mode,
             metadata={
@@ -78,7 +78,7 @@ class RuntimeRouter:
                 "reply_targets_self": event.reply_targets_self,
                 "surface_id": surface.surface_id,
                 "surface_exists": surface.exists,
-                "routing_profile_id": routing.profile_id,
+                "routing_agent_id": routing.agent_id,
                 "routing_actor_lane": routing.actor_lane,
                 "admission_mode": admission.mode,
                 "event_persist": persistence.persist_event,
@@ -146,7 +146,7 @@ def _default_session_config(default_agent_id: str) -> SessionConfig:
     """构造 router 级最小内建 SessionConfig.
 
     Args:
-        default_agent_id: 默认前台 profile.
+        default_agent_id: 默认前台 agent.
 
     Returns:
         SessionConfig: 内建最小 session 配置.
@@ -154,7 +154,7 @@ def _default_session_config(default_agent_id: str) -> SessionConfig:
 
     def _surface() -> SurfaceConfig:
         return SurfaceConfig(
-            routing=RoutingDomainConfig(default={"profile": default_agent_id}),
+            routing=RoutingDomainConfig(default={"agent_id": default_agent_id}),
             admission=AdmissionDomainConfig(default={"mode": "respond"}),
             context=ContextDomainConfig(default={}),
             persistence=PersistenceDomainConfig(default={"persist_event": True}),
@@ -166,7 +166,7 @@ def _default_session_config(default_agent_id: str) -> SessionConfig:
         session_id="inline:default",
         template_id="inline_default",
         title="Inline Default Session",
-        frontstage_profile=default_agent_id,
+        frontstage_agent_id=default_agent_id,
         selectors={},
         surfaces={
             "message.mention": _surface(),
