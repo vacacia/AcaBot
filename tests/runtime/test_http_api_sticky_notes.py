@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 from acabot.config import Config
 from acabot.runtime import RuntimeHttpApiServer, build_runtime_components
 
+<<<<<<< HEAD
 from ._agent_fakes import FakeAgent, FakeAgentResponse
 from .test_outbox import FakeGateway
 
