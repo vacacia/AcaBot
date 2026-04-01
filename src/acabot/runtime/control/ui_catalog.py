@@ -58,32 +58,27 @@ UI_NOTICE_SUBTYPE_OPTIONS = [
 ]
 
 
+from ..model.model_registry import PROVIDER_KIND_REGISTRY
+from ..model.model_targets import SUPPORTED_MODEL_CAPABILITIES, SUPPORTED_MODEL_TASK_KINDS
+
+
 def build_ui_options(*, api_key_env_names: list[str]) -> dict[str, object]:
     """返回 WebUI 通用选择项."""
 
     return {
-        "provider_kinds": ["openai_compatible", "anthropic", "google_gemini"],
+        "provider_kinds": [
+            {
+                "value": kind,
+                "label": meta.label,
+                "default_base_url": meta.default_base_url,
+                "config_class": meta.config_class,
+                "litellm_prefix": meta.litellm_prefix,
+            }
+            for kind, meta in PROVIDER_KIND_REGISTRY.items()
+        ],
         "model_target_source_kinds": ["agent", "system", "plugin"],
-        "model_task_kinds": [
-            "chat",
-            "embedding",
-            "rerank",
-            "speech_to_text",
-            "text_to_speech",
-            "image_generation",
-        ],
-        "model_capabilities": [
-            "tool_calling",
-            "reasoning",
-            "structured_output",
-            "image_input",
-            "image_output",
-            "document_input",
-            "audio_input",
-            "audio_output",
-            "video_input",
-            "video_output",
-        ],
+        "model_task_kinds": list(SUPPORTED_MODEL_TASK_KINDS),
+        "model_capabilities": list(SUPPORTED_MODEL_CAPABILITIES),
         "run_modes": ["respond", "record_only", "silent_drop"],
         "event_types": list(UI_EVENT_TYPE_OPTIONS),
         "event_type_labels": dict(SESSION_EVENT_LABELS),

@@ -13,10 +13,20 @@ type PluginConfig = {
 const items = ref<PluginConfig[]>(peekCachedGet<{ items: PluginConfig[] }>("/api/system/plugins/config")?.items ?? [])
 const saveMessage = ref("")
 const errorMessage = ref("")
+const errorText = ref("")
+const loading = ref(false)
 
 async function load(): Promise<void> {
-  const payload = await apiGet<{ items: PluginConfig[] }>("/api/system/plugins/config")
-  items.value = payload.items ?? []
+  loading.value = true
+  errorText.value = ""
+  try {
+    const payload = await apiGet<{ items: PluginConfig[] }>("/api/system/plugins/config")
+    items.value = payload.items ?? []
+  } catch (error) {
+    errorText.value = error instanceof Error ? error.message : "加载插件配置失败"
+  } finally {
+    loading.value = false
+  }
 }
 
 async function save(): Promise<void> {
@@ -56,7 +66,6 @@ onMounted(() => {
       <div class="ds-hero-copy">
         <p class="ds-eyebrow">Plugins</p>
         <h1>插件开关</h1>
-        <p class="ds-summary">统一在这里查看插件状态、保存配置和触发重载。</p>
       </div>
       <div class="ds-actions">
         <button class="ds-secondary-button" type="button" @click="void reloadPlugins()">重载</button>
@@ -64,6 +73,8 @@ onMounted(() => {
       </div>
     </header>
 
+    <p v-if="loading" class="ds-status">加载中...</p>
+    <p v-if="errorText" class="ds-status is-error">{{ errorText }}</p>
     <p v-if="saveMessage" class="ds-status is-ok">{{ saveMessage }}</p>
     <p v-if="errorMessage" class="ds-status is-error">{{ errorMessage }}</p>
 

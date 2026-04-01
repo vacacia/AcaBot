@@ -30,15 +30,50 @@ from .model_targets import (
     SUPPORTED_MODEL_TASK_KINDS,
 )
 
-ModelProviderKind = Literal["openai_compatible", "anthropic", "google_gemini"]
+ModelProviderKind = str  # registry-driven; see PROVIDER_KIND_REGISTRY
 ModelBindingState = Literal["resolved", "unresolved_target", "invalid_binding"]
 ModelEntityType = Literal["provider", "preset", "binding"]
 
-_SUPPORTED_PROVIDER_KINDS: set[str] = {
-    "openai_compatible",
-    "anthropic",
-    "google_gemini",
+
+@dataclass(slots=True)
+class ProviderKindMeta:
+    """一条 provider kind 的元数据，用于注册表驱动的分发."""
+
+    litellm_prefix: str
+    """litellm 路由用的模型名前缀, 例如 ``"deepseek/"``."""
+    default_base_url: str
+    """新建时自动填充的默认 base_url, 空串表示让用户自己填."""
+    config_class: str
+    """使用哪个 ProviderConfig dataclass. ``"openai_like"`` / ``"anthropic"`` / ``"google_gemini"``."""
+    label: str
+    """前端展示的可读名称."""
+
+
+PROVIDER_KIND_REGISTRY: dict[str, ProviderKindMeta] = {
+    # --- OpenAI 兼容协议 ---
+    "openai_compatible": ProviderKindMeta("openai/", "", "openai_like", "OpenAI Compatible"),
+    "deepseek":          ProviderKindMeta("deepseek/", "https://api.deepseek.com", "openai_like", "DeepSeek"),
+    "groq":              ProviderKindMeta("groq/", "https://api.groq.com/openai/v1", "openai_like", "Groq"),
+    "moonshot":          ProviderKindMeta("openai/", "https://api.moonshot.cn/v1", "openai_like", "Moonshot (月之暗面)"),
+    "ollama":            ProviderKindMeta("ollama/", "http://localhost:11434", "openai_like", "Ollama"),
+    "together_ai":       ProviderKindMeta("together_ai/", "https://api.together.xyz/v1", "openai_like", "Together AI"),
+    "openrouter":        ProviderKindMeta("openrouter/", "https://openrouter.ai/api/v1", "openai_like", "OpenRouter"),
+    "mistral":           ProviderKindMeta("mistral/", "https://api.mistral.ai/v1", "openai_like", "Mistral"),
+    "fireworks_ai":      ProviderKindMeta("fireworks_ai/", "https://api.fireworks.ai/inference/v1", "openai_like", "Fireworks AI"),
+    "perplexity":        ProviderKindMeta("perplexity/", "https://api.perplexity.ai", "openai_like", "Perplexity"),
+    "cohere":            ProviderKindMeta("cohere_chat/", "https://api.cohere.com/v2", "openai_like", "Cohere"),
+    "xai":               ProviderKindMeta("xai/", "https://api.x.ai/v1", "openai_like", "xAI (Grok)"),
+    "volcengine":        ProviderKindMeta("volcengine/", "https://ark.cn-beijing.volces.com/api/v3", "openai_like", "火山引擎"),
+    "zhipu":             ProviderKindMeta("openai/", "https://open.bigmodel.cn/api/paas/v4", "openai_like", "智谱 AI"),
+    "siliconflow":       ProviderKindMeta("openai/", "https://api.siliconflow.cn/v1", "openai_like", "SiliconFlow"),
+    "azure":             ProviderKindMeta("azure/", "", "openai_like", "Azure OpenAI"),
+    # --- Anthropic 协议 ---
+    "anthropic":         ProviderKindMeta("anthropic/", "https://api.anthropic.com", "anthropic", "Anthropic"),
+    # --- Google Gemini 协议 ---
+    "google_gemini":     ProviderKindMeta("gemini/", "", "google_gemini", "Google Gemini"),
 }
+
+_SUPPORTED_PROVIDER_KINDS: set[str] = set(PROVIDER_KIND_REGISTRY)
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SUPPORTED_MODEL_TASK_KINDS = set(SUPPORTED_MODEL_TASK_KINDS)
 _SUPPORTED_MODEL_CAPABILITIES = set(SUPPORTED_MODEL_CAPABILITIES)
@@ -256,7 +291,11 @@ class RuntimeModelRequest:
             api_key = str(os.getenv(self.api_key_env, "") or "")
         if not api_key and self.api_key:
             api_key = str(self.api_key or "")
-        if provider_kind == "openai_compatible":
+
+        meta = PROVIDER_KIND_REGISTRY.get(provider_kind)
+        config_class = meta.config_class if meta else ""
+
+        if config_class == "openai_like" or provider_kind == "openai_compatible":
             base_url = str(options.pop("base_url", "") or "")
             default_headers = dict(options.pop("default_headers", {}) or {})
             default_query = dict(options.pop("default_query", {}) or {})
@@ -275,7 +314,7 @@ class RuntimeModelRequest:
             request_options["provider_kind"] = provider_kind
             return request_options
 
-        if provider_kind == "anthropic":
+        if config_class == "anthropic":
             base_url = str(options.pop("base_url", "") or "")
             anthropic_version = str(options.pop("anthropic_version", "") or "")
             default_headers = dict(options.pop("default_headers", {}) or {})
@@ -297,7 +336,7 @@ class RuntimeModelRequest:
             request_options["provider_kind"] = provider_kind
             return request_options
 
-        if provider_kind == "google_gemini":
+        if config_class == "google_gemini":
             base_url = str(options.pop("base_url", "") or "")
             api_version = str(options.pop("api_version", "") or "")
             project_id = str(options.pop("project_id", "") or "")
@@ -613,7 +652,10 @@ class ModelRegistry:
             api_key=str(getattr(config, "api_key", "") or ""),
         )
         if not api_key_env and not api_key:
-            raise ValueError(f"provider api_key_env is required: {provider.provider_id}")
+            # 本地推理服务（如 Ollama）不需要 API key
+            _NO_AUTH_KINDS = {"ollama"}
+            if provider.kind not in _NO_AUTH_KINDS:
+                raise ValueError(f"provider api_key_env is required: {provider.provider_id}")
         if provider.kind == "openai_compatible":
             base_url = str(getattr(config, "base_url", "") or "").strip()
             if not base_url:
@@ -649,16 +691,21 @@ class ModelRegistry:
         *,
         target_catalog: MutableModelTargetCatalog,
     ) -> None:
+        # 基础字段非空检查
         if not str(binding.binding_id or "").strip():
             raise ValueError("binding_id is required")
         if not str(binding.target_id or "").strip():
             raise ValueError(f"target_id is required: {binding.binding_id}")
         if not binding.preset_ids:
             raise ValueError(f"binding preset_ids is required: {binding.binding_id}")
+        
         target = target_catalog.get(binding.target_id)
+        # 除非它是 plugin: 前缀的动态 target, 否则target 未找到就报错
         if target is None and not binding.target_id.startswith("plugin:"):
             raise ValueError(f"unknown model target: {binding.target_id}")
+        # 提取 target 要求的能力集合
         required_capabilities = set(target.required_capabilities) if target is not None else set()
+        # 逐一校验绑定中声明的每一个 preset
         for preset_id in binding.preset_ids:
             preset = self.presets.get(preset_id)
             if preset is None:
@@ -1121,8 +1168,11 @@ class FileSystemModelRegistryManager:
     @staticmethod
     def _resolved_model_name(provider_kind: str, model: str) -> str:
         normalized = str(model or "").strip()
-        if provider_kind == "google_gemini" and normalized and "/" not in normalized:
-            return f"gemini/{normalized}"
+        if not normalized or "/" in normalized:
+            return normalized
+        meta = PROVIDER_KIND_REGISTRY.get(provider_kind)
+        if meta and meta.litellm_prefix:
+            return f"{meta.litellm_prefix}{normalized}"
         return normalized
 
     def _load_registry_from_filesystem(self) -> ModelRegistry:
@@ -1173,46 +1223,30 @@ class FileSystemModelRegistryManager:
         provider_id = str(raw.get("provider_id", "") or path.stem)
         name = str(raw.get("name", "") or provider_id)
         kind = str(raw.get("kind", "") or "")
-        if kind == "openai_compatible":
-            api_key_env, api_key = _normalize_provider_auth_fields(
-                api_key_env=str(raw.get("api_key_env", "") or ""),
-                api_key=str(raw.get("api_key", "") or ""),
-            )
-            config = OpenAICompatibleProviderConfig(
-                base_url=str(raw.get("base_url", "") or ""),
-                api_key_env=api_key_env,
-                api_key=api_key,
-                default_headers={
-                    str(key): str(value)
-                    for key, value in dict(raw.get("default_headers", {}) or {}).items()
-                },
-                default_query=dict(raw.get("default_query", {}) or {}),
-                default_body=dict(raw.get("default_body", {}) or {}),
-            )
-            return ModelProvider(provider_id=provider_id, kind="openai_compatible", config=config, name=name)
-        if kind == "anthropic":
-            api_key_env, api_key = _normalize_provider_auth_fields(
-                api_key_env=str(raw.get("api_key_env", "") or ""),
-                api_key=str(raw.get("api_key", "") or ""),
-            )
-            config = AnthropicProviderConfig(
+        meta = PROVIDER_KIND_REGISTRY.get(kind)
+        if meta is None:
+            raise ValueError(f"unsupported provider kind in {path}: {kind}")
+        api_key_env, api_key = _normalize_provider_auth_fields(
+            api_key_env=str(raw.get("api_key_env", "") or ""),
+            api_key=str(raw.get("api_key", "") or ""),
+        )
+        default_headers = {
+            str(key): str(value)
+            for key, value in dict(raw.get("default_headers", {}) or {}).items()
+        }
+        default_query = dict(raw.get("default_query", {}) or {})
+        default_body = dict(raw.get("default_body", {}) or {})
+        if meta.config_class == "anthropic":
+            config: ProviderConfig = AnthropicProviderConfig(
                 api_key_env=api_key_env,
                 api_key=api_key,
                 base_url=str(raw.get("base_url", "") or ""),
                 anthropic_version=str(raw.get("anthropic_version", "") or ""),
-                default_headers={
-                    str(key): str(value)
-                    for key, value in dict(raw.get("default_headers", {}) or {}).items()
-                },
-                default_query=dict(raw.get("default_query", {}) or {}),
-                default_body=dict(raw.get("default_body", {}) or {}),
+                default_headers=default_headers,
+                default_query=default_query,
+                default_body=default_body,
             )
-            return ModelProvider(provider_id=provider_id, kind="anthropic", config=config, name=name)
-        if kind == "google_gemini":
-            api_key_env, api_key = _normalize_provider_auth_fields(
-                api_key_env=str(raw.get("api_key_env", "") or ""),
-                api_key=str(raw.get("api_key", "") or ""),
-            )
+        elif meta.config_class == "google_gemini":
             config = GoogleGeminiProviderConfig(
                 api_key_env=api_key_env,
                 api_key=api_key,
@@ -1221,15 +1255,21 @@ class FileSystemModelRegistryManager:
                 project_id=str(raw.get("project_id", "") or ""),
                 location=str(raw.get("location", "") or ""),
                 use_vertex_ai=bool(raw.get("use_vertex_ai", False)),
-                default_headers={
-                    str(key): str(value)
-                    for key, value in dict(raw.get("default_headers", {}) or {}).items()
-                },
-                default_query=dict(raw.get("default_query", {}) or {}),
-                default_body=dict(raw.get("default_body", {}) or {}),
+                default_headers=default_headers,
+                default_query=default_query,
+                default_body=default_body,
             )
-            return ModelProvider(provider_id=provider_id, kind="google_gemini", config=config, name=name)
-        raise ValueError(f"unsupported provider kind in {path}: {kind}")
+        else:
+            # openai_like — covers openai_compatible, deepseek, groq, etc.
+            config = OpenAICompatibleProviderConfig(
+                base_url=str(raw.get("base_url", "") or ""),
+                api_key_env=api_key_env,
+                api_key=api_key,
+                default_headers=default_headers,
+                default_query=default_query,
+                default_body=default_body,
+            )
+        return ModelProvider(provider_id=provider_id, kind=kind, config=config, name=name)
 
     @staticmethod
     def _load_preset_file(path: Path) -> ModelPreset:

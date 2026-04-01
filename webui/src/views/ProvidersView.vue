@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue"
+import { computed, onMounted, ref } from "vue"
 
+import CustomSelect from "../components/CustomSelect.vue"
 import { apiDelete, apiGet, apiPut, peekCachedGet } from "../lib/api"
 
 type ProviderRecord = {
@@ -28,6 +29,8 @@ type MutationResult = {
   message: string
 }
 
+type HeaderEntry = { key: string; value: string }
+
 type ProviderDraft = {
   provider_id: string
   name: string
@@ -40,37 +43,46 @@ type ProviderDraft = {
   project_id: string
   location: string
   use_vertex_ai: boolean
-  default_headers_text: string
-  default_query_text: string
-  default_body_text: string
+  default_headers: HeaderEntry[]
+}
+
+type ProviderKindOption = {
+  value: string
+  label: string
+  default_base_url: string
+  config_class: string
+  litellm_prefix: string
 }
 
 type Catalog = {
   options: {
-    provider_kinds: string[]
+    provider_kinds: ProviderKindOption[]
   }
 }
 
 const providers = ref<ProviderRecord[]>(peekCachedGet<ProviderRecord[]>('/api/models/providers') ?? [])
-const providerKinds = ref<string[]>(peekCachedGet<Catalog>('/api/ui/catalog')?.options.provider_kinds ?? [])
+const providerKinds = ref<ProviderKindOption[]>(peekCachedGet<Catalog>('/api/ui/catalog')?.options.provider_kinds ?? [])
 const selectedId = ref('')
 const draft = ref<ProviderDraft | null>(null)
 const loading = ref(!(providers.value.length > 0 || providerKinds.value.length > 0))
 const saveMessage = ref('')
 const errorMessage = ref('')
+const showAdvanced = ref(false)
 
-function jsonText(value: unknown): string {
-  if (!value || (typeof value === 'object' && !Array.isArray(value) && Object.keys(value as object).length === 0)) {
-    return ''
-  }
-  return JSON.stringify(value, null, 2)
-}
+const kindSelectOptions = computed(() =>
+  providerKinds.value.map(k => ({ value: k.value, label: k.label }))
+)
+
+const currentConfigClass = computed(() => {
+  if (!draft.value) return 'openai_like'
+  return providerKinds.value.find(k => k.value === draft.value!.kind)?.config_class ?? 'openai_like'
+})
 
 function blankDraft(): ProviderDraft {
   return {
     provider_id: '',
     name: '',
-    kind: providerKinds.value[0] || 'openai_compatible',
+    kind: providerKinds.value[0]?.value || 'openai_compatible',
     base_url: '',
     api_key_env: '',
     api_key: '',
@@ -79,9 +91,7 @@ function blankDraft(): ProviderDraft {
     project_id: '',
     location: '',
     use_vertex_ai: false,
-    default_headers_text: '',
-    default_query_text: '',
-    default_body_text: '',
+    default_headers: [],
   }
 }
 
@@ -104,22 +114,30 @@ function toDraft(item: ProviderRecord): ProviderDraft {
     project_id: item.config?.project_id || '',
     location: item.config?.location || '',
     use_vertex_ai: Boolean(item.config?.use_vertex_ai),
-    default_headers_text: jsonText(item.config?.default_headers),
-    default_query_text: jsonText(item.config?.default_query),
-    default_body_text: jsonText(item.config?.default_body),
+    default_headers: Object.entries(item.config?.default_headers || {}).map(
+      ([key, value]) => ({ key, value: String(value) })
+    ),
   }
 }
 
-function parseObjectText(label: string, value: string): Record<string, unknown> {
-  const text = value.trim()
-  if (!text) {
-    return {}
+function onKindChange(newKind: string): void {
+  if (!draft.value) return
+  const oldDefault = providerKinds.value.find(k => k.value === draft.value!.kind)?.default_base_url ?? ''
+  draft.value.kind = newKind
+  const meta = providerKinds.value.find(k => k.value === newKind)
+  if (meta?.default_base_url && (!draft.value.base_url || draft.value.base_url === oldDefault)) {
+    draft.value.base_url = meta.default_base_url
   }
-  const parsed = JSON.parse(text) as Record<string, unknown>
-  if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
-    throw new Error(`${label} 必须是 JSON 对象`)
-  }
-  return parsed
+}
+
+function addHeader(): void {
+  if (!draft.value) return
+  draft.value.default_headers.push({ key: '', value: '' })
+}
+
+function removeHeader(index: number): void {
+  if (!draft.value) return
+  draft.value.default_headers.splice(index, 1)
 }
 
 async function loadProviders(preferredId = ''): Promise<void> {
@@ -153,8 +171,12 @@ async function selectProvider(providerId: string, existingList?: ProviderRecord[
     draft.value = toDraft(found)
     return
   }
-  const payload = await apiGet<ProviderRecord>(`/api/models/providers/${encodeURIComponent(providerId)}`)
-  draft.value = toDraft(payload)
+  try {
+    const payload = await apiGet<ProviderRecord>(`/api/models/providers/${encodeURIComponent(providerId)}`)
+    draft.value = toDraft(payload)
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '加载供应商失败'
+  }
 }
 
 function createProvider(): void {
@@ -187,9 +209,13 @@ async function saveProvider(): Promise<void> {
       project_id: draft.value.project_id,
       location: draft.value.location,
       use_vertex_ai: draft.value.use_vertex_ai,
-      default_headers: parseObjectText('默认 Headers', draft.value.default_headers_text),
-      default_query: parseObjectText('默认 Query', draft.value.default_query_text),
-      default_body: parseObjectText('默认 Body', draft.value.default_body_text),
+      default_headers: Object.fromEntries(
+        draft.value.default_headers
+          .filter(h => h.key.trim())
+          .map(h => [h.key.trim(), h.value])
+      ),
+      default_query: {},
+      default_body: {},
     })
     if (!result.ok || !result.applied) {
       throw new Error(result.message || '保存失败')
@@ -259,7 +285,6 @@ onMounted(() => {
           <div class="ds-section-title">
             <div>
               <h2>{{ draft?.name || draft?.provider_id || '新建模型供应商' }}</h2>
-              <p class="ds-summary">这里只配置连接信息，不和模型 Preset 混在一起。</p>
             </div>
           </div>
           <div class="ds-actions">
@@ -281,30 +306,29 @@ onMounted(() => {
             <span>Provider ID</span>
             <input class="ds-input" v-model="draft.provider_id" type="text" :readonly="Boolean(selectedId)" />
           </label>
-          <label class="ds-field">
+          <div class="ds-field">
             <span>类型</span>
-            <select class="ds-select" v-model="draft.kind">
-              <option v-for="kind in providerKinds" :key="kind" :value="kind">{{ kind }}</option>
-            </select>
-          </label>
+            <CustomSelect
+              :model-value="draft.kind"
+              :options="kindSelectOptions"
+              placeholder="选择供应商类型"
+              @update:model-value="onKindChange"
+            />
+          </div>
           <label class="ds-field is-span-2">
             <span>Base URL</span>
-            <input class="ds-input" v-model="draft.base_url" type="text" />
+            <input class="ds-input" v-model="draft.base_url" type="text" placeholder="https://api.openai.com/v1" />
           </label>
-          <label class="ds-field">
-            <span>API Key 环境变量</span>
-            <input class="ds-input" v-model="draft.api_key_env" type="text" />
-          </label>
-          <label class="ds-field">
+          <label class="ds-field is-span-2">
             <span>API Key</span>
-            <input class="ds-input" v-model="draft.api_key" type="password" />
+            <input class="ds-input" v-model="draft.api_key" type="password" placeholder="sk-..." />
           </label>
-          <label v-if="draft.kind === 'anthropic'" class="ds-field is-span-2">
+          <label v-if="currentConfigClass === 'anthropic'" class="ds-field is-span-2">
             <span>Anthropic Version</span>
             <input class="ds-input" v-model="draft.anthropic_version" type="text" />
           </label>
 
-          <template v-if="draft.kind === 'google_gemini'">
+          <template v-if="currentConfigClass === 'google_gemini'">
             <label class="ds-field">
               <span>API Version</span>
               <input class="ds-input" v-model="draft.api_version" type="text" />
@@ -323,18 +347,30 @@ onMounted(() => {
             </label>
           </template>
 
-          <label class="ds-field is-span-2">
-            <span>默认 Headers(JSON)</span>
-            <textarea class="ds-textarea ds-mono" v-model="draft.default_headers_text" rows="6"></textarea>
-          </label>
-          <label class="ds-field is-span-2">
-            <span>默认 Query(JSON)</span>
-            <textarea class="ds-textarea ds-mono" v-model="draft.default_query_text" rows="6"></textarea>
-          </label>
-          <label class="ds-field is-span-2">
-            <span>默认 Body(JSON)</span>
-            <textarea class="ds-textarea ds-mono" v-model="draft.default_body_text" rows="6"></textarea>
-          </label>
+          <div class="is-span-2 advanced-toggle-row">
+            <button class="advanced-toggle" type="button" @click="showAdvanced = !showAdvanced">
+              <svg class="advanced-arrow" :class="{ 'is-open': showAdvanced }" width="12" height="12" viewBox="0 0 12 12"><path d="M3 4.5L6 7.5L9 4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              高级设置
+            </button>
+          </div>
+
+          <template v-if="showAdvanced">
+            <label class="ds-field is-span-2">
+              <span>API Key 环境变量</span>
+              <input class="ds-input" v-model="draft.api_key_env" type="text" placeholder="留空即可，直接填 API Key 更方便" />
+            </label>
+            <div class="ds-field is-span-2">
+              <span>Extra Headers</span>
+              <div class="kv-list">
+                <div v-for="(entry, idx) in draft.default_headers" :key="idx" class="kv-row">
+                  <input class="ds-input kv-key" v-model="entry.key" type="text" placeholder="Header name" />
+                  <input class="ds-input kv-value" v-model="entry.value" type="text" placeholder="Value" />
+                  <button class="kv-remove" type="button" @click="removeHeader(idx)">×</button>
+                </div>
+                <button class="kv-add" type="button" @click="addHeader()">+ 添加 Header</button>
+              </div>
+            </div>
+          </template>
         </div>
       </article>
     </div>
@@ -398,6 +434,96 @@ onMounted(() => {
   align-items: center;
   gap: 10px;
   border-radius: 18px;
+}
+
+.advanced-toggle-row {
+  padding-top: 4px;
+}
+
+.advanced-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+
+.advanced-toggle:hover {
+  color: var(--accent);
+}
+
+.advanced-arrow {
+  transition: transform 200ms ease;
+}
+
+.advanced-arrow.is-open {
+  transform: rotate(180deg);
+}
+
+.kv-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.kv-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.kv-key {
+  flex: 0 0 180px;
+}
+
+.kv-value {
+  flex: 1;
+}
+
+.kv-remove {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--panel-line-soft);
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  font-size: 16px;
+  cursor: pointer;
+  transition: color 120ms, border-color 120ms;
+}
+
+.kv-remove:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.kv-add {
+  align-self: flex-start;
+  padding: 6px 12px;
+  border: 1px dashed var(--panel-line-soft);
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 120ms, border-color 120ms;
+}
+
+.kv-add:hover {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 @media (max-width: 960px) {

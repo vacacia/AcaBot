@@ -3,7 +3,7 @@ from pathlib import Path
 from acabot.runtime.memory.conversation_facts import ConversationDelta, ConversationFact
 from acabot.runtime.memory.long_term_memory.contracts import MemoryEntry, MemoryProvenance
 from acabot.runtime.memory.long_term_memory.storage import LanceDbLongTermMemoryStore
-from acabot.runtime.memory.long_term_memory.write_port import CoreSimpleMemWritePort
+from acabot.runtime.memory.long_term_memory.write_port import LtmWritePort
 from acabot.runtime.memory.long_term_ingestor import ThreadLtmIngestResult
 
 
@@ -92,7 +92,7 @@ async def test_write_port_ingests_delta_in_fact_windows_without_saving_cursor(tm
     store = LanceDbLongTermMemoryStore(tmp_path / "lancedb")
     extractor = RecordingExtractor()
     embedding = RecordingEmbeddingClient()
-    port = CoreSimpleMemWritePort(
+    port = LtmWritePort(
         store=store,
         extractor=extractor,
         embedding_client=embedding,
@@ -109,7 +109,7 @@ async def test_write_port_ingests_delta_in_fact_windows_without_saving_cursor(tm
 
 async def test_write_port_records_failed_window_without_advancing_cursor(tmp_path: Path) -> None:
     store = LanceDbLongTermMemoryStore(tmp_path / "lancedb")
-    port = CoreSimpleMemWritePort(
+    port = LtmWritePort(
         store=store,
         extractor=FailingExtractor(),
         embedding_client=RecordingEmbeddingClient(),
@@ -128,7 +128,7 @@ async def test_write_port_records_failed_window_without_advancing_cursor(tmp_pat
 async def test_write_port_continues_after_failed_window_and_records_retry_count(tmp_path: Path) -> None:
     store = LanceDbLongTermMemoryStore(tmp_path / "lancedb")
     extractor = FailingFirstWindowExtractor()
-    port = CoreSimpleMemWritePort(
+    port = LtmWritePort(
         store=store,
         extractor=extractor,
         embedding_client=RecordingEmbeddingClient(),

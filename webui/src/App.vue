@@ -27,12 +27,22 @@ type AccentTheme = "rose" | "violet" | "aqua" | "amber" | "graphite"
 const THEME_STORAGE_KEY = "acabot.theme_mode"
 const ACCENT_STORAGE_KEY = "acabot.accent_theme"
 
-const themeMode = ref<ThemeMode>("dark")
-const accentTheme = ref<AccentTheme>("rose")
-let mediaQuery: MediaQueryList | null = null
+// Read saved values synchronously at setup time so the initial ref matches localStorage
+const savedTheme = localStorage.getItem(THEME_STORAGE_KEY)
+const savedAccent = localStorage.getItem(ACCENT_STORAGE_KEY)
+
+const themeMode = ref<ThemeMode>(
+  savedTheme === "light" || savedTheme === "dark" || savedTheme === "system" ? savedTheme : "dark"
+)
+const accentTheme = ref<AccentTheme>(
+  savedAccent === "rose" || savedAccent === "violet" || savedAccent === "aqua" || savedAccent === "amber" || savedAccent === "graphite" ? savedAccent : "rose"
+)
+
+// Initialize mediaQuery synchronously — window.matchMedia is safe in <script setup>
+const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)")
 
 function systemTheme(): "light" | "dark" {
-  return mediaQuery?.matches ? "dark" : "light"
+  return mediaQuery.matches ? "dark" : "light"
 }
 
 function applyTheme(mode: ThemeMode): void {
@@ -45,6 +55,10 @@ function applyTheme(mode: ThemeMode): void {
 function applyAccentTheme(theme: AccentTheme): void {
   document.documentElement.dataset.accentTheme = theme
 }
+
+// Apply theme immediately during setup — no waiting for onMounted
+applyTheme(themeMode.value)
+applyAccentTheme(accentTheme.value)
 
 function setThemeMode(mode: ThemeMode): void {
   themeMode.value = mode
@@ -65,21 +79,6 @@ function handleSystemThemeChange(): void {
 }
 
 onMounted(() => {
-  mediaQuery = window.matchMedia("(prefers-color-scheme: dark)")
-  const savedTheme = localStorage.getItem(THEME_STORAGE_KEY)
-  const savedAccent = localStorage.getItem(ACCENT_STORAGE_KEY)
-  if (savedTheme === "light" || savedTheme === "dark" || savedTheme === "system") {
-    themeMode.value = savedTheme
-  } else {
-    themeMode.value = "dark"
-  }
-  if (savedAccent === "rose" || savedAccent === "violet" || savedAccent === "aqua" || savedAccent === "amber" || savedAccent === "graphite") {
-    accentTheme.value = savedAccent
-  } else {
-    accentTheme.value = "rose"
-  }
-  applyTheme(themeMode.value)
-  applyAccentTheme(accentTheme.value)
   mediaQuery.addEventListener("change", handleSystemThemeChange)
 })
 
@@ -96,220 +95,170 @@ onBeforeUnmount(() => {
     "PingFang SC",
     "Microsoft YaHei",
     sans-serif;
-  --shadow-soft: 0 26px 70px rgba(190, 143, 143, 0.16), 0 8px 24px rgba(255, 255, 255, 0.42);
-  --shadow-card: 0 18px 44px rgba(191, 149, 149, 0.12), 0 4px 18px rgba(255, 255, 255, 0.28);
-  --border-strong: rgba(255, 255, 255, 0.7);
-  --blur-card: blur(24px) saturate(210%) contrast(1.02);
-  --glass-face-top: rgba(255, 255, 255, 0.12);
-  --glass-face-bottom: rgba(255, 247, 249, 0.04);
-  --glass-sheen-top: rgba(255, 255, 255, 0.68);
-  --glass-sheen-mid: rgba(255, 255, 255, 0.18);
-  --glass-edge-line: rgba(255, 255, 255, 0.5);
-  --glass-edge-shadow: rgba(255, 155, 171, 0.08);
-  --theme-bg-spot-1: rgba(255, 179, 188, 0.3);
-  --theme-bg-spot-2: rgba(255, 219, 224, 0.22);
-  --theme-bg-spot-3: rgba(255, 204, 215, 0.14);
-  --theme-bg-spot-4: rgba(255, 225, 230, 0.1);
-  --orb-a-color: rgba(255, 162, 177, 0.22);
-  --orb-b-color: rgba(255, 207, 214, 0.18);
-  --orb-c-color: rgba(255, 182, 196, 0.1);
-  --ambient-glow-primary: rgba(255, 178, 191, 0.3);
-  --ambient-glow-secondary: rgba(255, 222, 229, 0.24);
-  --ambient-glow-tertiary: rgba(255, 197, 211, 0.18);
-  --ambient-ribbon-primary: rgba(255, 212, 221, 0.24);
-  --ambient-ribbon-secondary: rgba(255, 255, 255, 0.16);
-  --ambient-ribbon-tertiary: rgba(255, 191, 206, 0.12);
-  --ambient-band: rgba(255, 255, 255, 0.28);
-  --ambient-vignette: rgba(255, 245, 247, 0.22);
-  --main-ribbon-soft: rgba(255, 255, 255, 0.1);
-  --main-ribbon-accent: rgba(255, 216, 224, 0.14);
-  --main-ribbon-fill: rgba(255, 255, 255, 0.06);
-  --bg-top: #f7f1ef;
-  --bg-bottom: #fff7f8;
-  --panel: rgba(255, 255, 255, 0.18);
-  --panel-strong: rgba(255, 251, 252, 0.24);
-  --panel-white: rgba(255, 255, 255, 0.22);
-  --panel-blue-soft: rgba(255, 239, 243, 0.38);
-  --panel-blue-soft-text: #aa3550;
-  --line: rgba(239, 217, 221, 0.82);
-  --panel-line-strong: rgba(239, 217, 221, 0.72);
-  --panel-line-soft: rgba(239, 217, 221, 0.56);
-  --text: #221b1f;
-  --muted: #6f5c65;
-  --heading-strong: #241d22;
-  --heading-soft: #45363d;
-  --sidebar-text: #31262d;
+  --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.06);
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.05);
+  --border-strong: #e2e5ea;
+  --blur-card: none;
+  --glass-face-top: transparent;
+  --glass-face-bottom: transparent;
+  --glass-sheen-top: transparent;
+  --glass-sheen-mid: transparent;
+  --glass-edge-line: #e2e5ea;
+  --glass-edge-shadow: rgba(0, 0, 0, 0.04);
+  --theme-bg-spot-1: transparent;
+  --theme-bg-spot-2: transparent;
+  --theme-bg-spot-3: transparent;
+  --theme-bg-spot-4: transparent;
+  --orb-a-color: transparent;
+  --orb-b-color: transparent;
+  --orb-c-color: transparent;
+  --ambient-glow-primary: transparent;
+  --ambient-glow-secondary: transparent;
+  --ambient-glow-tertiary: transparent;
+  --ambient-ribbon-primary: transparent;
+  --ambient-ribbon-secondary: transparent;
+  --ambient-ribbon-tertiary: transparent;
+  --ambient-band: transparent;
+  --ambient-vignette: transparent;
+  --main-ribbon-soft: transparent;
+  --main-ribbon-accent: transparent;
+  --main-ribbon-fill: transparent;
+  --bg-top: #f8f9fb;
+  --bg-bottom: #f0f2f5;
+  --panel: #ffffff;
+  --panel-strong: #f5f6f8;
+  --panel-white: #ffffff;
+  --panel-blue-soft: #eef2f8;
+  --panel-blue-soft-text: #3d5a80;
+  --line: #e2e5ea;
+  --panel-line-strong: #d4d8de;
+  --panel-line-soft: #e8eaef;
+  --text: #1a1d23;
+  --muted: #6b7280;
+  --heading-strong: #111318;
+  --heading-soft: #374151;
+  --sidebar-text: #1f2937;
   --sidebar-active: var(--accent);
-  --accent: #ff6479;
-  --accent-2: #ff98a6;
-  --accent-soft: rgba(255, 100, 121, 0.16);
-  --success: #18b368;
-  --danger: #ef4f62;
-  --warning: #d89a2e;
-  --info: #4d83ff;
-  --button-primary-start: var(--accent);
-  --button-primary-end: var(--accent-2);
-  --button-shadow-color: rgba(255, 111, 128, 0.22);
-  --sidebar-bg: rgba(255, 249, 250, 0.18);
-  --sidebar-shadow: 0 22px 54px rgba(191, 149, 149, 0.12);
-  --sidebar-brand-mark-start: #ff6479;
-  --sidebar-brand-mark-end: #ff98a6;
-  --theme-switch-bg: rgba(255, 255, 255, 0.2);
-  --theme-switch-active-bg: linear-gradient(135deg, rgba(255, 206, 214, 0.34), rgba(255, 244, 246, 0.2));
+  --accent: #6366f1;
+  --accent-2: #818cf8;
+  --accent-soft: rgba(99, 102, 241, 0.1);
+  --success: #10b981;
+  --danger: #ef4444;
+  --warning: #f59e0b;
+  --info: #3b82f6;
+  --button-primary-start: #6366f1;
+  --button-primary-end: #818cf8;
+  --button-shadow-color: rgba(99, 102, 241, 0.2);
+  --sidebar-bg: #ffffff;
+  --sidebar-shadow: 0 1px 0 #e2e5ea;
+  --sidebar-brand-mark-start: #6366f1;
+  --sidebar-brand-mark-end: #818cf8;
+  --theme-switch-bg: #f0f2f5;
+  --theme-switch-active-bg: #ffffff;
   --theme-switch-active-text: var(--accent);
   --theme-switch-text: var(--muted);
-  --log-message: #2b2127;
-  --log-seq: #7a6670;
-  --log-time: #8b7781;
-  --log-logger: #6d5a64;
-  --napcat-chip: #16877d;
+  --log-message: #1a1d23;
+  --log-seq: #9ca3af;
+  --log-time: #6b7280;
+  --log-logger: #9ca3af;
+  --napcat-chip: #059669;
   font-family: var(--font-sans);
 }
 
 :root[data-theme="dark"] {
-  --shadow-soft: 0 30px 84px rgba(0, 0, 0, 0.42), 0 10px 28px rgba(255, 149, 167, 0.04);
-  --shadow-card: 0 22px 54px rgba(0, 0, 0, 0.32), 0 4px 18px rgba(255, 149, 167, 0.05);
-  --border-strong: rgba(255, 255, 255, 0.12);
-  --glass-face-top: rgba(31, 38, 54, 0.12);
-  --glass-face-bottom: rgba(21, 27, 38, 0.04);
-  --glass-sheen-top: rgba(255, 255, 255, 0.14);
-  --glass-sheen-mid: rgba(255, 255, 255, 0.04);
-  --glass-edge-line: rgba(255, 255, 255, 0.18);
-  --glass-edge-shadow: rgba(5, 8, 16, 0.22);
-  --bg-top: #0e1218;
-  --bg-bottom: #171c26;
-  --panel: rgba(25, 31, 44, 0.16);
-  --panel-strong: rgba(18, 24, 35, 0.22);
-  --panel-white: rgba(30, 36, 51, 0.3);
-  --panel-blue-soft: rgba(66, 90, 128, 0.18);
-  --panel-blue-soft-text: #dbe7f5;
-  --line: rgba(103, 111, 139, 0.46);
-  --panel-line-strong: rgba(103, 111, 139, 0.34);
-  --panel-line-soft: rgba(103, 111, 139, 0.24);
-  --text: #f6f4f7;
-  --muted: #b8adba;
-  --heading-strong: #f7f5f8;
-  --heading-soft: #d8cfda;
-  --sidebar-text: #efeaf1;
-  --accent-soft: rgba(255, 120, 135, 0.18);
-  --sidebar-bg: rgba(20, 25, 37, 0.18);
-  --sidebar-shadow: 0 22px 54px rgba(0, 0, 0, 0.34);
-  --theme-switch-bg: rgba(255, 255, 255, 0.06);
-  --theme-switch-active-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.04));
-  --theme-switch-active-text: #fff8fb;
-  --log-message: #f4edf6;
-  --log-seq: #d3c6d5;
-  --log-time: #b7a9ba;
-  --log-logger: #c7b8ca;
-  --napcat-chip: #7ce0d4;
-  --main-ribbon-soft: rgba(255, 255, 255, 0.06);
-  --main-ribbon-accent: rgba(255, 188, 201, 0.08);
-  --main-ribbon-fill: rgba(255, 255, 255, 0.02);
+  --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.3);
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.2);
+  --border-strong: #2a2d35;
+  --glass-face-top: transparent;
+  --glass-face-bottom: transparent;
+  --glass-sheen-top: transparent;
+  --glass-sheen-mid: transparent;
+  --glass-edge-line: #2a2d35;
+  --glass-edge-shadow: rgba(0, 0, 0, 0.3);
+  --bg-top: #111318;
+  --bg-bottom: #0d0f14;
+  --panel: #1a1d24;
+  --panel-strong: #15171e;
+  --panel-white: #1e2028;
+  --panel-blue-soft: #1c2130;
+  --panel-blue-soft-text: #c4d5eb;
+  --line: #2a2d35;
+  --panel-line-strong: #33363f;
+  --panel-line-soft: #232630;
+  --text: #e4e5e9;
+  --muted: #8b8d97;
+  --heading-strong: #f0f1f3;
+  --heading-soft: #c0c2c8;
+  --sidebar-text: #d0d2d7;
+  --accent-soft: rgba(99, 102, 241, 0.15);
+  --sidebar-bg: #15171e;
+  --sidebar-shadow: 0 1px 0 #2a2d35;
+  --theme-switch-bg: #1e2028;
+  --theme-switch-active-bg: #252830;
+  --theme-switch-active-text: #f0f1f3;
+  --log-message: #e4e5e9;
+  --log-seq: #6b6d77;
+  --log-time: #8b8d97;
+  --log-logger: #6b6d77;
+  --napcat-chip: #34d399;
+  --main-ribbon-soft: transparent;
+  --main-ribbon-accent: transparent;
+  --main-ribbon-fill: transparent;
 }
 
 :root[data-accent-theme="rose"] {
-  --accent: #ff6479;
-  --accent-2: #ff98a6;
-  --button-shadow-color: rgba(255, 111, 128, 0.22);
-  --theme-bg-spot-1: rgba(255, 179, 188, 0.3);
-  --theme-bg-spot-2: rgba(255, 219, 224, 0.22);
-  --theme-bg-spot-3: rgba(255, 204, 215, 0.14);
-  --theme-bg-spot-4: rgba(255, 225, 230, 0.1);
-  --orb-a-color: rgba(255, 162, 177, 0.22);
-  --orb-b-color: rgba(255, 207, 214, 0.18);
-  --orb-c-color: rgba(255, 182, 196, 0.1);
-  --ambient-glow-primary: rgba(255, 178, 191, 0.3);
-  --ambient-glow-secondary: rgba(255, 222, 229, 0.24);
-  --ambient-glow-tertiary: rgba(255, 197, 211, 0.18);
-  --ambient-ribbon-primary: rgba(255, 212, 221, 0.3);
-  --ambient-ribbon-secondary: rgba(255, 255, 255, 0.22);
-  --ambient-ribbon-tertiary: rgba(255, 191, 206, 0.18);
-  --sidebar-brand-mark-start: #ff6479;
-  --sidebar-brand-mark-end: #ff98a6;
+  --accent: #f43f5e;
+  --accent-2: #fb7185;
+  --accent-soft: rgba(244, 63, 94, 0.1);
+  --button-shadow-color: rgba(244, 63, 94, 0.2);
+  --sidebar-brand-mark-start: #f43f5e;
+  --sidebar-brand-mark-end: #fb7185;
+  --button-primary-start: #f43f5e;
+  --button-primary-end: #fb7185;
 }
 
 :root[data-accent-theme="violet"] {
-  --accent: #8a63ff;
-  --accent-2: #c0a4ff;
-  --button-shadow-color: rgba(138, 99, 255, 0.2);
-  --theme-bg-spot-1: rgba(201, 183, 255, 0.3);
-  --theme-bg-spot-2: rgba(230, 220, 255, 0.22);
-  --theme-bg-spot-3: rgba(189, 207, 255, 0.14);
-  --theme-bg-spot-4: rgba(221, 213, 255, 0.1);
-  --orb-a-color: rgba(188, 163, 255, 0.22);
-  --orb-b-color: rgba(219, 205, 255, 0.18);
-  --orb-c-color: rgba(181, 202, 255, 0.1);
-  --ambient-glow-primary: rgba(196, 176, 255, 0.3);
-  --ambient-glow-secondary: rgba(225, 214, 255, 0.24);
-  --ambient-glow-tertiary: rgba(177, 197, 255, 0.18);
-  --ambient-ribbon-primary: rgba(198, 180, 255, 0.28);
-  --ambient-ribbon-secondary: rgba(239, 234, 255, 0.2);
-  --ambient-ribbon-tertiary: rgba(177, 202, 255, 0.16);
-  --sidebar-brand-mark-start: #8a63ff;
-  --sidebar-brand-mark-end: #c0a4ff;
+  --accent: #8b5cf6;
+  --accent-2: #a78bfa;
+  --accent-soft: rgba(139, 92, 246, 0.1);
+  --button-shadow-color: rgba(139, 92, 246, 0.2);
+  --sidebar-brand-mark-start: #8b5cf6;
+  --sidebar-brand-mark-end: #a78bfa;
+  --button-primary-start: #8b5cf6;
+  --button-primary-end: #a78bfa;
 }
 
 :root[data-accent-theme="aqua"] {
-  --accent: #28a8c7;
-  --accent-2: #7eddf0;
-  --button-shadow-color: rgba(40, 168, 199, 0.18);
-  --theme-bg-spot-1: rgba(177, 238, 248, 0.28);
-  --theme-bg-spot-2: rgba(214, 248, 255, 0.22);
-  --theme-bg-spot-3: rgba(174, 218, 255, 0.14);
-  --theme-bg-spot-4: rgba(201, 242, 249, 0.1);
-  --orb-a-color: rgba(124, 218, 237, 0.2);
-  --orb-b-color: rgba(205, 244, 250, 0.16);
-  --orb-c-color: rgba(167, 221, 255, 0.1);
-  --ambient-glow-primary: rgba(151, 228, 242, 0.28);
-  --ambient-glow-secondary: rgba(207, 245, 251, 0.22);
-  --ambient-glow-tertiary: rgba(174, 221, 255, 0.16);
-  --ambient-ribbon-primary: rgba(155, 229, 242, 0.26);
-  --ambient-ribbon-secondary: rgba(232, 250, 255, 0.18);
-  --ambient-ribbon-tertiary: rgba(170, 220, 255, 0.14);
-  --sidebar-brand-mark-start: #28a8c7;
-  --sidebar-brand-mark-end: #7eddf0;
+  --accent: #0891b2;
+  --accent-2: #22d3ee;
+  --accent-soft: rgba(8, 145, 178, 0.1);
+  --button-shadow-color: rgba(8, 145, 178, 0.18);
+  --sidebar-brand-mark-start: #0891b2;
+  --sidebar-brand-mark-end: #22d3ee;
+  --button-primary-start: #0891b2;
+  --button-primary-end: #22d3ee;
 }
 
 :root[data-accent-theme="amber"] {
-  --accent: #d89a2e;
-  --accent-2: #f0cb88;
-  --button-shadow-color: rgba(216, 154, 46, 0.18);
-  --theme-bg-spot-1: rgba(255, 220, 174, 0.28);
-  --theme-bg-spot-2: rgba(255, 241, 214, 0.22);
-  --theme-bg-spot-3: rgba(255, 216, 179, 0.14);
-  --theme-bg-spot-4: rgba(255, 236, 203, 0.1);
-  --orb-a-color: rgba(248, 209, 138, 0.2);
-  --orb-b-color: rgba(255, 237, 204, 0.16);
-  --orb-c-color: rgba(255, 216, 164, 0.1);
-  --ambient-glow-primary: rgba(248, 214, 155, 0.28);
-  --ambient-glow-secondary: rgba(255, 238, 209, 0.22);
-  --ambient-glow-tertiary: rgba(255, 214, 158, 0.16);
-  --ambient-ribbon-primary: rgba(248, 214, 156, 0.26);
-  --ambient-ribbon-secondary: rgba(255, 247, 229, 0.18);
-  --ambient-ribbon-tertiary: rgba(255, 222, 174, 0.14);
-  --sidebar-brand-mark-start: #d89a2e;
-  --sidebar-brand-mark-end: #f0cb88;
+  --accent: #d97706;
+  --accent-2: #fbbf24;
+  --accent-soft: rgba(217, 119, 6, 0.1);
+  --button-shadow-color: rgba(217, 119, 6, 0.18);
+  --sidebar-brand-mark-start: #d97706;
+  --sidebar-brand-mark-end: #fbbf24;
+  --button-primary-start: #d97706;
+  --button-primary-end: #fbbf24;
 }
 
 :root[data-accent-theme="graphite"] {
-  --accent: #6f829c;
-  --accent-2: #a7b4c6;
-  --button-shadow-color: rgba(111, 130, 156, 0.16);
-  --theme-bg-spot-1: rgba(210, 218, 231, 0.26);
-  --theme-bg-spot-2: rgba(236, 241, 248, 0.2);
-  --theme-bg-spot-3: rgba(198, 214, 232, 0.14);
-  --theme-bg-spot-4: rgba(225, 232, 240, 0.1);
-  --orb-a-color: rgba(184, 197, 214, 0.18);
-  --orb-b-color: rgba(228, 235, 244, 0.16);
-  --orb-c-color: rgba(191, 208, 229, 0.1);
-  --ambient-glow-primary: rgba(199, 209, 223, 0.24);
-  --ambient-glow-secondary: rgba(232, 238, 246, 0.18);
-  --ambient-glow-tertiary: rgba(187, 205, 227, 0.14);
-  --ambient-ribbon-primary: rgba(197, 210, 225, 0.22);
-  --ambient-ribbon-secondary: rgba(239, 244, 250, 0.16);
-  --ambient-ribbon-tertiary: rgba(186, 204, 227, 0.12);
-  --sidebar-brand-mark-start: #6f829c;
-  --sidebar-brand-mark-end: #a7b4c6;
+  --accent: #64748b;
+  --accent-2: #94a3b8;
+  --accent-soft: rgba(100, 116, 139, 0.1);
+  --button-shadow-color: rgba(100, 116, 139, 0.16);
+  --sidebar-brand-mark-start: #64748b;
+  --sidebar-brand-mark-end: #94a3b8;
+  --button-primary-start: #64748b;
+  --button-primary-end: #94a3b8;
 }
 
 html,
@@ -321,13 +270,7 @@ body,
 body {
   position: relative;
   margin: 0;
-  background:
-    radial-gradient(circle at 12% 12%, var(--theme-bg-spot-1), transparent 0, transparent 25%),
-    radial-gradient(circle at 46% 0%, var(--theme-bg-spot-2), transparent 0, transparent 26%),
-    radial-gradient(circle at 88% 20%, var(--theme-bg-spot-3), transparent 0, transparent 24%),
-    radial-gradient(circle at 68% 74%, var(--theme-bg-spot-4), transparent 0, transparent 30%),
-    linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
-  background-attachment: fixed;
+  background: var(--bg-bottom);
   color: var(--text);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
@@ -355,6 +298,7 @@ body::before {
   filter: blur(26px) saturate(138%);
   mix-blend-mode: screen;
   opacity: 0.72;
+  transition: opacity 160ms ease, filter 160ms ease;
 }
 
 body::after {
@@ -365,6 +309,7 @@ body::after {
   z-index: 0;
   background: radial-gradient(circle at center, transparent 52%, var(--ambient-vignette) 100%);
   opacity: 0.55;
+  transition: opacity 160ms ease;
 }
 
 #app {
@@ -417,6 +362,21 @@ textarea {
   background-blend-mode: screen;
   filter: blur(18px) saturate(108%);
   opacity: 0.72;
+  transition: opacity 160ms ease, filter 160ms ease;
+}
+
+body.overlay-active::before {
+  opacity: 0.18;
+  filter: blur(14px) saturate(108%);
+}
+
+body.overlay-active::after {
+  opacity: 0.18;
+}
+
+body.overlay-active .main::before {
+  opacity: 0.16;
+  filter: blur(10px) saturate(100%);
 }
 
 .main > * {

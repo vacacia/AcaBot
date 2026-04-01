@@ -3,6 +3,7 @@ defineProps<{
   title: string
   value: string
   hint: string
+  detail?: string
 }>()
 </script>
 
@@ -11,6 +12,7 @@ defineProps<{
     <div class="title">{{ title }}</div>
     <div class="value">{{ value }}</div>
     <div class="hint">{{ hint }}</div>
+    <div v-if="detail" class="detail">{{ detail }}</div>
   </article>
 </template>
 
@@ -48,23 +50,31 @@ defineProps<{
 
 .title {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
 .value {
-  margin: 10px 0 6px;
-  font-size: clamp(28px, 2vw, 36px);
+  margin: 8px 0 4px;
+  font-size: clamp(20px, 1.6vw, 22px);
   font-weight: 800;
   color: var(--heading-strong);
-  letter-spacing: -0.04em;
+  letter-spacing: -0.03em;
 }
 
 .hint {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.55;
+}
+
+.detail {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+  opacity: 0.8;
 }
 </style>

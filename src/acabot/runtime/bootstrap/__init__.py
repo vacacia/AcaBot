@@ -304,14 +304,15 @@ def build_runtime_components(
         subagent_names={item.subagent_name for item in runtime_subagent_catalog.list_all()},
     )
 
-    runtime_frontstage_agents = (
-        [
-            ResolvedAgent.from_session_agent(bundle.frontstage_agent)
-            for bundle in runtime_session_bundle_loader.list_bundles()
-        ]
-        if runtime_session_bundle_loader is not None
-        else [default_frontstage_agent]
-    )
+    runtime_frontstage_agents: list[ResolvedAgent] = [default_frontstage_agent]
+    if runtime_session_bundle_loader is not None:
+        seen_agent_ids = {default_frontstage_agent.agent_id}
+        for bundle in runtime_session_bundle_loader.list_bundles():
+            resolved = ResolvedAgent.from_session_agent(bundle.frontstage_agent)
+            if resolved.agent_id in seen_agent_ids:
+                continue
+            runtime_frontstage_agents.append(resolved)
+            seen_agent_ids.add(resolved.agent_id)
     runtime_model_target_catalog.replace_agent_targets(build_agent_model_targets(runtime_frontstage_agents))
     runtime_model_registry_manager.target_catalog.replace_agent_targets(
         build_agent_model_targets(runtime_frontstage_agents)
@@ -458,6 +459,7 @@ def build_runtime_components(
         reference_backend=runtime_reference_backend,
         config_control_plane=config_control_plane,
         log_buffer=log_buffer,
+        ltm_store=runtime_long_term_memory_store,
     )
     runtime_plugin_manager.attach_control_plane(control_plane)
     runtime_plugin_manager.attach_computer_runtime(runtime_computer_runtime)

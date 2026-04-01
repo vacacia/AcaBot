@@ -38,26 +38,6 @@ def resolve_run_request_for_agent(
     return request, snapshot_from_runtime_request(request)
 
 
-def resolve_summary_request(
-    manager: FileSystemModelRegistryManager | None,
-) -> RuntimeModelRequest | None:
-    """解析 summary target 对应的模型请求."""
-
-    if manager is None:
-        return None
-    return manager.resolve_target_request("system:compactor_summary")
-
-
-def resolve_image_caption_request(
-    manager: FileSystemModelRegistryManager | None,
-) -> RuntimeModelRequest | None:
-    """解析 image caption target 对应的模型请求."""
-
-    if manager is None:
-        return None
-    return manager.resolve_target_request("system:image_caption")
-
-
 def resolve_model_requests_for_agent(
     manager: FileSystemModelRegistryManager | None,
     *,
@@ -68,7 +48,10 @@ def resolve_model_requests_for_agent(
     PersistedModelSnapshot | None,
     RuntimeModelRequest | None,
 ]:
-    """为当前 agent 快照解析本次 run 与 summary 的模型请求配置."""
+    """为当前 agent 快照解析本次 run 与 summary 的模型请求配置.
+
+    summary_model_request 直接等于 model_request(压缩用主模型).
+    """
 
     if manager is None:
         return None, None, None
@@ -90,7 +73,8 @@ def resolve_model_requests_for_agent(
             run_mode=decision.run_mode,
             agent_id=agent.agent_id,
         )
-    summary_model_request = resolve_summary_request(manager)
+    # 压缩直接用主模型, 不再查独立 target
+    summary_model_request = model_request
     return model_request, model_snapshot, summary_model_request
 
 
@@ -100,10 +84,16 @@ def resolve_image_caption_request_for_agent(
     agent: ResolvedAgent,
     primary_request: RuntimeModelRequest | None,
 ) -> RuntimeModelRequest | None:
-    """为图片转述解析一份独立的模型请求.
+    """为图片转述解析模型请求.
 
-    这里不再读取旧前台身份入口, 只认固定 system target。
+    优先查 agent:{agent_id}:image_caption 绑定;
+    没有绑定时回退到主模型 primary_request(需要多模态能力才生效).
     """
 
-    _ = agent, primary_request
-    return resolve_image_caption_request(manager)
+    if manager is not None:
+        agent_caption = manager.resolve_target_request(
+            f"agent:{agent.agent_id}:image_caption"
+        )
+        if agent_caption is not None:
+            return agent_caption
+    return primary_request

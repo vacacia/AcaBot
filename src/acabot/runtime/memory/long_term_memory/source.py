@@ -8,7 +8,7 @@ from typing import Any, Protocol
 from ..memory_broker import MemoryAssemblySpec, MemoryBlock, SharedMemoryRetrievalRequest
 from .contracts import MemoryEntry
 from .ranking import merge_ranked_entry_hits
-from .renderer import CoreSimpleMemRenderer
+from .renderer import LtmRenderer
 
 
 class RetrievalStore(Protocol):
@@ -60,21 +60,13 @@ class QueryEmbeddingClient(Protocol):
 
 
 @dataclass(slots=True)
-class CoreSimpleMemMemorySource:
-    """CoreSimpleMemMemorySource 把长期记忆检索成一个统一 block.
-
-    Attributes:
-        store (RetrievalStore): 检索侧存储依赖面.
-        query_planner (QueryPlannerClient): query planning 客户端.
-        embedding_client (QueryEmbeddingClient): query embedding 客户端.
-        renderer (CoreSimpleMemRenderer): XML renderer.
-        max_entries (int): 最终注入条数上限.
-    """
+class LtmMemorySource:
+    """LTM 检索侧入口: query-aware 三路召回, 渲染成统一 block."""
 
     store: RetrievalStore
     query_planner: QueryPlannerClient
     embedding_client: QueryEmbeddingClient
-    renderer: CoreSimpleMemRenderer = field(default_factory=CoreSimpleMemRenderer)
+    renderer: LtmRenderer = field(default_factory=LtmRenderer)
     max_entries: int = 8
 
     async def __call__(self, request: SharedMemoryRetrievalRequest) -> list[MemoryBlock]:
@@ -260,4 +252,4 @@ class CoreSimpleMemMemorySource:
         }
 
 
-__all__ = ["CoreSimpleMemMemorySource", "RetrievalStore"]
+__all__ = ["LtmMemorySource", "RetrievalStore"]

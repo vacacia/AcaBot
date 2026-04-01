@@ -12,8 +12,8 @@ from acabot.runtime.memory.long_term_memory.model_clients import LtmQueryPlanner
 from acabot.runtime.model.model_registry import FileSystemModelRegistryManager
 from acabot.runtime.memory.long_term_memory.contracts import LtmSearchHit, MemoryEntry, MemoryProvenance
 from acabot.runtime.memory.long_term_memory.ranking import score_hit_channels
-from acabot.runtime.memory.long_term_memory.renderer import CoreSimpleMemRenderer
-from acabot.runtime.memory.long_term_memory.source import CoreSimpleMemMemorySource
+from acabot.runtime.memory.long_term_memory.renderer import LtmRenderer
+from acabot.runtime.memory.long_term_memory.source import LtmMemorySource
 from acabot.runtime.memory.long_term_memory.storage import LanceDbLongTermMemoryStore
 
 
@@ -107,7 +107,7 @@ async def test_long_term_memory_source_returns_single_long_term_memory_block(tmp
     store.upsert_entries(
         [_entry(entry_id="entry-1", topic="咖啡偏好", updated_at=123, text="Alice 喜欢拿铁。")]
     )
-    source = CoreSimpleMemMemorySource(
+    source = LtmMemorySource(
         store=store,
         query_planner=StaticQueryPlanner(),
         embedding_client=NullEmbeddingClient(),
@@ -122,7 +122,7 @@ async def test_long_term_memory_source_returns_single_long_term_memory_block(tmp
 
 
 def test_renderer_outputs_xml_in_rank_order() -> None:
-    renderer = CoreSimpleMemRenderer()
+    renderer = LtmRenderer()
     xml = renderer.render(
         [
             LtmSearchHit(
@@ -200,7 +200,7 @@ async def test_query_planner_client_uses_ltm_query_plan_target(tmp_path) -> None
         "location": "上海",
         "time_range": ["2025-01-01", "2025-12-31"],
     }
-    assert agent.calls[0]["model"] == "gpt-4.1-mini"
+    assert agent.calls[0]["model"] == "openai/gpt-4.1-mini"
 
 
 async def test_long_term_memory_source_ignores_empty_time_range_filter(tmp_path) -> None:
@@ -208,7 +208,7 @@ async def test_long_term_memory_source_ignores_empty_time_range_filter(tmp_path)
     store.upsert_entries(
         [_entry(entry_id="entry-1", topic="咖啡偏好", updated_at=123, text="Alice 喜欢拿铁。")]
     )
-    source = CoreSimpleMemMemorySource(
+    source = LtmMemorySource(
         store=store,
         query_planner=EmptyTimeRangePlanner(),
         embedding_client=NullEmbeddingClient(),

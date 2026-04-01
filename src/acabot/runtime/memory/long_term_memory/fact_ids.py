@@ -72,6 +72,12 @@ def build_fact_id_from_conversation_fact(fact: ConversationFact) -> str:
 def build_memory_entry_id(conversation_id: str, fact_ids: Iterable[str]) -> str:
     """根据对话容器和 canonical fact 集合生成稳定 entry_id.
 
+    entry_id = UUID5(conversation_id + sorted(fact_ids))
+
+    相同的 conversation_id + fact_ids 组合永远产生相同的 entry_id，
+    因此 storage 层用它做 upsert key：同一组事实再次被提取时，
+    会命中同一条记录并触发合并，而不是产生重复条目。
+
     Args:
         conversation_id: 所属对话容器.
         fact_ids: 这条记忆依赖的事实集合.

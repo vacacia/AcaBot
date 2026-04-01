@@ -1,7 +1,8 @@
 from pathlib import Path
 
 from acabot.runtime import (
-    AgentProfile,
+    ResolvedAgent,
+    AnthropicProviderConfig,
     FileSystemModelRegistryManager,
     ModelBinding,
     ModelProvider,
@@ -14,8 +15,8 @@ from acabot.runtime import (
 )
 
 
-def _profile(agent_id: str) -> AgentProfile:
-    return AgentProfile(
+def _profile(agent_id: str) -> ResolvedAgent:
+    return ResolvedAgent(
         agent_id=agent_id,
         name=agent_id.upper(),
         prompt_ref="prompt/default",
@@ -83,7 +84,7 @@ async def test_model_registry_manager_resolves_target_binding_and_preview(
     assert status.preset_count == 1
     assert status.binding_count == 1
     assert request is not None
-    assert request.model == "gpt-agent"
+    assert request.model == "openai/gpt-agent"
     assert request.provider_kind == "openai_compatible"
     assert request.execution_params["timeout"] == 10
     assert request.model_params["temperature"] == 0.2
@@ -118,7 +119,7 @@ async def test_model_registry_rejects_binding_when_preset_task_kind_mismatches_t
     result = await manager.upsert_binding(
         ModelBinding(
             binding_id="binding:summary",
-            target_id="system:compactor_summary",
+            target_id="system:ltm_extract",
             preset_ids=["embed-a"],
         )
     )
@@ -163,19 +164,19 @@ async def test_model_registry_manager_target_binding_supports_fallback_chain(
     await manager.upsert_binding(
         ModelBinding(
             binding_id="binding:summary",
-            target_id="system:compactor_summary",
+            target_id="system:ltm_extract",
             preset_ids=["summary-a", "summary-b"],
             timeout_sec=12,
         )
     )
 
-    request = manager.resolve_target_request("system:compactor_summary")
+    request = manager.resolve_target_request("system:ltm_extract")
 
     assert request is not None
     assert request.binding_id == "binding:summary"
-    assert request.model == "gpt-summary-a"
+    assert request.model == "openai/gpt-summary-a"
     assert request.execution_params["timeout"] == 12
-    assert [item.model for item in request.fallback_requests] == ["gpt-summary-b"]
+    assert [item.model for item in request.fallback_requests] == ["openai/gpt-summary-b"]
     assert all(item.binding_id == "binding:summary" for item in request.fallback_requests)
 
 
@@ -233,7 +234,7 @@ async def test_model_registry_keeps_plugin_binding_unresolved_until_slot_registe
 
     assert reload_result.ok is True
     assert request is not None
-    assert request.model == "gpt-plugin"
+    assert request.model == "openai/gpt-plugin"
 
 
 async def test_model_registry_blocks_plugin_binding_when_slot_task_kind_mismatches(
@@ -295,6 +296,12 @@ async def test_model_registry_rejects_binding_when_required_capabilities_are_mis
     tmp_path: Path,
 ) -> None:
     manager = _manager(tmp_path)
+    # 注册 agent target 使 agent:test:image_caption 可用(需要 image_input)
+    from acabot.runtime.model.model_targets import build_agent_model_targets, ModelTarget
+    from acabot.runtime import ResolvedAgent
+    manager.target_catalog.replace_agent_targets(
+        build_agent_model_targets([ResolvedAgent(agent_id="test", name="test", prompt_ref="p")])
+    )
     await manager.upsert_provider(
         ModelProvider(
             provider_id="openai-main",
@@ -319,7 +326,7 @@ async def test_model_registry_rejects_binding_when_required_capabilities_are_mis
     result = await manager.upsert_binding(
         ModelBinding(
             binding_id="binding:image-caption",
-            target_id="system:image_caption",
+            target_id="agent:test:image_caption",
             preset_ids=["caption-main"],
         )
     )
@@ -457,8 +464,53 @@ async def test_model_registry_manager_health_check_is_explicit_and_optional(
     result = await manager.health_check(preset_id="main")
 
     assert result.ok is True
-    assert result.model == "gpt-main"
+    assert result.model == "openai/gpt-main"
     assert manager.status().provider_count == 1
+
+
+async def test_model_registry_health_check_prefixes_anthropic_models_for_litellm(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    manager = _manager(tmp_path)
+    await manager.upsert_provider(
+        ModelProvider(
+            provider_id="glm",
+            kind="anthropic",
+            config=AnthropicProviderConfig(
+                base_url="https://open.bigmodel.cn/api/anthropic",
+                api_key_env="GLM_API_KEY",
+                anthropic_version="2023-06-01",
+            ),
+        )
+    )
+    await manager.upsert_preset(
+        ModelPreset(
+            preset_id="glm-main",
+            provider_id="glm",
+            model="glm-4.7",
+            task_kind="chat",
+            context_window=128000,
+        )
+    )
+
+    async def fake_complete(self, system_prompt, messages, model=None, request_options=None):
+        _ = self, system_prompt, messages, request_options
+        return type(
+            "Response",
+            (),
+            {
+                "error": None,
+                "model_used": model or "",
+            },
+        )()
+
+    monkeypatch.setattr("acabot.agent.agent.LitellmAgent.complete", fake_complete)
+
+    result = await manager.health_check(preset_id="glm-main")
+
+    assert result.ok is True
+    assert result.model == "anthropic/glm-4.7"
 
 
 async def test_model_registry_supports_inline_api_key_from_provider_payload(

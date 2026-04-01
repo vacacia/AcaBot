@@ -1,6 +1,6 @@
 """runtime.memory.long_term_memory.contracts 定义长期记忆正式对象.
 
-这个模块只负责 Core SimpleMem 的内部正式契约:
+这个模块只负责 LTM 的内部正式契约:
 - `MemoryEntry` 表示长期记忆原子对象
 - `MemoryProvenance` 表示记忆依据
 - `ConversationFactAnchorMap` 表示提取窗口里的本地锚点映射
@@ -85,7 +85,7 @@ class MemoryProvenance:
 
 @dataclass(slots=True)
 class MemoryEntry:
-    """MemoryEntry 表示 Core SimpleMem 的正式长期记忆对象.
+    """MemoryEntry 表示 LTM 的正式长期记忆对象.
 
     Attributes:
         entry_id (str): 这条记忆的稳定主键.
@@ -148,6 +148,11 @@ class MemoryEntry:
             raise ValueError("lossless_restatement is required")
         if not self.provenance.fact_ids:
             raise ValueError("provenance.fact_ids is required")
+        # time_point 和 time_interval 互斥：事件要么发生在某个时刻，要么持续一段时间
+        if self.time_point and (self.time_interval_start or self.time_interval_end):
+            raise ValueError(
+                "time_point and time_interval cannot both be set on the same entry"
+            )
 
 
 @dataclass(slots=True)

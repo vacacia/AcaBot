@@ -37,7 +37,7 @@ def _normalize_string_list(raw_items: object) -> list[str]:
 def _filesystem_session_storage_enabled(fs_conf: dict[str, object]) -> bool:
     """是否显式启用了 session bundle 文件真源."""
 
-    return bool(fs_conf.get("enabled", False)) and "sessions_dir" in fs_conf
+    return bool(fs_conf.get("enabled", False))
 
 
 def build_default_frontstage_agent(
@@ -175,6 +175,7 @@ def build_session_bundle_loader(
     tool_names: set[str],
     skill_names: set[str],
     subagent_names: set[str],
+    model_target_ids: set[str] | None = None,
 ) -> SessionBundleLoader | None:
     """按当前配置构造 session bundle loader.
 
@@ -197,6 +198,7 @@ def build_session_bundle_loader(
         tool_names=tool_names,
         skill_names=skill_names,
         subagent_names=subagent_names,
+        model_target_ids=model_target_ids,
     )
 
 

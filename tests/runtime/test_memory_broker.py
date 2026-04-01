@@ -8,7 +8,7 @@ from acabot.runtime import (
     RunContext,
 )
 from acabot.runtime.memory.long_term_memory.contracts import MemoryEntry, MemoryProvenance
-from acabot.runtime.memory.long_term_memory.source import CoreSimpleMemMemorySource
+from acabot.runtime.memory.long_term_memory.source import LtmMemorySource
 from acabot.runtime.memory.long_term_memory.storage import LanceDbLongTermMemoryStore
 from acabot.runtime.contracts import (
     ResolvedAgent,
@@ -279,7 +279,7 @@ async def test_memory_broker_accepts_long_term_memory_source_without_special_cas
         registry=_registry(
             (
                 "long_term_memory",
-                CoreSimpleMemMemorySource(
+                LtmMemorySource(
                     store=store,
                     query_planner=StaticPlanner(),
                     embedding_client=NullEmbeddingClient(),

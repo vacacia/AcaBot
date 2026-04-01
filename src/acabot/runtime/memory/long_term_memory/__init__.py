@@ -1,4 +1,4 @@
-"""runtime.memory.long_term_memory 导出 Core SimpleMem 的正式对象."""
+"""runtime.memory.long_term_memory 导出 LTM 的正式对象."""
 
 from .contracts import (
     ConversationFactAnchorMap,
@@ -27,10 +27,10 @@ from .model_clients import (
     LtmQueryPlannerClient,
 )
 from .ranking import HitChannelScore, merge_ranked_entry_hits, score_hit_channels
-from .renderer import CoreSimpleMemRenderer
-from .source import CoreSimpleMemMemorySource
+from .renderer import LtmRenderer
+from .source import LtmMemorySource
 from .write_port import (
-    CoreSimpleMemWritePort,
+    LtmWritePort,
     FactWindow,
     build_failed_window_id,
     derive_conversation_id_from_delta,
@@ -39,9 +39,9 @@ from .write_port import (
 
 __all__ = [
     "ConversationFactAnchorMap",
-    "CoreSimpleMemMemorySource",
-    "CoreSimpleMemRenderer",
-    "CoreSimpleMemWritePort",
+    "LtmMemorySource",
+    "LtmRenderer",
+    "LtmWritePort",
     "ExtractionWindowPayload",
     "FactWindow",
     "FailedWindowRecord",

@@ -164,7 +164,35 @@ def _default_computer_policy(config: Config) -> ComputerPolicy:
 def _session_bundle_storage_enabled(fs_conf: dict[str, object]) -> bool:
     """是否显式启用了 session bundle 文件真源."""
 
-    return bool(fs_conf.get("enabled", False)) and "sessions_dir" in fs_conf
+    return bool(fs_conf.get("enabled", False))
+
+
+def _surfaces_to_view(session: Any) -> dict[str, Any]:
+    """把 SessionConfig.surfaces 序列化成 WebUI 可消费的字典."""
+
+    result: dict[str, Any] = {}
+    for surface_id, surface in (session.surfaces or {}).items():
+        entry: dict[str, Any] = {}
+        for domain_name in ("routing", "admission", "context", "persistence", "extraction", "computer"):
+            domain = getattr(surface, domain_name, None)
+            if domain is None:
+                continue
+            domain_dict: dict[str, Any] = {"default": dict(domain.default)}
+            if domain.cases:
+                domain_dict["cases"] = [
+                    {
+                        "case_id": c.case_id,
+                        "when": c.when.to_dict() if hasattr(c.when, "to_dict") and c.when else None,
+                        "when_ref": c.when_ref,
+                        "use": dict(c.use),
+                        "priority": c.priority,
+                    }
+                    for c in domain.cases
+                ]
+            entry[domain_name] = domain_dict
+        result[surface_id] = entry
+    return result
+
 
 class RuntimeConfigControlPlane:
     """面向 WebUI 的 runtime 配置读写与热刷新服务."""
@@ -376,6 +404,15 @@ class RuntimeConfigControlPlane:
             raw["selectors"] = dict(payload.get("selectors", {}) or {})
         if "surfaces" in payload:
             raw["surfaces"] = dict(payload.get("surfaces", {}) or {})
+        if "context" in payload:
+            context_payload = dict(payload.get("context", {}) or {})
+            context_block = dict(raw.get("context", {}) or {})
+            if "strategy" in context_payload:
+                strategy = str(context_payload["strategy"] or "truncate")
+                context_block["strategy"] = strategy if strategy in ("truncate", "summarize") else "truncate"
+            if "preserve_recent" in context_payload:
+                context_block["preserve_recent"] = max(1, int(context_payload["preserve_recent"] or 12))
+            raw["context"] = context_block
         raw["session"] = session_block
         self._write_yaml(bundle.paths.session_config_path, raw)
         try:
@@ -399,6 +436,12 @@ class RuntimeConfigControlPlane:
         for key in ("prompt_ref", "visible_tools", "visible_skills", "visible_subagents"):
             if key in payload:
                 raw[key] = payload[key]
+        if "model_target" in payload:
+            model_target = str(payload.get("model_target", "") or "").strip()
+            if model_target:
+                raw["model_target"] = model_target
+            else:
+                raw.pop("model_target", None)
         if "computer_policy" in payload:
             raw["computer_policy"] = dict(payload.get("computer_policy", {}) or {})
         self._write_yaml(bundle.paths.agent_config_path, raw)
@@ -426,6 +469,11 @@ class RuntimeConfigControlPlane:
             if self.subagent_catalog is not None
             else set()
         )
+        model_target_ids = (
+            {item.target_id for item in self.model_registry_manager.target_catalog.list_targets()}
+            if self.model_registry_manager is not None
+            else None
+        )
         self.session_bundle_loader = _build_runtime_session_bundle_loader(
             self.config,
             prompt_refs=_build_runtime_prompt_refs(
@@ -436,6 +484,7 @@ class RuntimeConfigControlPlane:
             tool_names=tool_names,
             skill_names=skill_names,
             subagent_names=subagent_names,
+            model_target_ids=model_target_ids,
         )
         self._rebind_agent_loader()
 
@@ -444,14 +493,15 @@ class RuntimeConfigControlPlane:
 
         if self.model_registry_manager is None:
             return
-        agents = (
-            [
-                ResolvedAgent.from_session_agent(bundle.frontstage_agent)
-                for bundle in self.session_bundle_loader.list_bundles()
-            ]
-            if self.session_bundle_loader is not None
-            else [self.default_frontstage_agent]
-        )
+        agents: list[ResolvedAgent] = [self.default_frontstage_agent]
+        if self.session_bundle_loader is not None:
+            seen_agent_ids = {self.default_frontstage_agent.agent_id}
+            for bundle in self.session_bundle_loader.list_bundles():
+                resolved = ResolvedAgent.from_session_agent(bundle.frontstage_agent)
+                if resolved.agent_id in seen_agent_ids:
+                    continue
+                agents.append(resolved)
+                seen_agent_ids.add(resolved.agent_id)
         self.model_registry_manager.target_catalog.replace_agent_targets(
             build_agent_model_targets(agents)
         )
@@ -945,6 +995,9 @@ class RuntimeConfigControlPlane:
             "visible_skills": list(agent.skills),
             "visible_subagents": list(agent.visible_subagents),
         }
+        model_target = str(agent.config.get("model_target", "") or "").strip()
+        if model_target:
+            payload["model_target"] = model_target
         if agent.computer_policy is not None:
             payload["computer_policy"] = {
                 "backend": agent.computer_policy.backend,
@@ -975,9 +1028,15 @@ class RuntimeConfigControlPlane:
                 "template_id": session.template_id,
                 "frontstage_agent_id": session.frontstage_agent_id,
             },
+            "surfaces": _surfaces_to_view(session),
+            "context": {
+                "strategy": session.context_strategy,
+                "preserve_recent": session.context_preserve_recent,
+            },
             "agent": {
                 "agent_id": agent.agent_id,
                 "prompt_ref": agent.prompt_ref,
+                "model_target": str(agent.config.get("model_target", "") or ""),
                 "visible_tools": list(agent.visible_tools),
                 "visible_skills": list(agent.visible_skills),
                 "visible_subagents": list(agent.visible_subagents),

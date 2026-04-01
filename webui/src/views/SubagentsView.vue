@@ -14,11 +14,17 @@ type SubagentItem = {
 }
 
 const items = ref<SubagentItem[]>(peekCachedGet<SubagentItem[]>("/api/subagents") ?? [])
+const loading = ref(true)
+const errorText = ref("")
 
-onMounted(() => {
-  void apiGet<SubagentItem[]>("/api/subagents").then((payload) => {
-    items.value = payload
-  })
+onMounted(async () => {
+  try {
+    items.value = await apiGet<SubagentItem[]>("/api/subagents")
+  } catch (err: any) {
+    errorText.value = err?.message || String(err)
+  } finally {
+    loading.value = false
+  }
 })
 </script>
 
@@ -30,12 +36,14 @@ onMounted(() => {
           <div>
             <p class="ds-eyebrow">Subagents</p>
             <h2>Catalog 清单</h2>
-            <p class="ds-summary">这里展示当前文件系统 catalog 里可发现的子代理定义。</p>
           </div>
         </div>
       </div>
 
-      <div class="ds-list">
+      <p v-if="loading" class="ds-status">加载中…</p>
+      <p v-else-if="errorText" class="ds-status is-error">{{ errorText }}</p>
+
+      <div v-else class="ds-list">
         <article
           v-for="item in items"
           :key="item.subagent_id || item.subagent_name || 'unnamed-subagent'"

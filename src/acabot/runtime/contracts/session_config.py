@@ -345,6 +345,8 @@ class SessionConfig:
         frontstage_agent_id (str): 会话默认前台 agent.
         selectors (dict[str, MatchSpec]): 可复用的匹配条件表.
         surfaces (dict[str, SurfaceConfig]): 按 surface 划分的配置矩阵.
+        context_strategy (str): 上下文压缩策略, "truncate" 或 "summarize".
+        context_preserve_recent (int): 保留的最近消息轮次数.
         metadata (dict[str, Any]): 加载来源等补充信息.
     """
 
@@ -354,6 +356,8 @@ class SessionConfig:
     frontstage_agent_id: str = ""
     selectors: dict[str, MatchSpec] = field(default_factory=dict)
     surfaces: dict[str, SurfaceConfig] = field(default_factory=dict)
+    context_strategy: str = "truncate"
+    context_preserve_recent: int = 12
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

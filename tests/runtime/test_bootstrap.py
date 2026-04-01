@@ -16,7 +16,7 @@ from acabot.config import Config
 from acabot.runtime import (
     ApprovalRequired,
     ResolvedAgent,
-    CoreSimpleMemMemorySource,
+    LtmMemorySource,
     ContextAssembler,
     ContextCompactor,
     FileSystemModelRegistryManager,
@@ -299,7 +299,7 @@ async def test_build_runtime_components_runs_app_with_model_agent_runtime(tmp_pa
     await gateway.handler(_event())
 
     assert agent.calls[0]["system_prompt"] == "You are Aca."
-    assert agent.calls[0]["model"] == "test-model"
+    assert agent.calls[0]["model"] == "openai/test-model"
     assert components.pipeline.tool_broker is components.tool_broker
     assert components.pipeline.memory_broker is components.memory_broker
 
@@ -342,7 +342,7 @@ async def test_build_runtime_components_registers_long_term_memory_source_and_in
     source = components.memory_broker.registry.get("long_term_memory")
 
     assert isinstance(components.long_term_memory_ingestor, LongTermMemoryIngestor)
-    assert isinstance(source, CoreSimpleMemMemorySource)
+    assert isinstance(source, LtmMemorySource)
     assert isinstance(source.store, LanceDbLongTermMemoryStore)
     assert [source_id for source_id, _ in components.memory_broker.registry.items()] == [
         "self",

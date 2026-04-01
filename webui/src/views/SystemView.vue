@@ -33,8 +33,8 @@ type FilesystemConfig = {
   base_dir: string
   skill_catalog_dirs: string[]
   subagent_catalog_dirs: string[]
-  configured_skill_catalog_dirs: string[]
-  configured_subagent_catalog_dirs: string[]
+  configured_skill_catalog_dirs: string[] | null
+  configured_subagent_catalog_dirs: string[] | null
   default_skill_catalog_dirs: string[]
   default_subagent_catalog_dirs: string[]
   resolved_skill_catalog_dirs: ResolvedCatalogDir[]
@@ -217,8 +217,8 @@ function cloneSnapshot(snapshot: SystemConfigurationSnapshot): SystemDraft {
       ...snapshot.filesystem,
       skill_catalog_dirs: [...snapshot.filesystem.skill_catalog_dirs],
       subagent_catalog_dirs: [...snapshot.filesystem.subagent_catalog_dirs],
-      configured_skill_catalog_dirs: [...snapshot.filesystem.configured_skill_catalog_dirs],
-      configured_subagent_catalog_dirs: [...snapshot.filesystem.configured_subagent_catalog_dirs],
+      configured_skill_catalog_dirs: [...(snapshot.filesystem.configured_skill_catalog_dirs ?? [])],
+      configured_subagent_catalog_dirs: [...(snapshot.filesystem.configured_subagent_catalog_dirs ?? [])],
       default_skill_catalog_dirs: [...snapshot.filesystem.default_skill_catalog_dirs],
       default_subagent_catalog_dirs: [...snapshot.filesystem.default_subagent_catalog_dirs],
       resolved_skill_catalog_dirs: snapshot.filesystem.resolved_skill_catalog_dirs.map((item) => ({ ...item })),
@@ -376,12 +376,12 @@ async function saveAdmins(): Promise<void> {
     const saved = await apiPut<AdminsConfig & ApplyResult>("/api/admins", {
       admin_actor_ids: draft.value.admins.admin_actor_ids,
     })
-    setApplyFeedback("共享管理员", saved)
+    setApplyFeedback("管理员", saved)
     await refreshAfterMutation()
   } catch (error) {
     setFeedback(
       "is-error",
-      "共享管理员保存失败。请检查输入项，必要时展开技术详情查看具体原因。",
+      "管理员保存失败。请检查输入项，必要时展开技术详情查看具体原因。",
       normalizeErrorMessage(error),
     )
   } finally {
@@ -433,9 +433,7 @@ onMounted(() => {
       <div class="ds-hero-copy">
         <p class="ds-eyebrow">System</p>
         <h1>系统设置</h1>
-        <p class="ds-summary">
-          这里统一管理 AcaBot 的共享系统配置。默认是保存后就尝试生效；如果某一项必须重启，这一页会直接告诉你。
-        </p>
+        <p class="ds-summary">保存后即时生效，需重启的项目会明确提示。</p>
       </div>
       <div class="ds-actions">
         <span v-if="refreshing" class="ds-chip">正在同步最新配置</span>
@@ -466,9 +464,6 @@ onMounted(() => {
           <div class="ds-section-title">
             <div>
               <h2>共享网关设置</h2>
-              <p class="ds-summary">
-                这里管理 AcaBot 对外监听和连接相关的基础参数。保存后会写入正式配置文件，但这组设置需要重启 runtime 才会真正切换。
-              </p>
             </div>
           </div>
           <div class="ds-actions">
@@ -507,9 +502,6 @@ onMounted(() => {
           <div class="ds-section-title">
             <div>
               <h2>Catalog 扫描目录</h2>
-              <p class="ds-summary">
-                这里决定技能和子代理会从哪些目录被发现。前端只做空值和重复项校验，目录是否存在或可读仍以后端检查结果为准。
-              </p>
             </div>
           </div>
           <div class="ds-actions">
@@ -529,68 +521,72 @@ onMounted(() => {
         </p>
 
         <div class="catalog-stack">
-          <EditableListField
-            v-model="skillCatalogDirs"
-            label="技能扫描目录"
-            helper="一次添加一个目录。可以写相对路径，也可以写绝对路径；保存后会在下方显示当前实际扫描到的目录。"
-            placeholder="添加技能目录，按回车确认添加"
-            empty-title="还没有显式配置技能扫描目录"
-            empty-description="先添加一项，AcaBot 会在保存后解析实际生效位置，并在下方展示预览。"
-            :disabled="activeAction !== ''"
-          />
+          <div class="catalog-item">
+            <EditableListField
+              v-model="skillCatalogDirs"
+              label="Skill 扫描目录"
+              helper="一次添加一个目录。可以写相对路径，也可以写绝对路径；保存后会在下方显示当前实际扫描到的目录。"
+              placeholder="添加技能目录，按回车确认添加"
+              empty-title="还没有显式配置技能扫描目录"
+              empty-description="先添加一项，AcaBot 会在保存后解析实际生效位置，并在下方展示预览。"
+              :disabled="activeAction !== ''"
+            />
 
-          <div class="ds-surface ds-card-padding-sm preview-block">
-            <div class="preview-head">
-              <div>
-                <h3>当前实际扫描到的技能目录</h3>
-                <p class="ds-summary">
-                  这里显示的是已经生效的目录，不是你尚未保存的草稿。留空时会回退到默认值：{{ draft.filesystem.default_skill_catalog_dirs.join("、") || "无" }}。
-                </p>
+            <div class="ds-surface ds-card-padding-sm preview-block">
+              <div class="preview-head">
+                <div>
+                  <h3>当前实际扫描到的技能目录</h3>
+                  <p class="ds-summary">
+                    这里显示的是已经生效的目录，不是你尚未保存的草稿。留空时会回退到默认值：{{ draft.filesystem.default_skill_catalog_dirs.join("、") || "无" }}。
+                  </p>
+                </div>
               </div>
+              <ul v-if="draft.filesystem.resolved_skill_catalog_dirs.length" class="preview-list">
+                <li
+                  v-for="item in draft.filesystem.resolved_skill_catalog_dirs"
+                  :key="`${item.scope}:${item.host_root_path}`"
+                  class="ds-list-item ds-list-item-padding preview-item"
+                >
+                  <span class="ds-chip">{{ scopeLabel(item.scope) }}</span>
+                  <code class="ds-mono preview-value">{{ item.host_root_path }}</code>
+                </li>
+              </ul>
+              <p v-else class="ds-empty">当前还没有任何已生效的技能扫描目录。</p>
             </div>
-            <ul v-if="draft.filesystem.resolved_skill_catalog_dirs.length" class="preview-list">
-              <li
-                v-for="item in draft.filesystem.resolved_skill_catalog_dirs"
-                :key="`${item.scope}:${item.host_root_path}`"
-                class="ds-list-item ds-list-item-padding preview-item"
-              >
-                <span class="ds-chip">{{ scopeLabel(item.scope) }}</span>
-                <code class="ds-mono preview-value">{{ item.host_root_path }}</code>
-              </li>
-            </ul>
-            <p v-else class="ds-empty">当前还没有任何已生效的技能扫描目录。</p>
           </div>
 
-          <EditableListField
-            v-model="subagentCatalogDirs"
-            label="子代理扫描目录"
-            helper="这里控制系统会到哪里寻找可用的子代理定义包。"
-            placeholder="添加子代理目录，按回车确认添加"
-            empty-title="还没有显式配置子代理扫描目录"
-            empty-description="先添加一项，AcaBot 会在保存后解析实际生效位置，并在下方展示预览。"
-            :disabled="activeAction !== ''"
-          />
+          <div class="catalog-item">
+            <EditableListField
+              v-model="subagentCatalogDirs"
+              label="Subagent 扫描目录"
+              helper="这里控制系统会到哪里寻找可用的子代理定义包。"
+              placeholder="添加子代理目录，按回车确认添加"
+              empty-title="还没有显式配置子代理扫描目录"
+              empty-description="先添加一项，AcaBot 会在保存后解析实际生效位置，并在下方展示预览。"
+              :disabled="activeAction !== ''"
+            />
 
-          <div class="ds-surface ds-card-padding-sm preview-block">
-            <div class="preview-head">
-              <div>
-                <h3>当前实际扫描到的子代理目录</h3>
-                <p class="ds-summary">
-                  如果你没有显式填写，系统会回退到默认值：{{ draft.filesystem.default_subagent_catalog_dirs.join("、") || "无" }}。
-                </p>
+            <div class="ds-surface ds-card-padding-sm preview-block">
+              <div class="preview-head">
+                <div>
+                  <h3>当前实际扫描到的子代理目录</h3>
+                  <p class="ds-summary">
+                    如果你没有显式填写，系统会回退到默认值：{{ draft.filesystem.default_subagent_catalog_dirs.join("、") || "无" }}。
+                  </p>
+                </div>
               </div>
+              <ul v-if="draft.filesystem.resolved_subagent_catalog_dirs.length" class="preview-list">
+                <li
+                  v-for="item in draft.filesystem.resolved_subagent_catalog_dirs"
+                  :key="`${item.scope}:${item.host_root_path}`"
+                  class="ds-list-item ds-list-item-padding preview-item"
+                >
+                  <span class="ds-chip">{{ scopeLabel(item.scope) }}</span>
+                  <code class="ds-mono preview-value">{{ item.host_root_path }}</code>
+                </li>
+              </ul>
+              <p v-else class="ds-empty">当前还没有任何已生效的子代理扫描目录。</p>
             </div>
-            <ul v-if="draft.filesystem.resolved_subagent_catalog_dirs.length" class="preview-list">
-              <li
-                v-for="item in draft.filesystem.resolved_subagent_catalog_dirs"
-                :key="`${item.scope}:${item.host_root_path}`"
-                class="ds-list-item ds-list-item-padding preview-item"
-              >
-                <span class="ds-chip">{{ scopeLabel(item.scope) }}</span>
-                <code class="ds-mono preview-value">{{ item.host_root_path }}</code>
-              </li>
-            </ul>
-            <p v-else class="ds-empty">当前还没有任何已生效的子代理扫描目录。</p>
           </div>
         </div>
       </article>
@@ -599,10 +595,7 @@ onMounted(() => {
         <div class="ds-section-head">
           <div class="ds-section-title">
             <div>
-              <h2>共享管理员</h2>
-              <p class="ds-summary">
-                系统权限判断会统一读取这一份共享管理员列表。这里的每一项都建议写成完整身份标识，例如 <code>qq:private:123456</code>。
-              </p>
+              <h2>管理员</h2>
             </div>
           </div>
           <div class="ds-actions">
@@ -614,11 +607,11 @@ onMounted(() => {
 
         <EditableListField
           v-model="adminActorIds"
-          label="共享管理员"
+          label="管理员"
           helper="一次添加一个管理员标识。保存后，系统权限判断会立刻使用这一份列表。"
           placeholder="添加管理员标识，按回车确认添加"
-          empty-title="还没有配置任何共享管理员"
-          empty-description="先添加一项，AcaBot 保存后会立刻把它纳入共享管理员列表。"
+          empty-title="还没有配置任何管理员"
+          empty-description="先添加一项，AcaBot 保存后会立刻把它纳入管理员列表。"
           :disabled="activeAction !== ''"
         />
       </article>
@@ -628,9 +621,6 @@ onMounted(() => {
           <div class="ds-section-title">
             <div>
               <h2>维护动作</h2>
-              <p class="ds-summary">
-                大部分设置保存后都会自动尝试生效。只有你想手动强制重读配置，或者需要确认 runtime 是否已经重新装配时，才需要这一组操作。
-              </p>
             </div>
           </div>
           <div class="ds-actions">
@@ -798,6 +788,16 @@ onMounted(() => {
 
 .catalog-stack {
   margin-top: 8px;
+}
+
+.catalog-item {
+  padding: 12px 14px;
+  border: 1px solid var(--panel-line-soft);
+  border-radius: 12px;
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .preview-block {

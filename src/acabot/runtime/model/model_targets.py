@@ -114,25 +114,6 @@ class RuntimePluginModelSlot:
 # region 内建目录
 SYSTEM_MODEL_TARGETS: tuple[ModelTarget, ...] = (
     ModelTarget(
-        target_id="system:compactor_summary",
-        task_kind="chat",
-        source_kind="system",
-        owner_id="compactor_summary",
-        description="上下文压缩总结模型",
-        required=False,
-        allow_fallbacks=True,
-    ),
-    ModelTarget(
-        target_id="system:image_caption",
-        task_kind="chat",
-        source_kind="system",
-        owner_id="image_caption",
-        description="图片内容转述模型",
-        required=False,
-        allow_fallbacks=True,
-        required_capabilities=["image_input"],
-    ),
-    ModelTarget(
         target_id="system:ltm_extract",
         task_kind="chat",
         source_kind="system",
@@ -184,18 +165,32 @@ def build_agent_model_targets(agents: Iterable["ResolvedAgent"]) -> list[ModelTa
     items = sorted(
         {str(agent.agent_id): agent for agent in agents if str(getattr(agent, "agent_id", "") or "")}.items()
     )
-    return [
-        ModelTarget(
-            target_id=f"agent:{agent_id}",
-            task_kind="chat",
-            source_kind="agent",
-            owner_id=agent_id,
-            description=f"{agent_id} 主回复模型",
-            required=True,
-            allow_fallbacks=True,
+    targets: list[ModelTarget] = []
+    for agent_id, _agent in items:
+        targets.append(
+            ModelTarget(
+                target_id=f"agent:{agent_id}",
+                task_kind="chat",
+                source_kind="agent",
+                owner_id=agent_id,
+                description=f"{agent_id} 主回复模型",
+                required=True,
+                allow_fallbacks=True,
+            )
         )
-        for agent_id, _agent in items
-    ]
+        targets.append(
+            ModelTarget(
+                target_id=f"agent:{agent_id}:image_caption",
+                task_kind="chat",
+                source_kind="agent",
+                owner_id=agent_id,
+                description=f"{agent_id} 识图模型",
+                required=False,
+                allow_fallbacks=True,
+                required_capabilities=["image_input"],
+            )
+        )
+    return targets
 
 
 # endregion

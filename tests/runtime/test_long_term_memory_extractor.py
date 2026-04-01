@@ -20,6 +20,7 @@ def test_extractor_rejects_window_if_any_entry_lacks_anchor_evidence() -> None:
         parse_extractor_response(
             response=response,
             anchor_map=build_fact_anchor_map(["e:evt-1"]),
+            fact_roles={},
             conversation_id="qq:group:42",
             extractor_version="v1",
             now_ts=123,
@@ -37,6 +38,7 @@ def test_extractor_maps_local_fact_anchors_back_to_fact_ids() -> None:
             }
         ],
         anchor_map=anchors,
+        fact_roles={},
         conversation_id="qq:group:42",
         extractor_version="v1",
         now_ts=123,
@@ -63,6 +65,7 @@ def test_extractor_accepts_object_wrapper_with_entries_key() -> None:
             ]
         },
         anchor_map=anchors,
+        fact_roles={},
         conversation_id="qq:group:42",
         extractor_version="v1",
         now_ts=123,
@@ -85,6 +88,7 @@ def test_extractor_wraps_unknown_anchor_as_window_error() -> None:
                 }
             ],
             anchor_map=anchors,
+            fact_roles={},
             conversation_id="qq:group:42",
             extractor_version="v1",
             now_ts=123,

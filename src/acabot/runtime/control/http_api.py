@@ -65,6 +65,27 @@ def _query_bool(query: dict[str, list[str]], key: str, default: bool = False) ->
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _entry_to_dict(entry: Any) -> dict[str, Any]:
+    """把 MemoryEntry 序列化成 JSON 安全的字典."""
+    return {
+        "entry_id": entry.entry_id,
+        "conversation_id": entry.conversation_id,
+        "created_at": entry.created_at,
+        "updated_at": entry.updated_at,
+        "topic": entry.topic,
+        "lossless_restatement": entry.lossless_restatement,
+        "keywords": entry.keywords,
+        "persons": entry.persons,
+        "entities": entry.entities,
+        "location": entry.location,
+        "time_point": entry.time_point,
+        "time_interval_start": entry.time_interval_start,
+        "time_interval_end": entry.time_interval_end,
+        "extractor_version": entry.extractor_version,
+        "provenance": {"fact_ids": entry.provenance.fact_ids},
+    }
+
+
 class RuntimeHttpApiServer:
     """本地单机 HTTP server, 暴露 control plane API 并可选托管静态 WebUI."""
 
@@ -380,6 +401,110 @@ class RuntimeHttpApiServer:
             return self._ok(self._await(self.control_plane.get_long_term_memory_config()))
         if segments == ["memory", "long-term", "config"] and method == "PUT":
             return self._ok(self._await(self.control_plane.upsert_long_term_memory_config(payload)))
+        if segments == ["memory", "long-term", "stats"] and method == "GET":
+            store = self._get_ltm_store()
+            if store is None:
+                return 404, {"ok": False, "error": "LTM not configured"}
+            return self._ok(store.get_stats())
+        if segments == ["memory", "long-term", "entries"] and method == "GET":
+            store = self._get_ltm_store()
+            if store is None:
+                return 404, {"ok": False, "error": "LTM not configured"}
+            offset = int(_query_value(query, "offset", "0"))
+            limit = min(int(_query_value(query, "limit", "50")), 200)
+            date_start = _query_value(query, "date_start", "")
+            date_end = _query_value(query, "date_end", "")
+            entries, total = store.list_entries(
+                offset=offset,
+                limit=limit,
+                conversation_id=_query_value(query, "conversation_id"),
+                keyword=_query_value(query, "keyword"),
+                person=_query_value(query, "person"),
+                entity=_query_value(query, "entity"),
+                date_start=date_start,
+                date_end=date_end,
+            )
+            return self._ok({
+                "entries": [_entry_to_dict(e) for e in entries],
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+            })
+        if segments == ["memory", "long-term", "entries"] and method == "DELETE":
+            store = self._get_ltm_store()
+            if store is None:
+                return 404, {"ok": False, "error": "LTM not configured"}
+            conversation_id = _query_value(query, "conversation_id", "")
+            if not conversation_id:
+                return 400, {"ok": False, "error": "conversation_id query param required"}
+            deleted = store.delete_entries_by_conversation(conversation_id)
+            return self._ok({"deleted_count": deleted, "conversation_id": conversation_id})
+        if len(segments) == 4 and segments[:3] == ["memory", "long-term", "entries"]:
+            entry_id = segments[3]
+            store = self._get_ltm_store()
+            if store is None:
+                return 404, {"ok": False, "error": "LTM not configured"}
+            if method == "GET":
+                entry = store.get_entry(entry_id)
+                if entry is None:
+                    return 404, {"ok": False, "error": "entry not found"}
+                return self._ok(_entry_to_dict(entry))
+            if method == "PUT":
+                entry = store.get_entry(entry_id)
+                if entry is None:
+                    return 404, {"ok": False, "error": "entry not found"}
+                kwargs: dict[str, Any] = {}
+                if "topic" in payload:
+                    kwargs["topic"] = str(payload["topic"] or "")
+                if "lossless_restatement" in payload:
+                    kwargs["lossless_restatement"] = str(payload["lossless_restatement"] or "")
+                if "keywords" in payload:
+                    kwargs["keywords"] = [str(k) for k in (payload["keywords"] or [])]
+                if "persons" in payload:
+                    kwargs["persons"] = [str(p) for p in (payload["persons"] or [])]
+                if "entities" in payload:
+                    kwargs["entities"] = [str(e) for e in (payload["entities"] or [])]
+                if "location" in payload:
+                    kwargs["location"] = payload["location"]
+                updated = store.update_entry(entry_id, **kwargs)
+                if updated is None:
+                    return 404, {"ok": False, "error": "entry not found"}
+                return self._ok(_entry_to_dict(updated))
+            if method == "DELETE":
+                deleted = store.delete_entry(entry_id)
+                return self._ok({"deleted": deleted})
+        if segments == ["memory", "long-term", "search-test"] and method == "POST":
+            store = self._get_ltm_store()
+            if store is None:
+                return 404, {"ok": False, "error": "LTM not configured"}
+            query_text = str(payload.get("query_text", "") or "")
+            conversation_id = str(payload.get("conversation_id", "") or "")
+            if not query_text:
+                return 400, {"ok": False, "error": "query_text is required"}
+            if not conversation_id:
+                return 400, {"ok": False, "error": "conversation_id is required"}
+            results: list[dict[str, Any]] = []
+            # keyword search
+            kw_hits = store.keyword_search(query_text, conversation_id=conversation_id, limit=10)
+            seen_ids: set[str] = set()
+            for entry in kw_hits:
+                if entry.entry_id not in seen_ids:
+                    seen_ids.add(entry.entry_id)
+                    results.append({**_entry_to_dict(entry), "hit_source": "keyword"})
+            # structured search by person/entity extracted from query
+            struct_hits = store.structured_search(
+                conversation_id=conversation_id,
+                persons=[],
+                entities=[],
+                location=None,
+                time_range=None,
+                limit=10,
+            )
+            for entry in struct_hits:
+                if entry.entry_id not in seen_ids:
+                    seen_ids.add(entry.entry_id)
+                    results.append({**_entry_to_dict(entry), "hit_source": "structured"})
+            return self._ok({"query_text": query_text, "conversation_id": conversation_id, "results": results[:20]})
         if segments == ["memory", "sticky-notes", "item"] and method == "GET":
             result = self._await(
                 self.control_plane.get_sticky_note_record(
@@ -665,6 +790,10 @@ class RuntimeHttpApiServer:
         if len(segments) == 3 and segments[0] == "bindings" and segments[2] == "impact" and method == "GET":
             return self._ok(self._await(self.control_plane.get_model_binding_impact(segments[1])))
 
+        if segments == ["litellm-info"] and method == "GET":
+            return self._ok(_get_litellm_model_info(
+                model=_query_value(query, "model", ""),
+            ))
         return 404, {"ok": False, "error": "unknown model endpoint"}
 
     def _handle_workspaces(
@@ -772,11 +901,148 @@ class RuntimeHttpApiServer:
     def _ok(self, data: Any) -> tuple[int, dict[str, Any]]:
         return 200, {"ok": True, "data": _to_jsonable(data)}
 
+    def _get_ltm_store(self):
+        """获取 LTM 存储实例, 如果未配置则返回 None."""
+        return getattr(self.control_plane, "ltm_store", None)
+
     def _await(self, awaitable):
         if self._loop is None:
             raise RuntimeError("http api server is not started")
         future = asyncio.run_coroutine_threadsafe(awaitable, self._loop)
         return future.result(timeout=self.request_timeout_sec)
+
+
+def _get_litellm_model_info(model: str) -> dict[str, Any]:
+    """查询 litellm 注册表获取模型能力和支持的参数."""
+
+    import litellm
+
+    result: dict[str, Any] = {"model": model}
+    if not model:
+        result["model_info"] = None
+        result["supported_params"] = []
+        result["param_hints"] = {}
+        return result
+
+    raw: dict[str, Any] | None = None
+
+    # 模型能力信息
+    try:
+        raw = litellm.get_model_info(model)
+        result["model_info"] = {
+            "max_input_tokens": raw.get("max_input_tokens"),
+            "max_output_tokens": raw.get("max_output_tokens"),
+            "supports_vision": bool(raw.get("supports_vision")),
+            "supports_function_calling": bool(raw.get("supports_function_calling")),
+            "supports_reasoning": bool(raw.get("supports_reasoning")),
+            "supports_audio_input": bool(raw.get("supports_audio_input")),
+            "supports_audio_output": bool(raw.get("supports_audio_output")),
+            "supports_web_search": bool(raw.get("supports_web_search")),
+            "supports_prompt_caching": bool(raw.get("supports_prompt_caching")),
+            "supports_response_schema": bool(raw.get("supports_response_schema")),
+        }
+    except Exception:
+        result["model_info"] = None
+
+    # 支持的参数列表
+    supported_params: list[str] = []
+    try:
+        params = litellm.get_supported_openai_params(model=model)
+        supported_params = sorted(params) if params else []
+    except Exception:
+        pass
+    result["supported_params"] = supported_params
+
+    # 为前端生成每个参数的 UI hint（控件类型、范围、选项等）
+    result["param_hints"] = _build_param_hints(supported_params, raw)
+
+    return result
+
+
+def _build_param_hints(
+    supported_params: list[str],
+    model_info: dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    """根据模型支持的参数列表和能力信息，生成前端渲染所需的控件元数据.
+
+    前端不再维护写死的参数定义 — 所有控件类型、范围、选项全由后端决定。
+    """
+
+    hints: dict[str, dict[str, Any]] = {}
+    param_set = set(supported_params)
+
+    if "temperature" in param_set:
+        hints["temperature"] = {
+            "type": "slider", "label": "Temperature",
+            "hint": "越高越随机", "min": 0, "max": 2, "step": 0.05,
+        }
+
+    if "top_p" in param_set:
+        hints["top_p"] = {
+            "type": "slider", "label": "Top P",
+            "hint": "核采样", "min": 0, "max": 1, "step": 0.05,
+        }
+
+    if "max_tokens" in param_set or "max_completion_tokens" in param_set:
+        # 用实际支持的参数名作为 hint key
+        actual_key = "max_completion_tokens" if "max_completion_tokens" in param_set and "max_tokens" not in param_set else "max_tokens"
+        max_out = (model_info or {}).get("max_output_tokens")
+        h: dict[str, Any] = {
+            "type": "number", "label": "Max Tokens",
+            "hint": "最大输出 token 数", "min": 1,
+        }
+        if max_out:
+            h["max"] = max_out
+            h["hint"] = f"最大输出 token 数 (上限 {max_out})"
+        hints[actual_key] = h
+
+    # litellm 的 supported_params 是 provider 级别的，不区分具体模型。
+    # 需要结合 model_info 来过滤掉模型实际不支持的参数。
+    supports_reasoning = bool((model_info or {}).get("supports_reasoning"))
+
+    if "reasoning_effort" in param_set and supports_reasoning:
+        max_input = (model_info or {}).get("max_input_tokens") or 0
+        # 大上下文推理模型 (如 gpt-5.4 1M+) 通常支持 max 档
+        if max_input >= 500_000:
+            options = ["low", "medium", "high", "max"]
+        else:
+            options = ["low", "medium", "high"]
+        hints["reasoning_effort"] = {
+            "type": "select", "label": "思考强度",
+            "hint": "控制推理深度", "options": options,
+        }
+
+    if "thinking" in param_set and supports_reasoning:
+        hints["thinking"] = {
+            "type": "checkbox", "label": "深度思考",
+            "hint": "启用 extended thinking",
+        }
+
+    if "frequency_penalty" in param_set:
+        hints["frequency_penalty"] = {
+            "type": "slider", "label": "Frequency Penalty",
+            "hint": "重复惩罚", "min": -2, "max": 2, "step": 0.05,
+        }
+
+    if "presence_penalty" in param_set:
+        hints["presence_penalty"] = {
+            "type": "slider", "label": "Presence Penalty",
+            "hint": "新话题鼓励", "min": -2, "max": 2, "step": 0.05,
+        }
+
+    if "seed" in param_set:
+        hints["seed"] = {
+            "type": "number", "label": "Seed",
+            "hint": "固定随机种子",
+        }
+
+    if "stop" in param_set:
+        hints["stop"] = {
+            "type": "text", "label": "Stop Sequences",
+            "hint": "逗号分隔",
+        }
+
+    return hints
 
 
 def _model_provider_from_payload(
@@ -789,6 +1055,7 @@ def _model_provider_from_payload(
         GoogleGeminiProviderConfig,
         ModelProvider,
         OpenAICompatibleProviderConfig,
+        PROVIDER_KIND_REGISTRY,
         _normalize_provider_auth_fields,
     )
 
@@ -807,30 +1074,27 @@ def _model_provider_from_payload(
     }
     kind = str(normalized.get("kind", "") or "")
     provider_id = str(normalized.get("provider_id", "") or "")
+    meta = PROVIDER_KIND_REGISTRY.get(kind)
+    if meta is None:
+        raise ValueError(f"unsupported provider kind: {kind}")
     api_key_env, api_key = _normalize_provider_auth_fields(
         api_key_env=str(normalized.get("api_key_env", "") or ""),
         api_key=str(normalized.get("api_key", "") or ""),
     )
-    if kind == "openai_compatible":
-        config = OpenAICompatibleProviderConfig(
-            base_url=str(normalized.get("base_url", "") or ""),
-            api_key_env=api_key_env,
-            api_key=api_key,
-            default_headers=dict(normalized.get("default_headers", {}) or {}),
-            default_query=dict(normalized.get("default_query", {}) or {}),
-            default_body=dict(normalized.get("default_body", {}) or {}),
-        )
-    elif kind == "anthropic":
+    default_headers = dict(normalized.get("default_headers", {}) or {})
+    default_query = dict(normalized.get("default_query", {}) or {})
+    default_body = dict(normalized.get("default_body", {}) or {})
+    if meta.config_class == "anthropic":
         config = AnthropicProviderConfig(
             api_key_env=api_key_env,
             api_key=api_key,
             base_url=str(normalized.get("base_url", "") or ""),
             anthropic_version=str(normalized.get("anthropic_version", "") or ""),
-            default_headers=dict(normalized.get("default_headers", {}) or {}),
-            default_query=dict(normalized.get("default_query", {}) or {}),
-            default_body=dict(normalized.get("default_body", {}) or {}),
+            default_headers=default_headers,
+            default_query=default_query,
+            default_body=default_body,
         )
-    elif kind == "google_gemini":
+    elif meta.config_class == "google_gemini":
         config = GoogleGeminiProviderConfig(
             api_key_env=api_key_env,
             api_key=api_key,
@@ -839,12 +1103,19 @@ def _model_provider_from_payload(
             project_id=str(normalized.get("project_id", "") or ""),
             location=str(normalized.get("location", "") or ""),
             use_vertex_ai=bool(normalized.get("use_vertex_ai", False)),
-            default_headers=dict(normalized.get("default_headers", {}) or {}),
-            default_query=dict(normalized.get("default_query", {}) or {}),
-            default_body=dict(normalized.get("default_body", {}) or {}),
+            default_headers=default_headers,
+            default_query=default_query,
+            default_body=default_body,
         )
     else:
-        raise ValueError(f"unsupported provider kind: {kind}")
+        config = OpenAICompatibleProviderConfig(
+            base_url=str(normalized.get("base_url", "") or ""),
+            api_key_env=api_key_env,
+            api_key=api_key,
+            default_headers=default_headers,
+            default_query=default_query,
+            default_body=default_body,
+        )
     return ModelProvider(
         provider_id=provider_id,
         kind=kind,

@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Preset 编辑器原型</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Inter', 'Noto Sans SC', sans-serif;
+    background: #0d0f14;
+    color: #e4e5e9;
+    min-height: 100vh;
+    padding: 32px;
+  }
+
+  .page { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 22px; font-weight: 800; margin-bottom: 6px; }
+  .subtitle { font-size: 13px; color: #8b8d97; margin-bottom: 28px; }
+
+  .card {
+    background: #1a1d24;
+    border: 1px solid #232630;
+    border-radius: 16px;
+    padding: 22px;
+    margin-bottom: 16px;
+  }
+
+  .card-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #8b8d97;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 16px;
+  }
+
+  .form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field.span-2 { grid-column: span 2; }
+
+  .field label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #c0c2c8;
+  }
+
+  .field input, .field select {
+    background: #15171e;
+    border: 1px solid #2a2d35;
+    border-radius: 10px;
+    padding: 10px 14px;
+    color: #e4e5e9;
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 150ms;
+  }
+  .field input:focus, .field select:focus {
+    border-color: #6366f1;
+  }
+  .field input::placeholder { color: #4a4d56; }
+
+  .field .hint {
+    font-size: 11px;
+    color: #6b6d77;
+  }
+
+  /* Capabilities chips */
+  .caps-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  .cap-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 10px;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    border: 1px solid #2a2d35;
+    background: #15171e;
+    color: #8b8d97;
+    transition: all 150ms;
+  }
+  .cap-chip.is-on {
+    background: rgba(99, 102, 241, 0.12);
+    border-color: rgba(99, 102, 241, 0.3);
+    color: #818cf8;
+  }
+  .cap-chip .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #4a4d56;
+  }
+  .cap-chip.is-on .dot { background: #6366f1; }
+
+  /* Dynamic params section */
+  .params-section {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid #232630;
+  }
+
+  .params-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+
+  .params-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #e4e5e9;
+  }
+
+  .params-badge {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: rgba(16, 185, 129, 0.12);
+    color: #10b981;
+  }
+
+  .param-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 0;
+    border-bottom: 1px solid #1e2028;
+  }
+  .param-row:last-child { border-bottom: none; }
+
+  .param-label {
+    flex: 0 0 180px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #c0c2c8;
+  }
+
+  .param-control { flex: 1; display: flex; align-items: center; gap: 10px; }
+
+  .param-control input[type="range"] {
+    flex: 1;
+    accent-color: #6366f1;
+    height: 4px;
+  }
+
+  .param-control .range-value {
+    min-width: 44px;
+    text-align: right;
+    font-size: 13px;
+    font-weight: 700;
+    color: #818cf8;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .param-control select {
+    background: #15171e;
+    border: 1px solid #2a2d35;
+    border-radius: 8px;
+    padding: 7px 12px;
+    color: #e4e5e9;
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+  }
+
+  .param-control input[type="number"] {
+    background: #15171e;
+    border: 1px solid #2a2d35;
+    border-radius: 8px;
+    padding: 7px 12px;
+    color: #e4e5e9;
+    font-size: 13px;
+    width: 120px;
+    font-family: inherit;
+    outline: none;
+  }
+
+  .param-control input[type="checkbox"] {
+    width: 18px; height: 18px;
+    accent-color: #6366f1;
+  }
+
+  .empty-params {
+    padding: 20px;
+    text-align: center;
+    color: #4a4d56;
+    font-size: 13px;
+  }
+
+  .query-btn {
+    padding: 8px 16px;
+    border-radius: 10px;
+    border: none;
+    background: linear-gradient(135deg, #6366f1, #818cf8);
+    color: white;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: inherit;
+    transition: opacity 150ms;
+  }
+  .query-btn:hover { opacity: 0.85; }
+  .query-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .model-input-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+  }
+  .model-input-row .field { flex: 1; }
+
+  .json-preview {
+    margin-top: 16px;
+    padding: 14px;
+    border-radius: 10px;
+    background: #15171e;
+    border: 1px solid #232630;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 12px;
+    color: #8b8d97;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 200px;
+    overflow: auto;
+  }
+  .json-preview .key { color: #818cf8; }
+  .json-preview .val { color: #10b981; }
+
+  .status-bar {
+    font-size: 12px;
+    color: #6b6d77;
+    padding: 8px 0;
+  }
+  .status-bar.is-loading { color: #f59e0b; }
+  .status-bar.is-error { color: #ef4444; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>Preset 编辑器原型</h1>
+  <p class="subtitle">演示：填入模型名 → 自动查询 litellm → 动态渲染参数表单</p>
+
+  <!-- 基本信息 -->
+  <div class="card">
+    <div class="card-title">基本信息</div>
+    <div class="form-grid">
+      <div class="field">
+        <label>Preset ID</label>
+        <input type="text" id="presetId" placeholder="例如 main-chat" />
+      </div>
+      <div class="field">
+        <label>Provider</label>
+        <select id="providerId">
+          <option value="">选择供应商</option>
+          <option value="openai-main">openai-main</option>
+          <option value="anthropic-main">anthropic-main</option>
+          <option value="gemini-main">gemini-main</option>
+        </select>
+      </div>
+      <div class="field span-2">
+        <label>模型名</label>
+        <div class="model-input-row">
+          <div class="field" style="flex:1">
+            <input type="text" id="modelName" placeholder="例如 gpt-4o, claude-sonnet-4-20250514, gemini-2.0-flash" />
+          </div>
+          <button class="query-btn" id="queryBtn" onclick="queryModel()">查询参数</button>
+        </div>
+        <span class="hint">输入完整模型名后点"查询参数"，自动获取该模型支持的能力和可调参数</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 模型能力（自动填充） -->
+  <div class="card" id="capsCard" style="display:none">
+    <div class="card-title">模型能力（自动检测）</div>
+    <div id="capsStatus" class="status-bar"></div>
+    <div class="form-grid">
+      <div class="field">
+        <label>上下文窗口</label>
+        <input type="text" id="contextWindow" readonly />
+      </div>
+      <div class="field">
+        <label>最大输出</label>
+        <input type="text" id="maxOutput" readonly />
+      </div>
+      <div class="field span-2">
+        <label>能力</label>
+        <div class="caps-row" id="capsRow"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 模型参数（动态表单） -->
+  <div class="card" id="paramsCard" style="display:none">
+    <div class="params-header">
+      <span class="params-title">模型参数</span>
+      <span class="params-badge" id="paramCount"></span>
+    </div>
+    <div id="paramsBody"></div>
+
+    <div class="json-preview" id="jsonPreview"></div>
+  </div>
+</div>
+
+<script>
+// 模拟 litellm 返回的数据（实际会走后端 API）
+const MOCK_DATA = {
+  "gpt-4o": {
+    info: { max_input_tokens: 128000, max_output_tokens: 16384, supports_vision: true, supports_function_calling: true, supports_reasoning: false, supports_audio_input: false, supports_web_search: false, supports_prompt_caching: true },
+    params: ["temperature", "top_p", "max_tokens", "frequency_penalty", "presence_penalty", "seed", "logit_bias", "stop"]
+  },
+  "claude-sonnet-4-20250514": {
+    info: { max_input_tokens: 200000, max_output_tokens: 16000, supports_vision: true, supports_function_calling: true, supports_reasoning: true, supports_audio_input: false, supports_web_search: true, supports_prompt_caching: true },
+    params: ["temperature", "top_p", "max_tokens", "reasoning_effort", "thinking", "stop"]
+  },
+  "gemini-2.0-flash": {
+    info: { max_input_tokens: 1048576, max_output_tokens: 8192, supports_vision: true, supports_function_calling: true, supports_reasoning: false, supports_audio_input: true, supports_web_search: true, supports_prompt_caching: true },
+    params: ["temperature", "top_p", "max_tokens", "frequency_penalty", "presence_penalty", "stop"]
+  },
+  "deepseek-reasoner": {
+    info: { max_input_tokens: 65536, max_output_tokens: 8192, supports_vision: false, supports_function_calling: true, supports_reasoning: true, supports_audio_input: false, supports_web_search: false, supports_prompt_caching: true },
+    params: ["temperature", "top_p", "max_tokens", "reasoning_effort", "thinking", "frequency_penalty", "presence_penalty", "seed", "stop"]
+  },
+  "o3-mini": {
+    info: { max_input_tokens: 200000, max_output_tokens: 100000, supports_vision: true, supports_function_calling: true, supports_reasoning: true, supports_audio_input: false, supports_web_search: true, supports_prompt_caching: false },
+    params: ["temperature", "top_p", "max_tokens", "reasoning_effort", "seed", "stop"]
+  },
+}
+
+// 参数元数据：怎么渲染每个参数
+const PARAM_META = {
+  temperature: { label: "Temperature", type: "slider", min: 0, max: 2, step: 0.05, default: 0.7, hint: "越高越随机" },
+  top_p: { label: "Top P", type: "slider", min: 0, max: 1, step: 0.05, default: 1, hint: "核采样" },
+  max_tokens: { label: "Max Tokens", type: "number", default: null, hint: "最大输出 token 数" },
+  frequency_penalty: { label: "Frequency Penalty", type: "slider", min: -2, max: 2, step: 0.1, default: 0, hint: "重复惩罚" },
+  presence_penalty: { label: "Presence Penalty", type: "slider", min: -2, max: 2, step: 0.1, default: 0, hint: "新话题鼓励" },
+  reasoning_effort: { label: "思考强度", type: "select", options: ["low", "medium", "high"], default: "medium", hint: "控制推理深度" },
+  thinking: { label: "启用深度思考", type: "checkbox", default: false, hint: "开启 extended thinking" },
+  seed: { label: "Seed", type: "number", default: null, hint: "固定随机种子" },
+  stop: { label: "Stop Sequences", type: "text", default: "", hint: "逗号分隔" },
+  logit_bias: { label: "Logit Bias", type: "text", default: "", hint: "JSON 格式" },
+}
+
+// 只渲染用户关心的参数（排除内部参数）
+const USER_PARAMS = new Set([
+  "temperature", "top_p", "max_tokens", "frequency_penalty", "presence_penalty",
+  "reasoning_effort", "thinking", "seed", "stop", "logit_bias"
+])
+
+const CAP_LABELS = {
+  supports_vision: "👁 图片输入",
+  supports_function_calling: "🔧 工具调用",
+  supports_reasoning: "🧠 推理/思考",
+  supports_audio_input: "🎤 音频输入",
+  supports_web_search: "🌐 原生搜索",
+  supports_prompt_caching: "💾 缓存",
+}
+
+let currentParams = {}
+
+function queryModel() {
+  const modelName = document.getElementById("modelName").value.trim()
+  if (!modelName) return
+
+  // 模拟查询（实际走 /api/models/param-schema?model=xxx）
+  const data = MOCK_DATA[modelName]
+  if (!data) {
+    document.getElementById("capsCard").style.display = "block"
+    document.getElementById("capsStatus").textContent = `⚠ 模型 "${modelName}" 未在 litellm 注册表中找到，可手动配置参数`
+    document.getElementById("capsStatus").className = "status-bar is-error"
+    document.getElementById("capsRow").innerHTML = ""
+    document.getElementById("contextWindow").value = ""
+    document.getElementById("maxOutput").value = ""
+    document.getElementById("paramsCard").style.display = "none"
+    return
+  }
+
+  // 填充能力
+  document.getElementById("capsCard").style.display = "block"
+  document.getElementById("capsStatus").textContent = `✓ 从 litellm 获取到 ${modelName} 的模型信息`
+  document.getElementById("capsStatus").className = "status-bar"
+  document.getElementById("contextWindow").value = data.info.max_input_tokens?.toLocaleString() || "—"
+  document.getElementById("maxOutput").value = data.info.max_output_tokens?.toLocaleString() || "—"
+
+  // 能力 chips
+  let capsHtml = ""
+  for (const [key, label] of Object.entries(CAP_LABELS)) {
+    const on = data.info[key]
+    capsHtml += `<span class="cap-chip ${on ? 'is-on' : ''}"><span class="dot"></span>${label}</span>`
+  }
+  document.getElementById("capsRow").innerHTML = capsHtml
+
+  // 动态参数表单
+  const userParams = data.params.filter(p => USER_PARAMS.has(p) && PARAM_META[p])
+  document.getElementById("paramsCard").style.display = "block"
+  document.getElementById("paramCount").textContent = `${userParams.length} 个可调参数`
+
+  currentParams = {}
+  let html = ""
+  for (const paramName of userParams) {
+    const meta = PARAM_META[paramName]
+    currentParams[paramName] = meta.default
+    html += renderParam(paramName, meta)
+  }
+  document.getElementById("paramsBody").innerHTML = html || '<div class="empty-params">该模型没有用户可调参数</div>'
+  updateJsonPreview()
+}
+
+function renderParam(name, meta) {
+  let control = ""
+  if (meta.type === "slider") {
+    control = `
+      <input type="range" min="${meta.min}" max="${meta.max}" step="${meta.step}" value="${meta.default}"
+        oninput="onParamChange('${name}', parseFloat(this.value)); this.nextElementSibling.textContent = this.value" />
+      <span class="range-value">${meta.default}</span>
+    `
+  } else if (meta.type === "select") {
+    const opts = meta.options.map(o => `<option value="${o}" ${o === meta.default ? 'selected' : ''}>${o}</option>`).join("")
+    control = `<select onchange="onParamChange('${name}', this.value)">${opts}</select>`
+  } else if (meta.type === "number") {
+    control = `<input type="number" value="${meta.default || ''}" placeholder="不限" onchange="onParamChange('${name}', this.value ? Number(this.value) : null)" />`
+  } else if (meta.type === "checkbox") {
+    control = `<input type="checkbox" ${meta.default ? 'checked' : ''} onchange="onParamChange('${name}', this.checked)" />`
+  } else {
+    control = `<input type="text" value="${meta.default || ''}" placeholder="${meta.hint}" onchange="onParamChange('${name}', this.value)" style="flex:1;background:#15171e;border:1px solid #2a2d35;border-radius:8px;padding:7px 12px;color:#e4e5e9;font-size:13px;outline:none;" />`
+  }
+  return `
+    <div class="param-row">
+      <div class="param-label">${meta.label}</div>
+      <div class="param-control">${control}</div>
+    </div>
+  `
+}
+
+function onParamChange(name, value) {
+  currentParams[name] = value
+  updateJsonPreview()
+}
+
+function updateJsonPreview() {
+  // 过滤掉默认值和 null
+  const output = {}
+  for (const [k, v] of Object.entries(currentParams)) {
+    if (v === null || v === "" || v === PARAM_META[k]?.default) continue
+    output[k] = v
+  }
+  const el = document.getElementById("jsonPreview")
+  if (Object.keys(output).length === 0) {
+    el.innerHTML = '<span style="color:#4a4d56">// 所有参数都是默认值，model_params 为空</span>'
+    return
+  }
+  // 简单语法高亮
+  let json = JSON.stringify(output, null, 2)
+  json = json.replace(/"([^"]+)":/g, '<span class="key">"$1"</span>:')
+  json = json.replace(/: "([^"]+)"/g, ': <span class="val">"$1"</span>')
+  json = json.replace(/: (\d+\.?\d*)/g, ': <span class="val">$1</span>')
+  json = json.replace(/: (true|false)/g, ': <span class="val">$1</span>')
+  el.innerHTML = `<span style="color:#4a4d56">// 写入 model_params →</span>\n${json}`
+}
+
+// 预填一个示例
+document.getElementById("modelName").value = "claude-sonnet-4-20250514"
+document.getElementById("providerId").value = "anthropic-main"
+document.getElementById("presetId").value = "main-chat"
+queryModel()
+</script>
+</body>
+</html>

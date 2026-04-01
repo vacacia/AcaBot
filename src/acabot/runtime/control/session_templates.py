@@ -81,7 +81,7 @@ SESSION_CHANNEL_TEMPLATES = {
         template_id="qq_private",
         label="QQ 私聊",
         scope_prefixes=("qq:user:", "qq:private:"),
-        event_types=("message", "poke", "recall", "friend_added"),
+        event_types=("message", "poke", "recall"),
         message_filter_options=("all",),
         default_message_filter="all",
     ),

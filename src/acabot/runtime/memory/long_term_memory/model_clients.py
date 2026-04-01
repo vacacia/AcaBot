@@ -67,7 +67,7 @@ class LtmExtractorClient:
             facts=facts,
         )
         response = await self.agent.complete(
-            system_prompt="你负责把对话事实窗口提取成可举证的长期记忆。",
+            system_prompt=payload.system_prompt,
             messages=[{"role": "user", "content": payload.prompt}],
             model=request.model,
             request_options=request.to_request_options(),
@@ -81,6 +81,7 @@ class LtmExtractorClient:
         return parse_extractor_response(
             response=parsed,
             anchor_map=payload.anchor_map,
+            fact_roles=payload.fact_roles,
             conversation_id=conversation_id,
             extractor_version=self.extractor_version,
             now_ts=now_ts,

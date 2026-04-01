@@ -11,7 +11,7 @@ from acabot.runtime import (
 )
 from acabot.runtime.memory.long_term_memory.contracts import MemoryEntry, MemoryProvenance
 from acabot.runtime.memory.long_term_memory.storage import LanceDbLongTermMemoryStore
-from acabot.runtime.memory.long_term_memory.write_port import CoreSimpleMemWritePort
+from acabot.runtime.memory.long_term_memory.write_port import LtmWritePort
 
 
 class RacingWakeEvent:
@@ -371,7 +371,7 @@ async def test_long_term_memory_ingestor_survives_cursor_save_failure() -> None:
     assert "thread:2" in backend.cursors
 
 
-async def test_long_term_memory_ingestor_advances_cursor_after_core_simplemem_write_port_success(
+async def test_long_term_memory_ingestor_advances_cursor_after_ltm_write_port_success(
     tmp_path: Path,
 ) -> None:
     class RecordingExtractor:
@@ -415,7 +415,7 @@ async def test_long_term_memory_ingestor_advances_cursor_after_core_simplemem_wr
     )
     thread_manager = InMemoryThreadManager()
     store = LanceDbLongTermMemoryStore(tmp_path / "lancedb")
-    port = CoreSimpleMemWritePort(
+    port = LtmWritePort(
         store=store,
         extractor=RecordingExtractor(),
         embedding_client=RecordingEmbeddingClient(),
@@ -489,7 +489,7 @@ async def test_long_term_memory_ingestor_advances_cursor_after_partial_window_fa
     )
     thread_manager = InMemoryThreadManager()
     store = LanceDbLongTermMemoryStore(tmp_path / "lancedb")
-    port = CoreSimpleMemWritePort(
+    port = LtmWritePort(
         store=store,
         extractor=FailingFirstWindowExtractor(),
         embedding_client=RecordingEmbeddingClient(),

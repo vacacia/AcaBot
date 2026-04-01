@@ -25,7 +25,7 @@
 
 - 配置 `runtime.long_term_memory.enabled = true`
 - runtime 自动装配 `LanceDbLongTermMemoryStore`
-- 写侧走 `LongTermMemoryIngestor -> CoreSimpleMemWritePort`
+- 写侧走 `LongTermMemoryIngestor -> LtmWritePort`
 - 读侧走 `MemoryBroker -> CoreSimpleMemMemorySource`
 - 模型位点统一走：
   - `system:ltm_extract`

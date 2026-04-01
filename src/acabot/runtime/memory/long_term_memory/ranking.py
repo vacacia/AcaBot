@@ -1,4 +1,23 @@
-"""runtime.memory.long_term_memory.ranking 负责三路命中的统一排序."""
+"""LTM 三路命中的统一排序.
+
+三路召回 (semantic / lexical / symbolic) 按 entry_id 去重合流后,
+用位权加分排序:
+
+    symbolic  +100
+    semantic   +40
+    lexical    +10
+
+同分时按 updated_at 降序 (越新越靠前).
+
+完整分数表:
+    symbolic + semantic + lexical  → 150
+    symbolic + semantic            → 140
+    symbolic + lexical             → 110
+    symbolic only                  → 100
+    semantic + lexical             →  50
+    semantic only                  →  40
+    lexical only                   →  10
+"""
 
 from __future__ import annotations
 

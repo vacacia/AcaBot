@@ -1,4 +1,8 @@
-"""runtime.memory.long_term_memory.write_port 负责长期记忆写侧主状态机."""
+"""长期记忆写侧主状态机.
+
+把 ConversationDelta 按滑动窗口切分, 逐窗口走 提取 → embedding → 存储 三步.
+单窗口失败不阻塞后续窗口, 失败记录落盘供后续重试.
+"""
 
 from __future__ import annotations
 
@@ -17,7 +21,7 @@ from .fact_ids import build_fact_id_from_conversation_fact
 
 
 class LtmWindowExtractor(Protocol):
-    """LtmWindowExtractor 定义写侧提取依赖面."""
+    """写侧提取依赖面: 从一组对话事实中提取结构化记忆条目."""
 
     async def extract_window(
         self,
@@ -26,24 +30,24 @@ class LtmWindowExtractor(Protocol):
         facts: list[ConversationFact],
         now_ts: int,
     ) -> list[MemoryEntry]:
-        """把一个事实窗口提取成长期记忆列表."""
+        """从一个事实窗口提取长期记忆条目 (通常背后是 LLM 调用)."""
 
 
 class LtmEntryEmbeddingClient(Protocol):
-    """LtmEntryEmbeddingClient 定义写侧 embedding 依赖面."""
+    """写侧 embedding 依赖面: 把记忆条目向量化."""
 
     async def embed_entries(self, entries: list[MemoryEntry]) -> list[list[float]]:
-        """把一批 entry 变成向量."""
+        """为一批 MemoryEntry 生成对应的 embedding 向量."""
 
 
 class LongTermMemoryWriteStore(Protocol):
-    """LongTermMemoryWriteStore 定义写侧需要的最小存储依赖面."""
+    """写侧最小存储依赖面: cursor 管理 + entry 写入 + 失败记录."""
 
     def load_cursor(self, thread_id: str) -> ThreadLtmCursor | None:
-        """读取一个 thread 当前游标."""
+        """读取指定 thread 的写入游标, 不存在返回 None."""
 
     def save_cursor(self, cursor: ThreadLtmCursor) -> None:
-        """保存一个 thread 当前游标."""
+        """持久化 thread 写入游标."""
 
     def upsert_entries(
         self,
@@ -51,30 +55,30 @@ class LongTermMemoryWriteStore(Protocol):
         *,
         vectors: list[list[float]] | None = None,
     ) -> None:
-        """写入一批长期记忆对象."""
+        """写入或更新一批长期记忆条目, 可选附带 embedding 向量."""
 
     def save_failed_window(self, record: FailedWindowRecord) -> None:
-        """保存一个失败窗口对象."""
+        """持久化失败窗口记录, 供后续重试."""
 
     def load_failed_window(self, window_id: str) -> FailedWindowRecord | None:
-        """读取一个失败窗口对象."""
+        """按 window_id 读取失败窗口记录, 不存在返回 None."""
 
 
 @dataclass(slots=True)
 class FactWindow:
-    """FactWindow 表示一个按 fact 数量切出来的写侧窗口.
-
-    Attributes:
-        facts (list[ConversationFact]): 当前窗口事实.
-        fact_ids (list[str]): 当前窗口正式 fact_id 集合.
-    """
+    """按 fact 数量切出来的写侧窗口."""
 
     facts: list[ConversationFact]
     fact_ids: list[str]
 
 
-class CoreSimpleMemWritePort(LongTermMemoryWritePort):
-    """CoreSimpleMemWritePort 把 ConversationDelta 接到 Core SimpleMem."""
+class LtmWritePort(LongTermMemoryWritePort):
+    """LTM 写入端口: 把 ConversationDelta 按滑动窗口写进长期记忆.
+
+    窗口策略: 每 *window_size* 条 fact 切一窗, 相邻窗口重叠 *overlap_size* 条,
+    避免边界处语义丢失. 单窗口处理失败时记录 FailedWindowRecord 并跳过,
+    不阻塞后续窗口.
+    """
 
     def __init__(
         self,
@@ -85,16 +89,6 @@ class CoreSimpleMemWritePort(LongTermMemoryWritePort):
         window_size: int = 50,
         overlap_size: int = 10,
     ) -> None:
-        """初始化长期记忆写侧端口.
-
-        Args:
-            store: 写侧存储依赖面.
-            extractor: 窗口提取器.
-            embedding_client: entry embedding 客户端.
-            window_size: 每个窗口默认包含的 fact 数.
-            overlap_size: 相邻窗口重叠的 fact 数.
-        """
-
         self.store = store
         self.extractor = extractor
         self.embedding_client = embedding_client
@@ -103,24 +97,11 @@ class CoreSimpleMemWritePort(LongTermMemoryWritePort):
         self.step_size = max(1, self.window_size - self.overlap_size)
 
     async def load_cursor(self, thread_id: str) -> ThreadLtmCursor | None:
-        """读取一个 thread 的写入游标.
-
-        Args:
-            thread_id: 目标 thread.
-
-        Returns:
-            当前游标, 不存在则返回 None.
-        """
-
+        """读取指定 thread 的写入游标, 不存在返回 None."""
         return await asyncio.to_thread(self.store.load_cursor, thread_id)
 
     async def save_cursor(self, cursor: ThreadLtmCursor) -> None:
-        """保存一个 thread 的写入游标.
-
-        Args:
-            cursor: 待保存游标.
-        """
-
+        """持久化 thread 写入游标."""
         await asyncio.to_thread(self.store.save_cursor, cursor)
 
     async def ingest_thread_delta(
@@ -128,14 +109,14 @@ class CoreSimpleMemWritePort(LongTermMemoryWritePort):
         thread_id: str,
         delta: ConversationDelta,
     ) -> ThreadLtmIngestResult:
-        """把一个 thread 的增量事实窗口写进 Core SimpleMem.
+        """把一个 thread 的增量事实写进长期记忆.
 
-        Args:
-            thread_id: 目标 thread.
-            delta: 当前增量事实窗口.
+        处理流程: 切窗口 → 逐窗口 (提取 → embedding → 存储).
 
-        Returns:
-            当前增量的写入结果.
+        失败策略:
+        - 单窗口失败: 记录 FailedWindowRecord, 跳过继续处理后续窗口.
+        - 失败记录本身写不进去: 立刻返回 advance_cursor=False, 阻止游标前进.
+        - 部分窗口失败: 游标仍然前进, 通过 has_failures=True 告知调用方.
         """
 
         _ = thread_id
@@ -192,16 +173,9 @@ class CoreSimpleMemWritePort(LongTermMemoryWritePort):
 
 
 def derive_conversation_id_from_delta(delta: ConversationDelta) -> str:
-    """从增量窗口里推导正式 `conversation_id`.
+    """从增量窗口的 channel_scope 推导唯一 conversation_id.
 
-    Args:
-        delta: 当前增量事实窗口.
-
-    Returns:
-        当前窗口所属对话容器.
-
-    Raises:
-        ValueError: 当窗口为空或混入多个 conversation 时抛出.
+    要求 delta 内所有 fact 属于同一个 conversation, 否则抛 ValueError.
     """
 
     if not delta.facts:
@@ -222,16 +196,7 @@ def slice_fact_windows(
     window_size: int,
     overlap_size: int,
 ) -> list[FactWindow]:
-    """按固定 fact 窗口切分一段对话事实.
-
-    Args:
-        facts: 当前增量事实窗口.
-        window_size: 单窗 fact 数.
-        overlap_size: 相邻窗口重叠的 fact 数.
-
-    Returns:
-        事实窗口列表.
-    """
+    """按滑动窗口切分对话事实, 步长 = window_size - overlap_size."""
 
     if not facts:
         return []
@@ -256,15 +221,7 @@ def slice_fact_windows(
 
 
 def build_failed_window_id(conversation_id: str, fact_ids: list[str]) -> str:
-    """根据对话容器和窗口 fact 集合构造稳定失败窗口主键.
-
-    Args:
-        conversation_id: 所属对话容器.
-        fact_ids: 当前窗口正式 fact_id 集合.
-
-    Returns:
-        稳定失败窗口主键.
-    """
+    """构造稳定的失败窗口主键: ``{conversation_id}:{first_fact_id}:{last_fact_id}``."""
 
     if not fact_ids:
         raise ValueError("fact_ids is required")
@@ -272,7 +229,7 @@ def build_failed_window_id(conversation_id: str, fact_ids: list[str]) -> str:
 
 
 __all__ = [
-    "CoreSimpleMemWritePort",
+    "LtmWritePort",
     "FactWindow",
     "LongTermMemoryWriteStore",
     "build_failed_window_id",

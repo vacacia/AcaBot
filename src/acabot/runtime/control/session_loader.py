@@ -138,6 +138,11 @@ class SessionConfigLoader:
         declared_session_id = str(session_block.get("id", session_id) or session_id)
         if declared_session_id != session_id:
             raise ValueError(f"session.id does not match requested session_id: {path}")
+        context_block = _require_mapping(raw.get("context", {}), label="context", path=path)
+        context_strategy = str(context_block.get("strategy", "truncate") or "truncate")
+        if context_strategy not in ("truncate", "summarize"):
+            context_strategy = "truncate"
+        context_preserve_recent = int(context_block.get("preserve_recent", 12) or 12)
         return SessionConfig(
             session_id=declared_session_id,
             template_id=str(session_block.get("template", "") or ""),
@@ -145,6 +150,8 @@ class SessionConfigLoader:
             frontstage_agent_id=frontstage_agent_id,
             selectors=selectors,
             surfaces=surfaces,
+            context_strategy=context_strategy,
+            context_preserve_recent=max(1, context_preserve_recent),
             metadata={"config_path": str(path)},
         )
 

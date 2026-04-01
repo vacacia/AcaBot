@@ -814,6 +814,7 @@ async def test_runtime_config_control_plane_creates_session_and_updates_agent_pr
         agent=FakeAgent(FakeAgentResponse(text="ok")),
         log_buffer=InMemoryLogBuffer(),
     )
+    await _seed_model_registry(components.control_plane)
     await components.control_plane.upsert_prompt(
         prompt_ref="prompt/worker",
         content="you are worker",
@@ -847,6 +848,34 @@ async def test_runtime_config_control_plane_creates_session_and_updates_agent_pr
     assert prompt["prompt_ref"] == "prompt/worker"
     assert components.prompt_loader.load("prompt/worker") == "you are worker"
     assert (tmp_path / "prompts" / "worker.md").exists()
+
+
+async def test_runtime_config_control_plane_create_session_keeps_default_agent_model_target_binding(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, filesystem_enabled=True, base_dir=tmp_path)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+        log_buffer=InMemoryLogBuffer(),
+    )
+    await _seed_model_registry(components.control_plane)
+
+    created = await components.control_plane.create_session(
+        {
+            "session_id": "qq:user:10001",
+            "title": "Worker Session",
+            "template_id": "qq_private",
+        }
+    )
+
+    assert created["session"]["session_id"] == "qq:user:10001"
+    preview = await components.control_plane.preview_effective_target_model("agent:aca")
+    assert preview.target_id == "agent:aca"
+    assert preview.request.preset_id == "aca-main"
 
 
 async def test_webui_subagents_endpoint_returns_catalog_items(tmp_path: Path) -> None:
@@ -889,6 +918,7 @@ runtime:
         agent=FakeAgent(FakeAgentResponse(text="ok")),
         log_buffer=InMemoryLogBuffer(),
     )
+    await _seed_model_registry(components.control_plane)
     await components.control_plane.upsert_prompt(
         prompt_ref="prompt/worker",
         content="you are worker",
@@ -972,6 +1002,7 @@ runtime:
         agent=FakeAgent(FakeAgentResponse(text="ok")),
         log_buffer=InMemoryLogBuffer(),
     )
+    await _seed_model_registry(components.control_plane)
     await components.control_plane.upsert_prompt(
         prompt_ref="prompt/worker",
         content="you are worker",
@@ -1093,6 +1124,7 @@ async def test_runtime_http_api_server_serves_status_and_session_crud(tmp_path: 
         agent=FakeAgent(FakeAgentResponse(text="ok")),
         log_buffer=InMemoryLogBuffer(),
     )
+    await _seed_model_registry(components.control_plane)
     await components.control_plane.upsert_prompt(
         prompt_ref="prompt/worker",
         content="you are worker",
@@ -1251,6 +1283,61 @@ async def test_runtime_http_api_server_rejects_path_traversal_session_ids(tmp_pa
         assert "invalid session_id" in fetched["error"]
     finally:
         await server.stop()
+
+
+async def test_runtime_http_api_server_defaults_sessions_dir_when_filesystem_enabled(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""
+gateway:
+  host: "127.0.0.1"
+  port: 8080
+
+agent:
+
+runtime:
+  filesystem:
+    enabled: true
+    base_dir: "{tmp_path}"
+  webui:
+    enabled: true
+    host: "127.0.0.1"
+    port: 0
+""".strip(),
+        encoding="utf-8",
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+        log_buffer=InMemoryLogBuffer(),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        meta = await asyncio.to_thread(request_json, base_url, "/api/meta")
+        created = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/sessions",
+            method="POST",
+            payload={
+                "session_id": "qq:user:10001",
+                "title": "Worker Session",
+                "template_id": "qq_private",
+            },
+        )
+    finally:
+        await server.stop()
+
+    assert meta["data"]["storage_mode"] == "filesystem"
+    assert created["data"]["session"]["session_id"] == "qq:user:10001"
+    assert (tmp_path / "sessions" / "qq" / "user" / "10001" / "session.yaml").exists()
+    assert (tmp_path / "sessions" / "qq" / "user" / "10001" / "agent.yaml").exists()
 
 
 async def test_runtime_http_api_server_exposes_system_configuration_snapshot_and_gateway_restart_status(
@@ -3301,5 +3388,154 @@ async def test_memory_page_preserves_state_when_navigating_away_and_back(tmp_pat
         )
 
         assert result["searchValue"] == "qq:"
+    finally:
+        await server.stop()
+
+
+async def test_sessions_page_supports_creating_and_editing_session_owned_agent(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0, filesystem_enabled=True, base_dir=tmp_path)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+        log_buffer=InMemoryLogBuffer(),
+    )
+    await _seed_model_registry(components.control_plane)
+    await components.control_plane.upsert_prompt(
+        prompt_ref="prompt/worker",
+        content="you are worker",
+    )
+    await components.control_plane.create_session(
+        {
+            "session_id": "qq:user:10001",
+            "title": "私聊值守",
+            "template_id": "qq_private",
+        }
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        result = await asyncio.to_thread(
+            run_page_script,
+            url=f"{base_url}/sessions",
+            width=1440,
+            height=1000,
+            wait_ms=2200,
+            script="""
+              return new Promise((resolve) => {
+                const createButton = document.querySelector('[data-session-create-button]');
+                createButton?.click();
+                setTimeout(() => {
+                  const modalOpen = Boolean(document.querySelector('.modal-shell'));
+                  const templateSelect = document.querySelector('[data-session-create-template]');
+                  const sessionIdInput = document.querySelector('[data-session-create-id]');
+                  const titleInput = document.querySelector('[data-session-create-title]');
+                  if (templateSelect) {
+                    templateSelect.value = 'qq_group';
+                    templateSelect.dispatchEvent(new Event('change', { bubbles: true }));
+                  }
+                  if (sessionIdInput) {
+                    sessionIdInput.value = 'qq:group:42';
+                    sessionIdInput.dispatchEvent(new Event('input', { bubbles: true }));
+                  }
+                  if (titleInput) {
+                    titleInput.value = '群聊值守';
+                    titleInput.dispatchEvent(new Event('input', { bubbles: true }));
+                  }
+                  document.querySelector('[data-session-create-submit]')?.click();
+                  setTimeout(() => {
+                    const titleField = document.querySelector('[data-session-title-input]');
+                    if (titleField) {
+                      titleField.value = '群聊值守二号';
+                      titleField.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                    document.querySelector('[data-session-save-button]')?.click();
+                    setTimeout(() => {
+                      document.querySelector('[data-session-tab=\"agent\"]')?.click();
+                      setTimeout(() => {
+                        const promptSelect = document.querySelector('[data-agent-prompt-select]');
+                        if (promptSelect) {
+                          promptSelect.value = 'prompt/worker';
+                          promptSelect.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+                        document.querySelector('[data-agent-open-model]')?.click();
+                        setTimeout(() => {
+                          const modelOption = document.querySelector('[data-reply-model-option] input');
+                          const selectedReplyModel = modelOption?.closest('[data-reply-model-option]')?.getAttribute('data-reply-model-option') || '';
+                          modelOption?.click();
+                          document.querySelector('.capability-modal-shell .ds-primary-button')?.click();
+                          setTimeout(() => {
+                        document.querySelector('[data-agent-open-tools]')?.click();
+                        setTimeout(() => {
+                          const toolModalOpen = Boolean(document.querySelector('.capability-modal-shell'));
+                          const toolOption = document.querySelector('[data-capability-option=\"tools:read\"] input')
+                            || document.querySelector('[data-capability-option^=\"tools:\"] input');
+                          const selectedTool = toolOption?.closest('[data-capability-option]')?.getAttribute('data-capability-option')?.split(':').slice(1).join(':') || '';
+                          if (toolOption && !toolOption.checked) {
+                            toolOption.click();
+                          }
+                          document.querySelector('.capability-modal-shell .ds-primary-button')?.click();
+                          setTimeout(() => {
+                            document.querySelector('[data-agent-save-button]')?.click();
+                            setTimeout(async () => {
+                              const createdAgent = await fetch('/api/sessions/qq%3Agroup%3A42/agent').then((resp) => resp.json());
+                              const targetPreview = await fetch('/api/models/targets/' + encodeURIComponent('agent:' + createdAgent?.data?.agent_id) + '/effective').then((resp) => resp.json());
+                              resolve({
+                                modalOpen,
+                                bodyText: document.body.textContent || '',
+                                modelModalText: document.querySelector('.capability-modal-shell')?.textContent || '',
+                                    sessionRows: Array.from(document.querySelectorAll('[data-session-row]'))
+                                      .map((item) => item.textContent?.trim() || ''),
+                                activeTab: document.querySelector('[data-session-tab][aria-pressed=\"true\"]')?.textContent?.trim() || '',
+                                heading: document.querySelector('[data-session-panel-heading]')?.textContent?.trim() || '',
+                                promptValue: document.querySelector('[data-agent-prompt-select]')?.value || '',
+                                selectedReplyModel,
+                                toolModalOpen,
+                                selectedTool,
+                                selectedToolChips: Array.from(document.querySelectorAll('.capability-card .ds-chip'))
+                                  .map((item) => item.textContent?.trim() || ''),
+                                agentPromptRef: createdAgent?.data?.prompt_ref || '',
+                                effectiveModel: targetPreview?.data?.request?.model || '',
+                                effectivePresetId: targetPreview?.data?.request?.preset_id || '',
+                                agentVisibleTools: createdAgent?.data?.visible_tools || [],
+                                statusTexts: Array.from(document.querySelectorAll('.ds-status'))
+                                  .map((item) => item.textContent?.trim() || ''),
+                              });
+                            }, 900);
+                          }, 220);
+                        }, 220);
+                          }, 220);
+                        }, 180);
+                      }, 180);
+                    }, 900);
+                  }, 1100);
+                }, 280);
+              });
+            """,
+        )
+
+        assert result["modalOpen"] is True
+        assert "会话与 Session-Owned Agent" in result["bodyText"]
+        assert any("私聊值守" in item for item in result["sessionRows"])
+        assert any("群聊值守二号" in item for item in result["sessionRows"])
+        assert result["activeTab"] == "Agent"
+        assert result["heading"] == "群聊值守二号"
+        assert result["promptValue"] == "prompt/worker"
+        assert result["selectedReplyModel"]
+        assert result["effectivePresetId"] == result["selectedReplyModel"]
+        assert result["effectiveModel"]
+        assert "跟随默认" not in result["bodyText"]
+        assert "system:compactor_summary" not in result["modelModalText"]
+        assert result["toolModalOpen"] is True
+        assert result["selectedTool"]
+        assert result["selectedTool"] in result["selectedToolChips"]
+        assert result["agentPromptRef"] == "prompt/worker"
+        assert result["selectedTool"] in result["agentVisibleTools"]
+        assert any("已保存" in item for item in result["statusTexts"])
     finally:
         await server.stop()

@@ -145,7 +145,7 @@
 打开后, runtime 会自己构造:
 
 - `LanceDbLongTermMemoryStore`
-- `CoreSimpleMemWritePort`
+- `LtmWritePort`
 - `CoreSimpleMemMemorySource`
 - `LongTermMemoryIngestor`
 

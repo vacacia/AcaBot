@@ -13,7 +13,7 @@ docs/LTM/core-simplemem-design.md
 
 - `contracts.py` 定义 `MemoryEntry`、`MemoryProvenance`、`FailedWindowRecord`
 - `storage.py` 提供 `LanceDbLongTermMemoryStore`
-- `write_port.py` 提供 `CoreSimpleMemWritePort`
+- `write_port.py` 提供 `LtmWritePort`
 - `source.py` 提供 `CoreSimpleMemMemorySource`
 - `bootstrap/builders.py` 在 `runtime.long_term_memory.enabled = true` 时自动装配写入线和检索线
 

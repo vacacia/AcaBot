@@ -20,6 +20,7 @@ class SessionBundleLoader:
         tool_names: set[str] | None = None,
         skill_names: set[str] | None = None,
         subagent_names: set[str] | None = None,
+        model_target_ids: set[str] | None = None,
     ) -> None:
         self.config_root = Path(config_root)
         self.session_loader = SessionConfigLoader(config_root=self.config_root)
@@ -28,6 +29,7 @@ class SessionBundleLoader:
         self.tool_names = None if tool_names is None else set(tool_names)
         self.skill_names = None if skill_names is None else set(skill_names)
         self.subagent_names = None if subagent_names is None else set(subagent_names)
+        self.model_target_ids = None if model_target_ids is None else set(model_target_ids)
 
     def replace_catalog_refs(
         self,
@@ -36,6 +38,7 @@ class SessionBundleLoader:
         tool_names: set[str],
         skill_names: set[str],
         subagent_names: set[str],
+        model_target_ids: set[str] | None = None,
     ) -> None:
         """原子替换 bundle 校验所需的 catalog 快照."""
 
@@ -43,6 +46,7 @@ class SessionBundleLoader:
         self.tool_names = set(tool_names)
         self.skill_names = set(skill_names)
         self.subagent_names = set(subagent_names)
+        self.model_target_ids = None if model_target_ids is None else set(model_target_ids)
 
     def replace_root(self, config_root: str | Path) -> None:
         """替换 session bundle 根目录."""
@@ -124,6 +128,9 @@ class SessionBundleLoader:
         missing_subagents = sorted(item for item in frontstage_agent.visible_subagents if item not in self.subagent_names)
         if missing_subagents:
             problems.append(f"visible_subagents={missing_subagents}")
+        model_target = str(frontstage_agent.config.get("model_target", "") or "").strip()
+        if model_target and self.model_target_ids is not None and model_target not in self.model_target_ids:
+            problems.append(f"model_target={model_target}")
         if problems:
             raise ValueError("Unknown catalog references: " + ", ".join(problems))
 

@@ -20,16 +20,19 @@ def test_model_target_catalog_rebuilds_agent_targets_from_profile_registry() -> 
     catalog.replace_agent_targets(build_agent_model_targets([_profile("aca"), _profile("worker")]))
 
     aca = catalog.get("agent:aca")
-    summary = catalog.get("system:compactor_summary")
-    image_caption = catalog.get("system:image_caption")
+    aca_caption = catalog.get("agent:aca:image_caption")
 
     assert aca is not None
     assert aca.task_kind == "chat"
     assert aca.source_kind == "agent"
-    assert summary is not None
-    assert summary.allow_fallbacks is True
-    assert image_caption is not None
-    assert image_caption.required_capabilities == ["image_input"]
+    assert aca_caption is not None
+    assert aca_caption.required_capabilities == ["image_input"]
+    assert aca_caption.required is False
+
+    # system:compactor_summary 和 system:image_caption 已移除,
+    # 压缩用主模型, 识图用 agent 级 target
+    assert catalog.get("system:compactor_summary") is None
+    assert catalog.get("system:image_caption") is None
 
 
 def test_model_target_catalog_registers_and_unregisters_plugin_slots() -> None:

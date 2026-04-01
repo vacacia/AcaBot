@@ -1,6 +1,6 @@
 """runtime.memory.long_term_memory.storage 集中管理 LanceDB 持久化.
 
-这个模块只负责 Core SimpleMem 的存储层:
+这个模块只负责 LTM 的存储层:
 - 建表
 - `MemoryEntry` 读写
 - 词法检索
@@ -236,6 +236,16 @@ def _merge_entry_record(
 ) -> dict[str, Any]:
     """把一条新 entry 行合并进当前主表快照.
 
+    合并规则（以 updated_at 较大的那条为准）：
+    - entry_id 不存在：直接写入新行。
+    - 内容字段没有变化，旧行没有向量但新行有：只补向量，其他不动。
+    - 内容字段没有变化，向量状态也一样：保留旧行，丢弃新行（幂等）。
+    - 内容字段有变化，旧行 updated_at 更大：保留旧行。
+    - 内容字段有变化，新行 updated_at 更大：用新行，但继承旧行的 created_at。
+
+    "内容字段"指：topic、lossless_restatement、keywords、时间字段、
+    location、persons、entities、provenance_fact_ids。
+
     Args:
         existing_row: 已有行, 不存在时为 None.
         incoming_row: 新写入行.
@@ -385,7 +395,7 @@ def _time_overlaps(
 
 # region storage
 class LanceDbLongTermMemoryStore:
-    """LanceDbLongTermMemoryStore 表示 Core SimpleMem 的单一存储实现.
+    """LanceDbLongTermMemoryStore 表示 LTM 的单一存储实现.
 
     Attributes:
         root_dir (Path): LanceDB 数据目录.
@@ -681,6 +691,189 @@ class LanceDbLongTermMemoryStore:
         if not rows:
             return None
         return _record_to_failed_window(rows[0])
+
+    def list_entries(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+        conversation_id: str = "",
+        keyword: str = "",
+        person: str = "",
+        entity: str = "",
+        date_start: str = "",
+        date_end: str = "",
+    ) -> tuple[list[MemoryEntry], int]:
+        """List entries with pagination and optional filters.
+
+        Args:
+            offset: 分页起始位置.
+            limit: 分页大小.
+            conversation_id: 可选的对话容器过滤.
+            keyword: 可选的关键词过滤 (匹配 topic / lossless_restatement / keywords).
+            person: 可选的人物过滤.
+            entity: 可选的实体过滤.
+
+        Returns:
+            (entries, total_count) 元组.
+        """
+
+        all_rows = self._entries.to_arrow().to_pylist()
+        filtered = all_rows
+        if conversation_id:
+            filtered = [r for r in filtered if r.get("conversation_id") == conversation_id]
+        if person:
+            person_lower = person.lower()
+            filtered = [
+                r for r in filtered
+                if any(person_lower in str(p).lower() for p in (r.get("persons") or []))
+            ]
+        if entity:
+            entity_lower = entity.lower()
+            filtered = [
+                r for r in filtered
+                if any(entity_lower in str(e).lower() for e in (r.get("entities") or []))
+            ]
+        if keyword:
+            keyword_lower = keyword.lower()
+            filtered = [
+                r for r in filtered
+                if keyword_lower in str(r.get("topic", "")).lower()
+                or keyword_lower in str(r.get("lossless_restatement", "")).lower()
+                or any(keyword_lower in str(k).lower() for k in (r.get("keywords") or []))
+            ]
+        if date_start:
+            try:
+                import datetime
+                start_ts = int(datetime.datetime.strptime(date_start, "%Y-%m-%d").timestamp())
+                filtered = [r for r in filtered if (r.get("updated_at") or 0) >= start_ts]
+            except ValueError:
+                pass
+        if date_end:
+            try:
+                import datetime
+                end_ts = int(datetime.datetime.strptime(date_end, "%Y-%m-%d").replace(hour=23, minute=59, second=59).timestamp())
+                filtered = [r for r in filtered if (r.get("updated_at") or 0) <= end_ts]
+            except ValueError:
+                pass
+        filtered.sort(key=lambda r: r.get("updated_at", 0), reverse=True)
+        total = len(filtered)
+        page = filtered[offset:offset + limit]
+        return [_record_to_entry(r) for r in page], total
+
+    def get_stats(self) -> dict[str, int]:
+        """Get aggregate statistics about the LTM store.
+
+        Returns:
+            聚合统计字典, 包含 total_entries / conversations / persons / entities.
+        """
+
+        all_rows = self._entries.to_arrow().to_pylist()
+        conversations: set[str] = set()
+        persons: set[str] = set()
+        entities: set[str] = set()
+        for r in all_rows:
+            conversations.add(r.get("conversation_id", ""))
+            for p in (r.get("persons") or []):
+                if p:
+                    persons.add(p)
+            for e in (r.get("entities") or []):
+                if e:
+                    entities.add(e)
+        return {
+            "total_entries": len(all_rows),
+            "conversations": len(conversations),
+            "persons": len(persons),
+            "entities": len(entities),
+        }
+
+    def delete_entry(self, entry_id: str) -> bool:
+        """Delete a single entry by entry_id.
+
+        Args:
+            entry_id: 目标 entry 主键.
+
+        Returns:
+            找到并删除返回 True, 否则返回 False.
+        """
+
+        all_rows = self._entries.to_arrow().to_pylist()
+        new_rows = [r for r in all_rows if r.get("entry_id") != entry_id]
+        if len(new_rows) == len(all_rows):
+            return False
+        self._normalize_entry_vectors(new_rows)
+        self._rewrite_entries_table(new_rows)
+        return True
+
+    def delete_entries_by_conversation(self, conversation_id: str) -> int:
+        """Delete all entries belonging to a conversation.
+
+        Args:
+            conversation_id: 目标对话容器.
+
+        Returns:
+            被删除的条目数.
+        """
+
+        all_rows = self._entries.to_arrow().to_pylist()
+        new_rows = [r for r in all_rows if r.get("conversation_id") != conversation_id]
+        deleted_count = len(all_rows) - len(new_rows)
+        if deleted_count > 0:
+            self._normalize_entry_vectors(new_rows)
+            self._rewrite_entries_table(new_rows)
+        return deleted_count
+
+    def update_entry(
+        self,
+        entry_id: str,
+        *,
+        topic: str | None = None,
+        lossless_restatement: str | None = None,
+        keywords: list[str] | None = None,
+        persons: list[str] | None = None,
+        entities: list[str] | None = None,
+        location: str | None = ...,
+    ) -> MemoryEntry | None:
+        """Update fields of an existing entry.
+
+        Only provided (non-None) fields are updated. For ``location``,
+        pass ``None`` explicitly to clear it; omit to leave unchanged.
+
+        Args:
+            entry_id: 目标 entry 主键.
+
+        Returns:
+            更新后的 MemoryEntry, 如果不存在返回 None.
+        """
+
+        import time
+
+        all_rows = self._entries.to_arrow().to_pylist()
+        target_index = None
+        for i, r in enumerate(all_rows):
+            if r.get("entry_id") == entry_id:
+                target_index = i
+                break
+        if target_index is None:
+            return None
+        row = all_rows[target_index]
+        if topic is not None:
+            row["topic"] = topic
+        if lossless_restatement is not None:
+            row["lossless_restatement"] = lossless_restatement
+        if keywords is not None:
+            row["keywords"] = keywords
+            row["lexical_text"] = " ".join(keywords)
+        if persons is not None:
+            row["persons"] = persons
+        if entities is not None:
+            row["entities"] = entities
+        if location is not ...:
+            row["location"] = location or ""
+        row["updated_at"] = int(time.time())
+        self._normalize_entry_vectors(all_rows)
+        self._rewrite_entries_table(all_rows)
+        return _record_to_entry(row)
 
     def _ensure_table(self, table_name: str, schema: pa.Schema):
         """确保一个 LanceDB 表存在.

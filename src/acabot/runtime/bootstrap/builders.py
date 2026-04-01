@@ -21,8 +21,8 @@ from ..memory.conversation_facts import StoreBackedConversationFactReader
 from ..memory.file_backed import SelfFileRetriever, StickyNoteFileStore, StickyNoteRetriever
 from ..memory.long_term_ingestor import LongTermMemoryIngestor, LongTermMemoryWritePort
 from ..memory.long_term_memory import (
-    CoreSimpleMemMemorySource,
-    CoreSimpleMemWritePort,
+    LtmMemorySource,
+    LtmWritePort,
     LtmEmbeddingClient,
     LtmExtractorClient,
     LtmQueryPlannerClient,
@@ -234,7 +234,7 @@ def build_long_term_memory_source(
     agent: BaseAgent,
     store: LanceDbLongTermMemoryStore,
     model_registry_manager: FileSystemModelRegistryManager,
-) -> CoreSimpleMemMemorySource:
+) -> LtmMemorySource:
     """构造长期记忆检索侧 source.
 
     Args:
@@ -243,11 +243,11 @@ def build_long_term_memory_source(
         model_registry_manager: 模型注册表管理器.
 
     Returns:
-        CoreSimpleMemMemorySource: 已接上 query planner 和 embedding 的检索入口.
+        LtmMemorySource: 已接上 query planner 和 embedding 的检索入口.
     """
 
     long_term_memory_conf = _long_term_memory_config(config)
-    return CoreSimpleMemMemorySource(
+    return LtmMemorySource(
         store=store,
         query_planner=LtmQueryPlannerClient(
             agent=agent,
@@ -281,7 +281,7 @@ def build_long_term_memory_write_port(
     """
 
     long_term_memory_conf = _long_term_memory_config(config)
-    return CoreSimpleMemWritePort(
+    return LtmWritePort(
         store=store,
         extractor=LtmExtractorClient(
             agent=agent,

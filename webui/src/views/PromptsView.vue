@@ -153,7 +153,6 @@ onMounted(() => {
           <div class="ds-section-title">
             <div>
               <h2>{{ draftName || '新建提示词' }}</h2>
-              <p class="ds-summary">用户只看名字和内容，内部再映射到 <code>prompt/&lt;name&gt;</code>。</p>
             </div>
           </div>
           <div class="ds-actions">

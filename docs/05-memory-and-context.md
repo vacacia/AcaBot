@@ -124,7 +124,7 @@ sticky notes 现在是 file-backed 的稳定记忆材料。
 这条线当前已经跑通的是：
 
 - `LongTermMemoryIngestor` 负责写入编排
-- `CoreSimpleMemWritePort` 负责滑窗提取、embedding 和 LanceDB upsert
+- `LtmWritePort` 负责滑窗提取、embedding 和 LanceDB upsert
 - `CoreSimpleMemMemorySource` 负责 retrieval 时的混合召回和 XML block 渲染
 - `MemoryBroker` 把它和 `/self`、sticky notes 一起当作普通 `MemorySource`
 

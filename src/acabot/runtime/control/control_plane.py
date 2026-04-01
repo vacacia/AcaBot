@@ -114,6 +114,7 @@ class RuntimeControlPlane:
         reference_backend: ReferenceBackend | None = None,
         config_control_plane: RuntimeConfigControlPlane | None = None,
         log_buffer: InMemoryLogBuffer | None = None,
+        ltm_store: object | None = None,
     ) -> None:
         """初始化 RuntimeControlPlane.
 
@@ -134,6 +135,7 @@ class RuntimeControlPlane:
             computer_runtime: 可选的 computer 基础设施入口.
             reference_backend: 可选的 reference backend.
             config_control_plane: 可选的 runtime 配置控制面.
+            ltm_store: 可选的 LTM 存储实例 (LanceDbLongTermMemoryStore).
         """
 
         self.app = app
@@ -153,6 +155,7 @@ class RuntimeControlPlane:
         self.reference_backend = reference_backend
         self.config_control_plane = config_control_plane
         self.log_buffer = log_buffer
+        self.ltm_store = ltm_store
         self.model_ops = RuntimeModelControlOps(
             model_registry_manager=model_registry_manager,
         )

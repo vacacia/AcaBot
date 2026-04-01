@@ -559,10 +559,10 @@ Expected:
 
 - 因 `write_port.py` 和真实 LTM backend 不存在而失败。
 
-- [ ] **Step 3: 实现 `CoreSimpleMemWritePort`**
+- [ ] **Step 3: 实现 `LtmWritePort`**
 
 ```python
-class CoreSimpleMemWritePort(LongTermMemoryWritePort):
+class LtmWritePort(LongTermMemoryWritePort):
     async def ingest_thread_delta(self, thread_id: str, delta: ConversationDelta) -> bool:
         conversation_id = derive_conversation_id(delta)
         windows = slice_fact_windows(delta.facts, window_size=50, overlap_size=10)
