@@ -132,7 +132,7 @@ def build_extraction_window_payload(
         fact_roles[fact_id] = fact.role
     # endregion
 
-    system_prompt = "你是一个专业的对话信息提取助手，擅长从对话事实中提取结构化、无歧义的长期记忆条目。你只输出合法的 JSON，不输出任何解释。"
+    system_prompt = _load_prompt_file("extraction_system.txt")
     user_template = _load_prompt_file("extraction_user.txt")
     prompt = (
         user_template

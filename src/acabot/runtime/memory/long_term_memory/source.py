@@ -1,4 +1,17 @@
-"""runtime.memory.long_term_memory.source 负责长期记忆检索侧入口."""
+"""LTM 检索侧入口: 接收 MemoryBroker 的检索请求, 三路召回后返回 MemoryBlock。
+
+调用链路: 
+  MemoryBroker → LtmMemorySource.__call__()
+    1. QueryPlannerClient 把原始请求拆成 semantic / lexical / symbolic 三组查询
+    2. 三路分别向 RetrievalStore 发起检索
+    3. ranking.merge_ranked_entry_hits 按 entry_id 去重、位权排序
+    4. LtmRenderer 渲染成 XML, 包成 MemoryBlock 返回
+
+依赖面用 Protocol 定义: 
+- RetrievalStore: 三种检索方法（keyword / semantic / structured）
+- QueryPlannerClient: 调 LLM 生成 retrieval plan
+- QueryEmbeddingClient: 把查询文本变成向量
+"""
 
 from __future__ import annotations
 
@@ -12,7 +25,7 @@ from .renderer import LtmRenderer
 
 
 class RetrievalStore(Protocol):
-    """RetrievalStore 定义检索侧需要的最小存储依赖面."""
+    """检索侧的最小存储接口, 当前实现是 LanceDbLongTermMemoryStore。"""
 
     def keyword_search(
         self,
@@ -21,7 +34,16 @@ class RetrievalStore(Protocol):
         conversation_id: str,
         limit: int,
     ) -> list[MemoryEntry]:
-        """执行词法检索."""
+        """用 FTS 全文索引做词法检索。
+
+        Args:
+            query_text: 词法查询文本。
+            conversation_id: 限定在哪个对话容器内搜索。
+            limit: 返回条数上限。
+
+        Returns:
+            命中的 MemoryEntry 列表。
+        """
 
     def semantic_search(
         self,
@@ -30,7 +52,16 @@ class RetrievalStore(Protocol):
         conversation_id: str,
         limit: int,
     ) -> list[MemoryEntry]:
-        """执行语义检索."""
+        """用向量余弦相似度做语义检索。
+
+        Args:
+            query_vector: 查询向量（由 QueryEmbeddingClient 生成）。
+            conversation_id: 限定在哪个对话容器内搜索。
+            limit: 返回条数上限。
+
+        Returns:
+            命中的 MemoryEntry 列表。
+        """
 
     def structured_search(
         self,
@@ -42,26 +73,74 @@ class RetrievalStore(Protocol):
         time_range: tuple[str | None, str | None] | None,
         limit: int,
     ) -> list[MemoryEntry]:
-        """执行结构字段检索."""
+        """用结构字段（人物、实体、地点、时间区间）做精确匹配检索。
+
+        Args:
+            conversation_id: 限定在哪个对话容器内搜索。
+            persons: 要求 entry.persons 包含的人物集合（子集匹配）。
+            entities: 要求 entry.entities 包含的实体集合（子集匹配）。
+            location: 地点精确匹配, None 表示不过滤。
+            time_range: (start, end) 时间区间, 和 entry 的时间做重叠判断。
+            limit: 返回条数上限。
+
+        Returns:
+            命中的 MemoryEntry 列表。
+        """
 
 
 class QueryPlannerClient(Protocol):
-    """QueryPlannerClient 定义 query planning 依赖面."""
+    """调 LLM 把一条模糊检索请求拆成三路查询计划。
+
+    返回结构固定为 {semantic_queries, lexical_queries, symbolic_filters}。
+    当前唯一实现是 model_clients.LtmQueryPlannerClient。
+    """
 
     async def plan_query(self, request_payload: dict[str, Any]) -> dict[str, Any]:
-        """为当前检索请求生成一个 retrieval plan."""
+        """根据检索现场材料生成 retrieval plan。
+
+        Args:
+            request_payload: 包含 query_text、conversation_id、
+                working_summary、retained_history 等现场材料。
+
+        Returns:
+            包含 semantic_queries / lexical_queries / symbolic_filters 的字典。
+        """
 
 
 class QueryEmbeddingClient(Protocol):
-    """QueryEmbeddingClient 定义 query embedding 依赖面."""
+    """把查询文本变成向量, 供语义检索使用。
+
+    当前唯一实现是 model_clients.LtmEmbeddingClient。
+    """
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """把查询文本列表变成向量列表."""
+        """批量把文本变成向量。
+
+        Args:
+            texts: 待向量化的查询文本列表。
+
+        Returns:
+            与输入一一对应的向量列表。
+        """
 
 
 @dataclass(slots=True)
 class LtmMemorySource:
-    """LTM 检索侧入口: query-aware 三路召回, 渲染成统一 block."""
+    """长期记忆的 MemorySource 实现, 被 MemoryBroker 当作记忆来源调用。
+
+    执行流程: 
+    1. query_planner 把原始请求拆成三组查询（semantic / lexical / symbolic）
+    2. 三路分别向 store 发起检索
+    3. merge_ranked_entry_hits 按 entry_id 去重、位权排序
+    4. renderer 渲染成 XML, 包成 MemoryBlock 返回
+
+    Attributes:
+        store (RetrievalStore): 底层存储, 提供三种检索方法。
+        query_planner (QueryPlannerClient): 调 LLM 生成 retrieval plan。
+        embedding_client (QueryEmbeddingClient): 把查询文本变成向量。
+        renderer (LtmRenderer): 把命中结果渲染成 XML 注入上下文。
+        max_entries (int): 最终返回的最大命中条数, 默认 8。
+    """
 
     store: RetrievalStore
     query_planner: QueryPlannerClient
@@ -70,17 +149,22 @@ class LtmMemorySource:
     max_entries: int = 8
 
     async def __call__(self, request: SharedMemoryRetrievalRequest) -> list[MemoryBlock]:
-        """执行一次 query-aware retrieval.
+        """执行一次完整的 query-aware 三路检索。
 
         Args:
-            request: 当前共享检索请求.
+            request: MemoryBroker 传入的共享检索请求, 包含 query_text、
+                channel_scope、working_summary、retained_history 等现场材料。
 
         Returns:
-            统一的 `long_term_memory` block 列表.
+            包含一个 MemoryBlock 的列表（source="long_term_memory", 
+            priority=700）, 没有命中时返回空列表。
         """
 
+        # 第一步: 让 query planner 把原始请求拆成三组查询
         plan = await self.query_planner.plan_query(self._build_plan_request(request))
         conversation_id = str(request.channel_scope or "").strip()
+
+        # 第二步: 三路召回
         semantic_hits = await self._semantic_hits(
             conversation_id=conversation_id,
             semantic_queries=list(plan.get("semantic_queries", []) or []),
@@ -95,6 +179,8 @@ class LtmMemorySource:
             conversation_id=conversation_id,
             symbolic_filters=dict(plan.get("symbolic_filters", {}) or {}),
         )
+
+        # 第三步: 去重 + 位权排序 + 截断
         ranked_hits = merge_ranked_entry_hits(
             semantic_hits=semantic_hits,
             lexical_hits=lexical_hits,
@@ -102,6 +188,8 @@ class LtmMemorySource:
         )[: self.max_entries]
         if not ranked_hits:
             return []
+
+        # 第四步: 渲染成 XML, 包成 MemoryBlock
         return [
             MemoryBlock(
                 content=self.renderer.render(ranked_hits),
@@ -123,15 +211,18 @@ class LtmMemorySource:
         semantic_queries: list[str],
         fallback_query: str,
     ) -> list[MemoryEntry]:
-        """执行语义召回.
+        """语义召回: 把查询文本变成向量, 然后做余弦相似度检索。
+
+        如果 planner 没有给出 semantic_queries, 退回到原始 query_text。
+        每条查询文本分别做一次向量检索, 结果合并返回（去重由上层 ranking 处理）。
 
         Args:
-            conversation_id: 目标对话容器.
-            semantic_queries: query planner 产出的语义查询文本.
-            fallback_query: planner 没给时的默认查询文本.
+            conversation_id: 限定搜索的对话容器。
+            semantic_queries: query planner 产出的语义查询文本列表。
+            fallback_query: planner 没给时退回使用的原始 query_text。
 
         Returns:
-            语义命中列表.
+            所有语义查询的命中结果合并列表。
         """
 
         query_texts = [text for text in semantic_queries if str(text or "").strip()]
@@ -158,15 +249,18 @@ class LtmMemorySource:
         lexical_queries: list[str],
         fallback_query: str,
     ) -> list[MemoryEntry]:
-        """执行词法召回.
+        """词法召回: 用 FTS 全文索引做关键词匹配。
+
+        如果 planner 没有给出 lexical_queries, 退回到原始 query_text。
+        每条查询文本分别做一次 FTS 检索, 结果合并返回。
 
         Args:
-            conversation_id: 目标对话容器.
-            lexical_queries: query planner 产出的词法查询文本.
-            fallback_query: planner 没给时的默认查询文本.
+            conversation_id: 限定搜索的对话容器。
+            lexical_queries: query planner 产出的词法查询文本列表。
+            fallback_query: planner 没给时退回使用的原始 query_text。
 
         Returns:
-            词法命中列表.
+            所有词法查询的命中结果合并列表。
         """
 
         query_texts = [text for text in lexical_queries if str(text or "").strip()]
@@ -189,14 +283,18 @@ class LtmMemorySource:
         conversation_id: str,
         symbolic_filters: dict[str, Any],
     ) -> list[MemoryEntry]:
-        """执行结构字段召回.
+        """结构字段召回: 用 persons / entities / location / time_range 做精确匹配。
+
+        从 planner 输出的 symbolic_filters 里提取四类条件, 至少有一类非空才发起检索。
+        time_range 会被规范化成 (start, end) 元组, 两端都是 None 时视为无条件。
 
         Args:
-            conversation_id: 目标对话容器.
-            symbolic_filters: query planner 产出的结构过滤条件.
+            conversation_id: 限定搜索的对话容器。
+            symbolic_filters: query planner 产出的结构过滤条件字典, 
+                包含 persons / entities / location / time_range。
 
         Returns:
-            结构命中列表.
+            结构匹配的命中列表, 四类条件全空时返回空列表。
         """
 
         persons = [
@@ -234,13 +332,14 @@ class LtmMemorySource:
 
     @staticmethod
     def _build_plan_request(request: SharedMemoryRetrievalRequest) -> dict[str, Any]:
-        """把共享检索请求转成 query planner 的输入对象.
+        """把 MemoryBroker 的共享检索请求转成 query planner 需要的输入格式。
 
         Args:
-            request: 当前共享检索请求.
+            request: 当前共享检索请求。
 
         Returns:
-            query planner 输入字典.
+            包含 query_text / conversation_id / working_summary /
+            retained_history / metadata 的字典。
         """
 
         return {
