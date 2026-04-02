@@ -407,18 +407,22 @@ async def reconcile_all(self) -> list[PluginStatus]:
     packages, package_errors = self.catalog.scan()
     specs, spec_errors = self.spec_store.load_all()
 
-    # 解析失败的直接生成 failed 状态
+    # 解析失败的直接生成 failed 状态并落盘
     results = []
     error_ids: set[str] = set()
     for err in package_errors:
         error_ids.add(err.plugin_id)
-        results.append(PluginStatus(plugin_id=err.plugin_id, phase="failed", load_error=f"bad manifest: {err.error}", ...))
+        status = PluginStatus(plugin_id=err.plugin_id, phase="failed", load_error=f"bad manifest: {err.error}", ...)
+        self.status_store.save(status)
+        results.append(status)
     for err in spec_errors:
         if err.plugin_id not in error_ids:
             error_ids.add(err.plugin_id)
-            results.append(PluginStatus(plugin_id=err.plugin_id, phase="failed", load_error=f"bad spec: {err.error}", ...))
+            status = PluginStatus(plugin_id=err.plugin_id, phase="failed", load_error=f"bad spec: {err.error}", ...)
+            self.status_store.save(status)
+            results.append(status)
 
-    all_ids = set(packages) | set(specs) | self.host.loaded_plugin_ids() - error_ids
+    all_ids = (set(packages) | set(specs) | self.host.loaded_plugin_ids()) - error_ids
 
     for plugin_id in sorted(all_ids):
         status = await self._reconcile(
