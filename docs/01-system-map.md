@@ -1,646 +1,168 @@
 # AcaBot 系统地图
 
-这一篇不讲很细的实现，而是讲现在这套系统到底由哪些块组成、主线怎么走、哪些边界最容易看错。
+本文件是项目的总装配图，说明系统由哪些模块组成、主线怎么走、各子域的入口在哪里。
 
-如果你第一次接手这个项目，建议把它当成“总装配图”来看。
+## 主线
 
-## 先讲结论
+```
+Gateway → RuntimeApp → SessionRuntime → RuntimeRouter → ThreadPipeline → ModelAgentRuntime → Outbox → Gateway
+```
 
-AcaBot 现在真正的主线，已经不是“很多规则 + 一些旁路”那种形状了。
+**SessionRuntime** 负责"这条消息在当前会话里该怎么解释"，**RuntimeRouter** 把解释结果收成可执行路由，**ThreadPipeline** 负责真正把这次 run 跑完。
 
-现在更接近下面这条线：
+侧边线：
+- `ToolBroker`：工具可见性、执行和副产物
+- `builtin_tools/`：runtime 自带能力（read/write/edit/bash/skills/subagents）接成模型工具
+- `PluginManager`：外部扩展 plugin
+- `ComputerRuntime`：`/workspace`、`/skills`、`/self` 的文件和 shell 能力
+- `MemoryBroker`：统一 /self、sticky notes、长期记忆的检索
+- `RuntimeControlPlane + RuntimeHttpApiServer + WebUI`：本地控制面
+- `storage/`：事实记录和 thread 状态
 
-`Gateway -> RuntimeApp -> SessionRuntime -> RuntimeRouter -> ThreadPipeline -> ModelAgentRuntime -> Outbox -> Gateway`
+## 顶层目录
 
-同时还有几条稳定侧边线：
+| 目录 / 文件 | 职责 |
+|------------|------|
+| `main.py` | 启动入口：读配置、创建 gateway/agent、调 `build_runtime_components()` |
+| `config.py` | 配置容器：YAML 读写和路径解析 |
+| `types/` | 跨层共享数据对象（`StandardEvent`、`Action`） |
+| `gateway/` | 平台协议适配层（NapCat / OneBot v11） |
+| `agent/` | 模型调用抽象层（`BaseAgent`、tool 契约、response 契约） |
+| `runtime/` | 核心目录：主流程、路由、记忆、工具、控制面、模型解析 |
+| `webui/src/` | WebUI 前端源码（开发时看这里） |
+| `src/acabot/webui/` | WebUI 构建产物（`RuntimeHttpApiServer` 托管这里） |
 
-- `ToolBroker` 负责工具可见性、工具执行和工具副产物
-- `builtin_tools/` 负责把 runtime 自带能力接成给模型看的基础工具
-- `PluginManager` 负责外部扩展 plugin
-- `ComputerRuntime` 负责 `/workspace /skills /self` 这一套前台文件和 shell 能力
-- `RuntimeControlPlane + RuntimeHttpApiServer + WebUI` 负责本地控制面
-- `storage/` 和 `memory/` 负责事实记录、working memory 和长期记忆
+## 依赖方向
 
-如果你只记一句话，可以记这个：
+```
+types → gateway / agent → runtime → webui（通过 HTTP API）
+```
 
-> **SessionRuntime 负责“这条消息在当前会话里该怎么解释”，RuntimeRouter 负责把结果收成可执行路由，ThreadPipeline 负责真的把这次 run 跑完。**
+`types` 只放共享对象不依赖 runtime；`gateway` 依赖 `types`；`runtime` 依赖 `config/types/gateway/agent`；`webui` 只通过 HTTP API 和后端交互，不直接碰 Python 内部状态。
 
----
+## 启动和装配
 
-## 顶层目录现在各自是什么
+**`main.py`** 只创建最外层对象（读配置、创建 gateway/agent、调 bootstrap），不是业务主线。
 
-`src/acabot` 下面现在最重要的几块是：
+**`runtime/bootstrap/`** 是真正的装配中心。`build_runtime_components()` 接线所有核心组件：RuntimeRouter、SessionRuntime、ThreadManager、RunManager、ToolBroker、ComputerRuntime、MemoryBroker、ThreadPipeline、RuntimeControlPlane、RuntimeHttpApiServer、PluginManager、Outbox。bootstrap 还负责把 builtin tool 直接注册到 ToolBroker（`builtin:computer`、`builtin:skills`、`builtin:subagents`），这条线是主线不是补丁。
 
-- `main.py`
-  - 启动入口
-  - 读配置
-  - 创建 gateway、agent 和 runtime
-- `config.py`
-  - 配置容器
-  - 负责 YAML 读写和路径解析
-- `types/`
-  - 跨层共享的数据对象
-  - 重点是 `StandardEvent` 和 `Action`
-- `gateway/`
-  - 平台协议适配层
-  - 当前正式实现是 NapCat / OneBot v11
-- `agent/`
-  - 面向模型调用的抽象层
-  - 定义 `BaseAgent`、tool 契约、response 契约
-- `runtime/`
-  - 当前最重要的目录
-  - 主流程、路由、记忆、工具、控制面、模型解析都在这里
-- `webui/`
-  - WebUI 前端源码
-  - 真正开发时看的是 `webui/src/`
-- `src/acabot/webui/`
-  - WebUI 构建产物
-  - `RuntimeHttpApiServer` 托管的是这里，不是 `webui/src/`
+**`RuntimeApp`** 是 runtime 总入口：启动 gateway 和 plugin、接住 gateway 上来的 event、做最小入口分流、调 router、创建/获取 thread 和 run、把 `RunContext` 交给 pipeline。
 
----
+## 消息主线六步
 
-## 真实依赖方向
+### 1. Gateway 翻译平台消息
 
-脑子里最好一直保留这条方向：
+`gateway/napcat.py` → `types/event.py`
 
-`types -> gateway / agent -> runtime -> webui`
+只做协议层的事：平台事件翻译、segment 归一化、attachment 提取、reply/mention/targets_self 归一化。
 
-具体一点：
+### 2. SessionRuntime 解释消息
 
-- `types` 只放共享对象，不该依赖 runtime 细节
-- `gateway` 依赖 `types`
-- `agent` 依赖自己的契约和少量通用对象
-- `runtime` 依赖 `config / types / gateway / agent`
-- `webui` 不直接碰 Python 内部状态，只通过 HTTP API
+`runtime/control/session_runtime.py` → `contracts/session_config.py`
 
-这条方向不是为了好看，而是为了避免越界。
+整条主线最关键的一层。先把消息收成 `EventFacts`，然后做 session 定位、surface 解析，按六个决策域产出决策：routing、admission、persistence、extraction、context、computer。决定"这条消息怎么跑"的是 **SessionConfig + SessionRuntime**。
 
-如果你发现：
+### 3. RuntimeRouter 收口路由
 
-- `gateway` 开始决定 agent 绑定
-- `types` 开始带业务判断
-- `webui` 试图绕过 HTTP API 直接假设 Python 内部结构
+`runtime/router.py`
 
-那基本就是边界被写坏了。
+生成稳定 ID（actor_id、conversation_id、thread_id）并把 session runtime 的决策收成 `RouteDecision`。它是把"解释结果"装配成"运行时结果"的薄层。
 
----
+### 4. ThreadPipeline 执行 run
 
-## 启动和装配层
+`runtime/pipeline.py`
 
-关键文件：
+完整主线：plugin hook → computer 上下文和附件准备 → 消息输入材料 → 写入 thread working memory → context compaction → retrieval planning → 记忆注入 → 调模型 → 发送动作 → 收尾 run → 触发 memory extraction。
 
-- `src/acabot/main.py`
-- `src/acabot/runtime/bootstrap/`
-- `src/acabot/runtime/app.py`
+### 5. ModelAgentRuntime 调模型
 
-### `main.py`
+`runtime/model/model_agent_runtime.py`
 
-只负责把最外层东西创建出来：
+读取 prompt、解析当前 run 可见的 tools、通过 ContextAssembler 组装最终上下文、调 `BaseAgent.run()`、把结果转成 runtime 结构。
 
-- 读配置
-- 创建 gateway
-- 创建 agent
-- 调 `build_runtime_components()`
+### 6. Outbox 发消息
 
-它不是业务主线，不要把 runtime 逻辑塞回去。
+`runtime/outbox.py`
 
-### `runtime/bootstrap/`
+决定哪些动作发到平台、哪些属于送达事实、哪些写 `MessageStore`。
 
-这是现在真正的默认装配中心。
+## Runtime 子域
 
-`build_runtime_components()` 会把这些东西接起来：
+### 路由和会话决策
 
-- `RuntimeRouter`
-- `SessionRuntime`
-- `ThreadManager`
-- `RunManager`
-- `ToolBroker`
-- `ComputerRuntime`
-- `MemoryBroker`
-- `ThreadPipeline`
-- `RuntimeControlPlane`
-- `RuntimeHttpApiServer`
-- `PluginManager`
-- `Outbox`
+| 文件 | 职责 |
+|------|------|
+| `runtime/router.py` | 收口路由结果 |
+| `runtime/control/session_runtime.py` | 解释消息 |
+| `runtime/control/session_loader.py` | 加载 session config |
+| `runtime/control/session_bundle_loader.py` | 读取 session.yaml + agent.yaml |
+| `runtime/control/session_agent_loader.py` | 加载 session-owned agent |
+| `runtime/control/prompt_loader.py` | 读取 prompt |
+| `runtime/contracts/session_config.py` | 会话配置契约 |
 
-另外很重要的一点是：
+### 工具和能力表面
 
-- 前台基础工具现在不是 plugin 注册进去的
-- `bootstrap` 启动时会调用 `runtime/builtin_tools/__init__.py`
-- 直接把 builtin tool 注册到 `ToolBroker`
+**ToolBroker**（`runtime/tool_broker/`）：统一工具入口，负责注册、按 profile/run 过滤可见工具、执行、审批和副产物记录。
 
-也就是：
+**builtin_tools/**：runtime 自带的前台基础工具表面。当前有 `computer.py`（read/write/edit/bash）、`skills.py`（Skill 调用）、`subagents.py`（delegate_subagent），由 bootstrap 直接注册，不经过 plugin。
 
-- `builtin:computer`
-- `builtin:skills`
-- `builtin:subagents`
+**PluginManager**（`runtime/plugin_manager.py`）：外部可选扩展，提供 hook 和外部 tool。不要把前台基础工具和 plugin 混在一起。
 
-这条线现在是主线，不是补丁。
+### Computer
 
-### `RuntimeApp`
+| 文件 | 职责 |
+|------|------|
+| `runtime/computer/runtime.py` | `ComputerRuntime` 主入口（read/write/edit/bash_world） |
+| `runtime/computer/contracts.py` | 契约定义 |
+| `runtime/computer/backends.py` | 后端实现（host/docker） |
+| `runtime/computer/world.py` | Work World 路径（/workspace、/skills、/self） |
+| `runtime/computer/workspace.py` | workspace 和 attachments 管理 |
+| `runtime/builtin_tools/computer.py` | 给模型看的工具表面（模型不直接看到 `computer` 这个名字） |
 
-`RuntimeApp` 是 runtime 的总入口。
+### Skills
 
-它主要负责：
+runtime 按 `runtime.filesystem.skill_catalog_dirs` 递归扫描 `SKILL.md`，`SkillCatalog` 保留全部 metadata，profile 决定可见性，当前 run 按 `/skills` 可见性过滤，prompt 注入 skill 摘要，模型通过 `Skill(skill=...)` 调用。详见 `docs/18-tool-skill-subagent.md`。
 
-- 启动 gateway、plugin 和恢复逻辑
-- 接住 gateway 上来的 event
-- 做最小入口分流
-- 调 router
-- 创建 / 获取 thread 和 run
-- 把 `RunContext` 交给 pipeline
+关键文件：`runtime/skills/catalog.py`、`runtime/skills/package.py`、`runtime/skills/loader.py`、`runtime/builtin_tools/skills.py`。
 
----
+### Subagents
 
-## 消息主线现在怎么走
-
-### 第 1 步：Gateway 先把平台消息翻译成 `StandardEvent`
-
-关键文件：
-
-- `src/acabot/gateway/napcat.py`
-- `src/acabot/types/event.py`
-
-到这一步为止，只应该发生协议层事情：
-
-- 平台事件翻译
-- segment 归一化
-- attachment 提取
-- reply / mention / targets_self 归一化
-
-### 第 2 步：`SessionRuntime` 先解释这条消息
-
-关键文件：
-
-- `src/acabot/runtime/control/session_runtime.py`
-- `src/acabot/runtime/control/session_loader.py`
-- `src/acabot/runtime/contracts/session_config.py`
-
-这是现在整条主线里最关键的一层。
-
-它会先把消息收成：
-
-- `EventFacts`
-
-然后继续做：
-
-- session 定位
-- surface 解析
-- 不同决策域的决策
-
-当前会算的决策至少包括：
-
-- `routing`
-- `admission`
-- `persistence`
-- `extraction`
-- `context`
-- `computer`
-
-也就是说，今天真正决定“这条消息怎么跑”的，不是旧的 rule 文件，而是：
-
-> **SessionConfig + SessionRuntime**
-
-### 第 3 步：`RuntimeRouter` 把这些结果收成 `RouteDecision`
-
-关键文件：
-
-- `src/acabot/runtime/router.py`
-
-它负责两件事：
-
-1. 生成稳定 ID
-   - `actor_id`
-   - `channel_scope`
-   - `thread_id`
-2. 把 session runtime 算好的决策收成 `RouteDecision`
-
-所以 `router.py` 现在不是新的规则中心，它更像一个把“解释结果”装配成“运行时结果”的薄层。
-
-### 第 4 步：`ThreadPipeline` 真正执行这次 run
-
-关键文件：
-
-- `src/acabot/runtime/pipeline.py`
-
-它会把一条消息带过完整主线：
-
-- 运行 plugin hook
-- 准备 computer 上下文和附件
-- 准备消息输入材料
-- 写入 thread working memory
-- 做 context compaction
-- 做 retrieval planning
-- 注入长期记忆
-- 调模型
-- 发送动作
-- 收尾 run
-- 必要时触发 memory extraction
-
-### 第 5 步：`ModelAgentRuntime` 调模型
-
-关键文件：
-
-- `src/acabot/runtime/model/model_agent_runtime.py`
-
-它负责：
-
-- 读取 prompt
-- 解析当前 run 真正可见的 tools
-- 组装 system prompt
-- 调底层 `BaseAgent.run()`
-- 把结果转成 runtime 认识的结构
-
-### 第 6 步：`Outbox` 发消息并记录消息事实
-
-关键文件：
-
-- `src/acabot/runtime/outbox.py`
-
-这里处理的是：
-
-- 哪些动作真的要发到平台
-- 哪些动作属于“送达事实”
-- 哪些动作需要写 `MessageStore`
-
----
-
-## runtime 里最重要的几个子域
-
-## 1. 路由和会话决策
-
-关键文件：
-
-- `runtime/router.py`
-- `runtime/control/session_runtime.py`
-- `runtime/control/session_loader.py`
-- `runtime/control/session_bundle_loader.py`
-- `runtime/control/session_agent_loader.py`
-- `runtime/control/prompt_loader.py`
-- `runtime/contracts/session_config.py`
-
-这是“消息为什么这样跑”的入口。
-
-现在的分工要记住：
-
-- `SessionRuntime`: 解释消息
-- `RuntimeRouter`: 收口路由结果
-- `SessionBundleLoader`: 读取 `session.yaml + agent.yaml`
-- `PromptLoader`: 读取 prompt
-
-## 2. 工具和能力表面
-
-关键文件：
-
-- `runtime/tool_broker/`
-- `runtime/builtin_tools/`
-- `runtime/plugin_manager.py`
-- `runtime/plugins/`
-
-### `ToolBroker`
-
-它是统一工具入口，负责：
-
-- 注册工具
-- 按 profile / run 过滤可见工具
-- 执行工具
-- 做审批和审计
-- 记录 tool 副产物
-
-### `builtin_tools/`
-
-这层非常重要。
-
-它表达的是：
-
-> runtime 自带的前台基础工具表面。
-
-当前主要有：
-
-- `runtime/builtin_tools/computer.py`
-- `runtime/builtin_tools/skills.py`
-- `runtime/builtin_tools/subagents.py`
-
-它们负责把 runtime 里的真实能力接成给模型看的工具。
-
-### `plugin_manager.py`
-
-plugin 现在主要表示：
-
-- 外部可选扩展
-- hook
-- 外部 tool
-- 外部 subagent executor
-
-现在不要再把前台基础工具和 plugin 混在一起理解。
-
-## 3. `computer` 子域
-
-关键文件：
-
-- `runtime/computer/runtime.py`
-- `runtime/computer/contracts.py`
-- `runtime/computer/backends.py`
-- `runtime/computer/world.py`
-- `runtime/computer/workspace.py`
-- `runtime/builtin_tools/computer.py`
-
-这块现在已经很清楚了：
-
-- 前台真正暴露给模型看的 builtin tool 只有：
-  - `read`
-  - `write`
-  - `edit`
-  - `bash`
-- 模型不会直接看到 `computer` 这个名字
-- 真正干活的是 `ComputerRuntime`
-
-`ComputerRuntime` 现在最重要的前台入口是：
-
-- `read_world_path(...)`
-- `write_world_path(...)`
-- `edit_world_path(...)`
-- `bash_world(...)`
-
-它负责的是：
-
-- `/workspace /skills /self` 这套 world 路径
-- workspace
-- attachments
-- 文件读写
-- shell
-- backend 状态
-
-## 4. `skills` 子域
-
-关键文件：
-
-- `runtime/skills/catalog.py`
-- `runtime/skills/package.py`
-- `runtime/skills/loader.py`
-- `runtime/builtin_tools/skills.py`
-
-请直接以：
-
-- `docs/18-skill.md`
-
-作为目前这块的正式设计基准。
-
-### skill 现在的真实状态
-
-现在真正存在的是这几条线：
-
-1. runtime 会按 `runtime.filesystem.skill_catalog_dirs` 递归扫描每个 skill 根目录里的 `SKILL.md`
-2. 相对路径根目录算 `project`, `~` 和绝对路径根目录算 `user`
-3. `SkillCatalog` 会先保留全部扫描到的 skill metadata
-4. profile 决定这个 agent 理论上能看到哪些 skill
-5. 当前 run 里，world 还会再按 `/skills` 可见性过滤一次
-6. prompt 注入和 `Skill` 真正读取时，才按可见性和 `project > user` 选出最后那一份 skill
-7. 模型会在 system prompt 的 `<system-reminder>` 里看到 skill 摘要
-8. 模型可以调用 builtin `Skill(skill=...)` 读取某个 `SKILL.md`
-9. 前台 `computer` 也支持沿 `/skills/...` 继续读 skill 包里的文件
-
-如果你要继续改 skill，先看 `docs/18-skill.md`，不要只看眼前代码猜路径规则和工具契约。
-
-## 5. `subagents` 子域
-
-关键文件：
-
-- `runtime/subagents/contracts.py`
-- `runtime/subagents/broker.py`
-- `runtime/subagents/execution.py`
-- `runtime/builtin_tools/subagents.py`
-
-这里负责的是：
-
-- subagent executor 注册
-- 委派请求编排
-- child run 执行
-- frontstage `delegate_subagent` 工具
-
----
+subagent 定义真源是文件系统 `SUBAGENT.md` catalog，session 只负责 `visible_subagents`。关键文件：`runtime/subagents/contracts.py`、`runtime/subagents/broker.py`、`runtime/subagents/execution.py`、`runtime/builtin_tools/subagents.py`。
 
 ## 记忆和存储
 
-关键文件：
+**Working Memory**：`ThreadState.working_messages / working_summary`，当前 thread 短期上下文。
 
-- `runtime/memory/`
-- `runtime/storage/`
+**长期记忆**：`MemoryBroker` 统一读取三个来源——`SelfFileRetriever`（/self）、`StickyNoteRetriever`（便签）、`CoreSimpleMemMemorySource`（长期记忆）。`RetrievalPlanner` 准备检索现场，`ContextCompactor` 做短期上下文压缩。详见 `05-memory-and-context.md`。
 
-## working memory
+关键文件：`runtime/memory/memory_broker.py`、`runtime/memory/retrieval_planner.py`、`runtime/memory/context_compactor.py`、`runtime/memory/long_term_memory/`、`runtime/memory/long_term_ingestor.py`、`runtime/memory/file_backed/`。
 
-当前 thread 里的短期上下文主要在：
-
-- `ThreadState.working_messages`
-- `ThreadState.working_summary`
-
-它是短期上下文，不是长期记忆仓库。
-
-## 长期记忆
-
-关键文件：
-
-- `runtime/memory/memory_broker.py`
-- `runtime/memory/structured_memory.py`
-- `runtime/memory/retrieval_planner.py`
-- `runtime/memory/context_compactor.py`
-
-这条线主要负责：
-
-- retrieval
-- extraction
-- context compaction
-- prompt slots
-
-## 事实存储
-
-现在最重要的几类事实是：
-
-- `ChannelEventRecord`
-  - 外部事件事实
-- `MessageRecord`
-  - 系统真正送达的消息事实
-- `MemoryItem`
-  - 长期记忆项
-- `RunRecord`
-  - 一次执行生命周期
-- `ThreadState`
-  - 当前 thread 的短期状态
-
----
+**事实与状态存储**：`ChannelEventRecord`（外部事件事实）、`MessageRecord`（送达消息事实）、`RunRecord`（执行生命周期）、`ThreadState`（thread 短期状态）。
 
 ## 控制面和 WebUI
 
-关键文件：
+**RuntimeHttpApiServer**（`runtime/control/http_api.py`）：暴露 `/api/*`，可选托管 WebUI 构建产物。
 
-- `runtime/control/http_api.py`
-- `runtime/control/control_plane.py`
-- `runtime/control/config_control_plane.py`
-- `webui/src/`
-- `src/acabot/webui/`
+**RuntimeControlPlane**（`runtime/control/control_plane.py`）：运行时状态、workspace/sandbox、tools/skills/subagent 快照、run/thread/memory 查询。
 
-### 后端控制面
+**RuntimeConfigControlPlane**（`runtime/control/config_control_plane.py`）：配置真源读写（profiles、prompts、gateway、runtime plugins、session-config reload）。
 
-#### `RuntimeHttpApiServer`
+前端开发看 `webui/src/`，浏览器里看到的是构建后的 `src/acabot/webui/`。
 
-负责：
+## 容易看错的边界
 
-- 暴露 `/api/*`
-- 可选托管静态 WebUI 构建产物
+1. **SessionConfig ≠ profile**：SessionConfig 决定消息在当前会话里怎么跑，profile 决定被选中的 agent 是谁和默认带什么能力。
+2. **builtin tool ≠ plugin**：builtin tool 是 runtime 自带前台能力，plugin 是外部可选扩展。read/write/edit/bash 不是 plugin。
+3. **`computer` ≠ `builtin_tools/computer.py`**：前者是真正干活的子域，后者是给模型看的工具表面。
+4. **改 skill 先看规则**：先读 `docs/18-tool-skill-subagent.md`，再看代码。
+5. **WebUI 不是独立前端项目**：真入口是 RuntimeHttpApiServer + RuntimeControlPlane + RuntimeConfigControlPlane，改页面要同时看后端。
 
-#### `RuntimeControlPlane`
+## 典型改动入口
 
-负责：
-
-- 当前运行时状态
-- workspace / sandbox 状态
-- tools / skills / subagent executors 快照
-- run / thread / memory 等控制面查询
-
-#### `RuntimeConfigControlPlane`
-
-负责：
-
-- 配置真源读写
-- profiles
-- prompts
-- gateway
-- runtime plugins
-- session-config 驱动的 reload
-
-### 前端源码和构建产物
-
-#### 开发时看哪里
-
-- `webui/src/main.ts`
-- `webui/src/router.ts`
-- `webui/src/views/`
-- `webui/src/components/`
-- `webui/src/lib/api.ts`
-
-#### 运行时真正托管哪里
-
-- `src/acabot/webui/`
-
-也就是说：
-
-- 改页面时看 `webui/src/`
-- 浏览器里最终看到的是 build 后的 `src/acabot/webui/`
-
----
-
-## 现在系统里最容易看错的边界
-
-## 1. `SessionConfig` 和 profile 不是一回事
-
-- `SessionConfig` 决定这条消息在当前会话里怎么跑
-- profile 决定被选中的 agent 是谁、默认带什么能力
-
-不要再把 profile 当成“消息决策中心”。
-
-## 2. builtin tool 和 plugin 不是一回事
-
-- builtin tool 是 runtime 自带前台能力
-- plugin 是外部可选扩展
-
-不要再把 `read / write / edit / bash` 当成 plugin。
-
-## 3. `computer` 和 `builtin_tools/computer.py` 不是同一个层
-
-- `builtin_tools/computer.py` 是给模型看的工具表面
-- `runtime/computer/` 才是真正干活的子域
-
-## 4. 想改 skill 先看正式规则
-
-skill 这块现在已经有一条明确主线：
-
-- runtime 扫 skill
-- prompt 先给 skill 摘要
-- 模型调 `Skill(skill=...)`
-- 后续沿 `/skills/...` 继续读
-
-先看：
-
-- `docs/18-skill.md`
-
-再看代码。
-
-## 5. WebUI 不是一个独立前端项目
-
-它的真入口一直是：
-
-- `RuntimeHttpApiServer`
-- `RuntimeControlPlane`
-- `RuntimeConfigControlPlane`
-
-不要只改前端页面，不看后端控制面和配置真源。
-
----
-
-## 典型改动应该先看哪里
-
-### 想改消息主线
-
-先看：
-
-- `runtime/app.py`
-- `runtime/control/session_runtime.py`
-- `runtime/router.py`
-- `runtime/pipeline.py`
-
-### 想改前台工具
-
-先看：
-
-- `runtime/builtin_tools/`
-- `runtime/tool_broker/`
-- `runtime/computer/`
-
-### 想改 skill
-
-先看：
-
-- `docs/18-skill.md`
-- `runtime/skills/`
-- `runtime/builtin_tools/skills.py`
-- `runtime/computer/`
-
-### 想改 WebUI / 控制面
-
-先看：
-
-- `runtime/control/http_api.py`
-- `runtime/control/control_plane.py`
-- `runtime/control/config_control_plane.py`
-- `webui/src/`
-
-### 想改长期记忆
-
-先看：
-
-- `runtime/control/session_runtime.py`
-- `runtime/memory/memory_broker.py`
-- `runtime/memory/structured_memory.py`
-- `runtime/memory/retrieval_planner.py`
-- `runtime/pipeline.py`
-
----
-
-## 什么时候该看 `agent-first/`
-
-只有两种情况：
-
-1. 你发现代码里还没实现某块，而 `agent-first/` 里正好有近期 TODO
-2. 你要判断作者最近想把架构往哪推
-
-别把它当实现说明书。
-
----
-
-## 一句话版本
-
-这项目现在最重要的，不是死记某个文件很大，而是先认清三件事：
-
-1. `SessionRuntime` 先解释消息
-2. runtime 自带基础工具现在走 `builtin_tools/`
-3. `computer`、skill、subagent、WebUI 都已经各有明确入口，不要再按旧壳理解它们
+| 想改什么 | 先看 |
+|---------|------|
+| 消息主线 | `runtime/app.py`、`runtime/control/session_runtime.py`、`runtime/router.py`、`runtime/pipeline.py` |
+| 前台工具 | `runtime/builtin_tools/`、`runtime/tool_broker/`、`runtime/computer/` |
+| Skill | `docs/18-tool-skill-subagent.md`、`runtime/skills/`、`runtime/builtin_tools/skills.py` |
+| WebUI / 控制面 | `runtime/control/http_api.py`、`runtime/control/control_plane.py`、`webui/src/` |
+| 长期记忆 | `runtime/memory/memory_broker.py`、`runtime/memory/retrieval_planner.py`、`runtime/memory/long_term_memory/`、`runtime/memory/file_backed/` |

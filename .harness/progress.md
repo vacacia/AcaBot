@@ -1,29 +1,25 @@
 # progress.md
 
 ## 当前状态
-- [x] 项目路径结构统一初步完成: 
-    - 从 inline 到 filesystem 模式
-    - 全 snake_case 命名
-    - `extensions/` 统一收纳 plugins/skills/subagents
-    - 三层真源分离：`extensions/` 是能力包目录, `runtime_config/` 是操作者真源, `runtime_data/` 是运行时事实 
+- [x] 项目路径结构统一: filesystem-only，全 snake_case，三层分离（extensions/ / runtime_config/ / runtime_data/）
+- [x] 文档清理完成: 删除 14 个冗余文档，合并记忆子系统文档，更新路径引用
 
 ## 最近变更
 - `2026-03-27` 完成 lancedb-first long-term memory runtime
-- `2026-03-29` 到 `2026-03-30` 已完成系统页规划、session bundle source of truth、session-owned agent hard cut
+- `2026-03-29` ~ `2026-03-30` 系统页规划、session bundle source of truth、session-owned agent hard cut
 - `2026-04-01` 优化 WebUI 与 long-term memory extraction / query planning
-- `2026-04-02` 已完成一轮目录重构，把部署、扩展、示例配置重新收束到更清晰的位置
-
+- `2026-04-02` 目录重构（deploy/、extensions/、runtime_config/、runtime_data/）
+- `2026-04-02` 文档大清理：删除冗余文档，合并 17-* 到 05，更新 09 路径，更新 HANDOFF
 
 ## 已知问题
-- 目录刚重构过，一些文档、示例路径、测试夹具和构建产物引用出现滞后
-- 文档积攒过多, 需要压缩无用信息
-- webui 设计不完整, 缺少很多配置
-- 镜像太简陋, 没有基础的环境(字体, python环境, chrome..)
-- bot掌握工具太少, 需要 文字转图片工具, 需要 查询数据库工具, 需要各种扩展提升能力
-- 日志过于简陋, 重要信息显示不全面
+- webui 设计不完整，缺少很多配置页面
+- 镜像太简陋（缺字体、python 环境、chrome 等）
+- bot 掌握工具太少（文字转图片、查询数据库等）
+- 日志过于简陋，重要信息显示不全面
 - LTM 数据库安全性
-
+- Reference Backend 不再需要且设计不合理需要删除
 
 ## 下一步
-- 更新系统地图、专题文档和 handoff，避免文档落后于代码
-
+- WebUI 配置页面补全
+- 工具扩展
+- 镜像完善

@@ -1,338 +1,129 @@
-# working memory、长期记忆和上下文组装
+# 记忆层与上下文组装
 
-这一篇只讲当前代码里最重要的两件事：
+本文档说明 AcaBot 的记忆分层体系，以及一条消息从进入系统到组装成最终模型输入的完整流程。各子系统的详细实现见 `docs/wiki/`。
 
-1. 记忆和上下文现在分成哪些层
-2. 一条消息进来后，这些层怎么进入最终模型输入
+## 架构总览
 
----
+最终模型输入不在 pipeline 各阶段零散拼接，而是由 `ContextAssembler` 统一组装。核心组件链路：
 
-## 先讲结论
-
-当前前台主线里，真正给模型看的上下文不是在 pipeline 里到处拼出来的。
-
-现在稳定的主线是：
-
-- `ThreadPipeline` 负责准备中间态
-- `RetrievalPlanner` 只负责 prepare
-- `MemoryBroker` 统一读取 `/self`、sticky notes、长期记忆
-- `ContextAssembler` 统一组装最终 `system_prompt` 和 `messages`
-- `PayloadJsonWriter` 在模型调用前落盘最终 payload json
-
-也就是说：
-
-> **`ctx.system_prompt` 和 `ctx.messages` 现在只表示最终结果，不再表示 pipeline 中间态。**
-
----
-
-## 一、现在有哪些“像记忆”的层
-
-## 1. thread working memory
-
-这一层在：
-
-- `src/acabot/runtime/contracts/records.py`
-- `src/acabot/runtime/storage/threads.py`
-
-它表达的是当前 thread 的短期上下文：
-
-- `working_messages`
-- `working_summary`
-
-这层主要服务：
-
-- 当前轮上下文压缩
-- retained history 准备
-- 回复后的 thread 回写
-
----
-
-## 2. event / message facts
-
-这两层还是记录真实发生过什么：
-
-- `ChannelEventStore`
-  - 平台上发生过什么
-- `MessageStore`
-  - 系统真正发送并送达了什么
-
-它们不是给模型直接拼 prompt 的 working memory。
-
----
-
-## 3. `/self`
-
-`/self` 现在是前台 bot 的自我连续性文件区。
-
-当前真实文件形状是：
-
-```text
-/self/
-  today.md
-  daily/
-    2026-03-23.md
-    2026-03-22.md
+```
+ThreadPipeline → MessagePreparationService → ContextCompactor
+    → RetrievalPlanner（准备检索现场）
+    → MemoryBroker（统一读取 /self、sticky notes、长期记忆）
+    → ContextAssembler（组装最终 system_prompt + messages）
+    → PayloadJsonWriter → BaseAgent.run()
 ```
 
-对应代码在：
+`ctx.system_prompt` 和 `ctx.messages` 只表示最终结果，不表示 pipeline 中间态。
 
-- `src/acabot/runtime/soul/source.py`
+## 记忆分层
 
-虽然类名暂时还叫 `SoulSource`，但它现在管理的已经是 `/self`：
+AcaBot 区分五个层次的"类记忆"数据。前两层（thread working memory、event/message facts）是消息事实，后三层（/self、sticky notes、长期记忆）才是真正的记忆系统。
 
-- `today.md`
-  - 今天的极简连续性记录
-- `daily/*.md`
-  - 近几天整理过的总结稿
+### Thread Working Memory
 
-这一层由 bot 自己维护，用来保持 Aca 的行动连续性，不是人格 prompt，也不是 sticky note。
+当前 thread 的短期上下文，存储在 `ThreadState.working_messages` 和 `ThreadState.working_summary` 中。服务于当前轮上下文压缩、retained history 准备和回复后的 thread 回写。
 
----
+代码：`src/acabot/runtime/contracts/records.py`、`src/acabot/runtime/storage/threads.py`
 
-## 4. sticky notes
+### Event / Message Facts
 
-sticky notes 现在是 file-backed 的稳定记忆材料。
+客观事实记录层。`ChannelEventStore` 记录平台上真实发生过什么，`MessageStore` 记录系统真正发送并送达了什么。它们不直接参与 prompt 拼接，但为长期记忆的写入线提供原始数据源，也通过 `/api/runtime/threads/<thread_id>/events` 和 `/messages` 暴露给控制面。
 
-对应代码在：
+### /self — 自我连续性
 
-- `src/acabot/runtime/memory/file_backed/sticky_notes.py`
+记录 Aca 自己经历了什么、正在和谁互动、有哪些持续中的状态和承诺。不是人格 prompt（人格在配置 prompt 里），不是 sticky note（强绑具体对象的信息放 sticky note），而是 bot 自己通过 computer 工具维护的连续性空间。
 
-当前正式支持的 scope 还是：
+```
+runtime_data/soul/
+  today.md            # 今天的极简连续性记录（bot 调用工具追加）
+  daily/              # 近几天整理过的总结稿
+    2026-03-23.md
+```
 
-- `user`
-- `channel`
+代码：`src/acabot/runtime/soul/source.py`（类名 `SoulSource`）。前台 world 可见性在 `computer/world.py`，retrieval 走 `MemoryBroker` → `SelfFileRetriever`，控制面走 `/api/self/*`。Subagent 默认看不见 `/self`。
 
-每条 sticky note 依然是双区：
+### Sticky Notes — 实体便签
 
-- `readonly.md`
-- `editable.md`
+围绕实体的长期稳定笔记，让 bot 能持续理解某个用户或某个群。以 `entity_ref`（如 `qq:user:12345`）为主键，只支持 `user` 和 `conversation` 两种实体类型，几乎每轮都会注入上下文。
 
-这一层表达的是稳定事实和长期规则。
+数据模型 `StickyNoteRecord`：`entity_ref`（主键）、`readonly`（人工确认的高可信事实）、`editable`（bot 追加的观察）、`updated_at`。物理形态为文件系统双区：
 
----
+```
+runtime_data/sticky_notes/
+  user/<entity_ref>/readonly.md + editable.md
+  conversation/<entity_ref>/readonly.md + editable.md
+```
 
-## 5. 长期记忆
+组件链路：`StickyNoteFileStore` → `StickyNoteService` / `StickyNoteRenderer` → `StickyNoteRetriever`（retrieval 注入）+ builtin tools（`sticky_note_read` / `sticky_note_append`）+ control plane / HTTP API。
 
-长期记忆现在的正式实现就是 `long_term_memory`。
+Bot 只能 read（完整渲染视图）和 append（追加单行到 editable）；人类通过 WebUI 可以编辑双区、迁移整理、删除。Retrieval 策略：群聊拉 `[actor_id, conversation_id]`，私聊拉 `[actor_id]`，不存在则安静跳过。
 
-对应代码在：
+### Long-Term Memory — 长期记忆
 
-- `src/acabot/runtime/memory/long_term_memory/`
-- `src/acabot/runtime/memory/long_term_ingestor.py`
-- `src/acabot/runtime/bootstrap/builders.py`
+从完整对话事实中提炼的结构化经验库，基于 Core SimpleMem + LanceDB 实现。采用双线架构：
 
-这条线当前已经跑通的是：
+**写入线（fact-driven）**：前台在事实落盘成功后调用 `LongTermMemoryIngestor.mark_dirty(thread_id)`，LTM 自己维护 dirty set 和后台 worker，通过 `ConversationFactReader` 读取增量事实窗口，经 `LtmWritePort` 完成滑窗提取、embedding 和 LanceDB upsert，成功后推进 `last_event_id` / `last_message_id` 双游标。
 
-- `LongTermMemoryIngestor` 负责写入编排
-- `LtmWritePort` 负责滑窗提取、embedding 和 LanceDB upsert
-- `CoreSimpleMemMemorySource` 负责 retrieval 时的混合召回和 XML block 渲染
-- `MemoryBroker` 把它和 `/self`、sticky notes 一起当作普通 `MemorySource`
+**检索线（run-driven）**：`RetrievalPlanner` → `MemoryBroker.retrieve` → `CoreSimpleMemMemorySource`（query planning → semantic/lexical/symbolic 三路召回 → reranking → XML 渲染）→ `ContextAssembler`。
 
----
+需要三个 model target：`system:ltm_extract`、`system:ltm_query_plan`、`system:ltm_embed`。详细实现设计见 `docs/LTM/`。
 
-## 二、当前中间态是怎么准备的
+代码：`src/acabot/runtime/memory/long_term_memory/`、`src/acabot/runtime/memory/long_term_ingestor.py`
 
-## 1. 消息整理层
+## Pipeline 执行顺序
 
-入口在：
+一条消息从进入到回复的完整流程：
 
-- `src/acabot/runtime/inbound/message_preparation.py`
+| 步骤 | 组件 | 产物 |
+|------|------|------|
+| 1 | `MessagePreparationService.prepare(ctx)` | `MessageProjection`（history_text、model_content、memory_candidates） |
+| 2 | Pipeline 写入 thread | 当前消息进入 `working_messages` |
+| 3 | `ContextCompactor` | `effective_working_summary`、`effective_compacted_messages` |
+| 4 | `RetrievalPlanner.prepare(ctx)` | `RetrievalPlan`（retained_history、sticky_note_targets、context_labels） |
+| 5 | `MemoryBroker.retrieve(ctx)` | `MemoryBlock[]`（/self、sticky notes、LTM） |
+| 6 | `ContextAssembler.assemble(ctx, ...)` | `AssembledContext`（最终 system_prompt + messages） |
+| 7 | `PayloadJsonWriter` → `BaseAgent.run(...)` | 模型调用 |
 
-`MessagePreparationService.prepare(ctx)` 会先把当前消息准备成 `MessageProjection`：
+## ContextAssembler 的 Slot 结构
 
-- `history_text`
-  - 用来写进 thread working memory
-- `model_content`
-  - 用来作为最终那条 current user message
-- `memory_candidates`
-  - 给长期记忆写回参考
+`ContextAssembler` 将所有上游材料转成 `ContextContribution`，按 slot 组装成最终输入：
 
-所以当前消息在系统里本来就有多种用途，不是一份字符串走到底。
+| Slot | 内容来源 |
+|------|---------|
+| `system_prompt` | base prompt、visible skill/subagent summaries |
+| `message_prefix` | working_summary、/self、sticky notes、LTM retrieved memory |
+| `message_history` | retained history（compaction 后保留的历史消息） |
+| `message_current_user` | 当前轮用户输入的 model_content |
 
----
+## RetrievalPlanner 与 MemoryBroker 的分工
 
-## 2. context compaction
+`RetrievalPlanner` 负责"这轮检索的现场是什么"——把 compaction 产物解释成检索现场，收口 retrieval tags、sticky note targets 和 context labels。它的产物 `RetrievalPlan` 同时被 `MemoryBroker` 和 `ContextAssembler` 消费。
 
-入口在：
+`MemoryBroker` 负责"拿着这个现场去问哪些记忆源，并把结果收回来"——将 `RunContext` 规范成 `SharedMemoryRetrievalRequest`，调用已注册的三个 memory source（`SelfFileRetriever`、`StickyNoteRetriever`、`CoreSimpleMemMemorySource`），合并并规范化 `MemoryBlock`。
 
-- `src/acabot/runtime/memory/context_compactor.py`
+这两层的分离是刻意的：如果合并到 broker，broker 就会同时碰 compaction 产物、scope 选择、request 组装、source 调度和 block 规范化，容易退化成大杂烩。
 
-这一步会在预算内把 thread working memory 压成：
+### MemoryBroker 设计原则
 
-- `effective_working_summary`
-- `effective_compacted_messages`
-- `effective_dropped_messages`
+MemoryBroker 是 runtime 和各种记忆来源之间的**唯一入口**，但它自己不是任何一种记忆的真源。每次 run 开始前，它根据当前身份、thread、消息内容、compaction 结果和本轮允许范围，决定去问哪些记忆来源。真正翻文件、查库、做检索的是各来源模块，broker 只负责把结果收齐、整理成统一格式、补上来源元信息，然后交给 ContextAssembler。
 
-这些结果先放在 `ctx.metadata`，后面的 planner 和 broker 再消费。
+**读取线之外，broker 还应承担写回线的统一出口**：一轮结束后，把"这轮可能要更新哪些记忆"的请求统一发出（要不要补长期记忆、更新 sticky note、写入 /self），再交给各自写入模块处理。这样 broker 能追踪本轮读了什么、用了什么、写了什么，为前端展示和问题排查提供统一出口。
 
----
+**MemoryBroker 明确不管的事：**
 
-## 3. RetrievalPlanner
-
-入口在：
-
-- `src/acabot/runtime/memory/retrieval_planner.py`
-
-`RetrievalPlanner` 现在是 prepare-only 组件。
-
-它只产出 `RetrievalPlan`，不再负责最终 prompt 组装。
-
-当前 `RetrievalPlan` 里最重要的内容是：
-
-- `requested_tags`
-- `sticky_note_targets`
-- `retained_history`
-- `dropped_messages`
-- `working_summary`
-- `metadata["context_labels"]`
-
-它表达的是：
-
-> **这一轮共享给记忆来源的现场是什么、当前保留了哪些历史、当前 working summary 是什么。**
-
-
-`RetrievalPlanner` 至少在做三件 `MemoryBroker` 不适合直接背上的事：
-
-- 它把 short-term context 那条线的产物收成一个 run 级 `RetrievalPlan`。`prepare()` 会直接读 `effective_compacted_messages` 和 `effective_working_summary`，然后产出 `retained_history` 和 `working_summary`。这块本质上是“把 compaction 结果解释成检索现场”，不是“问记忆源要内容”。
-- 它把这一轮的 retrieval tags、sticky note targets、context labels 这些 run-local 条件收口。这属于“这轮到底在问什么”的准备层。
-- 它产出的 `RetrievalPlan` 不只是给 broker 用，`ContextAssembler` 还直接拿它来组 `working_summary` 和 `retained_history` 进最终上下文
-
-反过来看，`MemoryBroker` 当前更像执行层：
-- 它拿到 `RunContext` 或已经准备好的 retrieval context，规范成 shared request
-- 统一调用各个 memory source
-- 合并、规范化 `MemoryBlock`
-- 把结果交回主线
-
-它的天然问题域是“怎么问 source、怎么收结果”，不是“这一轮短期上下文该怎么变成检索现场”。
-
-
-所以更直白地说：
-- `RetrievalPlanner` 回答的是：**这轮检索的现场是什么**
-- `MemoryBroker` 回答的是：**拿着这个现场去问哪些记忆源，并把结果收回来**
-
-如果只剩 `MemoryBroker`，那它最后就会同时碰：
-
-- compaction 产物
-- sticky note scopes / context labels
-- retrieval request 组装
-- memory source 调度
-- memory block 规范化
-- 甚至后面还可能顺手碰 assembler 输入
-
-这样 broker 很容易重新长成一个大杂烩。
-
-我自己的判断是：**这层可以改名，但不该消失。**  
-`RetrievalPlanner` 这个名字现在确实有点误导，它更像 `RetrievalContextBuilder` 或 `RetrievalContextPreparer`。
-
----
-
-## 三、MemoryBroker 现在做什么
-
-入口在：
-
-- `src/acabot/runtime/memory/memory_broker.py`
-
-`MemoryBroker` 现在是所有“非聊天记录”的统一读取入口。
-
-当前 retrieval 侧，它会把 `RunContext` 规范成 `SharedMemoryRetrievalRequest`，然后交给注册好的 memory source：
-
-- `SelfFileRetriever`
-- `StickyNoteRetriever`
-- `CoreSimpleMemMemorySource`
-
-对应实现分别在：
-
-- `src/acabot/runtime/memory/file_backed/retrievers.py`
-- `src/acabot/runtime/memory/long_term_memory/source.py`
-
-所以现在 `/self`、sticky notes、长期记忆，已经都走 `MemoryBroker.retrieve(ctx)` 这一个入口。
-
----
-
-## 四、最终上下文现在怎么组装
-
-最终上下文组装入口在：
-
-- `src/acabot/runtime/context_assembly/assembler.py`
-
-`ContextAssembler` 会把上游材料统一转成 `ContextContribution`，再组装成：
-
-- `AssembledContext.system_prompt`
-- `AssembledContext.messages`
-
-当前真正参与组装的来源有：
-
-- base prompt
-- visible skill summaries
-- visible subagent summaries
-- memory blocks
-  - `/self`
-  - sticky notes
-  - retrieved memory
-- `working_summary`
-- retained history
-- current user `model_content`
-
-当前 slot 结构是：
-
-- `system_prompt`
-- `message_prefix`
-- `message_history`
-- `message_current_user`
-
-其中：
-
-- `working_summary`、`/self`、sticky note、retrieved memory`
-  - 进入 `message_prefix`
-- retained history
-  - 进入 `message_history`
-- 当前轮用户输入
-  - 进入 `message_current_user`
-
----
-
-## 五、主线顺序现在是什么
-
-当前真实顺序可以按这条线记：
-
-1. `MessagePreparationService.prepare(ctx)`
-2. pipeline 把 `history_text` 写进 thread working memory
-3. `ContextCompactor` 生成 effective summary / retained history
-4. `RetrievalPlanner.prepare(ctx)`
-5. `MemoryBroker.retrieve(ctx)`
-6. `ModelAgentRuntime.execute(ctx)`
-7. `ContextAssembler.assemble(ctx, ...)`
-8. `PayloadJsonWriter.write(...)`
-9. `BaseAgent.run(...)`
-
-这里最关键的一点是：
-
-> **最终上下文只在 `ModelAgentRuntime -> ContextAssembler` 这一步落地。**
-
-pipeline 不再直接拼最终 `ctx.messages`。
-
----
-
-## 六、当前几层边界怎么记
-
-可以直接记这四句：
-
-- thread 保存短期上下文
-- `RetrievalPlanner` 决定这一轮怎么查、保留哪些历史
-- `MemoryBroker` 统一读取 `/self`、sticky note、长期记忆，只负责 retrieval 收发和汇总
-- `ContextAssembler` 统一把这些材料变成最终模型输入
-
-如果你后面要继续改：
-
-- `/self` 文件结构
-- sticky note 检索范围
-- retained history 和 working summary 的关系
-- 最终 prompt / messages 到底长什么样
-
-先看：
-
-- `src/acabot/runtime/soul/source.py`
-- `src/acabot/runtime/memory/file_backed/retrievers.py`
-- `src/acabot/runtime/memory/retrieval_planner.py`
-- `src/acabot/runtime/memory/memory_broker.py`
-- `src/acabot/runtime/context_assembly/assembler.py`
+| 不管 | 归属 |
+|------|------|
+| thread working memory | thread + compaction |
+| event/message facts 的存储 | 事实记录线 |
+| /self 的目录结构和文件编辑 | SoulSource 文件真源 |
+| sticky note 的增删改查 | StickyNoteService |
+| 记忆在 prompt 中的排列顺序 | ContextAssembler |
+
+## 源码阅读顺序
+
+1. `src/acabot/runtime/soul/source.py`
+2. `src/acabot/runtime/memory/file_backed/retrievers.py`
+3. `src/acabot/runtime/memory/retrieval_planner.py`
+4. `src/acabot/runtime/memory/memory_broker.py`
+5. `src/acabot/runtime/context_assembly/assembler.py`

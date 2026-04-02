@@ -1,334 +1,88 @@
-# run 机制
+# Run 机制
 
-**runtime 里的 `run` 到底是什么, 一条事件和一个 `run` 是什么关系, `run` 内部会经历什么, 哪些内容会进公共上下文, 哪些不会?**
+## 核心概念
 
+| 概念 | 定义 |
+|------|------|
+| **event** | 外部平台送进来的一条真实事件，经 gateway 翻译成 `StandardEvent` |
+| **message** | event 里最常见的前台消息子类，口语"每条消息一个 run"实际是"每个 message event 一个 run" |
+| **thread** | 一条对话线共享的上下文容器，保存 `working_messages`、`working_summary`、`last_event_at` 和 thread 级 lock |
+| **run** | runtime 为处理一次事件创建的执行实例，有自己的 run_id、生命周期状态、approval 上下文 |
 
-当前主线里，**正式语义是一条入站 `event` 对应一次 `run`；在最常见的前台路径里，普通 message event 基本就是一条消息一个 `run`**。但一个 `run` 不等于“一次模型请求”。一个 `run` 里面可能有: 
-- 多轮 LLM 请求
-- 多次 tool call
-- approval 中断
-- approval 通过后的续执行
+**run 不等于一次模型请求。** 一个 run 里可能有多轮 LLM 请求、多次 tool call、approval 中断和续执行，它们全属于同一个 run。
 
+## Event → Run 的关系
 
-真正稳定的边界是: 
-- `event`
-  - 外部平台送进来的一条真实事件
-- `message`
-  - `event` 里最常见的前台消息子类
-- `thread`
-  - 一条对话线共享的上下文容器
-- `run`
-  - runtime 为处理一次事件而创建的执行实例
+正式语义：一条入站 event 对应一个新 run。流程：Gateway 收到平台事件 → `StandardEvent` → `RuntimeApp.handle_event()` → RuntimeRouter/SessionRuntime 算出落到哪个 thread → 创建/获取 thread → open 新 run → 构造 RunContext → `ThreadPipeline.execute()`。
 
-不要把 `run` 理解成“最后发给模型的那一次 completion 请求”。
+### 例外
 
----
+| 场景 | 行为 |
+|------|------|
+| `silent_drop` | 直接结束，不创建 run |
+| `record_only` | 创建 run，但只写入 thread + 收尾，不调模型 |
+| approval resume | 不是新 run，复用原 run 继续执行后半段 |
+| subagent delegation | 创建新的 child run（独立执行，产物回流给父 run） |
 
-## `event` / `message` / `thread` / `run` 分别是什么
+## Run 内部执行链
 
-## 1. `event`
+`ThreadPipeline.execute()` 的完整顺序：mark_running → computer prepare → message preparation → append 用户消息到 thread → context compaction → retrieval plan → memory injection → agent execute → outbox → 更新 thread → 收尾 run。
 
-`event` 是外部世界真实发生的一条事件。
+## Run 私有 vs 公共 Thread
 
-它先经过 gateway 协议翻译，变成 `StandardEvent`，再进入 runtime 主线。
+### Run 私有（不进公共历史）
 
-例子: 
+当前 run 的 system_prompt、组装出的 messages、tool loop 中间消息、tool call 返回结果、tool audit、artifacts、pending approval。这些是"这次执行过程里模型和 runtime 看到了什么"。
 
-- QQ 群里用户发了一句“帮我看一下这个仓库”
-- 用户回复了一条旧消息
-- 用户发来一张图片
+### 进入公共 Thread 的
 
-这些都还是事件事实，不是 `run`。
+只有两类：
+1. **用户消息**：append 进 thread
+2. **assistant 可见回复**：真正成功送达的 assistant 内容，以 `thread_content` 回写到 thread
 
-## 2. `message`
+公共 thread 历史的核心语义：**这条对话线上真实发生过、用户和 bot 真正看得到的消息流。**
 
-`message` 不是比 `event` 更正式的词，它是 `event` 里最常见的那一类。
+### Skill 和 Subagent 在上下文中的表现
 
-也就是说: 
+`Skill` 的 SKILL.md 内容和 `delegate_subagent` 的总结结果会进入当前 run 的 tool loop 消息（即模型能看到），但默认不进公共 thread 历史。只有模型把它们整理成最终回复并成功发出时，才以回复文本形式进入公共 thread。
 
-- 所有前台聊天消息都是 `event`
-- 但不是所有 `event` 都一定是 message
+`mark_skill_loaded` 记录的是 thread 级 workspace/world 状态（"这个 thread 已经 load 过哪些 skill"），不是聊天消息历史。
 
-平时口语里经常说“每条消息一个 run”，本质上是在说“每个普通 message event 一个 run”。
+## 并行 Run
 
-## 3. `thread`
+同一个 thread 上多个 run 允许并行——这是当前主线明确接受的语义。run A 先 append 用户消息 A，run B 紧接着 append 用户消息 B，run A 做 snapshot 时可能已经看见消息 B。这表示"当前 run 看到的是对话线上已经真实发生过的新消息"，不是"别的 run 的内部 tool result 被串进来了"。
 
-`thread` 是一条对话线共享的上下文容器。
+**允许发生**：新用户消息进入共享 thread 被并发 run 看见。
+**不应该发生**：run A 的私有 tool loop 中间态、tool audit 跑到 run B 的私有上下文里。
 
-它现在主要保存这些运行时状态: 
+## Approval Resume
 
-- `working_messages`
-- `working_summary`
-- `last_event_at`
-- 一把 thread 级 lock
+Approval 打断时 run 进入 `waiting_approval`。通过后不是重新当作新消息处理，而是：读取原 run 审批上下文 → 恢复工具执行现场 → replay 等待批准的 tool → 继续收尾。语义是**原 run 的后半段**。
 
-它表达的是: 
+## Subagent Child Run
 
-> **这条对话线到现在为止，公共上下文是什么。**
+与 approval resume 相反。`delegate_subagent` 的语义不是"父 run 换个函数接着跑"，而是：父 run 发起委派 → runtime 创建新 child run → child run 在自己的上下文里执行（`deliver_actions=False`，不对外发消息）→ 总结结果回收给父 run。
 
-当前代码在: 
+## 为什么不做 Generic Continuation
 
-- `src/acabot/runtime/contracts/records.py`
-- `src/acabot/runtime/storage/threads.py`
+当前主线不承载 generic continuation（一次 run 的私有执行过程延续到后续消息）。这里说的不是 approval 这种已正式定义的中断恢复，而是"工具做到一半 → 先发中间状态 → 用户下一条消息来了接着跑"这种。
 
-## 4. `run`
+### 立不住的原因
 
-`run` 是 runtime 为处理某次事件创建的一次正式执行。
+**run 私有态没有 replay 契约**：tool loop 中间态、工具原始返回、临时变量都是执行现场，不是"下一条消息还能复用的正式对象"。直接当 continuation 接下去，run 不再只是一次执行、thread 不再只是公共消息、工具过程变成半公开半私有的混合状态，恢复/取消/审计/并发全部变脏。
 
-它有自己的: 
+**工具缺字段不等于该挂起等用户**：工具校验只说明缺了什么参数，说明不了模型是不是该从上下文补、该追问用户、还是该换方案。Continuation 不是工具层自动推出来的，而是 agent 显式决策后 runtime 物化成正式状态。
 
-- `run_id`
-- `thread_id`
-- `actor_id`
-- `agent_id`
-- 生命周期状态
-- 错误信息
-- approval 上下文
+**群聊不适合**：群聊天然多 actor、多消息并发、乱序插话。更稳的边界是 event → short run，新消息就是新 run，共享的只有公共 thread 历史。
 
-它表达的是: 
+**私聊方向不同**：私聊如果要支持连续前台体验（边做工具调用边发状态、用户中途回一句能接上），更合理的方向是 foreground worker，而不是把 continuation 塞回 run。详见 `docs/26-foreground-worker.md`。
 
-> **系统这一次为了处理某条事件，实际跑了什么执行流程。**
+## 关键代码
 
-当前代码在: 
-
-- `src/acabot/runtime/contracts/records.py`
-- `src/acabot/runtime/storage/runs.py`
-
----
-
-## 一条 `event` 和一个 `run` 的关系
-
-当前主线大致是: 
-
-1. Gateway 收到平台事件
-2. 翻译成 `StandardEvent`
-3. `RuntimeApp.handle_event()` 接住这条事件
-4. `RuntimeRouter` / `SessionRuntime` 算出这次事件落到哪个 `thread`
-5. `RuntimeApp` 创建或获取这个 `thread`
-6. `RuntimeApp` 为这次事件 `open()` 一个新的 `run`
-7. 构造 `RunContext`
-8. 交给 `ThreadPipeline.execute()`
-
-也就是说，**正式语义是一条事件对应一个新的 `run`**。
-
-但在最常见的前台对话路径里，这条事件通常刚好就是一条 message event，所以平时才会顺手说成“每条消息一个 run”。
-
-当前接线点在: 
-
-- `src/acabot/runtime/app.py`
-- `src/acabot/runtime/pipeline.py`
-
-### 当前的例外
-
-不是所有事件都会变成正常前台 `run`。
-
-#### 1. `silent_drop`
-
-这类事件会直接结束，不创建正常执行主线。
-
-#### 2. `record_only`
-
-这类事件会创建 `run`，但不会进入模型调用。
-
-它只负责: 
-
-- 把用户消息写进 thread
-- 保存 thread
-- 收尾 run
-
-#### 3. approval resume
-
-approval 通过后的恢复，不是“新消息再开一个 run”。
-
-它是拿原来的 `run` 继续做后半段执行。
-
-#### 4. subagent child run
-
-`delegate_subagent` 不会把父 `run` 继续硬塞进子任务里。
-
-它会创建一个新的 child run。
-
-所以: 
-
-- 普通消息 -> 新 run
-- approval resume -> 复用原 run
-- subagent delegation -> 新 child run
-
----
-
-## 一个 `run` 里面到底会发生什么
-
-当前 `ThreadPipeline.execute()` 这条线大致是: 
-
-1. `mark_running`
-2. `computer_runtime.prepare_run_context(ctx)`
-3. `message_preparation_service.prepare(ctx)`
-4. 把当前用户消息 append 到 thread
-5. 做 context compaction
-6. 准备 retrieval plan
-7. 注入 memory blocks
-8. 调 `agent_runtime.execute(ctx)`
-9. 把动作交给 `Outbox`
-10. 根据送达结果更新 thread
-11. 收尾 run
-
-所以一个 `run` 不是“调一下模型就完”。
-
-它是一整条 runtime 执行链。
-
----
-
-## 一个 `run` 不等于一次模型请求
-
-这点最容易看错。
-
-当前 `ModelAgentRuntime.execute(ctx)` 最终会调用 `BaseAgent.run(...)`。
-
-而 `BaseAgent.run(...)` 内部本身就可能进入 tool loop, 所以: 
-- 一个 `run` 里可能有多轮 LLM 请求
-- 一个 `run` 里可能有多次 tool call
-- 它们全部仍然属于同一个 `run`
-
-
-## 当前 `run` 私有的东西有哪些
-
-当前 `run` 里有一批东西是**只属于这次执行**的，不会直接变成公共聊天历史。
-
-比如: 
-
-- 这次模型调用用的 `system_prompt`
-- 这次组装出来的 `messages`
-- 这次 tool loop 的中间消息
-- 这次 tool call 的返回结果
-- 这次 tool audit
-- 这次 run 的 artifacts
-- 这次 run 的 pending approval
-- ...
-
-它们的语义是: 
-
-> **这次执行过程里模型和 runtime 自己看到了什么。**
-
-不是: 
-
-> **这条对话线上每个人以后都应该一直看到什么。**
-
----
-
-## 哪些东西会进公共 `thread` 上下文
-
-当前真正会回写到共享 `thread.working_messages` 的，主要是两类可见消息: 
-
-### 1. 用户消息
-
-用户输入会先 append 进当前 thread。
-
-### 2. assistant 可见回复
-
-只有真正成功送达出去的 assistant 可见内容，才会把 `thread_content` 回写到 thread。
-
-所以公共 `thread` 历史的核心语义是: **这条对话线上真实发生过、用户和 bot 真正看得到的消息流。**
-
-
-## `Skill` 和 `subagent` 会不会出现在上下文里
-
-## 1. 会出现在当前 run 的模型上下文里
-
-### `Skill`
-
-当前 run ，`ContextAssembler` 就把可见 skills 摘要放进 system prompt。
-
-如果模型真的调用了 `Skill(skill=...)`: 
-
-- tool 会把 `SKILL.md` 原文和 `/skills/...` 基目录作为 tool result 返回给当前 run
-- 这份结果会进入当前 run 私有的 tool loop 消息里
-
-#### `mark_skill_loaded` 
-
-它记录的是: **当前这个 thread 已经显式 load 过哪些 skill。**
-
-所以它属于: thread 级 workspace/world 状态
-
-不属于: 公共聊天消息历史
-
-它表达的是“这个 thread 的工作环境记住了这件事”，不是“聊天记录里多了一条消息”。
-
-
-
-### `delegate_subagent`
-
-当前 run 一开始，`ContextAssembler` 也把可见 subagent 摘要放进 system prompt。
-
-如果模型真的调用了 `delegate_subagent`: 
-
-- tool 会创建 child run
-- 子任务跑完后，把总结结果返回给父 run
-- 这份总结会进入父 run 私有的 tool loop 消息里
-
-所以它们当然会进入**当前 run 的模型上下文**。
-
-## 2. 默认不会直接进入公共 thread 历史
-
-`Skill` 和 `delegate_subagent` 的 tool result 默认不会自动变成共享消息历史。
-
-它们只有在最后被模型整理成用户可见回复并成功发出去时，才会以**最终回复文本**的形式进入公共 thread。
-
-
-## 同一个 `thread` 上多个 `run` 可以并行
-
-当前实现里，同一个 thread 上多个 run 是允许并行的。
-
-这不是 bug，而是当前主线明确接受的语义: 
-
-- run A 先 append 了用户消息 A
-- run B 紧接着 append 了用户消息 B
-- run A 做 snapshot 时可能已经看见消息 B
-
-这表示的是: **当前 run 看到的是这条对话线上已经真实发生过的新消息。**
-
-不是: **别的 run 的内部 tool result 被串进来了。**
-
-### 1. 允许发生的
-
-同一 thread 上，新的用户消息进入共享 thread，被别的并发 run 看见。
-
-这是当前设计接受的行为。
-
-### 2. 不应该发生的
-
-run A 的私有 tool loop 中间态、tool audit、内部 tool result 直接跑到 run B 的私有上下文里。
-
-当前实现不是这么做的。
-
-
-## approval resume 为什么还是同一个 `run`
-
-approval 打断时，当前 run 会进入 `waiting_approval`。
-
-approval 通过后，系统不是重新把这件事当作一条新消息处理，而是: 
-
-- 读取原 run 的审批上下文
-- 恢复工具执行现场
-- replay 之前等待批准的那次 tool
-- 继续把这次 run 收尾
-
-所以 approval resume 的语义是:  **原 run 的后半段。**
-
-不是: **另起一个全新的普通消息 run。**
-
----
-
-## subagent child run 为什么是新的 `run`
-
-subagent 跟 approval resume 正好相反。
-
-`delegate_subagent` 的语义不是“父 run 的后半段换个函数接着跑”，而是: 
-
-- 父 run 发起一次委派
-- runtime 创建一个新的 child run
-- child run 在自己的上下文里执行
-- child run 不直接对外发送前台消息
-- 最后把总结结果回收给父 run
-
-所以 child run 是一个独立的 `run`，只是它的产物会回流到父 run。
-
+| 文件 | 职责 |
+|------|------|
+| `runtime/contracts/records.py` | RunRecord、ThreadState 定义 |
+| `runtime/storage/threads.py` | thread 存储 |
+| `runtime/storage/runs.py` | run 存储 |
+| `runtime/app.py` | event → run 创建 |
+| `runtime/pipeline.py` | run 执行主线 |

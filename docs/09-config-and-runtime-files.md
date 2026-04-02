@@ -1,344 +1,97 @@
 # 配置、运行时文件和生效路径
 
-这一篇主要解决两个问题:
+AcaBot 的配置分三层：主配置文件（`config.yaml`）、文件系统配置目录（`runtime_config/`）和运行时数据目录（`runtime_data/`）。理解这三层的区别是修改任何配置逻辑的前提。
 
-1. 配置到底从哪里来
-2. 改完之后什么时候生效
+## Config 对象
 
-## `Config` 还是最底层入口
+`src/acabot/config.py` 中的 `Config` 是最底层配置入口，提供 `from_file()`、`get()`、`save()`、`reload_from_file()`、`base_dir()` 和 `resolve_path()`。
 
-关键文件:
+`Config.from_file()` 按以下优先级查找配置文件：显式传入路径 > 环境变量 `ACABOT_CONFIG` > 默认 `config.yaml`。实际部署中，配置文件通常在 `deploy/` 目录下，通过 `ACABOT_CONFIG` 指向，而不是仓库根目录。
 
-- `src/acabot/config.py`
+`Config.resolve_path()` 将相对路径解析到配置文件所在目录（而不是仓库根目录），所以同一个相对路径在不同位置的 config 下会指向不同的实际目录。
 
-它主要负责:
+## 三层配置来源
 
-- `from_file()`
-- `get()`
-- `save()`
-- `reload_from_file()`
-- `base_dir()`
-- `resolve_path()`
+### 主配置文件（`config.yaml`）
 
-### 配置文件查找顺序
+由 `Config` 读取，包含四个顶层块：
 
-`Config.from_file()` 的优先级还是:
+| 块 | 影响范围 |
+|-----|---------|
+| `gateway` | 网关创建、监听地址、WebUI 网关状态页 |
+| `agent` | 默认 agent、默认模型、默认系统 prompt |
+| `runtime` | filesystem 模式、computer、session 读取路径、长期记忆开关、skill 目录等（影响最广） |
+| `plugins` | 插件加载和私有配置 |
 
-1. 显式传入 path
-2. 环境变量 `ACABOT_CONFIG`
-3. 默认 `config.yaml`
+`runtime` 块中两个值得注意的子配置：
 
-### 一个现实情况
+- **`runtime.filesystem.skill_catalog_dirs`**：指定 skill 扫描根目录。相对路径视为 `project` 来源，`~` 或绝对路径视为 `user` 来源。默认扫描 `./.agents/skills` 和 `~/.agents/skills`，递归查找 `**/SKILL.md`。注入和执行时按 `project > user` 优先级选取。
+- **`runtime.long_term_memory.enabled`**：装配开关（不是模型配置开关）。打开后自动构造 `LanceDbLongTermMemoryStore`、`LtmWritePort`、`CoreSimpleMemMemorySource` 和 `LongTermMemoryIngestor`。实际可用还需要在 `models/bindings/` 中配好 `system:ltm_extract`、`system:ltm_query_plan`、`system:ltm_embed` 三个 target。该配置块还支持 `storage_dir`、`window_size`、`overlap_size`、`max_entries`、`extractor_version`。
 
-仓库根目录不一定真的有正在使用的 `config.yaml`。
-实际部署更常见的是:
+### 文件系统配置目录（`runtime_config/`）
 
-- `runtime-env/config.yaml`
-- 再通过 `ACABOT_CONFIG` 指过去
+当前是唯一模式（inline 配置已移除）。runtime 从这里加载 prompts、sessions、models 和 plugins 配置：
 
-所以你改配置逻辑时, 不要默认“项目根目录就是唯一真源”。
+```
+runtime_config/
+  models/
+    providers/          # 模型提供方
+    presets/             # 模型预设
+    bindings/            # 模型绑定（含 target 映射）
+  prompts/               # prompt 模板
+  sessions/              # session config + session-owned agent
+    qq/group/<id>/session.yaml + agent.yaml
+    qq/private/<id>/session.yaml + agent.yaml
+  plugins/               # 插件私有配置
+```
 
-## 现在的配置来源有哪几类
+### 运行时数据目录（`runtime_data/`）
 
-当前系统可以把配置分成三层看:
+不是配置真源，而是运行时状态和持久化数据：
 
-### 1. 主配置文件
+```
+runtime_data/
+  soul/                  # /self 连续性文件（today.md、daily/）
+  sticky_notes/          # 实体便签（user/、conversation/）
+  workspaces/            # thread workspace
+  debug/                 # 调试产物（payload json 等）
+  acabot.db              # SQLite 主库
+  long_term_memory/      # LanceDB 数据
+```
 
-主要由 `Config` 读取。
+很多 WebUI 页面操作的是 `runtime_config/` 或 `runtime_data/` 下的文件，而不是主 YAML。只改 `Config` 对象往往只改对一半。
 
-通常包含:
+## 其他仓库目录
 
-- `gateway`
-- `agent`
-- `runtime`
-- `plugins`
+| 目录 | 用途 |
+|------|------|
+| `deploy/` | 部署实例目录，含 `compose.yaml`、`compose.dev.yaml`、`napcat/` |
+| `extensions/` | 能力包目录，含 `plugins/`、`skills/`、`subagents/` |
+| `deploy/napcat/` | NapCat 自身配置和登录态，不属于 AcaBot 业务配置 |
 
-### 2. 文件系统配置目录
+## Session、Agent 和 Prompt 的加载
 
-如果开了 `runtime.filesystem.enabled`, 运行时还会继续从文件系统目录加载:
+相关加载器在 `src/acabot/runtime/control/` 下：
 
-- `profiles/`
-- `prompts/`
-- `sessions/`
-- `models/`
-- 其他 control plane 需要的运行时目录
+**Frontstage agent**（`session_agent_loader.py`）描述 `prompt_ref`、`enabled_tools`、`skills`、`computer_policy`。模型配置不在这里，而是统一放在 `models/` 目录下由 target 解析。
 
-当前真正和主线强相关的几类是:
+**Prompt**（`prompt_loader.py`）从 `runtime_config/prompts/` 加载，支持 chained fallback。
 
-- profiles
-- prompts
-- sessions
+**Session config**（`session_loader.py`）控制六个决策域：routing、admission、persistence、extraction、context、computer。从 `runtime_config/sessions/` 加载。
 
-### 3. 运行时数据目录
+## RuntimeConfigControlPlane
 
-这一层不是“配置真源”, 而是运行时状态和持久化数据。
+`src/acabot/runtime/control/config_control_plane.py` 提供配置真源的读写能力，当前覆盖：profiles、prompts、gateway、runtime plugins，以及 session-config 驱动的 reload。
 
-常见内容包括:
+## 热刷新与重启
 
-- SQLite 数据
-- workspace
-- attachments
-- self 数据
-- long_term_memory 的 LanceDB 数据
-- 运行过程里的临时状态
+并非所有配置都支持热刷新。
 
-## 为什么这点重要
+| 支持热刷新 | 需要重启 |
+|-----------|---------|
+| profiles、prompts、session config、部分 plugin 配置 | gateway 监听地址/token、进程级环境变量、Docker/NapCat 接线、基础设施初始化参数 |
 
-因为很多 WebUI 页面改的不是主 YAML 某一段, 而是运行时目录下的一组文件。
-
-你如果只改 `Config`, 往往只改对一半。
-
-## 哪些配置会影响哪些模块
-
-### `gateway`
-
-影响:
-
-- `main.py` 创建 gateway
-- WebUI 的 gateway 状态页
-- 部署接线
-
-### `agent`
-
-影响:
-
-- 默认 agent 创建
-- 默认模型
-- 默认系统 prompt
-
-### `runtime`
-
-影响最大, 现在通常包括:
-
-- default agent/profile
-- profiles
-- filesystem 模式
-- webui
-- computer
-- runtime plugins
-- session config 的读取路径
-
-这里有一条和 skill 直接相关的新规则:
-
-- `runtime.filesystem.skill_catalog_dirs`
-
-它表示“runtime 要扫描哪些 skill 根目录”。
-
-当前规则是:
-
-- 相对路径, 例如 `./skills`、`./agent/skills`, 算 `project`
-- `~` 路径和根目录绝对路径, 算 `user`
-- runtime 会递归扫描这些目录下的 `**/SKILL.md`
-- 扫描阶段先保留全部 skill metadata
-- 真正注入 prompt 或执行 `Skill(skill=...)` 时, 再按可见性和 `project > user` 选出最后那一份 skill
-
-如果配置没写这个字段, runtime 默认会扫描:
-
-- `./.agents/skills`
-- `~/.agents/skills`
-
-这里还有一条和长期记忆直接相关的新配置:
-
-- `runtime.long_term_memory.enabled`
-
-它表示 runtime 是否自动装配 `long_term_memory` 这一整条链路。
-打开后, runtime 会自己构造:
-
-- `LanceDbLongTermMemoryStore`
-- `LtmWritePort`
-- `CoreSimpleMemMemorySource`
-- `LongTermMemoryIngestor`
-
-这只是装配开关, 不是模型配置开关。
-真正让这条链路可用, 还要先在模型绑定里配好:
-
-- `system:ltm_extract`
-- `system:ltm_query_plan`
-- `system:ltm_embed`
-
-当前这个配置块还支持这些字段:
-
-- `storage_dir`
-- `window_size`
-- `overlap_size`
-- `max_entries`
-- `extractor_version`
-
-### `plugins`
-
-影响 plugin 的加载和插件私有配置。
-
-## session bundle / prompt / session 现在分别从哪里来
-
-关键文件:
-
-- `src/acabot/runtime/control/session_bundle_loader.py`
-- `src/acabot/runtime/control/session_agent_loader.py`
-- `src/acabot/runtime/control/prompt_loader.py`
-- `src/acabot/runtime/control/session_loader.py`
-- `src/acabot/runtime/control/session_runtime.py`
-- `src/acabot/runtime/control/config_control_plane.py`
-
-### frontstage agent
-
-frontstage agent 现在主要描述:
-
-- prompt_ref
-- enabled_tools
-- skills
-- computer policy
-
-模型配置不在这里；模型真源统一放在 `models/providers`、`models/presets`、`models/bindings`，再由内建和插件 target 解析。
-
-它可以来自:
-
-- `runtime.profiles`
-- 文件系统 `profiles/`
-
-### prompt
-
-prompt 现在可以来自:
-
-- inline `runtime.prompts`
-- 文件系统 `prompts/`
-- chained fallback
-
-### session config
-
-session config 现在决定的是:
-
-- routing
-- admission
-- persistence
-- extraction
-- context
-- computer
-
-它可以来自:
-
-- config 里直接提供的 session 相关配置
-- 文件系统 `sessions/`
-
-## `RuntimeConfigControlPlane` 现在真正管什么
-
-关键文件:
-
-- `src/acabot/runtime/control/config_control_plane.py`
-
-它现在保留的配置真源读写能力主要是:
-
-- profiles
-- prompts
-- gateway
-- runtime plugins
-- session-config 驱动的 reload
-
-如果你在找旧的:
-
-- binding rules
-- inbound rules
-- event policies
-
-那已经不是当前控制面的真源结构了。
-
-## 热刷新和重启怎么分
-
-不要假设所有配置都能热刷新。
-
-### 更可能热刷新的
-
-- profiles
-- prompts
-- session config
-- 部分 plugin 配置
-
-### 更可能需要重启的
-
-- gateway 监听地址 / token
-- 进程级环境变量
-- Docker / NapCat 接线
-- 某些基础设施初始化参数
-
-如果你做 WebUI 配置页, 最好在页面文案里说清楚这一点。
-
-## `runtime-env/` 现在怎么理解
-
-这个目录更像“实际运行实例目录”, 不是源代码目录。
-
-里面常见的东西包括:
-
-- `compose.yaml`
-- `config.yaml`
-- `.env`
-- `runtime-config/`
-- `runtime-data/`
-- `napcat/`
-
-## 运行时目录的实际意义
-
-### `runtime-config/`
-
-更像给 WebUI 和 runtime 热刷新用的配置真源目录。
-
-### `runtime-data/`
-
-更像运行时状态和持久化数据目录, 比如:
-
-- SQLite
-- workspace
-- attachments
-- self 数据
-- `long-term-memory/lancedb`
-
-### `napcat/`
-
-NapCat 自己的配置和登录态, 不属于 AcaBot 的业务配置。
-
-## 路径解析规则
-
-`Config.resolve_path()` 会把相对路径解析到当前配置文件所在目录。
-
-这点很重要, 因为:
-
-- 同样写一个相对路径
-- 在项目根 config 和在 `runtime-env/config.yaml` 下面
-- 实际指向的目录可能完全不同
-
-所以你如果改 filesystem 目录、workspace、模型目录等路径, 不要只盯字符串, 要看配置文件本身在哪里。
-
-## 设计新配置项时的建议
-
-### 1. 先决定它属于哪一层
-
-通常放在:
-
-- `gateway`
-- `agent`
-- `runtime`
-- `plugins.<plugin_name>`
-
-不要随手塞。
-
-### 2. 先想清楚它是不是“运行时可改”
-
-如果以后要给 WebUI 改, 最好一开始就想好:
-
-- 是否能热刷新
-- 改完是不是要触发 reload
-
-### 3. 先想清楚它是不是“部署态配置”
-
-像 token、端口、挂载路径这种更偏部署态。不要和业务配置混着讲。
-
-## AI 在改配置相关代码前要先确认的事
-
-1. 当前实例到底读的是哪份 config
-2. 是否开启了 filesystem 模式
-3. 目标改动是配置真源还是运行时数据
-4. 改完要不要热刷新
-5. WebUI 是否也要同步暴露
-
-## 读源码顺序建议
+## 源码阅读顺序
 
 1. `src/acabot/config.py`
 2. `src/acabot/runtime/control/config_control_plane.py`

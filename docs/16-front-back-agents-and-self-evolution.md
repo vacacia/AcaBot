@@ -163,7 +163,7 @@ src/acabot/runtime/
 
 ## 现有代码里哪些部分可以继续复用
 
-前台聊天主线本身不需要推翻，仍然会以 `src/acabot/runtime/app.py`、`src/acabot/runtime/router.py`、`src/acabot/runtime/pipeline.py`、`src/acabot/runtime/model/model_agent_runtime.py` 为核心。控制面和配置热刷新仍然重要，关键仍然在 `src/acabot/runtime/control/control_plane.py` 和 `src/acabot/runtime/control/config_control_plane.py`。workspace、附件、shell session 和 backend 抽象仍然会依赖 `src/acabot/runtime/computer/runtime.py`。长期记忆底层桶也仍然在 `src/acabot/runtime/memory/structured_memory.py` 这条线里。
+前台聊天主线本身不需要推翻，仍然会以 `src/acabot/runtime/app.py`、`src/acabot/runtime/router.py`、`src/acabot/runtime/pipeline.py`、`src/acabot/runtime/model/model_agent_runtime.py` 为核心。控制面和配置热刷新仍然重要，关键仍然在 `src/acabot/runtime/control/control_plane.py` 和 `src/acabot/runtime/control/config_control_plane.py`。workspace、附件、shell session 和 backend 抽象仍然会依赖 `src/acabot/runtime/computer/runtime.py`。长期记忆底层也仍然在 `src/acabot/runtime/memory/` 这条线里（MemoryBroker、long_term_memory/、file_backed/）。
 
 真正新增的重点，是把“后台模式、后台桥接、后台 session、后台队列、后台产物”从这些现有模块里独立出来，形成一个清楚的 backend 域。否则这些能力最后很容易散回 `plugins/`、`control/`、`tool_broker/` 里，看起来只是系统多了一些零散功能，而不是正式多了一个后台人格。
 

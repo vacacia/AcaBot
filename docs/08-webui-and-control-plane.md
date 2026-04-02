@@ -1,211 +1,92 @@
 # WebUI 和控制面
 
-如果你的任务是“做控制面板”“补一个配置页”“让 WebUI 能操作某个运行时能力”，先看这一篇。
+WebUI 不是纯前端页面工程，而是一条完整链路：
 
-这块不是一个纯前端页面工程，而是一条完整链路。
+```
+webui/src/*.vue → vite build → src/acabot/webui/ → RuntimeHttpApiServer → RuntimeControlPlane / RuntimeConfigControlPlane → runtime state / 配置真源
+```
 
-## 总体结构
+## 关键文件
 
-现在的链路是:
+| 层 | 文件 |
+|----|------|
+| 前端源码 | `webui/src/`、`webui/src/router.ts`、`webui/src/views/`、`webui/src/components/` |
+| 构建配置 | `webui/vite.config.ts` |
+| 构建产物 | `src/acabot/webui/index.html`（RuntimeHttpApiServer 托管这里，不是手写源码） |
+| HTTP API | `src/acabot/runtime/control/http_api.py` |
+| 运行时控制面 | `src/acabot/runtime/control/control_plane.py`、`snapshots.py`、`ui_catalog.py`、`model_ops.py`、`workspace_ops.py`、`reference_ops.py` |
+| 配置控制面 | `src/acabot/runtime/control/config_control_plane.py` |
+| 日志 | `src/acabot/runtime/control/log_buffer.py` |
 
-`webui/src/*.vue -> vite build -> src/acabot/webui -> RuntimeHttpApiServer -> RuntimeControlPlane -> RuntimeConfigControlPlane / runtime state`
+## 前端页面体系
 
-对应文件:
+当前 Vue + Vite 应用，重点页面包括：首页、Soul、记忆、管理员、模型供应商/模型、提示词、插件/技能/子代理、会话、系统、日志。新功能应先判断挂在哪个现有页面体系里，不要随手起散的入口。
 
-- `webui/src/`
-- `webui/src/router.ts`
-- `webui/src/views/`
-- `webui/src/components/`
-- `webui/vite.config.ts`
-- `src/acabot/webui/index.html`
-- `src/acabot/runtime/control/http_api.py`
-- `src/acabot/runtime/control/control_plane.py`
-- `src/acabot/runtime/control/snapshots.py`
-- `src/acabot/runtime/control/ui_catalog.py`
-- `src/acabot/runtime/control/model_ops.py`
-- `src/acabot/runtime/control/workspace_ops.py`
-- `src/acabot/runtime/control/reference_ops.py`
-- `src/acabot/runtime/control/config_control_plane.py`
-- `src/acabot/runtime/control/log_buffer.py`
+改完 `webui/src/*.vue` 后必须跑 `npm --prefix webui run build`，RuntimeHttpApiServer 读的是 `src/acabot/webui/` 里的构建产物。
 
-## 前端这边是什么状态
+## RuntimeHttpApiServer
 
-前端已经不是旧的单文件 `app.js` 静态壳，而是一套 Vue + Vite 应用。
+`runtime/control/http_api.py`，用 Python 自带 `ThreadingHTTPServer`。两个职责：提供 `/api/*` HTTP API，可选托管静态 WebUI。
 
-从页面目录能看出当前重点页包括:
+加 API 时通常要改：`handle_api_request()` → 需要时补 `RuntimeControlPlane` 方法 → 涉及配置真源再补 `RuntimeConfigControlPlane`。业务逻辑放回 control plane，不要在 http_api.py 里堆。
 
-- 首页
-- Soul
-- 记忆
-- 管理员
-- 模型供应商 / 模型
-- 提示词
-- 插件 / 技能 / 子代理
-- 会话
-- 系统
-- 日志
+### 后台维护接口
 
-这意味着如果你做 WebUI 新功能，最好先判断它应该挂在哪个现有页面体系里，而不是随手再起一套散的入口。
+后台维护面沿同一条链路暴露最小只读接口：`/api/backend/status`、`/api/backend/session-binding`、`/api/backend/session-path`。第一阶段只暴露 backend 是否已接线、canonical session binding、binding 文件路径和后台模式状态，不镜像 transcript，不引入 operation/artifact 列表。
 
-## `RuntimeHttpApiServer`
+`configured` 的语义：runtime 已经构造出 configured backend session service，且后台入口、`ask_backend`、control plane 都按 enabled backend 行为工作——不是"bridge 对象存在"这么弱的条件。http_api.py 只提供 `/api/backend/*` 适配，真正的聚合在 RuntimeControlPlane。
 
-这个文件做两件事:
+### 日志接口
 
-1. 提供本地 HTTP API
-2. 可选托管静态 WebUI
+`InMemoryLogBuffer` 缓存最近一段 runtime 日志。`GET /api/system/logs` 返回 `items`、`next_seq`、`reset_required`，前端通过 `after_seq` 增量轮询。语义是"最近日志窗口"，不是完整历史日志检索。
 
-特点:
+## RuntimeControlPlane
 
-- 用的是 Python 自带 `ThreadingHTTPServer`
-- API 走 `/api/*`
-- 静态文件默认从 `src/acabot/webui` 提供
-- `src/acabot/webui` 是构建产物，不是手写源码
+`runtime/control/control_plane.py`。运行时运维入口，关心当前状态、配置快照、运行时对象查询、plugin reload、approvals、runtime/memory/thread/run 可视化。不直接等于配置真源。
 
-### 加 API 时通常要改哪里
+内部已拆分：
 
-1. `handle_api_request()`
-2. 需要时补 `RuntimeControlPlane` 方法
-3. 如果涉及配置真源，再补 `RuntimeConfigControlPlane`
+| 文件 | 职责 |
+|------|------|
+| `control_plane.py` | 本体和组装逻辑 |
+| `snapshots.py` | 返回给 WebUI/API 的轻量快照类型 |
+| `ui_catalog.py` | WebUI 表单选项常量和目录选项 helper |
+| `model_ops.py` | 模型注册表控制面操作 |
+| `workspace_ops.py` | workspace、sandbox、attachments、mirrored skills 控制面操作 |
+| `reference_ops.py` | reference 检索和写入控制面操作 |
 
-后台维护面现在也沿这条链路暴露最小只读接口:
+改状态返回结构看 `snapshots.py`，改下拉框和选项枚举看 `ui_catalog.py`，不要默认往 `control_plane.py` 加体积。
 
-- `/api/backend/status`
-- `/api/backend/session-binding`
-- `/api/backend/session-path`
+## RuntimeConfigControlPlane
 
-第一阶段这些接口只暴露 backend 是否已接线、canonical session binding、binding 文件路径和当前后台模式状态, 不镜像 backend transcript, 也不引入 operation/artifact 列表。
-
-这里的 `configured` 语义要注意: 现在它表示“真实 runtime 已经构造出 configured backend session service, 并且后台入口 / `ask_backend` / control plane 都会按 enabled backend 行为工作”, 不是“bridge 对象存在”这么弱的条件。
-
-很多人只在 `http_api.py` 加个分支就完了，结果后面控制面逻辑越来越脏。正常做法还是把业务放回 control plane。
-
-backend 这块当前已经这样做了: `http_api.py` 只提供 `/api/backend/*` 适配, 真正的 configured/session path/binding/status 聚合仍在 `RuntimeControlPlane`。
-
-日志现在也沿同一条链路暴露:
-
-- `InMemoryLogBuffer` 缓存最近一段 runtime 日志
-- `GET /api/system/logs` 返回:
-  - `items`
-  - `next_seq`
-  - `reset_required`
-- 前端通过 `after_seq` 做增量轮询
-
-这里的语义是“最近日志窗口”，不是完整历史日志检索。
-
-## `RuntimeControlPlane`
-
-这是运行时运维入口。
-
-它关心的是:
-
-- 当前状态
-- 当前配置快照
-- 运行时对象查询
-- plugin reload
-- approvals
-- runtime / memory / thread / run 可视化
-
-它不直接等于配置真源，也不该把所有 YAML 读写细节都塞自己身上。
-
-现在这一层内部也已经继续拆开了:
-
-- `control_plane.py` 只保留 `RuntimeControlPlane` 本体和少量组装逻辑
-- `snapshots.py` 放 control plane 返回给 WebUI / API 的轻量快照类型
-- `ui_catalog.py` 放 WebUI 表单选项常量和目录选项 helper
-- `model_ops.py` 放模型注册表相关控制面操作
-- `workspace_ops.py` 放 workspace、sandbox、attachments 和 mirrored skills 相关控制面操作
-- `reference_ops.py` 放 reference 检索和写入相关控制面操作
-
-所以如果你只是要改状态返回结构，优先看 `snapshots.py`；如果只是要改 WebUI 下拉框和选项枚举，优先看 `ui_catalog.py`，不要第一反应就去给 `control_plane.py` 继续加体积。
-
-## `RuntimeConfigControlPlane`
-
-这个文件才是很多“配置页”背后的真源读写层。
-
-它现在真正处理的东西主要是:
-
-- profiles
-- prompts
-- gateway
-- runtime plugins
-- filesystem 配置目录
-- session-config 驱动的 reload
+`runtime/control/config_control_plane.py`。配置页背后的真源读写层，当前处理：profiles、prompts、gateway、runtime plugins、filesystem 配置目录、session-config 驱动的 reload。
 
 ### 判断一个 WebUI 功能改哪里
 
-#### 只是展示运行时状态
+- **只展示运行时状态**：改 RuntimeControlPlane
+- **要读写持久配置**：改 RuntimeConfigControlPlane
+- **两者都要**：前后都得碰
 
-优先改 `RuntimeControlPlane`。
+## 新面板开发流程
 
-#### 要读写持久配置
-
-优先改 `RuntimeConfigControlPlane`。
-
-#### 两者都要
-
-前后都得碰。
-
-## WebUI 新面板怎么加
-
-建议按这个顺序:
-
-1. 先确定数据源
-   - 运行时状态
-   - 配置真源
-   - 两者结合
+1. 先确定数据源（运行时状态 / 配置真源 / 两者结合）
 2. 先补后端接口
 3. 再补前端页面状态和表单
 4. 最后补导航入口和帮助文字
 
-原因很简单: 这套 WebUI 的难点通常不在 DOM，而在“你到底在改运行时状态，还是在改配置真源”。
+难点通常不在 DOM，而在"你到底在改运行时状态还是配置真源"。
 
-## 这块最常见的坑
+## 后端风格
 
-### 1. 只改 `webui/src` 但忘了重新 build
+保持当前分层：http_api.py 只做 HTTP 适配，control_plane.py 做运行时操作和状态聚合，config_control_plane.py 做配置真源和热刷新。
 
-`RuntimeHttpApiServer` 读的是 `src/acabot/webui` 里的构建产物。
+## 常见问题
 
-如果你只改了 `webui/src/*.vue`，但没跑:
+1. **只改 `webui/src` 没重新 build**：浏览器看到的还是旧页面。
+2. **把"当前状态"和"持久配置"混成一个接口**：短期省事，长期让页面行为难解释。
+3. **忘了哪些改动需要重启**：有些配置可以热刷新，有些只是写回文件。WebUI 文案要讲明白。
 
-- `npm --prefix webui run build`
-
-浏览器里看到的还是旧页面。
-
-### 2. 把“当前状态”和“持久配置”混成一个接口
-
-短期省事，长期会让页面行为非常难解释。
-
-### 3. 忘了哪些改动需要重启
-
-有些配置可以热刷新，有些改完只是写回文件。WebUI 文案最好讲明白，不要让用户误会“保存即生效”。
-
-## 如果要做“WebUI 控制面板”
-
-你给的优先级里 WebUI 是最高的，所以这里单独说一下。
-
-最稳的办法不是先画 UI，而是先回答三件事:
-
-1. 面板操作的是运行时状态，还是配置真源
-2. 改完是否需要热刷新
-3. 操作结果应该立刻在哪个页面能看到
-
-常见落点:
-
-- 新增只读面板: `RuntimeControlPlane + http_api + app.js`
-- 新增配置编辑面板: `RuntimeConfigControlPlane + http_api + app.js`
-- 新增动作按钮: 还要看是否需要触发 runtime service
-
-## 建议的后端风格
-
-尽量保持现在这种分层:
-
-- `http_api.py` 只做 HTTP 适配
-- `control_plane.py` 做运行时操作和状态聚合
-- `config_control_plane.py` 做配置真源和热刷新
-
-别把 YAML 读写、状态聚合、路由分发全堆进 `http_api.py`。
-
-## 读源码顺序建议
+## 源码阅读顺序
 
 1. `src/acabot/runtime/control/http_api.py`
 2. `src/acabot/runtime/control/control_plane.py`
@@ -218,4 +99,3 @@ backend 这块当前已经这样做了: `http_api.py` 只提供 `/api/backend/*`
 9. `webui/src/router.ts`
 10. `webui/src/views/`
 11. `webui/src/components/`
-12. `src/acabot/webui/index.html`
