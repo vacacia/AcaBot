@@ -1,86 +1,106 @@
-# AcaBot
+# AcaBot v2 — Runtime 基础设施强化
 
 ## What This Is
 
-AcaBot 是一个面向 QQ / NapCat 场景的本地优先 agent runtime 和后台控制台。它的目标不是只把模型接起来跑，而是让操作者能够通过统一的 WebUI 看懂、配置和维护 bot 的真实行为，而不是继续依赖分散配置文件、硬编码路径和源码猜系统怎么运行。
-
-当前这轮工作主要先服务你自己把系统收稳、收可用，但产品方向不是“只给作者自己调试的私人工具”。在核心控制面稳定后，它还需要能让其他操作者通过 quickstart 上手。
+AcaBot 是一个 agentic chatbot runtime，通过 Gateway 接收 IM 平台事件，经过 session-config 路由引擎、LLM agent pipeline、工具调用，最终通过 Gateway 回复。当前核心 pipeline 已稳定运行，本轮工作聚焦于 runtime 基础设施的补全和重构——插件体系、消息工具、定时任务、日志、数据安全等，让 bot 从"能跑"进化到"好用、可扩展、可观测"。
 
 ## Core Value
 
-操作者必须能通过一个真实可用的 WebUI 稳定地理解并控制 AcaBot 的行为。
+**让 AcaBot 的 runtime 基础设施从 MVP 水平提升到正式可用水平：插件可管理、消息能力完整、定时任务可用、运行状态可观测。**
 
 ## Requirements
 
 ### Validated
 
-- ✓ AcaBot 已经具备一套正式 runtime 主线，包含 gateway、router、pipeline、tool broker、memory、subagent、control plane 等核心结构 — existing
-- ✓ AcaBot 已经具备本地 WebUI shell、HTTP API 和多个后台页面入口，而不是纯命令行系统 — existing
-- ✓ AcaBot 已经具备 sticky notes、长期记忆、模型注册表、session 契约等第一版能力，只是很多地方还没有真正产品化 — existing
-- ✓ 仓库中已经存在较完整的设计文档和页面草图，可直接作为 brownfield 演进真源 — existing
+- ✓ Gateway ↔ LLM pipeline 完整运行 — existing
+- ✓ Session-config 路由引擎 — existing
+- ✓ ToolBroker 统一工具注册/执行 — existing
+- ✓ Memory 三层架构（working/sticky notes/LTM） — existing
+- ✓ Computer subsystem（Host/Docker/Remote 后端） — existing
+- ✓ WebUI + Control Plane HTTP API — existing
+- ✓ Skills / Subagents 子系统 — existing
+- ✓ 目录三层分离（extensions/ runtime_config/ runtime_data/） — existing
+- ✓ Docker 镜像双版本（Full + Lite） — existing
+- ✓ LanceDB-backed LTM runtime — existing
 
 ### Active
 
-- [ ] 把 WebUI 做到“能正常设置 AcaBot 行为”，让现有页面里明确要用的管理内容真正生效
-- [ ] 统一旧代码中分散的硬编码路径、设置和运行时数据目录，让系统知道哪些路径才是正式真源
-- [ ] 把 Session 管理重新接回当前 runtime / session contract，而不是继续保留废弃配置入口
-- [ ] 把长期记忆从“简陋但能跑”提升到“可配置、可观察、可解释、可日常使用”
-- [ ] 在控制面稳定后，为未来其他操作者补 Quickstart 和最小上手文档
+- [ ] 插件管控重构（docs/29-plugin-control-plane.md 完整方案）
+- [ ] 统一 message 工具（方案待重新敲定）
+- [ ] Playwright + Chromium 集成（镜像依赖 + Outbox 渲染函数）
+- [ ] 定时任务基础设施（统一 scheduler，插件 + bot 核心均可用）
+- [ ] 日志内容优化（需调研后确定具体范围）
+- [ ] LTM 数据库安全性（数据完整性保障）
+- [ ] 删除 Reference Backend（设计不合理，不再需要）
 
 ### Out of Scope
 
-- 聊天工作区 / 对话工作台 — 当前 WebUI 明确不做，先聚焦后台控制台
-- 单独的“平台”页面 — 已决定并入系统页，避免再拆一套弱价值导航
-- 插件市场、在线安装、版本管理 — 先把现有插件 / skill / subagent 控制面做实，再谈分发系统
-- 把底层实现细节原样暴露给普通操作者 — 例如直接把数据库或内部目录结构当产品字段展示，这会放大系统噪音
+- Gateway 层新增平台适配器（非本轮目标，当前 NapCat/OneBot v11 够用）
+- OAuth/用户认证体系（AcaBot 是单操作者 bot，不是多用户 SaaS）
+- 移动端 App（WebUI 已有）
+- 商业化/计费功能
+- LLM provider 切换优化（litellm 已够用）
 
 ## Context
 
-这是一个明确的 brownfield 项目，不是从零开始的新应用。当前代码里已经有新的 runtime 主线、session 契约、control plane 和 WebUI shell，但“可操作性”还没有真正收口。
+### 技术环境
 
-从现有设计稿和代码状态来看，WebUI 的页面分类、页面定位和很多管理项已经被你一点点想清楚了，尤其是 `webui-pages-draft.md` 里对首页、Session、记忆、模型供应商、模型预设、提示词、日志、系统、技能、插件、工具、SubAgent 等页面的产品定位已经很明确。当前问题不是“还没想好要什么页”，而是“这些页还没有都接到正式真源上，也不一定真的能生效”。
+- Python 3.11+ / asyncio，TypeScript (Vue 3) 前端
+- litellm 多 provider LLM 调用，LanceDB 向量存储
+- NapCat (OneBot v11 reverse-WebSocket) 作为唯一 Gateway
+- Docker Compose 部署（acabot + napcat 双容器）
 
-同时，runtime 侧还有两条直接影响可用性的老问题：
+### 当前状态
 
-- 路径 / 配置 / 运行时数据目录分散，很多地方还是硬编码或隐式默认，导致操作者很难判断系统真正把数据写到了哪里
-- 长期记忆虽然已经接上了最小可运行链路，但离“实用的产品能力”还有明显距离
+- pipeline 核心稳定，但 plugin_manager.py (972行) 职责过重
+- 现有 3 个内建插件（OpsControl/NapCatTools/ReferenceTools）将在插件重构中删除
+- extensions/plugins/ 目录机制从未真正工作
+- bot 消息能力受限（只能纯文本回复，无法主动引用/reaction/附件/文转图/跨会话）
+- 日志系统过于简陋，工具调用和 LTM 过程不可见
+- 无定时任务基础设施，插件和 bot 核心都没有 scheduler
+- Reference Backend 设计不合理，需要彻底删除
+- LTM 数据库缺乏并发保护和数据完整性保障
 
-这轮工作的价值不在于再堆一个新特性，而在于把现有这些能力收成“用户真的能操作、能理解、能持续维护”的正式系统。
+### 已有方案文档
+
+- `docs/29-plugin-control-plane.md` — 插件管控重构完整方案（六模块拆分 + Reconciler 架构）
+- `.harness/progress.md` — 项目进度和已定方案摘要
 
 ## Constraints
 
-- **Brownfield**: 必须沿着现有 runtime 主线、session contract 和 control plane 演进，而不是另起炉灶重写一套系统 — 因为当前代码和文档已经形成正式边界
-- **Product Scope**: 现有 WebUI 页面信息架构和页面定位优先保持稳定 — 因为这些页面内容已经是你明确打磨过的需求，而不是随手占位
-- **Source of Truth**: WebUI 的每一个正式管理项都必须接到真实配置 / 目录 / registry / runtime 契约，而不是停留在占位 UI 状态 — 因为“页面存在但不生效”会直接毁掉控制面的可信度
-- **Operability**: 路径、数据目录、filesystem catalog、运行时存储位置必须可统一解析和可说明 — 因为当前连操作者自己都不总能判断运行时数据实际落点
-- **Audience**: 当前优先级是操作者可用性，后续要支持其他人上手 — 因为 Quickstart 和可维护性是明确后续目标
+- **Tech Stack**: Python 3.11+ / asyncio，不引入新的异步框架
+- **Gateway**: 当前只有 NapCat，消息工具设计需平台无关但只需 OneBot v11 实现
+- **部署**: Docker Compose，镜像改动需兼容 Full + Lite 双版本
+- **兼容性**: 插件重构需保证 BackendBridgeToolPlugin 过渡期可用
+- **单操作者**: AcaBot 面向单个操作者，不需要多租户隔离
 
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| 先以 WebUI 可用性为这一轮最高优先级 | 没有真实可用的控制面，很多能力虽然“在代码里存在”，但实际上没法稳定使用 | — Pending |
-| 先统一 runtime 路径 / 配置 / 数据目录，再继续铺 WebUI 生效链 | 页面只有接到正式真源上才有意义；路径不统一会让所有“保存并生效”都变得脆弱 | — Pending |
-| Session 页必须围绕新的 session/runtime 契约重做，而不是恢复旧私有模型表单 | 旧入口会把系统重新带回已经废弃的配置路径 | — Pending |
-| 长期记忆要从最小实验链路升级成可操作的产品能力 | 当前 LTM 太简陋，无法支撑日常使用与调试 | — Pending |
-| Quickstart 放在控制面收稳之后再补 | 先让系统自己站稳，再给其他人提供稳定上手路径 | — Pending |
+| 插件体系用 Reconciler 模式（Package + Spec + Status） | 分离代码（Package）、意图（Spec）、观察（Status），WebUI 可管理 | — Pending |
+| 插件身份从 import path 改为 plugin_id | class 重构不会破坏配置和 UI | — Pending |
+| 旧插件直接删除不迁移 | 代码量小，新体系重写更干净 | — Pending |
+| Playwright 作为镜像依赖而非 plugin/runtime | bot 通过 bash 直接用，Outbox 层提供 render_markdown_to_image() | — Pending |
+| 统一 message 工具方案待重新敲定 | progress.md 中的草案需要进一步讨论 | — Pending |
+| 定时任务做成正式基础设施 | 插件和 bot 核心都需要，不能只是 ad-hoc asyncio.sleep | — Pending |
 
 ## Evolution
 
 This document evolves at phase transitions and milestone boundaries.
 
-**After each phase transition** (via `$gsd-transition`):
+**After each phase transition** (via `/gsd:transition`):
 1. Requirements invalidated? → Move to Out of Scope with reason
 2. Requirements validated? → Move to Validated with phase reference
 3. New requirements emerged? → Add to Active
 4. Decisions to log? → Add to Key Decisions
 5. "What This Is" still accurate? → Update if drifted
 
-**After each milestone** (via `$gsd-complete-milestone`):
+**After each milestone** (via `/gsd:complete-milestone`):
 1. Full review of all sections
 2. Core Value check — still the right priority?
 3. Audit Out of Scope — reasons still valid?
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-29 after initialization*
+*Last updated: 2026-04-02 after initialization*
