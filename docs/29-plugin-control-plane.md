@@ -80,8 +80,11 @@ Reconciler 是大脑，Host 是手脚。
 class RuntimePluginContext:
     """插件 setup 时可见的最小 runtime 上下文"""
     plugin_config: dict[str, Any]       # 合并后的最终配置（default_config | spec.config）
+    plugin_id: str                      # 当前插件的 ID
+    data_dir: Path                      # 插件专属可写目录：runtime_data/plugins/<id>/data/
     gateway: GatewayProtocol
     tool_broker: ToolBroker
+    model_registry_manager: FileSystemModelRegistryManager | None = None
     reference_backend: ReferenceBackend | None = None
     sticky_notes: StickyNoteService | None = None
     computer_runtime: ComputerRuntime | None = None
@@ -90,6 +93,81 @@ class RuntimePluginContext:
 ```
 
 原来的 `config` 字段（整个全局 Config 对象）改成 `plugin_config`（这个插件的最终配置 dict）。插件不再拿到全局配置，只能看到自己那份。`get_plugin_config()` 方法删掉。
+
+### 新增能力：LLM 调用
+
+插件通过 `model_slots()` 声明模型槽位，runtime 在加载时注册为正式 ModelTarget（`plugin:<plugin_id>:<slot_id>`）。操作者在 WebUI 的 model bindings 里给这个 target 绑定具体的 provider + preset。
+
+插件运行时通过 `context.model_registry_manager.resolve_target_request(f"plugin:{plugin_id}:{slot_id}")` 拿到 `RuntimeModelRequest`，然后用 `litellm.acompletion()` 调用。这和 LTM 模块的调用方式完全一致。
+
+```python
+# 插件中的 LLM 调用示例
+class AnalysisPlugin(RuntimePlugin):
+    def model_slots(self) -> list[RuntimePluginModelSlot]:
+        return [
+            RuntimePluginModelSlot(
+                slot_id="analyze",
+                task_kind="chat",
+                description="话题分析用的模型",
+            )
+        ]
+
+    async def do_analysis(self, messages: list[dict]) -> str:
+        target_id = f"plugin:{self.name}:analyze"
+        request = self.model_registry_manager.resolve_target_request(target_id)
+        if request is None:
+            raise RuntimeError("模型未配置")
+        from litellm import acompletion
+        response = await acompletion(
+            model=request.model,
+            messages=messages,
+            **request.extra_params,
+        )
+        return response.choices[0].message.content
+```
+
+### 新增能力：插件数据目录
+
+`context.data_dir` 指向 `runtime_data/plugins/<plugin_id>/data/`，Host 在 load_plugin 时自动创建。插件可以在这个目录下自由读写文件（缓存、数据库、生成的报告等）。
+
+### 新增能力：定时任务
+
+插件可以在 `setup()` 时通过 Host 注册定时任务，Host 在 `unload_plugin()` / `teardown()` 时自动取消该插件注册的所有任务，防止泄漏。
+
+```python
+# plugin_runtime_host.py 新增
+class PluginTaskHandle:
+    """插件注册的后台任务的句柄"""
+    task_id: str
+    async def cancel(self) -> None: ...
+
+class PluginRuntimeHost:
+    # ...现有方法...
+
+    def register_periodic_task(
+        self,
+        plugin_id: str,
+        callback: Callable[[], Awaitable[None]],
+        interval_seconds: float,
+        *,
+        name: str = "",
+    ) -> PluginTaskHandle: ...
+
+    def cancel_plugin_tasks(self, plugin_id: str) -> None: ...
+```
+
+`register_periodic_task()` 内部用 `asyncio.create_task` + sleep 循环实现，不引入外部 scheduler 依赖。`unload_plugin()` 时自动调 `cancel_plugin_tasks()`。
+
+插件在 `setup()` 时保存 Host 引用（通过 context 传入）来注册任务：
+
+```python
+@dataclass
+class RuntimePluginContext:
+    # ...现有字段...
+    register_periodic_task: Callable[..., PluginTaskHandle] | None = None
+```
+
+这样插件不直接持有 Host 引用，只拿到一个注册函数。Host 在构造 context 时把自己的方法绑上去（已经绑好 plugin_id）。
 
 
 ## plugin_package.py — PluginPackage 和 PackageCatalog
@@ -373,7 +451,7 @@ class PluginReconciler:
         spec_store: SpecStore,
         status_store: StatusStore,
         host: PluginRuntimeHost,
-        context_factory: Callable[[dict[str, Any]], RuntimePluginContext],
+        context_factory: Callable[[str, dict[str, Any]], RuntimePluginContext],
     ): ...
 
     async def reconcile_all(self) -> list[PluginStatus]: ...
@@ -431,7 +509,7 @@ async def _reconcile(self, plugin_id, package, spec) -> PluginStatus:
                 return status
 
         merged_config = package.default_config | spec.config
-        context = self.context_factory(merged_config)
+        context = self.context_factory(plugin_id, merged_config)
         try:
             snapshot = await self.host.load_plugin(package, context)
             status = PluginStatus(
@@ -649,12 +727,17 @@ async def stop(self):
 ### context_factory
 
 ```python
-def make_context_factory(gateway, tool_broker, reference_backend, ...):
-    def factory(plugin_config: dict[str, Any]) -> RuntimePluginContext:
+def make_context_factory(gateway, tool_broker, model_registry_manager, reference_backend, ...):
+    def factory(plugin_id: str, plugin_config: dict[str, Any]) -> RuntimePluginContext:
+        data_dir = runtime_data_plugins_dir / plugin_id / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
         return RuntimePluginContext(
             plugin_config=plugin_config,
+            plugin_id=plugin_id,
+            data_dir=data_dir,
             gateway=gateway,
             tool_broker=tool_broker,
+            model_registry_manager=model_registry_manager,
             reference_backend=reference_backend,
             ...
         )
