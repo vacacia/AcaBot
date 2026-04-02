@@ -26,7 +26,7 @@ AcaBot 的配置分三层：主配置文件（`config.yaml`）、文件系统配
 `runtime` 块中两个值得注意的子配置：
 
 - **`runtime.filesystem.skill_catalog_dirs`**：指定 skill 扫描根目录。相对路径视为 `project` 来源，`~` 或绝对路径视为 `user` 来源。默认扫描 `./.agents/skills` 和 `~/.agents/skills`，递归查找 `**/SKILL.md`。注入和执行时按 `project > user` 优先级选取。
-- **`runtime.long_term_memory.enabled`**：装配开关（不是模型配置开关）。打开后自动构造 `LanceDbLongTermMemoryStore`、`LtmWritePort`、`CoreSimpleMemMemorySource` 和 `LongTermMemoryIngestor`。实际可用还需要在 `models/bindings/` 中配好 `system:ltm_extract`、`system:ltm_query_plan`、`system:ltm_embed` 三个 target。该配置块还支持 `storage_dir`、`window_size`、`overlap_size`、`max_entries`、`extractor_version`。
+- **`runtime.long_term_memory.enabled`**：装配开关（不是模型配置开关）。打开后自动构造 `LanceDbLongTermMemoryStore`、`LtmWritePort`、`LtmMemorySource` 和 `LongTermMemoryIngestor`。实际可用还需要在 `models/bindings/` 中配好 `system:ltm_extract`、`system:ltm_query_plan`、`system:ltm_embed` 三个 target。该配置块还支持 `storage_dir`、`window_size`、`overlap_size`、`max_entries`、`extractor_version`。
 
 ### 文件系统配置目录（`runtime_config/`）
 
@@ -65,9 +65,8 @@ runtime_data/
 
 | 目录 | 用途 |
 |------|------|
-| `deploy/` | 部署实例目录，含 `compose.yaml`、`compose.dev.yaml`、`napcat/` |
+| `deploy/` | 部署实例目录，含 `compose.yaml`、`compose.dev.yaml`、`README.md` |
 | `extensions/` | 能力包目录，含 `plugins/`、`skills/`、`subagents/` |
-| `deploy/napcat/` | NapCat 自身配置和登录态，不属于 AcaBot 业务配置 |
 
 ## Session、Agent 和 Prompt 的加载
 

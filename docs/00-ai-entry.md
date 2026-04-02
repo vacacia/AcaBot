@@ -21,7 +21,6 @@
 | 前后台双 agent / 自我进化 | `16-front-back-agents-and-self-evolution.md` |
 | 配置和部署 | `09-config-and-runtime-files.md`、`deploy/README.md` |
 | session config / session-owned agent | `23-session-config-and-rule-refactor.md`、`27-session-owned-agent.md` |
-| 子系统详细实现 | `docs/wiki/`（computer、sticky-notes、long-term-memory、skill、subagent） |
 | LTM 实现设计 | `docs/LTM/` |
 
 ---
@@ -141,7 +140,7 @@ src/acabot/runtime/control/            # 控制面（HTTP API、config、session
 ### 主线
 
 ```
-NapCat → Gateway → RuntimeApp → SessionRuntime → RuntimeRouter
+NapCat → Gateway → RuntimeApp → RuntimeRouter → SessionRuntime
     → ThreadManager / RunManager → ThreadPipeline → ModelAgentRuntime → Outbox → Gateway
 ```
 

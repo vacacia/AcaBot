@@ -56,3 +56,26 @@ AcaBot 是一个 Python 3.11 的 agent runtime，负责把网关事件收进运�
 │   └── run-e2e.sh
 └── CHANGELOG.md                  ← Harness 自身的变更日志
 ```
+
+### 功能列表（JSON 格式）
+示例:
+```json
+{
+  "features": [
+    {
+      "id": "auth-001",
+      "description": "用户可以用邮箱和密码注册",
+      "priority": 1,
+      "status": "passing",
+      "verification": "POST /api/auth/register 返回 201 + JWT"
+    },
+    {
+      "id": "order-001",
+      "description": "用户可以创建新订单",
+      "priority": 2,
+      "status": "failing",
+      "verification": "POST /api/orders 返回 201 + 订单 ID"
+    }
+  ]
+}
+```

@@ -5,7 +5,7 @@
 ## 主线
 
 ```
-Gateway → RuntimeApp → SessionRuntime → RuntimeRouter → ThreadPipeline → ModelAgentRuntime → Outbox → Gateway
+Gateway → RuntimeApp → RuntimeRouter → SessionRuntime → ThreadPipeline → ModelAgentRuntime → Outbox → Gateway
 ```
 
 **SessionRuntime** 负责"这条消息在当前会话里该怎么解释"，**RuntimeRouter** 把解释结果收成可执行路由，**ThreadPipeline** 负责真正把这次 run 跑完。
@@ -133,7 +133,7 @@ subagent 定义真源是文件系统 `SUBAGENT.md` catalog，session 只负责 `
 
 **Working Memory**：`ThreadState.working_messages / working_summary`，当前 thread 短期上下文。
 
-**长期记忆**：`MemoryBroker` 统一读取三个来源——`SelfFileRetriever`（/self）、`StickyNoteRetriever`（便签）、`CoreSimpleMemMemorySource`（长期记忆）。`RetrievalPlanner` 准备检索现场，`ContextCompactor` 做短期上下文压缩。详见 `05-memory-and-context.md`。
+**长期记忆**：`MemoryBroker` 统一读取三个来源——`SelfFileRetriever`（/self）、`StickyNoteRetriever`（便签）、`LtmMemorySource`（长期记忆）。`RetrievalPlanner` 准备检索现场，`ContextCompactor` 做短期上下文压缩。详见 `05-memory-and-context.md`。
 
 关键文件：`runtime/memory/memory_broker.py`、`runtime/memory/retrieval_planner.py`、`runtime/memory/context_compactor.py`、`runtime/memory/long_term_memory/`、`runtime/memory/long_term_ingestor.py`、`runtime/memory/file_backed/`。
 

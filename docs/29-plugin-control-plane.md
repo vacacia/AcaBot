@@ -164,7 +164,20 @@ class PackageCatalog:
     def get(self, plugin_id: str) -> PluginPackage | None: ...  # 读最新缓存
 ```
 
-`scan()` 遍历 `extensions/plugins/` 下每个子目录，找 `plugin.yaml`，解析成 `PluginPackage`。没有 `plugin.yaml` 的子目录跳过。单个坏文件 warning log，跳过继续，返回结果不包含坏项。
+`scan()` 遍历 `extensions/plugins/` 下每个子目录，找 `plugin.yaml`，解析成 `PluginPackage`。没有 `plugin.yaml` 的子目录跳过。
+
+解析失败的不会被静默丢弃——`scan()` 同时返回解析错误列表：
+
+```python
+@dataclass(frozen=True)
+class PackageScanError:
+    plugin_id: str      # 从目录名推断
+    error: str
+
+def scan(self) -> tuple[dict[str, PluginPackage], list[PackageScanError]]: ...
+```
+
+Reconciler 拿到解析错误后，为对应的 plugin_id 生成 `PluginStatus(phase="failed", load_error="...")`，这样 WebUI 能看到"这个插件的 manifest 写坏了"，不会错误地显示为 uninstalled 或从列表消失。
 
 
 ## plugin_spec.py — PluginSpec 和 SpecStore
@@ -217,7 +230,18 @@ class SpecStore:
     def delete(self, plugin_id: str) -> None: ...       # 删文件+目录
 ```
 
-单个坏文件 warning log，跳过继续，返回结果不包含坏项。
+解析失败的同样不会被静默丢弃——`load_all()` 同时返回解析错误列表：
+
+```python
+@dataclass(frozen=True)
+class SpecParseError:
+    plugin_id: str
+    error: str
+
+def load_all(self) -> tuple[dict[str, PluginSpec], list[SpecParseError]]: ...
+```
+
+Reconciler 拿到解析错误后，为对应的 plugin_id 生成 `PluginStatus(phase="failed", load_error="...")`，WebUI 能看到"这个插件的配置文件写坏了"，不会错误地显示为 disabled。
 
 `save()` / `delete()` 用原子写，和现有代码（`config_control_plane.py` line 1252、`model_registry.py` line 1446）保持一致。
 
@@ -589,9 +613,9 @@ async def reconcile_all_plugins(self) -> list[PluginView]: ...
 
 ### BackendBridgeToolPlugin
 
-暂时保留 `plugins/backend_bridge_tool.py` 文件不动。它不走新插件体系——bootstrap 里直接实例化并手动注册 tool 到 ToolBroker。它不经过 Reconciler，不出现在插件列表，不出现在 `/api/status` 的 `loaded_plugins` 里。
+暂时保留 `plugins/backend_bridge_tool.py` 文件。它不走新插件体系——bootstrap 里直接实例化并手动注册 tool 到 ToolBroker。它不经过 Reconciler，不出现在插件列表，不出现在 `/api/status` 的 `loaded_plugins` 里。
 
-文件头标注为过渡期死代码，后续用别的方式重做时删除。
+文件内的导入从 `plugin_manager` 换到 `plugin_protocol`（否则删了 `plugin_manager.py` 后导入会炸）。文件头标注为过渡期死代码，后续用别的方式重做时删除。
 
 ### OpsControl 的运维命令
 
@@ -674,7 +698,7 @@ def make_context_factory(gateway, tool_broker, reference_backend, ...):
 | `pipeline.py` (line 32, 458, 470) | `plugin_manager.run_hooks()` → `host.run_hooks()` |
 | `runtime/__init__.py` (line 228-242, 485-493) | 删 plugin_manager + 4 个旧插件类的 re-export，加新模块 export |
 | `plugins/__init__.py` | 删 3 个旧插件导出，只保留 BackendBridgeToolPlugin |
-| `plugins/backend_bridge_tool.py` | 保留，文件头标注过渡期死代码 |
+| `plugins/backend_bridge_tool.py` | 导入从 `plugin_manager` 换到 `plugin_protocol`，文件头标注过渡期死代码 |
 | `control_plane.py` | 删 `reload_plugins()`。`_list_loaded_plugins()` 保留，数据源换成 `host.loaded_plugin_ids()`。新增插件资源方法（list/get/update_spec/delete_spec/reconcile_all） |
 | `config_control_plane.py` | 删 `list_plugin_configs()`、`replace_plugin_configs()`、`_probe_plugin_import_error()`、`_plugin_name_from_path()`、`_plugin_display_name_from_path()` |
 | `http_api.py` (line 252) | 删 4 个旧插件端点，加 5 个新端点 |

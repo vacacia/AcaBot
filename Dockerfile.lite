@@ -1,0 +1,26 @@
+FROM python:3.11-slim
+WORKDIR /app
+
+# ── 最小系统工具 + 字体 ──
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl jq \
+    fonts-noto-cjk fontconfig \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Python 包管理 ──
+RUN pip install uv --no-cache-dir
+
+# ── 项目依赖 ──
+COPY pyproject.toml ./
+COPY src/ src/
+RUN uv pip install --system .
+
+# ── Playwright + Chromium（含系统依赖） ──
+RUN pip install playwright && playwright install --with-deps chromium
+
+# ── 扩展 ──
+COPY extensions/ extensions/
+
+EXPOSE 8080 8765
+ENV PYTHONPATH=/app/src:/app/extensions
+CMD ["python", "-m", "acabot.main"]

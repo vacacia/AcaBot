@@ -20,7 +20,7 @@ AcaBot 已完成一轮目录重构和文档清理。核心 runtime 主线（Gate
 
 ## 文档结构
 
-核心架构文档是编号系列 `docs/00-14`，覆盖系统地图、runtime 主线、数据契约、路由、记忆、网关、WebUI、配置、部署等。子系统详细文档在 `docs/wiki/`（computer、sticky-notes、long-term-memory、skill、subagent）。LTM 实现设计在 `docs/LTM/`。历史计划和设计 spec 在 `docs/superpowers/`。
+核心架构文档是编号系列 `docs/00-27`，覆盖系统地图、runtime 主线、数据契约、路由、记忆、网关、WebUI、配置、computer、工具/技能/子代理、run 机制、session config 等。原 `docs/wiki/` 子系统文档已合并到对应编号文档中（computer→12、sticky-notes/long-term-memory→05、skill/subagent→18）。LTM 实现设计在 `docs/LTM/`。历史计划和设计 spec 在 `docs/superpowers/`。
 
 ## 已知问题
 

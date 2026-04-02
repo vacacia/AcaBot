@@ -83,7 +83,7 @@ StandardEvent → EventFacts → SessionConfig/SurfaceResolution → 各 Decisio
 
 ### ResolvedAgent
 
-`contracts/routing.py`。当前 run 的身份和能力快照（`agent_id`、`name`、`prompt_ref`、`enabled_tools`、`skills`、`computer_policy`、`config`）。是静态配置快照，不承载本轮临时决策或运行中状态。
+`contracts/routing.py`。当前 run 的身份和能力快照（`agent_id`、`name`、`prompt_ref`、`enabled_tools`、`skills`、`visible_subagents`、`computer_policy`、`config`）。是静态配置快照，不承载本轮临时决策或运行中状态。
 
 ### ThreadState / ThreadRecord
 
@@ -91,7 +91,7 @@ StandardEvent → EventFacts → SessionConfig/SurfaceResolution → 各 Decisio
 
 ### RunRecord
 
-`contracts/records.py`。一次正式执行的生命周期记录（`run_id`、`thread_id`、`actor_id`、`agent_id`、`trigger_event_id`、`status`、`started_at`、`finished_at`、`error`、`approval_context`、`metadata`）。状态流转：queued → running → completed / failed / waiting_approval / interrupted / cancelled。
+`contracts/records.py`。一次正式执行的生命周期记录（`run_id`、`thread_id`、`actor_id`、`agent_id`、`trigger_event_id`、`status`、`started_at`、`finished_at`、`error`、`approval_context`、`metadata`）。状态流转：queued → running → completed / completed_with_errors / failed / waiting_approval / interrupted / cancelled。
 
 ### RunContext
 
@@ -99,12 +99,12 @@ StandardEvent → EventFacts → SessionConfig/SurfaceResolution → 各 Decisio
 
 | 分组 | 字段 |
 |------|------|
-| 基础现场 | `run`、`event`、`decision`、`thread`、`profile` |
+| 基础现场 | `run`、`event`、`decision`、`thread`、`agent` |
 | 模型请求 | `model_request`、`summary_model_request` |
 | 会话决策 | `event_facts`、`surface_resolution`、所有 decision |
 | computer | `world_view`、`workspace_state`、`attachment_snapshots`、`computer_backend_kind`、`computer_policy_effective` |
 | 消息整理 | `resolved_message`、`resolved_images`、`message_projection` |
-| 模型输入和记忆 | `messages`、`retrieval_plan`、`memory_blocks`、`prompt_slots`、`memory_user_content`、`system_prompt` |
+| 模型输入和记忆 | `messages`、`retrieval_plan`、`shared_memory_request`、`memory_broker_result`、`memory_blocks`、`memory_user_content`、`system_prompt` |
 | 执行结果 | `response`、`actions`、`delivery_report`、`metadata` |
 
 需要在 pipeline 里共享中间结果时，优先放进 RunContext，不要发明临时局部变量逐层传递。
