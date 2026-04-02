@@ -168,7 +168,7 @@ plugin:
 前提：`extensions/` 必须在 sys.path 上。三种运行方式各自保证：
 
 - **Docker**：Dockerfile 里 `PYTHONPATH=/app/src:/app/extensions`
-- **本地直接启动**：runtime bootstrap 时主动把 `extensions/` 加进 `sys.path`（基于项目根目录，和 `docs/28-directory-restructure.md` 中 extensions 路径解析一致，不基于 `config.base_dir()`）
+- **本地直接启动**：runtime bootstrap 时主动把 `extensions/` 加进 `sys.path`（基于项目根目录，和 `docs/todo/28-directory-restructure.md` 中 extensions 路径解析一致，不基于 `config.base_dir()`）
 - **测试**：`tests/conftest.py` 把 `extensions/` 加进 `sys.path`
 
 ### PackageCatalog
@@ -697,6 +697,50 @@ def make_context_factory(gateway, tool_broker, reference_backend, ...):
         )
     return factory
 ```
+
+
+## 设计约束与已知边界
+
+### 目录路径不是硬编码
+
+`runtime_config/plugins/` 和 `runtime_data/plugins/` 在文档里作为默认路径描述，但实际实现必须跟随 active config 解析（`runtime.filesystem.base_dir` 和 `runtime.runtime_root`）。非默认部署（比如 `ACABOT_CONFIG` 指到别处）时，这些路径会随 config 解析结果变化。PackageCatalog / SpecStore / StatusStore 的构造参数是 `Path`，由 bootstrap 解析后传入，不在 Store 内部硬编码路径。
+
+### model target 注册的 revalidate / rollback
+
+现有 `MutableModelTargetCatalog.register_plugin_slots()` 在注册插件 model target 后会触发 registry revalidation。Host 的 `load_plugin()` 必须保留这个行为——注册 model target 后如果 revalidation 失败，应该回滚已注册的 target 并标记加载失败。`unload_plugin()` 注销 model target 后同样触发 revalidation。这是现有的正确性保障，不能丢。
+
+### manifest/spec 解析失败时已加载实例的处理
+
+`reconcile_all()` 对解析失败的 plugin_id 会生成 `failed` 状态，但这些 ID 被排除出了 `_reconcile()` 的正常流程。如果该插件之前已经 loaded（比如上次启动时正常，这次 manifest 被改坏了），需要先 unload 它，否则会形成"状态 failed，实例还在跑"的分裂。修正：在生成 failed status 之前，检查 `host.loaded_plugin_ids()`，如果已加载则先 unload。
+
+### 重新扫描不处理 Python 模块缓存
+
+`reconcile_all()`（包括手动 rescan）只处理 manifest/spec 变化和 load/unload 决策。如果插件的 Python 代码变了但 manifest 没变，rescan 不会感知到代码变更——Python 的 `sys.modules` 缓存意味着已导入的模块不会被重新加载。代码变更要求重启进程。不做 `sys.modules` 清理 / `importlib.reload()`。
+
+### RuntimePlugin.name 和 plugin_id 的关系
+
+`plugin_id` 是正式身份（来自 manifest），`RuntimePlugin.name` 是协议层的旧字段。两者必须一致：Host 在 `load_plugin()` 时校验 `plugin.name == package.plugin_id`，不一致则拒绝加载。tool source 标记、model target 注册、hook 追踪全部使用 `plugin_id`（来自 package），不再依赖 `plugin.name`。后续可以考虑从协议层删掉 `.name`，但本轮先做强校验。
+
+### reconcile_all 的加载顺序
+
+改为按 `plugin_id` 字母序加载，不再保留"按配置顺序加载"的旧语义。这是有意的行为变化：
+
+- 同优先级 hook 的执行顺序变成按 plugin_id 排，而非配置文件里的先后顺序
+- 如果有同名 tool 注册（不应该有），后注册的覆盖先注册的，覆盖顺序也会变
+
+这个变化是可接受的，因为：旧的"配置顺序"在新体系里已经不存在（每个插件一个独立 Spec 文件），没有自然的顺序源。如果以后需要显式排序，可以在 Spec 里加 `priority` 字段。
+
+### StatusStore.delete() 的作用范围
+
+`StatusStore.delete()` 只删 `runtime_data/plugins/<id>/status.json`，不删整个 `<id>/` 目录。插件的私有数据（`runtime_data/plugins/<id>/data/`）和 status.json 在同一棵目录下，delete status 不能把数据一起抹了。目录结构：
+
+```
+runtime_data/plugins/<id>/
+  status.json       ← StatusStore 管理，delete() 只删这个
+  data/              ← 插件私有数据，Host/StatusStore 不碰
+```
+
+只有当操作者明确"移除并禁用"（`DELETE /api/system/plugins/<id>/spec`）时，才考虑清理插件数据目录——但即便如此，本轮也不做自动清理，让操作者手动处理。
 
 
 ## 影响面
