@@ -33,6 +33,9 @@ from acabot.runtime import (
     ToolBroker,
     build_runtime_components,
 )
+from acabot.runtime.control.session_loader import StaticSessionConfigLoader
+from acabot.runtime.control.session_runtime import SessionRuntime
+from acabot.runtime.contracts import SessionConfig
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
 from .test_outbox import FakeGateway, FakeMessageStore
@@ -153,7 +156,7 @@ async def test_runtime_control_plane_reports_status_snapshot(tmp_path: Path) -> 
     )
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(default_agent_id="aca"),
+        router=RuntimeRouter(session_runtime=SessionRuntime(StaticSessionConfigLoader(SessionConfig(session_id="", template_id="default", frontstage_agent_id="aca")))),
         thread_manager=thread_manager,
         run_manager=run_manager,
         channel_event_store=channel_event_store,
@@ -219,7 +222,7 @@ async def test_runtime_control_plane_status_exposes_delegate_agent_id() -> None:
     control_plane = RuntimeControlPlane(
         app=RuntimeApp(
             gateway=gateway,
-            router=RuntimeRouter(default_agent_id="aca"),
+            router=RuntimeRouter(session_runtime=SessionRuntime(StaticSessionConfigLoader(SessionConfig(session_id="", template_id="default", frontstage_agent_id="aca")))),
             thread_manager=thread_manager,
             run_manager=run_manager,
             channel_event_store=InMemoryChannelEventStore(),
@@ -317,7 +320,7 @@ async def test_runtime_control_plane_lists_catalog_subagents(tmp_path: Path) -> 
     control_plane = RuntimeControlPlane(
         app=RuntimeApp(
             gateway=FakeGateway(),
-            router=RuntimeRouter(default_agent_id="aca"),
+            router=RuntimeRouter(session_runtime=SessionRuntime(StaticSessionConfigLoader(SessionConfig(session_id="", template_id="default", frontstage_agent_id="aca")))),
             thread_manager=InMemoryThreadManager(),
             run_manager=InMemoryRunManager(),
             channel_event_store=InMemoryChannelEventStore(),
@@ -370,7 +373,7 @@ async def test_runtime_control_plane_lists_duplicate_subagent_names_with_unique_
     control_plane = RuntimeControlPlane(
         app=RuntimeApp(
             gateway=FakeGateway(),
-            router=RuntimeRouter(default_agent_id="aca"),
+            router=RuntimeRouter(session_runtime=SessionRuntime(StaticSessionConfigLoader(SessionConfig(session_id="", template_id="default", frontstage_agent_id="aca")))),
             thread_manager=InMemoryThreadManager(),
             run_manager=InMemoryRunManager(),
             channel_event_store=InMemoryChannelEventStore(),
@@ -407,7 +410,7 @@ async def test_runtime_control_plane_lists_mirrored_skills(tmp_path: Path) -> No
     control_plane = RuntimeControlPlane(
         app=RuntimeApp(
             gateway=FakeGateway(),
-            router=RuntimeRouter(default_agent_id="aca"),
+            router=RuntimeRouter(session_runtime=SessionRuntime(StaticSessionConfigLoader(SessionConfig(session_id="", template_id="default", frontstage_agent_id="aca")))),
             thread_manager=InMemoryThreadManager(),
             run_manager=InMemoryRunManager(),
             channel_event_store=InMemoryChannelEventStore(),
@@ -448,7 +451,7 @@ async def test_runtime_control_plane_reports_backend_status(tmp_path: Path) -> N
     )
     app = RuntimeApp(
         gateway=FakeGateway(),
-        router=RuntimeRouter(default_agent_id="aca"),
+        router=RuntimeRouter(session_runtime=SessionRuntime(StaticSessionConfigLoader(SessionConfig(session_id="", template_id="default", frontstage_agent_id="aca")))),
         thread_manager=InMemoryThreadManager(),
         run_manager=InMemoryRunManager(),
         channel_event_store=InMemoryChannelEventStore(),

@@ -56,7 +56,7 @@ def resolve_runtime_path(config: Config, raw_path: object) -> Path:
     """
 
     runtime_conf = config.get("runtime", {})
-    runtime_root = Path(str(runtime_conf.get("runtime_root", ".acabot-runtime") or ".acabot-runtime"))
+    runtime_root = Path(str(runtime_conf.get("runtime_root", "runtime_data") or "runtime_data"))
     if not runtime_root.is_absolute():
         runtime_root = config.resolve_path(runtime_root)
     path = Path(str(raw_path))
@@ -92,15 +92,13 @@ def resolve_skill_catalog_dirs(
 
     raw_values = fs_conf.get("skill_catalog_dirs")
     items = _normalize_catalog_dir_values(raw_values, defaults=defaults)
-    base_dir = Path(str(fs_conf.get("base_dir", ".") or "."))
-    if not base_dir.is_absolute():
-        base_dir = config.resolve_path(base_dir)
+    project_root = config.base_dir()
 
     resolved: list[SkillDiscoveryRoot] = []
     seen: set[tuple[str, str]] = set()
     for raw in items:
         scope = _scope_for_catalog_dir(raw)
-        path = _resolve_catalog_dir_path(raw=raw, base_dir=base_dir)
+        path = _resolve_catalog_dir_path(raw=raw, base_dir=project_root)
         root = SkillDiscoveryRoot(host_root_path=str(path), scope=scope)
         key = (str(root.path), root.scope)
         if key in seen:
@@ -129,15 +127,13 @@ def resolve_subagent_catalog_dirs(
 
     raw_values = fs_conf.get("subagent_catalog_dirs")
     items = _normalize_catalog_dir_values(raw_values, defaults=defaults)
-    base_dir = Path(str(fs_conf.get("base_dir", ".") or "."))
-    if not base_dir.is_absolute():
-        base_dir = config.resolve_path(base_dir)
+    project_root = config.base_dir()
 
     resolved: list[SubagentDiscoveryRoot] = []
     seen: set[tuple[str, str]] = set()
     for raw in items:
         scope = _scope_for_catalog_dir(raw)
-        path = _resolve_catalog_dir_path(raw=raw, base_dir=base_dir)
+        path = _resolve_catalog_dir_path(raw=raw, base_dir=project_root)
         root = SubagentDiscoveryRoot(host_root_path=str(path), scope=scope)
         key = (str(root.path), root.scope)
         if key in seen:

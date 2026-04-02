@@ -14,7 +14,7 @@ from tests.runtime.test_outbox import FakeGateway
 async def test_frontstage_backend_bridge_only_supports_query_and_change() -> None:
     """ask_backend 只允许前台发送 query/change 两类请求."""
 
-    broker = ToolBroker(default_agent_id="aca")
+    broker = ToolBroker()
     plugin = BackendBridgeToolPlugin()
     await plugin.setup(
         RuntimePluginContext(

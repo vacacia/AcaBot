@@ -26,6 +26,8 @@ from acabot.runtime import (
     ThreadPipeline,
     ToolBroker,
 )
+from acabot.runtime.control.session_loader import StaticSessionConfigLoader
+from acabot.runtime.contracts import SessionConfig
 from acabot.types import Action, ActionType, EventSource, MsgSegment, StandardEvent
 
 from .test_outbox import ExplodingIngestor, FakeGateway, FakeMessageStore, RecordingIngestor
@@ -62,6 +64,12 @@ def _broken_agent_loader(decision: RouteDecision) -> ResolvedAgent:
     raise RuntimeError("agent loader exploded")
 
 
+def _default_router() -> RuntimeRouter:
+    """构造不需要 default_agent_id 的默认 router."""
+    session = SessionConfig(session_id="", template_id="default", frontstage_agent_id="aca")
+    return RuntimeRouter(session_runtime=SessionRuntime(StaticSessionConfigLoader(session)))
+
+
 def _session_router(
     tmp_path: Path,
     session_body: str,
@@ -80,7 +88,6 @@ visible_subagents: []
     (bundle_dir / "session.yaml").write_text(session_body.strip(), encoding="utf-8")
     (bundle_dir / "agent.yaml").write_text(agent_body.strip(), encoding="utf-8")
     return RuntimeRouter(
-        default_agent_id="aca",
         session_runtime=SessionRuntime(SessionConfigLoader(config_root=tmp_path / "sessions")),
     )
 
@@ -92,7 +99,6 @@ class BrokenAgentRuntime(AgentRuntime):
 
 async def test_runtime_router_silent_drops_unconfigured_session(tmp_path: Path) -> None:
     router = RuntimeRouter(
-        default_agent_id="aca",
         session_runtime=SessionRuntime(SessionConfigLoader(config_root=tmp_path / "sessions")),
     )
 
@@ -238,7 +244,7 @@ async def test_runtime_app_installs_handler_and_processes_event() -> None:
     )
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(default_agent_id="aca"),
+        router=_default_router(),
         thread_manager=thread_manager,
         run_manager=run_manager,
         channel_event_store=channel_event_store,
@@ -273,7 +279,7 @@ async def test_runtime_app_marks_ltm_dirty_after_channel_event_persist() -> None
     ltm = RecordingIngestor()
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(default_agent_id="aca"),
+        router=_default_router(),
         thread_manager=thread_manager,
         run_manager=run_manager,
         channel_event_store=channel_event_store,
@@ -305,7 +311,7 @@ async def test_runtime_app_mark_dirty_failure_does_not_break_event_processing() 
     )
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(default_agent_id="aca"),
+        router=_default_router(),
         thread_manager=thread_manager,
         run_manager=run_manager,
         channel_event_store=channel_event_store,
@@ -484,7 +490,7 @@ async def test_runtime_app_marks_run_failed_when_agent_loader_crashes() -> None:
     )
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(default_agent_id="aca"),
+        router=_default_router(),
         thread_manager=thread_manager,
         run_manager=run_manager,
         channel_event_store=channel_event_store,
@@ -515,7 +521,7 @@ async def test_runtime_app_marks_ltm_dirty_when_agent_loader_crashes_after_event
     ltm = RecordingIngestor()
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(default_agent_id="aca"),
+        router=_default_router(),
         thread_manager=thread_manager,
         run_manager=run_manager,
         channel_event_store=channel_event_store,
@@ -548,7 +554,7 @@ async def test_runtime_app_stops_ltm_ingestor_when_gateway_start_crashes() -> No
     ltm = RecordingIngestor()
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(default_agent_id="aca"),
+        router=_default_router(),
         thread_manager=thread_manager,
         run_manager=run_manager,
         channel_event_store=channel_event_store,
@@ -579,7 +585,7 @@ async def test_runtime_app_tears_down_plugins_when_gateway_start_crashes() -> No
     )
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(default_agent_id="aca"),
+        router=_default_router(),
         thread_manager=InMemoryThreadManager(),
         run_manager=InMemoryRunManager(),
         channel_event_store=InMemoryChannelEventStore(),
@@ -614,7 +620,7 @@ async def test_runtime_app_tears_down_plugins_when_plugin_start_fails() -> None:
     )
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(default_agent_id="aca"),
+        router=_default_router(),
         thread_manager=InMemoryThreadManager(),
         run_manager=InMemoryRunManager(),
         channel_event_store=InMemoryChannelEventStore(),
@@ -650,7 +656,7 @@ async def test_runtime_app_tears_down_plugins_when_ltm_start_fails() -> None:
     )
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(default_agent_id="aca"),
+        router=_default_router(),
         thread_manager=InMemoryThreadManager(),
         run_manager=InMemoryRunManager(),
         channel_event_store=InMemoryChannelEventStore(),
@@ -691,7 +697,7 @@ async def test_runtime_app_keeps_failed_run_terminal_when_pipeline_crashes() -> 
     )
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(default_agent_id="aca"),
+        router=_default_router(),
         thread_manager=thread_manager,
         run_manager=run_manager,
         channel_event_store=channel_event_store,
@@ -721,7 +727,7 @@ async def test_runtime_app_recovery_interrupts_stale_running_runs_on_start() -> 
     )
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(default_agent_id="aca"),
+        router=_default_router(),
         thread_manager=thread_manager,
         run_manager=run_manager,
         channel_event_store=channel_event_store,
@@ -759,7 +765,7 @@ async def test_runtime_app_recovery_keeps_pending_approval_visible() -> None:
     )
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(default_agent_id="aca"),
+        router=_default_router(),
         thread_manager=thread_manager,
         run_manager=run_manager,
         channel_event_store=channel_event_store,
@@ -803,7 +809,7 @@ async def test_runtime_app_approve_pending_approval_completes_run() -> None:
     resumer = FakeApprovalResumer(ApprovalResumeResult(status="completed"))
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(default_agent_id="aca"),
+        router=_default_router(),
         thread_manager=thread_manager,
         run_manager=run_manager,
         channel_event_store=channel_event_store,
@@ -870,7 +876,7 @@ async def test_runtime_app_approve_pending_approval_can_reenter_waiting_state() 
     )
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(default_agent_id="aca"),
+        router=_default_router(),
         thread_manager=thread_manager,
         run_manager=run_manager,
         channel_event_store=channel_event_store,
@@ -919,7 +925,7 @@ async def test_runtime_app_reject_pending_approval_cancels_run() -> None:
     outbox = Outbox(gateway=gateway, store=FakeMessageStore())
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(default_agent_id="aca"),
+        router=_default_router(),
         thread_manager=thread_manager,
         run_manager=run_manager,
         channel_event_store=channel_event_store,
@@ -966,7 +972,7 @@ async def test_runtime_app_stop_closes_reference_backend() -> None:
     reference_backend = TrackingReferenceBackend()
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(default_agent_id="aca"),
+        router=_default_router(),
         thread_manager=InMemoryThreadManager(),
         run_manager=InMemoryRunManager(),
         channel_event_store=InMemoryChannelEventStore(),
@@ -1007,7 +1013,7 @@ async def test_runtime_app_lazily_starts_plugins_on_first_event() -> None:
     pipeline.plugin_manager = plugin_manager
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(default_agent_id="aca"),
+        router=_default_router(),
         thread_manager=thread_manager,
         run_manager=run_manager,
         channel_event_store=channel_event_store,
@@ -1035,7 +1041,7 @@ async def test_runtime_app_stop_tears_down_runtime_plugins() -> None:
     )
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(default_agent_id="aca"),
+        router=_default_router(),
         thread_manager=InMemoryThreadManager(),
         run_manager=InMemoryRunManager(),
         channel_event_store=InMemoryChannelEventStore(),
@@ -1066,7 +1072,7 @@ async def test_runtime_app_stop_still_stops_ltm_after_plugin_teardown_failure() 
     ltm = RecordingIngestor()
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(default_agent_id="aca"),
+        router=_default_router(),
         thread_manager=InMemoryThreadManager(),
         run_manager=InMemoryRunManager(),
         channel_event_store=InMemoryChannelEventStore(),
@@ -1113,7 +1119,7 @@ async def test_runtime_app_tears_down_plugins_when_lazy_plugin_start_fails_on_ev
     )
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(default_agent_id="aca"),
+        router=_default_router(),
         thread_manager=thread_manager,
         run_manager=run_manager,
         channel_event_store=channel_event_store,
@@ -1149,7 +1155,7 @@ async def test_runtime_app_can_reload_plugins_from_config() -> None:
     )
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(default_agent_id="aca"),
+        router=_default_router(),
         thread_manager=InMemoryThreadManager(),
         run_manager=InMemoryRunManager(),
         channel_event_store=InMemoryChannelEventStore(),

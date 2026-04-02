@@ -8,6 +8,7 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+import shutil
 
 import pytest
 
@@ -56,6 +57,63 @@ from acabot.types import EventSource, MsgSegment, StandardEvent
 from .test_outbox import FakeGateway
 from .test_outbox import RecordingIngestor
 from .test_pipeline_runtime import ApprovalToolAgent
+
+
+def _write_minimal_session(
+    base_dir: Path,
+    *,
+    agent_id: str = "aca",
+    prompt_ref: str = "prompt/default",
+    prompt_text: str = "You are Aca.",
+    visible_tools: list[str] | None = None,
+    visible_skills: list[str] | None = None,
+    visible_subagents: list[str] | None = None,
+) -> None:
+    """在 base_dir 下写入最小 session+agent+prompt 文件供 build_runtime_components 使用."""
+    import yaml as _yaml
+
+    session_dir = base_dir / "sessions" / "qq" / "user" / "10001"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    (session_dir / "session.yaml").write_text(
+        f"session:\n  id: qq:user:10001\n  template: qq_user\nfrontstage:\n  agent_id: {agent_id}\nsurfaces:\n  message.private:\n    admission:\n      default:\n        mode: respond\n",
+        encoding="utf-8",
+    )
+    agent_data = {
+        "agent_id": agent_id,
+        "prompt_ref": prompt_ref,
+        "visible_tools": visible_tools or [],
+        "visible_skills": visible_skills or [],
+        "visible_subagents": visible_subagents or [],
+    }
+    (session_dir / "agent.yaml").write_text(
+        _yaml.dump(agent_data, default_flow_style=False),
+        encoding="utf-8",
+    )
+    # Write the prompt file
+    parts = prompt_ref.replace("prompt/", "", 1).split("/")
+    prompts_dir = base_dir / "prompts"
+    for p in parts[:-1]:
+        prompts_dir = prompts_dir / p
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+    (prompts_dir / f"{parts[-1]}.md").write_text(prompt_text, encoding="utf-8")
+
+
+def _fs_config(tmp_path: Path, extra: dict | None = None) -> Config:
+    """构造带 filesystem 基目录的最小 Config."""
+    _write_minimal_session(tmp_path)
+    base = {
+        "agent": {"system_prompt": "You are Aca."},
+        "runtime": {
+            "filesystem": {"base_dir": str(tmp_path)},
+        },
+    }
+    if extra:
+        for key, val in extra.items():
+            if key == "runtime" and isinstance(val, dict):
+                base["runtime"].update(val)
+            else:
+                base[key] = val
+    return Config(base)
 
 
 @dataclass
@@ -169,9 +227,7 @@ def _config_with_long_term_memory(tmp_path: Path) -> Config:
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
-                "default_agent_id": "aca",
-                "default_prompt_ref": "prompt/default",
-                "runtime_root": str(tmp_path / ".acabot-runtime"),
+                "runtime_root": str(tmp_path / "runtime_data"),
                 "long_term_memory": {
                     "enabled": True,
                 },
@@ -234,22 +290,33 @@ async def _model_registry_manager(
     return manager
 
 
-def test_build_runtime_components_uses_runtime_profiles_and_prompts() -> None:
+def test_build_runtime_components_uses_runtime_profiles_and_prompts(tmp_path: Path) -> None:
+    # Set up filesystem session config
+    session_dir = tmp_path / "sessions" / "qq" / "user" / "10001"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    (session_dir / "session.yaml").write_text(
+        "session:\n  id: qq:user:10001\n  template: qq_user\nfrontstage:\n  agent_id: aca\nsurfaces:\n  message.private:\n    admission:\n      default:\n        mode: respond\n",
+        encoding="utf-8",
+    )
+    (session_dir / "agent.yaml").write_text(
+        "agent_id: aca\nname: Aca\nprompt_ref: prompt/aca\nvisible_tools: []\nvisible_skills: []\nvisible_subagents: []\n",
+        encoding="utf-8",
+    )
+    # Set up prompts
+    prompts_dir = tmp_path / "prompts" / "aca"
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+    (prompts_dir / "index.md").write_text("You are Aca.", encoding="utf-8")
+
     config = Config(
         {
             "agent": {
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {
-                "default_agent_id": "aca",
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                    }
-                },
-                "prompts": {
-                    "prompt/aca": "You are Aca."
+                "filesystem": {
+                    "base_dir": str(tmp_path),
+                    "sessions_dir": "sessions",
+                    "prompts_dir": "prompts",
                 },
             },
         }
@@ -268,21 +335,20 @@ def test_build_runtime_components_uses_runtime_profiles_and_prompts() -> None:
     )
     profile = components.agent_loader(decision)
 
-    assert components.router.default_agent_id == "aca"
     assert components.prompt_loader.load("prompt/aca") == "You are Aca."
-    assert profile.name == "Aca"
+    assert profile.name == "aca"
     assert not hasattr(profile, "default_model")
 
 
 async def test_build_runtime_components_runs_app_with_model_agent_runtime(tmp_path: Path) -> None:
+    _write_minimal_session(tmp_path)
     config = Config(
         {
             "agent": {
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
-                "default_agent_id": "aca",
-                "default_prompt_ref": "prompt/default",
+                "filesystem": {"base_dir": str(tmp_path)},
             },
         }
     )
@@ -304,15 +370,15 @@ async def test_build_runtime_components_runs_app_with_model_agent_runtime(tmp_pa
     assert components.pipeline.memory_broker is components.memory_broker
 
 
-def test_build_runtime_components_wires_optional_long_term_memory_ingestor() -> None:
+def test_build_runtime_components_wires_optional_long_term_memory_ingestor(tmp_path: Path) -> None:
+    _write_minimal_session(tmp_path)
     config = Config(
         {
             "agent": {
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
-                "default_agent_id": "aca",
-                "default_prompt_ref": "prompt/default",
+                "filesystem": {"base_dir": str(tmp_path)},
             },
         }
     )
@@ -353,15 +419,15 @@ async def test_build_runtime_components_registers_long_term_memory_source_and_in
     assert components.outbox.long_term_memory_ingestor is components.long_term_memory_ingestor
 
 
-async def test_build_runtime_components_accepts_runtime_plugins() -> None:
+async def test_build_runtime_components_accepts_runtime_plugins(tmp_path: Path) -> None:
+    _write_minimal_session(tmp_path)
     config = Config(
         {
             "agent": {
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
-                "default_agent_id": "aca",
-                "default_prompt_ref": "prompt/default",
+                "filesystem": {"base_dir": str(tmp_path)},
             },
         }
     )
@@ -380,18 +446,18 @@ async def test_build_runtime_components_accepts_runtime_plugins() -> None:
     assert plugin.setup_calls == 1
 
 
-async def test_build_runtime_components_loads_runtime_plugins_from_config() -> None:
+async def test_build_runtime_components_loads_runtime_plugins_from_config(tmp_path: Path) -> None:
     from tests.runtime.runtime_plugin_samples import SampleConfiguredRuntimePlugin
 
     SampleConfiguredRuntimePlugin.reset()
+    _write_minimal_session(tmp_path)
     config = Config(
         {
             "agent": {
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
-                "default_agent_id": "aca",
-                "default_prompt_ref": "prompt/default",
+                "filesystem": {"base_dir": str(tmp_path)},
                 "plugins": [
                     "tests.runtime.runtime_plugin_samples:SampleConfiguredRuntimePlugin",
                 ],
@@ -410,28 +476,24 @@ async def test_build_runtime_components_loads_runtime_plugins_from_config() -> N
     assert SampleConfiguredRuntimePlugin.setup_calls == 1
 
 
-async def test_build_runtime_components_exposes_skill_tool_and_empty_subagent_catalog() -> None:
+async def test_build_runtime_components_exposes_skill_tool_and_empty_subagent_catalog(tmp_path: Path) -> None:
     skills_dir = Path(__file__).resolve().parent.parent / "fixtures" / "skills"
+    _write_minimal_session(tmp_path, agent_id="aca", prompt_ref="prompt/aca", prompt_text="You are Aca.")
+    # Write agent.yaml with skills
+    agent_yaml = tmp_path / "sessions" / "qq" / "user" / "10001" / "agent.yaml"
+    agent_yaml.write_text(
+        "agent_id: aca\nprompt_ref: prompt/aca\nvisible_tools: []\nvisible_skills:\n  - sample_configured_skill\nvisible_subagents: []\n",
+        encoding="utf-8",
+    )
     config = Config(
         {
             "agent": {
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
-                "default_agent_id": "aca",
                 "filesystem": {
-                    "enabled": True,
+                    "base_dir": str(tmp_path),
                     "skill_catalog_dirs": [str(skills_dir)],
-                },
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                        "skills": ["sample_configured_skill"],
-                    }
-                },
-                "prompts": {
-                    "prompt/aca": "You are Aca.",
                 },
                 "plugins": [
                     "tests.runtime.runtime_plugin_samples:SampleConfiguredRuntimePlugin",
@@ -468,31 +530,27 @@ async def test_build_runtime_components_exposes_skill_tool_and_empty_subagent_ca
 async def test_build_runtime_components_loads_profiles_and_prompts_from_filesystem(
     tmp_path: Path,
 ) -> None:
-    profiles_dir = tmp_path / "profiles"
     prompts_dir = tmp_path / "prompts"
-    profiles_dir.mkdir()
     prompts_dir.mkdir()
-    (profiles_dir / "aca.yaml").write_text(
-        "\n".join(
-            [
-                "name: Aca Filesystem",
-                "prompt_ref: prompt/aca",
-                "enabled_tools:",
-                "  - reference_search",
-            ]
-        ),
+    (prompts_dir / "aca.md").write_text("You are Aca from filesystem.", encoding="utf-8")
+    # Write session bundle with agent config
+    session_dir = tmp_path / "sessions" / "qq" / "user" / "10001"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    (session_dir / "session.yaml").write_text(
+        "session:\n  id: qq:user:10001\n  template: qq_user\nfrontstage:\n  agent_id: aca\nsurfaces:\n  message.private:\n    admission:\n      default:\n        mode: respond\n",
         encoding="utf-8",
     )
-    (prompts_dir / "aca.md").write_text("You are Aca from filesystem.", encoding="utf-8")
+    (session_dir / "agent.yaml").write_text(
+        "agent_id: aca\nprompt_ref: prompt/aca\nvisible_tools: []\nvisible_skills: []\nvisible_subagents: []\n",
+        encoding="utf-8",
+    )
     config = Config(
         {
             "agent": {
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {
-                "default_agent_id": "aca",
                 "filesystem": {
-                    "enabled": True,
                     "base_dir": str(tmp_path),
                 },
             },
@@ -514,20 +572,18 @@ async def test_build_runtime_components_loads_profiles_and_prompts_from_filesyst
     profile = components.agent_loader(decision)
     prompt = components.prompt_loader.load("prompt/aca")
 
-    assert profile.name == "Aca Filesystem"
-    assert not hasattr(profile, "default_model")
-    assert profile.enabled_tools == ["reference_search"]
     assert prompt == "You are Aca from filesystem."
 
 
-async def test_build_runtime_components_backend_status_exposes_session_path() -> None:
+async def test_build_runtime_components_backend_status_exposes_session_path(tmp_path: Path) -> None:
+    _write_minimal_session(tmp_path)
     config = Config(
         {
             "agent": {
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {
-                "default_agent_id": "aca",
+                "filesystem": {"base_dir": str(tmp_path)},
             },
         }
     )
@@ -540,9 +596,13 @@ async def test_build_runtime_components_backend_status_exposes_session_path() ->
     backend_status = await components.control_plane.get_backend_status()
 
     assert backend_status.configured is False
-    assert backend_status.session_path.endswith(".acabot-runtime/backend/session.json")
+    assert backend_status.session_path.endswith("runtime_data/backend/session.json")
 
 
+_has_pi = shutil.which("pi") is not None
+
+
+@pytest.mark.skipif(not _has_pi, reason="pi binary not available")
 async def test_build_runtime_components_constructs_configured_backend_service_when_enabled(
     tmp_path: Path,
 ) -> None:
@@ -552,8 +612,7 @@ async def test_build_runtime_components_constructs_configured_backend_service_wh
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {
-                "default_agent_id": "aca",
-                "runtime_root": str(tmp_path / ".acabot-runtime"),
+                "runtime_root": str(tmp_path / "runtime_data"),
                 "backend": {
                     "enabled": True,
                     "admin_actor_ids": ["qq:user:10001"],
@@ -574,7 +633,7 @@ async def test_build_runtime_components_constructs_configured_backend_service_wh
     assert components.backend_bridge.session.is_configured() is True
     assert backend_status.configured is True
     assert backend_status.admin_actor_ids == ["qq:user:10001"]
-    assert backend_status.session_path == str((tmp_path / ".acabot-runtime" / "backend" / "session.json").resolve())
+    assert backend_status.session_path == str((tmp_path / "runtime_data" / "backend" / "session.json").resolve())
     assert components.backend_bridge.session.adapter.cwd == config.base_dir()
 
     await components.backend_bridge.session.adapter.dispose()
@@ -589,17 +648,10 @@ async def test_build_runtime_components_uses_default_bot_admin_actor_ids_for_bac
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {
-                "default_agent_id": "aca",
-                "runtime_root": str(tmp_path / ".acabot-runtime"),
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/default",
-                        "admin_actor_ids": ["qq:private:123456"],
-                    }
-                },
+                "runtime_root": str(tmp_path / "runtime_data"),
                 "backend": {
                     "enabled": False,
+                    "admin_actor_ids": ["qq:private:123456"],
                     "session_binding_path": "backend/session.json",
                 },
             },
@@ -616,6 +668,7 @@ async def test_build_runtime_components_uses_default_bot_admin_actor_ids_for_bac
     assert backend_status.admin_actor_ids == ["qq:private:123456"]
 
 
+@pytest.mark.skipif(not _has_pi, reason="pi binary not available")
 async def test_build_runtime_components_uses_explicit_backend_cwd_when_configured(
     tmp_path: Path,
 ) -> None:
@@ -627,8 +680,7 @@ async def test_build_runtime_components_uses_explicit_backend_cwd_when_configure
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {
-                "default_agent_id": "aca",
-                "runtime_root": str(tmp_path / ".acabot-runtime"),
+                "runtime_root": str(tmp_path / "runtime_data"),
                 "backend": {
                     "enabled": True,
                     "admin_actor_ids": ["qq:user:10001"],
@@ -660,8 +712,7 @@ async def test_build_runtime_components_resolves_backend_binding_path_under_runt
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {
-                "default_agent_id": "aca",
-                "runtime_root": str(tmp_path / ".acabot-runtime"),
+                "runtime_root": str(tmp_path / "runtime_data"),
                 "backend": {
                     "enabled": False,
                     "session_binding_path": "backend/session.json",
@@ -677,7 +728,7 @@ async def test_build_runtime_components_resolves_backend_binding_path_under_runt
     )
     backend_status = await components.control_plane.get_backend_status()
 
-    assert backend_status.session_path == str((tmp_path / ".acabot-runtime" / "backend" / "session.json").resolve())
+    assert backend_status.session_path == str((tmp_path / "runtime_data" / "backend" / "session.json").resolve())
 
 
 async def test_build_runtime_components_invalid_backend_command_stays_unconfigured(
@@ -689,8 +740,7 @@ async def test_build_runtime_components_invalid_backend_command_stays_unconfigur
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {
-                "default_agent_id": "aca",
-                "runtime_root": str(tmp_path / ".acabot-runtime"),
+                "runtime_root": str(tmp_path / "runtime_data"),
                 "backend": {
                     "enabled": True,
                     "admin_actor_ids": ["qq:user:10001"],
@@ -710,7 +760,7 @@ async def test_build_runtime_components_invalid_backend_command_stays_unconfigur
 
     assert components.backend_bridge.session.is_configured() is False
     assert backend_status.configured is False
-    assert backend_status.session_path == str((tmp_path / ".acabot-runtime" / "backend" / "session.json").resolve())
+    assert backend_status.session_path == str((tmp_path / "runtime_data" / "backend" / "session.json").resolve())
 
 
 async def test_build_runtime_components_exposes_control_plane() -> None:
@@ -720,7 +770,6 @@ async def test_build_runtime_components_exposes_control_plane() -> None:
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {
-                "default_agent_id": "aca",
             },
         }
     )
@@ -739,15 +788,15 @@ async def test_build_runtime_components_exposes_control_plane() -> None:
 
 
 async def test_build_runtime_components_routes_through_session_config(tmp_path: Path) -> None:
-    sessions_dir = tmp_path / "sessions/qq/group"
-    sessions_dir.mkdir(parents=True)
-    (sessions_dir / "42.yaml").write_text(
+    session_dir = tmp_path / "sessions/qq/group/42"
+    session_dir.mkdir(parents=True)
+    (session_dir / "session.yaml").write_text(
         """
 session:
   id: qq:group:42
   template: qq_group
 frontstage:
-  profile: aca
+  agent_id: ops
 selectors:
   sender_is_admin:
     sender_roles: [admin]
@@ -772,27 +821,29 @@ surfaces:
 """.strip(),
         encoding="utf-8",
     )
+    (session_dir / "agent.yaml").write_text(
+        """
+agent_id: ops
+prompt_ref: "prompt/ops"
+visible_tools: []
+visible_skills: []
+visible_subagents: []
+""".strip(),
+        encoding="utf-8",
+    )
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir(parents=True)
+    (prompts_dir / "aca.md").write_text("You are Aca.", encoding="utf-8")
+    (prompts_dir / "ops.md").write_text("You are Ops.", encoding="utf-8")
+    (prompts_dir / "default.md").write_text("You are a helpful assistant.", encoding="utf-8")
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         """
-agent:
-  system_prompt: "Fallback prompt."
-
 runtime:
-  default_agent_id: "aca"
   filesystem:
     base_dir: .
     sessions_dir: sessions
-  profiles:
-    aca:
-      name: "Aca"
-      prompt_ref: "prompt/aca"
-    ops:
-      name: "Ops"
-      prompt_ref: "prompt/ops"
-  prompts:
-    prompt/aca: "You are Aca."
-    prompt/ops: "You are Ops."
+    prompts_dir: prompts
 """.strip(),
         encoding="utf-8",
     )
@@ -849,24 +900,17 @@ runtime:
 
 
 async def test_build_runtime_components_wires_tool_broker_into_agent_runtime(tmp_path: Path) -> None:
+    _write_minimal_session(tmp_path, agent_id="aca", prompt_ref="prompt/aca", prompt_text="You are Aca.")
+    # Overwrite agent.yaml with visible_tools
+    agent_yaml = tmp_path / "sessions" / "qq" / "user" / "10001" / "agent.yaml"
+    agent_yaml.write_text(
+        "agent_id: aca\nprompt_ref: prompt/aca\nvisible_tools:\n  - get_time\nvisible_skills: []\nvisible_subagents: []\n",
+        encoding="utf-8",
+    )
     config = Config(
         {
-            "agent": {
-                "system_prompt": "You are Aca.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                        "enabled_tools": ["get_time"],
-                    }
-                },
-                "prompts": {
-                    "prompt/aca": "You are Aca."
-                },
-            },
+            "agent": {"system_prompt": "You are Aca."},
+            "runtime": {"filesystem": {"base_dir": str(tmp_path)}},
         }
     )
     broker = ToolBroker()
@@ -899,25 +943,12 @@ async def test_build_runtime_components_wires_tool_broker_into_agent_runtime(tmp
     assert agent.calls[0]["tools"][0].name == "get_time"
 
 
-async def test_build_runtime_components_registers_builtin_computer_tools() -> None:
+async def test_build_runtime_components_registers_builtin_computer_tools(tmp_path: Path) -> None:
+    _write_minimal_session(tmp_path, agent_id="aca", prompt_ref="prompt/aca", prompt_text="You are Aca.", visible_tools=["read"])
     config = Config(
         {
-            "agent": {
-                "system_prompt": "You are Aca.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                        "enabled_tools": ["read"],
-                    }
-                },
-                "prompts": {
-                    "prompt/aca": "You are Aca.",
-                },
-            },
+            "agent": {"system_prompt": "You are Aca."},
+            "runtime": {"filesystem": {"base_dir": str(tmp_path)}},
         }
     )
     components = build_runtime_components(
@@ -948,25 +979,12 @@ async def test_build_runtime_components_registers_builtin_computer_tools() -> No
     assert [tool.name for tool in visible] == ["read"]
 
 
-async def test_build_runtime_components_drops_stale_tools_from_removed_computer_adapter() -> None:
+async def test_build_runtime_components_drops_stale_tools_from_removed_computer_adapter(tmp_path: Path) -> None:
+    _write_minimal_session(tmp_path, agent_id="aca", prompt_ref="prompt/aca", prompt_text="You are Aca.", visible_tools=["read"])
     config = Config(
         {
-            "agent": {
-                "system_prompt": "You are Aca.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                        "enabled_tools": ["read", "ls", "exec"],
-                    }
-                },
-                "prompts": {
-                    "prompt/aca": "You are Aca.",
-                },
-            },
+            "agent": {"system_prompt": "You are Aca."},
+            "runtime": {"filesystem": {"base_dir": str(tmp_path)}},
         }
     )
     broker = ToolBroker()
@@ -1014,7 +1032,7 @@ async def test_build_runtime_components_drops_stale_tools_from_removed_computer_
     assert [tool.name for tool in visible] == ["read"]
 
 
-async def test_build_runtime_components_drops_stale_builtin_plugins_from_reused_plugin_manager() -> None:
+async def test_build_runtime_components_drops_stale_builtin_plugins_from_reused_plugin_manager(tmp_path: Path) -> None:
     class StaleComputerToolAdapterPlugin(RuntimePlugin):
         name = "computer_tool_adapter"
 
@@ -1031,24 +1049,11 @@ async def test_build_runtime_components_drops_stale_builtin_plugins_from_reused_
                 )
             ]
 
+    _write_minimal_session(tmp_path, agent_id="aca", prompt_ref="prompt/aca", prompt_text="You are Aca.", visible_tools=["read"])
     config = Config(
         {
-            "agent": {
-                "system_prompt": "You are Aca.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                        "enabled_tools": ["read", "ls"],
-                    }
-                },
-                "prompts": {
-                    "prompt/aca": "You are Aca.",
-                },
-            },
+            "agent": {"system_prompt": "You are Aca."},
+            "runtime": {"filesystem": {"base_dir": str(tmp_path)}},
         }
     )
     broker = ToolBroker()
@@ -1081,25 +1086,12 @@ async def test_build_runtime_components_drops_stale_builtin_plugins_from_reused_
     assert [tool.name for tool in visible] == ["read"]
 
 
-async def test_build_runtime_components_rejects_started_plugin_manager() -> None:
+async def test_build_runtime_components_rejects_started_plugin_manager(tmp_path: Path) -> None:
+    _write_minimal_session(tmp_path, agent_id="aca", prompt_ref="prompt/aca", prompt_text="You are Aca.", visible_tools=["read"])
     config = Config(
         {
-            "agent": {
-                "system_prompt": "You are Aca.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                        "enabled_tools": ["read"],
-                    }
-                },
-                "prompts": {
-                    "prompt/aca": "You are Aca.",
-                },
-            },
+            "agent": {"system_prompt": "You are Aca."},
+            "runtime": {"filesystem": {"base_dir": str(tmp_path)}},
         }
     )
     broker = ToolBroker()
@@ -1120,30 +1112,16 @@ async def test_build_runtime_components_rejects_started_plugin_manager() -> None
         )
 
 
-async def test_build_runtime_components_full_plugin_reload_keeps_builtin_plugins() -> None:
+async def test_build_runtime_components_full_plugin_reload_keeps_builtin_plugins(tmp_path: Path) -> None:
+    skills_dir = Path(__file__).resolve().parent.parent / "fixtures" / "skills"
+    _write_minimal_session(tmp_path, agent_id="aca", prompt_ref="prompt/aca", prompt_text="You are Aca.", visible_tools=["read"], visible_skills=["sample_configured_skill"])
     config = Config(
         {
-            "agent": {
-                "system_prompt": "You are Aca.",
-            },
+            "agent": {"system_prompt": "You are Aca."},
             "runtime": {
-                "default_agent_id": "aca",
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                        "enabled_tools": ["read"],
-                        "skills": ["sample_configured_skill"],
-                    }
-                },
                 "filesystem": {
-                    "enabled": True,
-                    "skill_catalog_dirs": [
-                        str(Path(__file__).resolve().parent.parent / "fixtures" / "skills")
-                    ],
-                },
-                "prompts": {
-                    "prompt/aca": "You are Aca.",
+                    "base_dir": str(tmp_path),
+                    "skill_catalog_dirs": [str(skills_dir)],
                 },
             },
         }
@@ -1177,34 +1155,16 @@ async def test_build_runtime_components_full_plugin_reload_keeps_builtin_plugins
     assert [tool.name for tool in visible] == ["read", "Skill"]
 
 
-async def test_build_runtime_components_reload_keeps_conditional_subagent_delegation_builtin() -> None:
+async def test_build_runtime_components_reload_keeps_conditional_subagent_delegation_builtin(tmp_path: Path) -> None:
+    skills_dir = Path(__file__).resolve().parent.parent / "fixtures" / "skills"
+    _write_minimal_session(tmp_path, agent_id="aca", prompt_ref="prompt/aca", prompt_text="You are Aca.", visible_skills=["sample_configured_skill"])
     config = Config(
         {
-            "agent": {
-                "system_prompt": "You are Aca.",
-            },
+            "agent": {"system_prompt": "You are Aca."},
             "runtime": {
-                "default_agent_id": "aca",
                 "filesystem": {
-                    "enabled": True,
-                    "skill_catalog_dirs": [
-                        str(Path(__file__).resolve().parent.parent / "fixtures" / "skills")
-                    ],
-                },
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                        "skills": ["sample_configured_skill"],
-                    },
-                    "worker": {
-                        "name": "Worker",
-                        "prompt_ref": "prompt/worker",
-                    },
-                },
-                "prompts": {
-                    "prompt/aca": "You are Aca.",
-                    "prompt/worker": "You are Worker.",
+                    "base_dir": str(tmp_path),
+                    "skill_catalog_dirs": [str(skills_dir)],
                 },
             },
         }
@@ -1263,25 +1223,12 @@ async def test_build_runtime_components_default_approval_resume_replays_tool_cal
         restricted,
     )
     gateway = FakeGateway()
+    _write_minimal_session(tmp_path, agent_id="aca", prompt_ref="prompt/aca", prompt_text="You are Aca.", visible_tools=["restricted"])
     components = build_runtime_components(
         Config(
             {
-                "agent": {
-                    "system_prompt": "You are Aca.",
-                },
-                "runtime": {
-                    "default_agent_id": "aca",
-                    "profiles": {
-                        "aca": {
-                            "name": "Aca",
-                            "prompt_ref": "prompt/aca",
-                            "enabled_tools": ["restricted"],
-                        }
-                    },
-                    "prompts": {
-                        "prompt/aca": "You are Aca.",
-                    },
-                },
+                "agent": {"system_prompt": "You are Aca."},
+                "runtime": {"filesystem": {"base_dir": str(tmp_path)}},
             }
         ),
         gateway=gateway,
@@ -1335,25 +1282,12 @@ async def test_build_runtime_components_approval_resume_marks_completed_with_err
         restricted,
     )
     gateway = FakeGateway()
+    _write_minimal_session(tmp_path, agent_id="aca", prompt_ref="prompt/aca", prompt_text="You are Aca.", visible_tools=["restricted"])
     components = build_runtime_components(
         Config(
             {
-                "agent": {
-                    "system_prompt": "You are Aca.",
-                },
-                "runtime": {
-                    "default_agent_id": "aca",
-                    "profiles": {
-                        "aca": {
-                            "name": "Aca",
-                            "prompt_ref": "prompt/aca",
-                            "enabled_tools": ["restricted"],
-                        }
-                    },
-                    "prompts": {
-                        "prompt/aca": "You are Aca.",
-                    },
-                },
+                "agent": {"system_prompt": "You are Aca."},
+                "runtime": {"filesystem": {"base_dir": str(tmp_path)}},
             }
         ),
         gateway=gateway,
@@ -1413,25 +1347,12 @@ async def test_build_runtime_components_approval_resume_fails_closed_on_nested_a
         restricted,
     )
     gateway = FakeGateway()
+    _write_minimal_session(tmp_path, agent_id="aca", prompt_ref="prompt/aca", prompt_text="You are Aca.", visible_tools=["restricted"])
     components = build_runtime_components(
         Config(
             {
-                "agent": {
-                    "system_prompt": "You are Aca.",
-                },
-                "runtime": {
-                    "default_agent_id": "aca",
-                    "profiles": {
-                        "aca": {
-                            "name": "Aca",
-                            "prompt_ref": "prompt/aca",
-                            "enabled_tools": ["restricted"],
-                        }
-                    },
-                    "prompts": {
-                        "prompt/aca": "You are Aca.",
-                    },
-                },
+                "agent": {"system_prompt": "You are Aca."},
+                "runtime": {"filesystem": {"base_dir": str(tmp_path)}},
             }
         ),
         gateway=gateway,
@@ -1457,14 +1378,14 @@ async def test_build_runtime_components_uses_sqlite_persistence_when_configured(
     tmp_path: Path,
 ) -> None:
     sqlite_path = tmp_path / "runtime.db"
+    _write_minimal_session(tmp_path)
     config = Config(
         {
             "agent": {
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
-                "default_agent_id": "aca",
-                "default_prompt_ref": "prompt/default",
+                "filesystem": {"base_dir": str(tmp_path)},
                 "persistence": {
                     "sqlite_path": str(sqlite_path),
                 },
@@ -1518,8 +1439,6 @@ def test_build_runtime_components_defaults_to_null_reference_backend() -> None:
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
-                "default_agent_id": "aca",
-                "default_prompt_ref": "prompt/default",
             },
         }
     )
@@ -1543,8 +1462,6 @@ def test_build_runtime_components_ignores_legacy_prompt_assembly_config() -> Non
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
-                "default_agent_id": "aca",
-                "default_prompt_ref": "prompt/default",
                 "prompt_assembly": {
                     "sticky_intro": "稳定规则如下",
                     "summary_slot_position": "history_prefix",
@@ -1567,15 +1484,15 @@ def test_build_runtime_components_ignores_legacy_prompt_assembly_config() -> Non
 async def test_build_runtime_components_memory_broker_reads_self_and_sticky_file_sources(
     tmp_path: Path,
 ) -> None:
+    _write_minimal_session(tmp_path)
     config = Config(
         {
             "agent": {
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
-                "default_agent_id": "aca",
-                "default_prompt_ref": "prompt/default",
-                "runtime_root": str(tmp_path / ".acabot-runtime"),
+                "filesystem": {"base_dir": str(tmp_path)},
+                "runtime_root": str(tmp_path / "runtime_data"),
             },
         }
     )
@@ -1636,9 +1553,7 @@ async def test_build_runtime_components_wires_context_assembler_and_payload_writ
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
-                "default_agent_id": "aca",
-                "default_prompt_ref": "prompt/default",
-                "runtime_root": str(tmp_path / ".acabot-runtime"),
+                "runtime_root": str(tmp_path / "runtime_data"),
             },
         }
     )
@@ -1653,7 +1568,7 @@ async def test_build_runtime_components_wires_context_assembler_and_payload_writ
     assert isinstance(components.payload_json_writer, PayloadJsonWriter)
     assert components.payload_json_writer.root_dir == resolve_runtime_path(
         config,
-        "debug/model-payloads",
+        "debug/model_payloads",
     )
 
 
@@ -1661,14 +1576,14 @@ def test_build_payload_json_writer_uses_default_payload_json_dir(tmp_path: Path)
     config = Config(
         {
             "runtime": {
-                "runtime_root": str(tmp_path / ".acabot-runtime"),
+                "runtime_root": str(tmp_path / "runtime_data"),
             }
         }
     )
 
     writer = build_payload_json_writer(config)
 
-    assert writer.root_dir == resolve_runtime_path(config, "debug/model-payloads")
+    assert writer.root_dir == resolve_runtime_path(config, "debug/model_payloads")
 
 
 def test_build_runtime_components_applies_context_compaction_config() -> None:
@@ -1678,8 +1593,6 @@ def test_build_runtime_components_applies_context_compaction_config() -> None:
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
-                "default_agent_id": "aca",
-                "default_prompt_ref": "prompt/default",
                 "context_compaction": {
                     "enabled": True,
                     "strategy": "summarize",
@@ -1718,8 +1631,6 @@ def test_build_runtime_components_selects_local_reference_backend(tmp_path: Path
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
-                "default_agent_id": "aca",
-                "default_prompt_ref": "prompt/default",
                 "reference": {
                     "enabled": True,
                     "provider": "local",
@@ -1748,8 +1659,6 @@ def test_build_runtime_components_selects_openviking_reference_backend() -> None
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
-                "default_agent_id": "aca",
-                "default_prompt_ref": "prompt/default",
                 "reference": {
                     "enabled": True,
                     "provider": "openviking",

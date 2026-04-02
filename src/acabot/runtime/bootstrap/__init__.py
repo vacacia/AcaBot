@@ -71,7 +71,8 @@ from .builders import (
 from .config import resolve_runtime_path
 from .components import RuntimeComponents
 from .loaders import (
-    build_default_frontstage_agent,
+    BootstrapDefaults,
+    build_bootstrap_defaults,
     build_prompt_refs,
     build_prompt_loader,
     build_session_bundle_loader,
@@ -128,7 +129,7 @@ def build_runtime_components(
 
     runtime_conf = config.get("runtime", {})
     default_computer_policy = build_default_computer_policy(config)
-    default_frontstage_agent = build_default_frontstage_agent(
+    bootstrap_defaults = build_bootstrap_defaults(
         config,
         default_computer_policy=default_computer_policy,
     )
@@ -136,16 +137,14 @@ def build_runtime_components(
     prompt_loader = ReloadablePromptLoader(
         build_prompt_loader(
             config,
-            prompt_refs={default_frontstage_agent.prompt_ref},
+            prompt_refs={bootstrap_defaults.prompt_ref},
             subagent_catalog=runtime_subagent_catalog,
         )
     )
-    default_agent_id = str(default_frontstage_agent.agent_id or "default")
+    # model target catalog 初始为空，等 session 加载后填充
     runtime_model_target_catalog = MutableModelTargetCatalog()
-    runtime_model_target_catalog.replace_agent_targets(build_agent_model_targets([default_frontstage_agent]))
     session_runtime = build_session_runtime(config)
     runtime_router = router or RuntimeRouter(
-        default_agent_id=default_agent_id,
         session_runtime=session_runtime,
     )
     runtime_thread_manager = thread_manager or build_thread_manager(config)
@@ -158,7 +157,7 @@ def build_runtime_components(
     )
     runtime_sticky_notes_dir = resolve_runtime_path(
         config,
-        runtime_conf.get("sticky_notes_dir", "sticky-notes"),
+        runtime_conf.get("sticky_notes_dir", "sticky_notes"),
     )
     runtime_soul_source = SoulSource(root_dir=runtime_soul_dir)
     runtime_sticky_notes_source = StickyNoteFileStore(root_dir=runtime_sticky_notes_dir)
@@ -169,7 +168,6 @@ def build_runtime_components(
     runtime_skill_catalog = skill_catalog or build_skill_catalog(config)
     runtime_subagent_delegator = subagent_delegator or SubagentDelegationBroker(
         catalog=runtime_subagent_catalog,
-        default_agent_id=str(default_agent_id or ""),
     )
     runtime_context_compactor = context_compactor or build_context_compactor(
         config,
@@ -273,7 +271,6 @@ def build_runtime_components(
     runtime_tool_broker = tool_broker or ToolBroker(
         skill_catalog=runtime_skill_catalog,
         subagent_catalog=runtime_subagent_catalog,
-        default_agent_id=default_agent_id,
         backend_bridge=runtime_backend_bridge,
     )
     runtime_tool_broker.skill_catalog = runtime_skill_catalog
@@ -292,7 +289,7 @@ def build_runtime_components(
         config,
         prompt_refs=build_prompt_refs(
             config,
-            prompt_refs={default_frontstage_agent.prompt_ref},
+            prompt_refs={bootstrap_defaults.prompt_ref},
             subagent_catalog=runtime_subagent_catalog,
         ),
         tool_names={
@@ -304,15 +301,15 @@ def build_runtime_components(
         subagent_names={item.subagent_name for item in runtime_subagent_catalog.list_all()},
     )
 
-    runtime_frontstage_agents: list[ResolvedAgent] = [default_frontstage_agent]
-    if runtime_session_bundle_loader is not None:
-        seen_agent_ids = {default_frontstage_agent.agent_id}
-        for bundle in runtime_session_bundle_loader.list_bundles():
-            resolved = ResolvedAgent.from_session_agent(bundle.frontstage_agent)
-            if resolved.agent_id in seen_agent_ids:
-                continue
-            runtime_frontstage_agents.append(resolved)
-            seen_agent_ids.add(resolved.agent_id)
+    # runtime_frontstage_agents 只从 session 收集，不再包含 bootstrap 假 agent
+    runtime_frontstage_agents: list[ResolvedAgent] = []
+    seen_agent_ids: set[str] = set()
+    for bundle in runtime_session_bundle_loader.list_bundles():
+        resolved = ResolvedAgent.from_session_agent(bundle.frontstage_agent)
+        if resolved.agent_id in seen_agent_ids:
+            continue
+        runtime_frontstage_agents.append(resolved)
+        seen_agent_ids.add(resolved.agent_id)
     runtime_model_target_catalog.replace_agent_targets(build_agent_model_targets(runtime_frontstage_agents))
     runtime_model_registry_manager.target_catalog.replace_agent_targets(
         build_agent_model_targets(runtime_frontstage_agents)
@@ -320,22 +317,17 @@ def build_runtime_components(
     runtime_model_registry_manager.reload_now()
 
     runtime_agent_loader_state = {
-        "default_frontstage_agent": default_frontstage_agent,
         "session_bundle_loader": runtime_session_bundle_loader,
     }
 
     def runtime_agent_loader(decision):
         session_bundle_loader = runtime_agent_loader_state["session_bundle_loader"]
-        if session_bundle_loader is not None:
-            bundle = session_bundle_loader.load_by_session_id(decision.channel_scope)
-            return ResolvedAgent.from_session_agent(bundle.frontstage_agent)
-        return runtime_agent_loader_state["default_frontstage_agent"]
+        bundle = session_bundle_loader.load_by_session_id(decision.channel_scope)
+        return ResolvedAgent.from_session_agent(bundle.frontstage_agent)
 
     def rebind_agent_loader(
-        next_default_frontstage_agent: ResolvedAgent,
         next_session_bundle_loader,
     ) -> None:
-        runtime_agent_loader_state["default_frontstage_agent"] = next_default_frontstage_agent
         runtime_agent_loader_state["session_bundle_loader"] = next_session_bundle_loader
 
     builtin_plugins = build_builtin_runtime_plugins()
@@ -411,7 +403,7 @@ def build_runtime_components(
     config_control_plane = RuntimeConfigControlPlane(
         config=config,
         router=runtime_router,
-        default_frontstage_agent=default_frontstage_agent,
+        bootstrap_defaults=bootstrap_defaults,
         session_bundle_loader=runtime_session_bundle_loader,
         prompt_loader=prompt_loader,
         model_registry_manager=runtime_model_registry_manager,

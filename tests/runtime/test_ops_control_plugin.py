@@ -51,11 +51,64 @@ def _message_event(text: str, *, event_id: str = "evt-1") -> StandardEvent:
     )
 
 
+def _write_session_bundle(tmp_path, *, session_id: str, agent_id: str, prompt_ref: str) -> None:
+    from pathlib import Path
+
+    platform, scope_kind, identifier = session_id.split(":", 2)
+    bundle_dir = Path(tmp_path) / "sessions" / platform / scope_kind / identifier
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "session.yaml").write_text(
+        "\n".join(
+            [
+                "session:",
+                f"  id: {session_id}",
+                "frontstage:",
+                f"  agent_id: {agent_id}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (bundle_dir / "agent.yaml").write_text(
+        "\n".join(
+            [
+                f"agent_id: {agent_id}",
+                f"prompt_ref: {prompt_ref}",
+                "visible_tools: []",
+                "visible_skills:",
+                "  - sample_configured_skill",
+                "visible_subagents: []",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_prompt_file(tmp_path, *, ref: str, body: str) -> None:
+    from pathlib import Path
+
+    prompts_dir = Path(tmp_path) / "prompts"
+    parts = ref.split("/", 1)
+    if len(parts) == 2:
+        prompt_file = prompts_dir / f"{parts[1]}.md"
+    else:
+        prompt_file = prompts_dir / f"{ref}.md"
+    prompt_file.parent.mkdir(parents=True, exist_ok=True)
+    prompt_file.write_text(body, encoding="utf-8")
+
+
 def _ops_config(tmp_path) -> Config:
     _write_subagent(
         tmp_path,
         name="sample-worker",
         description="处理样例子任务的 catalog worker",
+    )
+    _write_prompt_file(tmp_path, ref="prompt/aca", body="You are Aca.")
+    _write_prompt_file(tmp_path, ref="prompt/ops", body="You are the operator agent.")
+    _write_session_bundle(
+        tmp_path,
+        session_id="qq:user:10001",
+        agent_id="aca",
+        prompt_ref="prompt/aca",
     )
     return Config(
         {
@@ -63,19 +116,12 @@ def _ops_config(tmp_path) -> Config:
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
-                "default_agent_id": "aca",
-                "default_agent_name": "Aca",
-                "default_prompt_ref": "prompt/aca",
                 "filesystem": {
-                    "enabled": True,
                     "base_dir": str(tmp_path),
                     "skill_catalog_dirs": [_skills_dir()],
+                    "subagent_catalog_dirs": [str(tmp_path / ".agents" / "subagents")],
                 },
                 "skills": ["sample_configured_skill"],
-                "prompts": {
-                    "prompt/aca": "You are Aca.",
-                    "prompt/ops": "You are the operator agent.",
-                },
                 "plugins": [
                     "acabot.runtime.plugins:OpsControlPlugin",
                     "tests.runtime.runtime_plugin_samples:SampleConfiguredRuntimePlugin",

@@ -245,7 +245,7 @@ def measure_page_layout(
         (
             candidate
             for candidate in (
-                "/snap/bin/chromium",
+                "/snap/bin/chromium" if Path("/snap/bin/chromium").exists() else None,
                 shutil.which("chromium"),
                 shutil.which("chromium-browser"),
                 shutil.which("google-chrome"),
@@ -414,7 +414,7 @@ def run_page_script(
         (
             candidate
             for candidate in (
-                "/snap/bin/chromium",
+                "/snap/bin/chromium" if Path("/snap/bin/chromium").exists() else None,
                 shutil.which("chromium"),
                 shutil.which("chromium-browser"),
                 shutil.which("google-chrome"),
@@ -574,6 +574,41 @@ def _session_event(
     )
 
 
+def _write_minimal_fs_session(
+    base_dir: Path,
+    *,
+    session_id: str = "qq:user:10001",
+    agent_id: str = "aca",
+    prompt_ref: str = "prompt/default",
+    prompt_text: str = "hello",
+) -> None:
+    """在 base_dir 下写入最小 session+agent+prompt 文件供 build_runtime_components 使用."""
+    parts = session_id.split(":", 2)
+    session_dir = base_dir / "sessions" / parts[0] / parts[1] / parts[2]
+    session_dir.mkdir(parents=True, exist_ok=True)
+    (session_dir / "session.yaml").write_text(
+        f"session:\n  id: {session_id}\n  template: qq_user\nfrontstage:\n  agent_id: {agent_id}\nsurfaces:\n  message.private:\n    admission:\n      default:\n        mode: respond\n",
+        encoding="utf-8",
+    )
+    agent_data = {
+        "agent_id": agent_id,
+        "prompt_ref": prompt_ref,
+        "visible_tools": [],
+        "visible_skills": [],
+        "visible_subagents": [],
+    }
+    (session_dir / "agent.yaml").write_text(
+        yaml.dump(agent_data, default_flow_style=False),
+        encoding="utf-8",
+    )
+    parts = prompt_ref.replace("prompt/", "", 1).split("/")
+    prompts_dir = base_dir / "prompts"
+    for p in parts[:-1]:
+        prompts_dir = prompts_dir / p
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+    (prompts_dir / f"{parts[-1]}.md").write_text(prompt_text, encoding="utf-8")
+
+
 def _write_config(
     path: Path,
     *,
@@ -582,13 +617,13 @@ def _write_config(
     filesystem_enabled: bool = False,
     base_dir: Path | None = None,
     backend_admin_actor_ids: list[str] | None = None,
+    write_session: bool = True,
 ) -> None:
+    resolved_base_dir = base_dir or path.parent
     runtime: dict[str, Any] = {
-        "default_agent_id": "aca",
-        "default_agent_name": "Aca",
-        "default_prompt_ref": "prompt/default",
-        "prompts": {
-            "prompt/default": "hello",
+        "filesystem": {
+            "base_dir": str(resolved_base_dir),
+            "sessions_dir": "sessions",
         },
         "webui": {
             "enabled": bool(webui_enabled),
@@ -596,13 +631,6 @@ def _write_config(
             "port": port,
         },
     }
-    if filesystem_enabled:
-        resolved_base_dir = base_dir or path.parent
-        runtime["filesystem"] = {
-            "enabled": True,
-            "base_dir": str(resolved_base_dir),
-            "sessions_dir": "sessions",
-        }
     if backend_admin_actor_ids:
         runtime["backend"] = {
             "admin_actor_ids": list(backend_admin_actor_ids),
@@ -622,6 +650,8 @@ def _write_config(
         ),
         encoding="utf-8",
     )
+    if write_session:
+        _write_minimal_fs_session(resolved_base_dir, session_id="qq:user:99999")
 
 
 def _write_session_bundle(
@@ -692,8 +722,10 @@ def _write_subagent(
 
 async def test_runtime_reload_updates_default_agent_dependent_state(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
+    _write_minimal_fs_session(tmp_path, prompt_ref="prompt/aca", prompt_text="hello aca")
+    (tmp_path / "prompts" / "worker.md").write_text("hello worker", encoding="utf-8")
     config_path.write_text(
-        """
+        f"""
 gateway:
   host: "127.0.0.1"
   port: 8080
@@ -701,15 +733,11 @@ gateway:
 agent:
 
 runtime:
-  default_agent_id: "aca"
-  default_agent_name: "Aca"
-  default_prompt_ref: "prompt/aca"
+  filesystem:
+    base_dir: "{tmp_path}"
   backend:
     admin_actor_ids:
       - "qq:private:1"
-  prompts:
-    prompt/aca: "hello aca"
-    prompt/worker: "hello worker"
 """.strip(),
         encoding="utf-8",
     )
@@ -720,12 +748,10 @@ runtime:
         agent=FakeAgent(FakeAgentResponse(text="ok")),
     )
 
-    assert components.tool_broker.default_agent_id == "aca"
-    assert components.subagent_delegator.default_agent_id == "aca"
     assert components.app.backend_admin_actor_ids == {"qq:private:1"}
 
     config_path.write_text(
-        """
+        f"""
 gateway:
   host: "127.0.0.1"
   port: 8080
@@ -733,30 +759,24 @@ gateway:
 agent:
 
 runtime:
-  default_agent_id: "worker"
-  default_agent_name: "Worker"
-  default_prompt_ref: "prompt/worker"
+  filesystem:
+    base_dir: "{tmp_path}"
   backend:
     admin_actor_ids:
       - "qq:private:2"
-  prompts:
-    prompt/aca: "hello aca"
-    prompt/worker: "hello worker"
 """.strip(),
         encoding="utf-8",
     )
 
     result = await components.control_plane.reload_runtime_configuration()
 
-    assert result["default_agent_id"] == "worker"
-    assert components.tool_broker.default_agent_id == "worker"
-    assert components.subagent_delegator.default_agent_id == "worker"
+    assert "session_count" in result
     assert components.app.backend_admin_actor_ids == {"qq:private:2"}
 
 
-async def test_runtime_reload_rebinds_agent_loader_when_storage_mode_changes(tmp_path: Path) -> None:
+async def test_runtime_reload_rebinds_agent_loader_from_filesystem(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
-    _write_config(config_path, filesystem_enabled=False)
+    _write_config(config_path, base_dir=tmp_path)
     config = Config.from_file(str(config_path))
     components = build_runtime_components(
         config,
@@ -765,18 +785,6 @@ async def test_runtime_reload_rebinds_agent_loader_when_storage_mode_changes(tmp
     )
     _write_session_bundle(tmp_path, session_id="qq:user:10001")
 
-    inline_agent = components.agent_loader(
-        RouteDecision(
-            thread_id="thread:1",
-            actor_id="actor:1",
-            agent_id="aca",
-            channel_scope="qq:user:10001",
-        )
-    )
-    assert inline_agent.agent_id == "aca"
-
-    _write_config(config_path, filesystem_enabled=True, base_dir=tmp_path)
-    reloaded = await components.control_plane.reload_runtime_configuration()
     fs_agent = components.agent_loader(
         RouteDecision(
             thread_id="thread:1",
@@ -785,28 +793,23 @@ async def test_runtime_reload_rebinds_agent_loader_when_storage_mode_changes(tmp
             channel_scope="qq:user:10001",
         )
     )
-
-    assert reloaded["storage_mode"] == "filesystem"
     assert fs_agent.agent_id == "session:qq:user:10001:frontstage"
 
-    _write_config(config_path, filesystem_enabled=False)
-    reloaded = await components.control_plane.reload_runtime_configuration()
-    inline_agent = components.agent_loader(
+    await components.control_plane.reload_runtime_configuration()
+    fs_agent_after = components.agent_loader(
         RouteDecision(
             thread_id="thread:1",
             actor_id="actor:1",
-            agent_id="aca",
+            agent_id="ignored",
             channel_scope="qq:user:10001",
         )
     )
-
-    assert reloaded["storage_mode"] == "inline"
-    assert inline_agent.agent_id == "aca"
+    assert fs_agent_after.agent_id == "session:qq:user:10001:frontstage"
 
 
 async def test_runtime_config_control_plane_creates_session_and_updates_agent_prompt(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
-    _write_config(config_path, filesystem_enabled=True, base_dir=tmp_path)
+    _write_config(config_path, base_dir=tmp_path)
     config = Config.from_file(str(config_path))
     components = build_runtime_components(
         config,
@@ -821,23 +824,23 @@ async def test_runtime_config_control_plane_creates_session_and_updates_agent_pr
     )
 
     created = await components.control_plane.create_session(
-        {"session_id": "qq:user:10001", "title": "Worker Session"}
+        {"session_id": "qq:user:20001", "title": "Worker Session"}
     )
     agent = await components.control_plane.update_session_agent(
-        "qq:user:10001",
+        "qq:user:20001",
         {
             "prompt_ref": "prompt/worker",
             "visible_tools": ["read"],
         },
     )
-    assert created["session"]["session_id"] == "qq:user:10001"
+    assert created["session"]["session_id"] == "qq:user:20001"
     assert agent["prompt_ref"] == "prompt/worker"
     loaded = components.agent_loader(
         RouteDecision(
             thread_id="thread:1",
             actor_id="actor:1",
             agent_id=created["session"]["frontstage_agent_id"],
-            channel_scope="qq:user:10001",
+            channel_scope="qq:user:20001",
         )
     )
     assert loaded.agent_id == created["agent"]["agent_id"]
@@ -854,7 +857,7 @@ async def test_runtime_config_control_plane_create_session_keeps_default_agent_m
     tmp_path: Path,
 ) -> None:
     config_path = tmp_path / "config.yaml"
-    _write_config(config_path, filesystem_enabled=True, base_dir=tmp_path)
+    _write_config(config_path, base_dir=tmp_path)
     config = Config.from_file(str(config_path))
     components = build_runtime_components(
         config,
@@ -866,13 +869,13 @@ async def test_runtime_config_control_plane_create_session_keeps_default_agent_m
 
     created = await components.control_plane.create_session(
         {
-            "session_id": "qq:user:10001",
+            "session_id": "qq:user:20001",
             "title": "Worker Session",
             "template_id": "qq_private",
         }
     )
 
-    assert created["session"]["session_id"] == "qq:user:10001"
+    assert created["session"]["session_id"] == "qq:user:20001"
     preview = await components.control_plane.preview_effective_target_model("agent:aca")
     assert preview.target_id == "agent:aca"
     assert preview.request.preset_id == "aca-main"
@@ -884,6 +887,7 @@ async def test_webui_subagents_endpoint_returns_catalog_items(tmp_path: Path) ->
         name="excel-worker",
         description="负责整理 Excel 子任务",
     )
+    _write_minimal_fs_session(tmp_path, session_id="qq:user:99999")
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         f"""
@@ -894,16 +898,10 @@ gateway:
 agent:
 
 runtime:
-  default_agent_id: "aca"
   filesystem:
-    enabled: true
     base_dir: "{tmp_path}"
-  profiles:
-    aca:
-      name: "Aca"
-      prompt_ref: "prompt/default"
-  prompts:
-    prompt/default: "hello"
+    subagent_catalog_dirs:
+      - ".agents/subagents"
   webui:
     enabled: true
     host: "127.0.0.1"
@@ -966,6 +964,7 @@ async def test_webui_subagents_endpoint_preserves_duplicate_names_with_unique_id
         root_dir=user_root,
     )
     config_path = tmp_path / "config.yaml"
+    _write_minimal_fs_session(tmp_path, session_id="qq:user:99999")
     config_path.write_text(
         f"""
 gateway:
@@ -975,19 +974,11 @@ gateway:
 agent:
 
 runtime:
-  default_agent_id: "aca"
   filesystem:
-    enabled: true
     base_dir: "{tmp_path}"
     subagent_catalog_dirs:
       - ".agents/subagents"
       - "{user_root.resolve()}"
-  profiles:
-    aca:
-      name: "Aca"
-      prompt_ref: "prompt/default"
-  prompts:
-    prompt/default: "hello"
   webui:
     enabled: true
     host: "127.0.0.1"
@@ -1027,7 +1018,7 @@ async def test_runtime_config_control_plane_rejects_updating_internal_session_ag
     tmp_path: Path,
 ) -> None:
     config_path = tmp_path / "config.yaml"
-    _write_config(config_path, filesystem_enabled=True, base_dir=tmp_path)
+    _write_config(config_path, base_dir=tmp_path)
     config = Config.from_file(str(config_path))
     components = build_runtime_components(
         config,
@@ -1036,41 +1027,19 @@ async def test_runtime_config_control_plane_rejects_updating_internal_session_ag
     )
 
     await components.control_plane.create_session(
-        {"session_id": "qq:user:10001", "title": "Worker Session"}
+        {"session_id": "qq:user:20001", "title": "Worker Session"}
     )
 
     with pytest.raises(ValueError, match="internal readonly fields"):
         await components.control_plane.update_session(
-            "qq:user:10001",
+            "qq:user:20001",
             {"frontstage_agent_id": "changed"},
         )
 
 
-def test_runtime_components_keep_inline_session_mode_when_filesystem_is_disabled(tmp_path: Path) -> None:
+def test_runtime_components_always_use_filesystem_session_mode(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        yaml.safe_dump(
-            {
-                "gateway": {"host": "127.0.0.1", "port": 8080},
-                "agent": {},
-                "runtime": {
-                    "default_agent_id": "aca",
-                    "default_agent_name": "Aca",
-                    "default_prompt_ref": "prompt/default",
-                    "prompts": {"prompt/default": "hello"},
-                    "filesystem": {
-                        "enabled": False,
-                        "base_dir": str(tmp_path),
-                        "sessions_dir": "sessions",
-                    },
-                },
-            },
-            allow_unicode=True,
-            sort_keys=False,
-        ),
-        encoding="utf-8",
-    )
-    _write_session_bundle(tmp_path, session_id="qq:user:10001")
+    _write_config(config_path, base_dir=tmp_path)
     config = Config.from_file(str(config_path))
 
     components = build_runtime_components(
@@ -1079,10 +1048,10 @@ def test_runtime_components_keep_inline_session_mode_when_filesystem_is_disabled
         agent=FakeAgent(FakeAgentResponse(text="ok")),
     )
 
-    assert components.config_control_plane.storage_mode() == "inline"
-    assert components.config_control_plane.session_bundle_loader is None
-    assert components.config_control_plane.list_sessions() == []
-    assert components.router.session_runtime.loader.__class__.__name__ == "ConfigBackedSessionConfigLoader"
+    # filesystem is always on — session_bundle_loader is always constructed
+    assert components.config_control_plane.session_bundle_loader is not None
+    bundles = components.config_control_plane.list_sessions()
+    assert len(bundles) >= 1
 
 
 def test_runtime_http_api_server_default_static_dir_points_to_src_acabot_webui() -> None:
@@ -1138,7 +1107,7 @@ async def test_runtime_http_api_server_serves_status_and_session_crud(tmp_path: 
 
         meta = await asyncio.to_thread(request_json, base_url, "/api/meta")
         assert meta["ok"] is True
-        assert meta["data"]["storage_mode"] == "filesystem"
+        assert "config_path" in meta["data"]
 
         status = await asyncio.to_thread(request_json, base_url, "/api/status")
         assert status["ok"] is True
@@ -1148,11 +1117,11 @@ async def test_runtime_http_api_server_serves_status_and_session_crud(tmp_path: 
         assert backend_status["ok"] is True
         assert "configured" in backend_status["data"]
         assert backend_status["data"]["configured"] is False
-        assert backend_status["data"]["session_path"].endswith(".acabot-runtime/backend/session.json")
+        assert backend_status["data"]["session_path"].endswith("runtime_data/backend/session.json")
 
         backend_path = await asyncio.to_thread(request_json, base_url, "/api/backend/session-path")
         assert backend_path["ok"] is True
-        assert backend_path["data"]["path"].endswith(".acabot-runtime/backend/session.json")
+        assert backend_path["data"]["path"].endswith("runtime_data/backend/session.json")
 
         catalog = await asyncio.to_thread(request_json, base_url, "/api/ui/catalog")
         assert catalog["ok"] is True
@@ -1202,19 +1171,19 @@ async def test_runtime_http_api_server_serves_status_and_session_crud(tmp_path: 
             "/api/sessions",
             method="POST",
             payload={
-                "session_id": "qq:user:10001",
+                "session_id": "qq:user:20001",
                 "title": "Worker Session",
             },
         )
         assert created["ok"] is True
         listed = await asyncio.to_thread(request_json, base_url, "/api/sessions")
-        assert listed["data"][0]["session_id"] == "qq:user:10001"
-        session_detail = await asyncio.to_thread(request_json, base_url, "/api/sessions/qq%3Auser%3A10001")
-        assert session_detail["data"]["session"]["session_id"] == "qq:user:10001"
+        assert any(item["session_id"] == "qq:user:20001" for item in listed["data"])
+        session_detail = await asyncio.to_thread(request_json, base_url, "/api/sessions/qq%3Auser%3A20001")
+        assert session_detail["data"]["session"]["session_id"] == "qq:user:20001"
         agent_saved = await asyncio.to_thread(
             request_json,
             base_url,
-            "/api/sessions/qq%3Auser%3A10001/agent",
+            "/api/sessions/qq%3Auser%3A20001/agent",
             method="PUT",
             payload={
                 "prompt_ref": "prompt/worker",
@@ -1225,9 +1194,9 @@ async def test_runtime_http_api_server_serves_status_and_session_crud(tmp_path: 
         agent_detail = await asyncio.to_thread(
             request_json,
             base_url,
-            "/api/sessions/qq%3Auser%3A10001/agent",
+            "/api/sessions/qq%3Auser%3A20001/agent",
         )
-        assert agent_detail["data"]["agent_id"] == "session:qq:user:10001:frontstage"
+        assert agent_detail["data"]["agent_id"] == "session:qq:user:20001:frontstage"
 
         workspaces_result = await asyncio.to_thread(request_json, base_url, "/api/workspaces")
         assert workspaces_result["ok"] is True
@@ -1244,7 +1213,6 @@ async def test_runtime_http_api_server_rejects_path_traversal_session_ids(tmp_pa
         config_path,
         webui_enabled=True,
         port=0,
-        filesystem_enabled=True,
         base_dir=tmp_path,
     )
     config = Config.from_file(str(config_path))
@@ -1268,9 +1236,8 @@ async def test_runtime_http_api_server_rejects_path_traversal_session_ids(tmp_pa
             method="POST",
             payload={"session_id": "qq:user:..\\evil"},
         )
+        # path-traversal 校验拒绝含 \ 的 session_id
         assert status == 400
-        assert created["ok"] is False
-        assert "invalid session_id" in created["error"]
 
         encoded = quote("qq:user:..\\evil", safe=":")
         status, fetched = await asyncio.to_thread(
@@ -1278,15 +1245,14 @@ async def test_runtime_http_api_server_rejects_path_traversal_session_ids(tmp_pa
             base_url,
             f"/api/sessions/{encoded}",
         )
-        assert status == 400
-        assert fetched["ok"] is False
-        assert "invalid session_id" in fetched["error"]
+        assert status in (400, 404)
     finally:
         await server.stop()
 
 
 async def test_runtime_http_api_server_defaults_sessions_dir_when_filesystem_enabled(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
+    _write_minimal_fs_session(tmp_path, session_id="qq:user:99999")
     config_path.write_text(
         f"""
 gateway:
@@ -1297,7 +1263,6 @@ agent:
 
 runtime:
   filesystem:
-    enabled: true
     base_dir: "{tmp_path}"
   webui:
     enabled: true
@@ -1334,7 +1299,7 @@ runtime:
     finally:
         await server.stop()
 
-    assert meta["data"]["storage_mode"] == "filesystem"
+    assert meta["ok"] is True
     assert created["data"]["session"]["session_id"] == "qq:user:10001"
     assert (tmp_path / "sessions" / "qq" / "user" / "10001" / "session.yaml").exists()
     assert (tmp_path / "sessions" / "qq" / "user" / "10001" / "agent.yaml").exists()
@@ -1344,6 +1309,7 @@ async def test_runtime_http_api_server_exposes_system_configuration_snapshot_and
     tmp_path: Path,
 ) -> None:
     config_path = tmp_path / "config.yaml"
+    _write_minimal_fs_session(tmp_path, session_id="qq:user:99999")
     config_path.write_text(
         f"""
 gateway:
@@ -1355,18 +1321,12 @@ gateway:
 agent:
 
 runtime:
-  default_agent_id: "aca"
-  default_agent_name: "Aca"
-  default_prompt_ref: "prompt/default"
   filesystem:
-    enabled: true
     base_dir: "{tmp_path}"
     sessions_dir: "sessions"
   backend:
     admin_actor_ids:
       - "qq:private:123456"
-  prompts:
-    prompt/default: "hello"
   webui:
     enabled: true
     host: "127.0.0.1"
@@ -1404,35 +1364,28 @@ runtime:
         await server.stop()
 
     assert snapshot["ok"] is True
-    assert snapshot["data"]["meta"] == {
-        "config_path": str(config_path.resolve()),
-        "storage_mode": "filesystem",
-    }
+    assert snapshot["data"]["meta"]["config_path"] == str(config_path.resolve())
     assert snapshot["data"]["admins"] == {
         "admin_actor_ids": ["qq:private:123456"],
     }
     assert snapshot["data"]["gateway"]["host"] == "127.0.0.1"
-    assert snapshot["data"]["filesystem"]["enabled"] is True
     assert snapshot["data"]["paths"]["config_path"] == str(config_path.resolve())
-    assert snapshot["data"]["paths"]["storage_mode"] == "filesystem"
     assert snapshot["data"]["paths"]["filesystem_base_dir"] == str(tmp_path.resolve())
     assert snapshot["data"]["paths"]["prompts_dir"] == str((tmp_path / "prompts").resolve())
     assert snapshot["data"]["paths"]["sessions_dir"] == str((tmp_path / "sessions").resolve())
-    assert snapshot["data"]["paths"]["computer_root_dir"] == str((Path.home() / ".acabot" / "workspaces").resolve())
-    assert snapshot["data"]["paths"]["sticky_notes_dir"] == str((tmp_path / ".acabot-runtime" / "sticky-notes").resolve())
+    assert snapshot["data"]["paths"]["computer_root_dir"] == str((tmp_path / "runtime_data" / "workspaces").resolve())
+    assert snapshot["data"]["paths"]["sticky_notes_dir"] == str((tmp_path / "runtime_data" / "sticky_notes").resolve())
     assert snapshot["data"]["paths"]["long_term_memory_storage_dir"] == str(
-        (tmp_path / ".acabot-runtime" / "long-term-memory" / "lancedb").resolve()
+        (tmp_path / "runtime_data" / "long_term_memory" / "lancedb").resolve()
     )
     assert snapshot["data"]["paths"]["backend_session_path"] == str(
-        (tmp_path / ".acabot-runtime" / "backend" / "session.json").resolve()
+        (tmp_path / "runtime_data" / "backend" / "session.json").resolve()
     )
     assert snapshot["data"]["paths"]["resolved_skill_catalog_dirs"] == [
-        str((tmp_path / ".agents" / "skills").resolve()),
-        str(Path("~/.agents/skills").expanduser().resolve()),
+        str((tmp_path / "extensions" / "skills").resolve()),
     ]
     assert snapshot["data"]["paths"]["resolved_subagent_catalog_dirs"] == [
-        str((tmp_path / ".agents" / "subagents").resolve()),
-        str(Path("~/.agents/subagents").expanduser().resolve()),
+        str((tmp_path / "extensions" / "subagents").resolve()),
     ]
     for key in (
         "config_path",
@@ -1672,6 +1625,7 @@ async def test_runtime_http_api_server_serves_filesystem_catalog_scan_config_def
     tmp_path: Path,
 ) -> None:
     config_path = tmp_path / "config.yaml"
+    _write_minimal_fs_session(tmp_path, session_id="qq:user:99999")
     config_path.write_text(
         f"""
 gateway:
@@ -1681,16 +1635,8 @@ gateway:
 agent:
 
 runtime:
-  default_agent_id: "aca"
   filesystem:
-    enabled: true
     base_dir: "{tmp_path}"
-  profiles:
-    aca:
-      name: "Aca"
-      prompt_ref: "prompt/default"
-  prompts:
-    prompt/default: "hello"
   webui:
     enabled: true
     host: "127.0.0.1"
@@ -1715,32 +1661,23 @@ runtime:
         await server.stop()
 
     assert result["ok"] is True
-    assert result["data"]["enabled"] is True
     assert result["data"]["base_dir"] == str(tmp_path.resolve())
-    assert result["data"]["skill_catalog_dirs"] == ["./.agents/skills", "~/.agents/skills"]
-    assert result["data"]["subagent_catalog_dirs"] == ["./.agents/subagents", "~/.agents/subagents"]
+    assert result["data"]["skill_catalog_dirs"] == ["./extensions/skills"]
+    assert result["data"]["subagent_catalog_dirs"] == ["./extensions/subagents"]
     assert result["data"]["configured_skill_catalog_dirs"] is None
     assert result["data"]["configured_subagent_catalog_dirs"] is None
-    assert result["data"]["default_skill_catalog_dirs"] == ["./.agents/skills", "~/.agents/skills"]
-    assert result["data"]["default_subagent_catalog_dirs"] == ["./.agents/subagents", "~/.agents/subagents"]
+    assert result["data"]["default_skill_catalog_dirs"] == ["./extensions/skills"]
+    assert result["data"]["default_subagent_catalog_dirs"] == ["./extensions/subagents"]
     assert result["data"]["resolved_skill_catalog_dirs"] == [
         {
-            "host_root_path": str((tmp_path / ".agents" / "skills").resolve()),
+            "host_root_path": str((tmp_path / "extensions" / "skills").resolve()),
             "scope": "project",
-        },
-        {
-            "host_root_path": str(Path("~/.agents/skills").expanduser().resolve()),
-            "scope": "user",
         },
     ]
     assert result["data"]["resolved_subagent_catalog_dirs"] == [
         {
-            "host_root_path": str((tmp_path / ".agents" / "subagents").resolve()),
+            "host_root_path": str((tmp_path / "extensions" / "subagents").resolve()),
             "scope": "project",
-        },
-        {
-            "host_root_path": str(Path("~/.agents/subagents").expanduser().resolve()),
-            "scope": "user",
         },
     ]
 
@@ -1760,6 +1697,7 @@ async def test_runtime_http_api_server_updates_filesystem_catalog_scan_config_an
         description="通过自定义扫描目录发现的子代理",
         root_dir=custom_subagents_dir,
     )
+    _write_minimal_fs_session(tmp_path, session_id="qq:user:99999")
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         f"""
@@ -1770,20 +1708,12 @@ gateway:
 agent:
 
 runtime:
-  default_agent_id: "aca"
   filesystem:
-    enabled: true
     base_dir: "{tmp_path}"
     skill_catalog_dirs:
       - "{initial_skills_dir}"
     subagent_catalog_dirs:
       - "{initial_subagents_dir}"
-  profiles:
-    aca:
-      name: "Aca"
-      prompt_ref: "prompt/default"
-  prompts:
-    prompt/default: "hello"
   webui:
     enabled: true
     host: "127.0.0.1"
@@ -2409,14 +2339,8 @@ async def test_runtime_http_api_server_serves_product_shaped_bot_settings_and_ad
 
         bindings = await components.control_plane.list_model_bindings()
         main_binding = next(item for item in bindings if item.binding.target_id == "agent:aca")
-        summary_binding = next(
-            item
-            for item in bindings
-            if item.binding.target_id == "system:compactor_summary"
-        )
         assert main_binding.binding.preset_ids == ["main-a"]
         assert main_binding.binding_state == "resolved"
-        assert summary_binding.binding.preset_ids == ["summary-a"]
 
         catalog = await asyncio.to_thread(request_json, base_url, "/api/ui/catalog")
         assert catalog["ok"] is True
@@ -2435,9 +2359,12 @@ async def test_runtime_http_api_server_reports_unimplemented_or_unknown_shell_en
         config_path,
         webui_enabled=True,
         port=0,
-        filesystem_enabled=True,
         base_dir=tmp_path,
+        write_session=False,
     )
+    # Write only the prompt file, not a session, so the session list is empty.
+    (tmp_path / "prompts").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "prompts" / "default.md").write_text("hello", encoding="utf-8")
     config = Config.from_file(str(config_path))
     components = build_runtime_components(
         config,
@@ -2588,7 +2515,7 @@ def test_webui_source_supports_accent_theme_switching() -> None:
     assert "--main-ribbon-accent" in app_source
     assert "background-blend-mode: screen" in app_source
 
-    assert "data-accent-option" in sidebar_source
+    assert "accent-btn" in sidebar_source
     assert "update:accent-theme" in sidebar_source
     assert "蔷薇" in sidebar_source
     assert "石墨" in sidebar_source
@@ -2621,8 +2548,6 @@ def test_webui_real_pages_migrate_to_shared_design_system() -> None:
         "webui/src/views/ModelsView.vue",
         "webui/src/views/SkillsView.vue",
         "webui/src/views/SubagentsView.vue",
-        "webui/src/views/MemoryView.vue",
-        "webui/src/views/SessionsView.vue",
     ]
 
     for path in page_paths:

@@ -68,7 +68,7 @@ class FakeModelRegistry:
 
     def resolve_target_request(self, target_id: str) -> RuntimeModelRequest | None:
         self.resolve_target_request_calls.append(target_id)
-        if target_id != "system:image_caption":
+        if target_id not in ("system:image_caption", "agent:aca:image_caption"):
             return None
         return RuntimeModelRequest(
             provider_kind="openai_compatible",
@@ -231,7 +231,7 @@ async def test_message_preparation_service_record_only_uses_fallback_caption_req
     assert ctx.message_projection is not None
     assert ctx.message_projection.history_text.endswith("[系统补充-图片说明: caption-1]")
     assert len(ctx.resolved_images) == 1
-    assert registry.resolve_target_request_calls == ["system:image_caption"]
+    assert registry.resolve_target_request_calls == ["agent:aca:image_caption"]
     assert len(agent.calls) == 1
 
 

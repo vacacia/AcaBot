@@ -252,7 +252,7 @@ from .control.prompt_loader import (
     ReloadablePromptLoader,
     StaticPromptLoader,
 )
-from .control.session_loader import ConfigBackedSessionConfigLoader, SessionConfigLoader, StaticSessionConfigLoader
+from .control.session_loader import SessionConfigLoader, StaticSessionConfigLoader
 from .control.session_runtime import SessionRuntime
 from .references import (
     LocalReferenceBackend,
@@ -523,7 +523,6 @@ __all__ = [
     "RuntimeRouter",
     "SessionConfig",
     "SessionConfigLoader",
-    "ConfigBackedSessionConfigLoader",
     "StaticSessionConfigLoader",
     "SessionLocatorResult",
     "SessionRuntime",

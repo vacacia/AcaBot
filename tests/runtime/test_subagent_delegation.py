@@ -149,7 +149,6 @@ async def test_subagent_delegation_broker_rejects_self_delegate(
     broker = SubagentDelegationBroker(
         catalog=_catalog(tmp_path),
         execution_service=object(),
-        default_agent_id="aca",
     )
 
     result = await broker.delegate(

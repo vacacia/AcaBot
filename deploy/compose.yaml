@@ -1,11 +1,10 @@
 # AcaBot + NapCat 运行环境
 #
-# 使用方法:
-#   1. 进入 runtime-env/
-#   2. 复制 .env.example -> .env
-#   3. 复制 config.example.yaml -> config.yaml
-#   4. 准备 runtime-config/ 与 runtime-data/
-#   5. docker compose up -d --build
+# 生产模式:
+#   cd deploy && cp .env.example .env && docker compose up -d --build
+#
+# 开发模式:
+#   cd deploy && docker compose -f compose.yaml -f compose.dev.yaml up
 
 services:
   acabot:
@@ -18,15 +17,14 @@ services:
       - "${ACABOT_PORT:-8080}:8080"
       - "${ACABOT_WEBUI_PORT:-8765}:8765"
     volumes:
-      - ./config.yaml:/app/runtime-env/config.yaml
-      - ./.env:/app/.env:ro
-      - ./runtime-config:/app/runtime-env/runtime-config
-      - ./runtime-data:/app/runtime-env/runtime-data
-      - ../src:/app/src
-      - ../plugins:/app/plugins
+      - ../config.yaml:/app/config.yaml
+      - ../.env:/app/.env:ro
+      - ../runtime_config:/app/runtime_config
+      - ../runtime_data:/app/runtime_data
+      - ../extensions:/app/extensions
     environment:
       - TZ=Asia/Shanghai
-      - ACABOT_CONFIG=/app/runtime-env/config.yaml
+      - ACABOT_CONFIG=/app/config.yaml
     networks:
       - acabot_network
 
@@ -35,7 +33,7 @@ services:
     container_name: acabot-napcat
     restart: unless-stopped
     ports:
-      - "${NAPCAT_WEBUI_PORT:-6099}:6099"
+      - "${NAPCAT_WEBUI_PORT:-6100}:6099"
     environment:
       - NAPCAT_UID=${NAPCAT_UID:-1000}
       - NAPCAT_GID=${NAPCAT_GID:-1000}

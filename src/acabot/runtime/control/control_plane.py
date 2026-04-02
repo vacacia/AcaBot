@@ -322,7 +322,6 @@ class RuntimeControlPlane:
         return {
             "meta": {
                 "config_path": str(path_overview.get("config_path", "") or ""),
-                "storage_mode": str(path_overview.get("storage_mode", "") or ""),
             },
             "gateway": self.config_control_plane.get_gateway_config(),
             "filesystem": self.config_control_plane.get_filesystem_scan_config(),
@@ -817,11 +816,6 @@ class RuntimeControlPlane:
             if self.config_control_plane is not None
             else []
         )
-        default_agent_id = (
-            str(self.config_control_plane.default_frontstage_agent.agent_id or "")
-            if self.config_control_plane is not None
-            else ""
-        )
         agent_items: list[dict[str, object]] = []
         seen_agent_ids: set[str] = set()
         for bundle in session_bundles:
@@ -837,31 +831,12 @@ class RuntimeControlPlane:
                 }
             )
             seen_agent_ids.add(agent_id)
-        if (
-            self.config_control_plane is not None
-            and default_agent_id
-            and default_agent_id not in seen_agent_ids
-        ):
-            agent_items.append(
-                {
-                    "agent_id": default_agent_id,
-                    "name": str(self.config_control_plane.default_frontstage_agent.name or default_agent_id),
-                }
-            )
         skills = await self.list_skills()
         subagents = await self.list_subagents()
         providers = await self.list_model_providers()
         presets = await self.list_model_presets()
         bindings = await self.list_model_bindings()
         return {
-            "bot": {
-                "agent_id": default_agent_id,
-                "name": (
-                    str(self.config_control_plane.default_frontstage_agent.name or default_agent_id)
-                    if self.config_control_plane is not None
-                    else default_agent_id
-                ),
-            },
             "agents": agent_items,
             "prompts": [
                 {

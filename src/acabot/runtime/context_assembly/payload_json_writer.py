@@ -8,7 +8,7 @@
     PayloadJsonWriter
         |
         v
-    debug/model-payloads/*.json
+    debug/model_payloads/*.json
 
 这一层不决定上下文怎么组装, 也不决定 agent 怎么执行.
 它只负责把最终要发给模型的 payload 写成可读的 json 文件.

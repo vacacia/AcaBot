@@ -1,14 +1,13 @@
-"""runtime.bootstrap.loaders 构造前台 agent、prompt 和 session runtime."""
+"""runtime.bootstrap.loaders 构造 prompt、session runtime 和 bootstrap defaults."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from acabot.config import Config
 
-from ..computer import ComputerPolicy, parse_computer_policy
-from ..contracts import ResolvedAgent
+from ..computer import ComputerPolicy
 from ..control.prompt_loader import (
     ChainedPromptLoader,
     FileSystemPromptLoader,
@@ -16,78 +15,32 @@ from ..control.prompt_loader import (
     StaticPromptLoader,
 )
 from ..control.session_bundle_loader import SessionBundleLoader
-from ..control.session_loader import ConfigBackedSessionConfigLoader, SessionConfigLoader
+from ..control.session_loader import SessionConfigLoader
 from ..control.session_runtime import SessionRuntime
 from ..subagents import SubagentCatalog
 from .config import resolve_filesystem_path
 
 
-def _normalize_string_list(raw_items: object) -> list[str]:
-    items: list[str] = []
-    seen: set[str] = set()
-    for item in list(raw_items or []):
-        text = str(item or "").strip()
-        if not text or text in seen:
-            continue
-        items.append(text)
-        seen.add(text)
-    return items
+@dataclass(frozen=True, slots=True)
+class BootstrapDefaults:
+    """Bootstrap 期间的种子默认值。不是 agent，不参与路由/UI/model target。"""
+
+    prompt_ref: str = "prompt/default"
+    computer_policy: ComputerPolicy | None = None
 
 
-def _filesystem_session_storage_enabled(fs_conf: dict[str, object]) -> bool:
-    """是否显式启用了 session bundle 文件真源."""
-
-    return bool(fs_conf.get("enabled", False))
-
-
-def build_default_frontstage_agent(
+def build_bootstrap_defaults(
     config: Config,
     *,
     default_computer_policy: ComputerPolicy,
-) -> ResolvedAgent:
-    """从当前配置构造 inline 模式下的默认前台 agent."""
+) -> BootstrapDefaults:
+    """从 config 构造 bootstrap 种子默认值。"""
 
-    runtime_conf = dict(config.get("runtime", {}) or {})
-    agent_conf = dict(config.get("agent", {}) or {})
-    agent_id = str(runtime_conf.get("default_agent_id", "default") or "default")
-    prompt_ref = str(runtime_conf.get("default_prompt_ref", "prompt/default") or "prompt/default")
-    merged_config: dict[str, Any] = dict(agent_conf)
-    for key in ("max_tool_rounds", "image_caption", "context_management"):
-        if key in runtime_conf:
-            merged_config[key] = runtime_conf[key]
-    return ResolvedAgent(
-        agent_id=agent_id,
-        name=str(runtime_conf.get("default_agent_name", agent_id) or agent_id),
-        prompt_ref=prompt_ref,
-        enabled_tools=_normalize_string_list(runtime_conf.get("enabled_tools", [])),
-        skills=_normalize_string_list(runtime_conf.get("skills", [])),
-        visible_subagents=_normalize_string_list(runtime_conf.get("visible_subagents", [])),
-        computer_policy=parse_computer_policy(
-            runtime_conf.get("computer"),
-            defaults=default_computer_policy,
-        ),
-        config=merged_config,
+    _ = config
+    return BootstrapDefaults(
+        prompt_ref="prompt/default",
+        computer_policy=default_computer_policy,
     )
-
-
-def build_prompt_map(
-    config: Config,
-    *,
-    prompt_refs: set[str] | None = None,
-) -> dict[str, str]:
-    """构造 inline prompt 映射."""
-
-    runtime_conf = dict(config.get("runtime", {}) or {})
-    agent_conf = dict(config.get("agent", {}) or {})
-    prompts = {
-        str(prompt_ref or "").strip(): str(prompt_text or "")
-        for prompt_ref, prompt_text in dict(runtime_conf.get("prompts", {}) or {}).items()
-        if str(prompt_ref or "").strip()
-    }
-    default_prompt_text = str(agent_conf.get("system_prompt", "") or "")
-    for prompt_ref in set(prompt_refs or set()):
-        prompts.setdefault(prompt_ref, default_prompt_text)
-    return prompts
 
 
 def build_prompt_loader(
@@ -96,25 +49,23 @@ def build_prompt_loader(
     prompt_refs: set[str] | None = None,
     subagent_catalog: SubagentCatalog | None = None,
 ) -> PromptLoader:
-    """构造 prompt loader."""
+    """构造 prompt loader（filesystem-only，无 inline）."""
 
     runtime_conf = dict(config.get("runtime", {}) or {})
     fs_conf = dict(runtime_conf.get("filesystem", {}) or {})
-    prompt_map = build_prompt_map(config, prompt_refs=prompt_refs)
-    prompt_map.update(_build_subagent_prompt_map(subagent_catalog))
-    static_loader = StaticPromptLoader(prompt_map)
-    if not bool(fs_conf.get("enabled", False)):
-        return static_loader
+    subagent_prompts = _build_subagent_prompt_map(subagent_catalog)
     prompts_dir = resolve_filesystem_path(
         config,
         fs_conf,
         key="prompts_dir",
         default="prompts",
     )
-    return ChainedPromptLoader([
+    loaders: list[PromptLoader] = [
         FileSystemPromptLoader(prompts_dir),
-        static_loader,
-    ])
+    ]
+    if subagent_prompts:
+        loaders.append(StaticPromptLoader(subagent_prompts))
+    return ChainedPromptLoader(loaders)
 
 
 def _build_subagent_prompt_map(subagent_catalog: SubagentCatalog | None) -> dict[str, str]:
@@ -140,19 +91,13 @@ def build_prompt_refs(
     prompt_refs: set[str] | None = None,
     subagent_catalog: SubagentCatalog | None = None,
 ) -> set[str]:
-    """枚举当前 runtime 已知的 prompt_ref 集合."""
+    """枚举当前 runtime 已知的 prompt_ref 集合（filesystem-only）."""
 
     runtime_conf = dict(config.get("runtime", {}) or {})
     fs_conf = dict(runtime_conf.get("filesystem", {}) or {})
-    refs = {
-        str(prompt_ref or "").strip()
-        for prompt_ref in dict(runtime_conf.get("prompts", {}) or {})
-        if str(prompt_ref or "").strip()
-    }
+    refs: set[str] = set()
     refs.update(str(prompt_ref or "").strip() for prompt_ref in set(prompt_refs or set()) if str(prompt_ref or "").strip())
     refs.update(_build_subagent_prompt_map(subagent_catalog).keys())
-    if not bool(fs_conf.get("enabled", False)):
-        return refs
     prompts_dir = resolve_filesystem_path(
         config,
         fs_conf,
@@ -176,16 +121,11 @@ def build_session_bundle_loader(
     skill_names: set[str],
     subagent_names: set[str],
     model_target_ids: set[str] | None = None,
-) -> SessionBundleLoader | None:
-    """按当前配置构造 session bundle loader.
-
-    当 runtime 还没有启用 filesystem session 真源时返回 `None`.
-    """
+) -> SessionBundleLoader:
+    """按当前配置构造 session bundle loader（始终构造，filesystem-only）."""
 
     runtime_conf = dict(config.get("runtime", {}) or {})
     fs_conf = dict(runtime_conf.get("filesystem", {}) or {})
-    if not _filesystem_session_storage_enabled(fs_conf):
-        return None
     sessions_dir = resolve_filesystem_path(
         config,
         fs_conf,
@@ -214,25 +154,23 @@ def _prompt_ref_from_path(prompts_dir: Path, path: Path) -> str:
 
 
 def build_session_runtime(config: Config) -> SessionRuntime:
-    """构造 session-config 驱动的决策运行时."""
+    """构造 session-config 驱动的决策运行时（filesystem-only）."""
 
     runtime_conf = dict(config.get("runtime", {}) or {})
     fs_conf = dict(runtime_conf.get("filesystem", {}) or {})
-    if _filesystem_session_storage_enabled(fs_conf):
-        sessions_dir = resolve_filesystem_path(
-            config,
-            fs_conf,
-            key="sessions_dir",
-            default="sessions",
-        )
-        return SessionRuntime(SessionConfigLoader(config_root=sessions_dir))
-    return SessionRuntime(ConfigBackedSessionConfigLoader(config))
+    sessions_dir = resolve_filesystem_path(
+        config,
+        fs_conf,
+        key="sessions_dir",
+        default="sessions",
+    )
+    return SessionRuntime(SessionConfigLoader(config_root=sessions_dir))
 
 
 __all__ = [
-    "build_default_frontstage_agent",
+    "BootstrapDefaults",
+    "build_bootstrap_defaults",
     "build_prompt_loader",
-    "build_prompt_map",
     "build_prompt_refs",
     "build_session_bundle_loader",
     "build_session_runtime",

@@ -1,11 +1,16 @@
+import shutil
 from pathlib import Path
+
+import pytest
 
 from acabot.config import Config
 from acabot.runtime import build_runtime_components
 from acabot.runtime.app import RuntimeApp
 from acabot.runtime.backend.contracts import BackendRequest
 from acabot.runtime.backend.mode_registry import BackendModeRegistry
-from acabot.runtime.contracts import ResolvedAgent, RouteDecision
+from acabot.runtime.contracts import ResolvedAgent, RouteDecision, SessionConfig
+from acabot.runtime.control.session_loader import StaticSessionConfigLoader
+from acabot.runtime.control.session_runtime import SessionRuntime
 from acabot.runtime.router import RuntimeRouter
 from acabot.runtime.storage.event_store import InMemoryChannelEventStore
 from acabot.runtime.storage.runs import InMemoryRunManager
@@ -80,7 +85,7 @@ def _build_app(
     pipeline = TrackingPipeline()
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(default_agent_id="aca"),
+        router=RuntimeRouter(session_runtime=SessionRuntime(StaticSessionConfigLoader(SessionConfig(session_id="", template_id="default", frontstage_agent_id="aca")))),
         thread_manager=InMemoryThreadManager(),
         run_manager=InMemoryRunManager(),
         channel_event_store=InMemoryChannelEventStore(),
@@ -178,6 +183,10 @@ async def test_non_admin_message_still_goes_to_pipeline() -> None:
     assert len(pipeline.execute_calls) == 1
 
 
+_has_pi = shutil.which("pi") is not None
+
+
+@pytest.mark.skipif(not _has_pi, reason="pi binary not available")
 async def test_build_runtime_components_enabled_backend_admin_bang_routes_to_real_backend(
     tmp_path: Path,
 ) -> None:
@@ -217,6 +226,7 @@ async def test_build_runtime_components_enabled_backend_admin_bang_routes_to_rea
     await components.backend_bridge.session.adapter.dispose()
 
 
+@pytest.mark.skipif(not _has_pi, reason="pi binary not available")
 async def test_build_runtime_components_enabled_backend_maintain_followup_routes_to_real_backend(
     tmp_path: Path,
 ) -> None:

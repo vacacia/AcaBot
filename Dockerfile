@@ -1,19 +1,14 @@
 FROM python:3.11-slim
-
 WORKDIR /app
 
 RUN pip install uv --no-cache-dir
 
-
 COPY pyproject.toml ./
-RUN uv pip install --system -e "."
-
-
 COPY src/ src/
-COPY plugins/ plugins/
+RUN uv pip install --system .
 
-EXPOSE 8080
+COPY extensions/ extensions/
 
-ENV PYTHONPATH=/app/src
-
+EXPOSE 8080 8765
+ENV PYTHONPATH=/app/src:/app/extensions
 CMD ["python", "-m", "acabot.main"]

@@ -72,17 +72,34 @@ class ConfigExampleAgent(BaseAgent):
 async def test_config_example_builds_runtime_components(tmp_path: Path) -> None:
     """验证 config.example.yaml 仍然指向 runtime 主线."""
 
-    config = Config.from_file(str(Path("config.example.yaml")))
-    config.get("runtime", {}).setdefault("persistence", {})["sqlite_path"] = str(
-        tmp_path / "runtime.db"
-    )
-    components = build_runtime_components(
-        config,
-        gateway=FakeGateway(),
-        agent=ConfigExampleAgent(),
-    )
-    await components.plugin_manager.ensure_started()
+    # Create the default prompt file expected by config.example.yaml
+    prompts_dir = Path("runtime_config") / "prompts" / "default"
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+    prompt_file = prompts_dir / "index.md"
+    created_prompt = not prompt_file.exists()
+    if created_prompt:
+        prompt_file.write_text("you are a helpful assistant.", encoding="utf-8")
 
-    assert components.router.default_agent_id == "aca"
-    assert components.prompt_loader.load("prompt/default").strip() == "you are a helpful assistant."
-    assert [plugin.name for plugin in components.plugin_manager.loaded] == ["backend_bridge_tool", "ops_control"]
+    try:
+        config = Config.from_file(str(Path("config.example.yaml")))
+        config.get("runtime", {}).setdefault("persistence", {})["sqlite_path"] = str(
+            tmp_path / "runtime.db"
+        )
+        components = build_runtime_components(
+            config,
+            gateway=FakeGateway(),
+            agent=ConfigExampleAgent(),
+        )
+        await components.plugin_manager.ensure_started()
+
+        assert components.prompt_loader.load("prompt/default").strip() == "you are a helpful assistant."
+        assert [plugin.name for plugin in components.plugin_manager.loaded] == ["backend_bridge_tool", "ops_control"]
+    finally:
+        if created_prompt and prompt_file.exists():
+            prompt_file.unlink()
+        # Clean up empty dirs
+        try:
+            prompts_dir.rmdir()
+            prompts_dir.parent.rmdir()
+        except OSError:
+            pass

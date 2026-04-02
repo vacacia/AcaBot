@@ -17,18 +17,9 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 data/
-runtime-data/
-runtime-config/
-runtime-env/.env
-runtime-env/config.yaml
-runtime-env/runtime-config/
-runtime-env/runtime-data/
-runtime-env/napcat
 *.db
 .env
 config.yaml
-napcat/QQ/
-napcat/config
 agent-first
 TODO.md
 .vscode/settings.json
@@ -37,10 +28,13 @@ backup
 
 docs/explore
 
-.acabot-runtime/
+runtime_data/
+runtime_config/
+deploy/napcat/
+deploy/.env
+
 webui/node_modules/
 webui/.vite/
-
 
 notes
 docs/ex

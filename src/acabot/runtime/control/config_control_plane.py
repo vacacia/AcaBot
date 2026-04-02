@@ -23,7 +23,8 @@ from acabot.config import Config
 
 from ..bootstrap.config import resolve_runtime_path as _resolve_runtime_path
 from ..bootstrap.loaders import (
-    build_default_frontstage_agent as _build_default_frontstage_agent_from_config,
+    BootstrapDefaults,
+    build_bootstrap_defaults as _build_bootstrap_defaults,
     build_prompt_loader as _build_runtime_prompt_loader,
     build_prompt_refs as _build_runtime_prompt_refs,
     build_session_bundle_loader as _build_runtime_session_bundle_loader,
@@ -43,11 +44,11 @@ from .prompt_loader import (
     ReloadablePromptLoader,
 )
 from .session_bundle_loader import SessionBundleLoader
-from .session_loader import ConfigBackedSessionConfigLoader, SessionConfigLoader
+from .session_loader import SessionConfigLoader
 from .session_runtime import SessionRuntime
 
-DEFAULT_SKILL_CATALOG_DIRS = ["./.agents/skills", "~/.agents/skills"]
-DEFAULT_SUBAGENT_CATALOG_DIRS = ["./.agents/subagents", "~/.agents/subagents"]
+DEFAULT_SKILL_CATALOG_DIRS = ["./extensions/skills"]
+DEFAULT_SUBAGENT_CATALOG_DIRS = ["./extensions/subagents"]
 
 
 def _resolve_filesystem_path(
@@ -128,15 +129,8 @@ def _build_session_runtime(config: Config) -> SessionRuntime:
 
     runtime_conf = config.get("runtime", {})
     fs_conf = dict(runtime_conf.get("filesystem", {}))
-    if _session_bundle_storage_enabled(fs_conf):
-        sessions_dir = _resolve_filesystem_path(
-            config,
-            fs_conf,
-            key="sessions_dir",
-            default="sessions",
-        )
-        return SessionRuntime(SessionConfigLoader(config_root=sessions_dir))
-    return SessionRuntime(ConfigBackedSessionConfigLoader(config))
+    sessions_dir = _resolve_filesystem_path(config, fs_conf, key="sessions_dir", default="sessions")
+    return SessionRuntime(SessionConfigLoader(config_root=sessions_dir))
 
 
 def _default_computer_policy(config: Config) -> ComputerPolicy:
@@ -159,12 +153,6 @@ def _default_computer_policy(config: Config) -> ComputerPolicy:
         network_mode=str(computer_conf.get("network_mode", "enabled") or "enabled"),
     )
     return parse_computer_policy(computer_conf, defaults=defaults)
-
-
-def _session_bundle_storage_enabled(fs_conf: dict[str, object]) -> bool:
-    """是否显式启用了 session bundle 文件真源."""
-
-    return bool(fs_conf.get("enabled", False))
 
 
 def _surfaces_to_view(session: Any) -> dict[str, Any]:
@@ -202,7 +190,7 @@ class RuntimeConfigControlPlane:
         *,
         config: Config,
         router: RuntimeRouter,
-        default_frontstage_agent: ResolvedAgent,
+        bootstrap_defaults: BootstrapDefaults,
         session_bundle_loader: SessionBundleLoader | None,
         prompt_loader: ReloadablePromptLoader,
         model_registry_manager: FileSystemModelRegistryManager | None = None,
@@ -212,14 +200,14 @@ class RuntimeConfigControlPlane:
         tool_broker=None,
         subagent_delegator=None,
         builtin_plugin_factory: Callable[[], list[Any]] | None = None,
-        rebind_agent_loader: Callable[[ResolvedAgent, SessionBundleLoader | None], None] | None = None,
+        rebind_agent_loader: Callable[[SessionBundleLoader | None], None] | None = None,
     ) -> None:
         """初始化 RuntimeConfigControlPlane.
 
         Args:
             config: 当前 runtime 配置.
             router: 当前 runtime router.
-            default_frontstage_agent: inline 模式默认前台 agent.
+            bootstrap_defaults: bootstrap 种子默认值.
             session_bundle_loader: session bundle 真源 loader.
             prompt_loader: 可热刷新的 prompt loader.
             skill_catalog: 可选 skill catalog.
@@ -232,7 +220,7 @@ class RuntimeConfigControlPlane:
 
         self.config = config
         self.router = router
-        self.default_frontstage_agent = default_frontstage_agent
+        self.bootstrap_defaults = bootstrap_defaults
         self.session_bundle_loader = session_bundle_loader
         self.prompt_loader = prompt_loader
         self.model_registry_manager = model_registry_manager
@@ -244,17 +232,6 @@ class RuntimeConfigControlPlane:
         self.builtin_plugin_factory = builtin_plugin_factory
         self.rebind_agent_loader = rebind_agent_loader
 
-    def storage_mode(self) -> str:
-        """返回当前配置存储模式.
-
-        Returns:
-            str: `filesystem` 或 `inline`.
-        """
-
-        runtime_conf = self.config.get("runtime", {})
-        fs_conf = dict(runtime_conf.get("filesystem", {}))
-        return "filesystem" if _session_bundle_storage_enabled(fs_conf) else "inline"
-
     async def reload_runtime_configuration(self) -> dict[str, Any]:
         """重新加载 runtime 配置并热更新相关组件.
 
@@ -263,10 +240,9 @@ class RuntimeConfigControlPlane:
         """
 
         self.config.reload_from_file()
-        default_policy = _default_computer_policy(self.config)
-        self.default_frontstage_agent = _build_default_frontstage_agent_from_config(
+        self.bootstrap_defaults = _build_bootstrap_defaults(
             self.config,
-            default_computer_policy=default_policy,
+            default_computer_policy=_default_computer_policy(self.config),
         )
         if self.subagent_catalog is not None:
             self.subagent_catalog.replace_loader(self._subagent_catalog_loader())
@@ -278,18 +254,13 @@ class RuntimeConfigControlPlane:
         self.prompt_loader.replace_loader(
             _build_runtime_prompt_loader(
                 self.config,
-                prompt_refs={self.default_frontstage_agent.prompt_ref},
+                prompt_refs={self.bootstrap_defaults.prompt_ref},
                 subagent_catalog=self.subagent_catalog,
             )
         )
         self._rebind_agent_loader()
-        self.router.default_agent_id = self.default_frontstage_agent.agent_id
         self.router.session_runtime = _build_session_runtime(self.config)
 
-        if self.tool_broker is not None:
-            self.tool_broker.default_agent_id = self.default_frontstage_agent.agent_id
-        if self.subagent_delegator is not None:
-            self.subagent_delegator.default_agent_id = self.default_frontstage_agent.agent_id
         if self.plugin_manager is not None:
             builtin_plugins = (
                 self.builtin_plugin_factory()
@@ -300,9 +271,7 @@ class RuntimeConfigControlPlane:
             await self.plugin_manager.reload_from_config()
         await self._refresh_session_agent_targets()
         return {
-            "default_agent_id": self.default_frontstage_agent.agent_id,
             "session_count": len(self.list_sessions()),
-            "storage_mode": self.storage_mode(),
         }
 
     def list_sessions(self) -> list[dict[str, Any]]:
@@ -340,8 +309,6 @@ class RuntimeConfigControlPlane:
             for bundle in self.session_bundle_loader.list_bundles():
                 if bundle.frontstage_agent.agent_id == normalized:
                     return ResolvedAgent.from_session_agent(bundle.frontstage_agent)
-        if normalized == self.default_frontstage_agent.agent_id:
-            return self.default_frontstage_agent
         return None
 
     async def create_session(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -366,10 +333,29 @@ class RuntimeConfigControlPlane:
             selectors=dict(payload.get("selectors", {}) or {}),
             surfaces=dict(payload.get("surfaces", {}) or {}),
         )
-        agent_payload = self._build_agent_payload_from_agent(
-            agent_id=agent_id,
-            agent=self.default_frontstage_agent,
-        )
+        agent_payload = {
+            "agent_id": agent_id,
+            "prompt_ref": self.bootstrap_defaults.prompt_ref,
+            "visible_tools": [],
+            "visible_skills": [],
+            "visible_subagents": [],
+        }
+        # 如果 seed prompt 文件不存在，自动创建一份最小默认 prompt
+        seed_prompt_ref = agent_payload["prompt_ref"]
+        prompt_path = self._resolve_prompt_path(seed_prompt_ref)
+        if prompt_path is None or not prompt_path.exists():
+            target = self._path_for_prompt_ref(seed_prompt_ref)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("You are a helpful assistant.\n", encoding="utf-8")
+        if self.bootstrap_defaults.computer_policy is not None:
+            cp = self.bootstrap_defaults.computer_policy
+            agent_payload["computer_policy"] = {
+                "backend": cp.backend,
+                "allow_exec": cp.allow_exec,
+                "allow_sessions": cp.allow_sessions,
+                "auto_stage_attachments": cp.auto_stage_attachments,
+                "network_mode": cp.network_mode,
+            }
         self._write_yaml(session_dir / "session.yaml", session_payload)
         self._write_yaml(session_dir / "agent.yaml", agent_payload)
         try:
@@ -478,7 +464,7 @@ class RuntimeConfigControlPlane:
             self.config,
             prompt_refs=_build_runtime_prompt_refs(
                 self.config,
-                prompt_refs={self.default_frontstage_agent.prompt_ref},
+                prompt_refs={self.bootstrap_defaults.prompt_ref},
                 subagent_catalog=self.subagent_catalog,
             ),
             tool_names=tool_names,
@@ -493,9 +479,9 @@ class RuntimeConfigControlPlane:
 
         if self.model_registry_manager is None:
             return
-        agents: list[ResolvedAgent] = [self.default_frontstage_agent]
+        agents: list[ResolvedAgent] = []
         if self.session_bundle_loader is not None:
-            seen_agent_ids = {self.default_frontstage_agent.agent_id}
+            seen_agent_ids: set[str] = set()
             for bundle in self.session_bundle_loader.list_bundles():
                 resolved = ResolvedAgent.from_session_agent(bundle.frontstage_agent)
                 if resolved.agent_id in seen_agent_ids:
@@ -563,7 +549,7 @@ class RuntimeConfigControlPlane:
         current_conf = dict(runtime_conf.get("long_term_memory", {}) or {})
         normalized = {
             "enabled": bool(current_conf.get("enabled", False)),
-            "storage_dir": str(current_conf.get("storage_dir", "long-term-memory/lancedb") or "long-term-memory/lancedb"),
+            "storage_dir": str(current_conf.get("storage_dir", "long_term_memory/lancedb") or "long_term_memory/lancedb"),
             "window_size": max(1, int(current_conf.get("window_size", 50) or 50)),
             "overlap_size": max(0, int(current_conf.get("overlap_size", 10) or 10)),
             "max_entries": max(1, int(current_conf.get("max_entries", 8) or 8)),
@@ -601,7 +587,6 @@ class RuntimeConfigControlPlane:
         configured_skill_catalog_dirs = self._configured_catalog_dir_values("skill_catalog_dirs")
         configured_subagent_catalog_dirs = self._configured_catalog_dir_values("subagent_catalog_dirs")
         return {
-            "enabled": bool(fs_conf.get("enabled", False)),
             "base_dir": str(base_dir.resolve()),
             "skill_catalog_dirs": _normalize_catalog_dir_values(
                 fs_conf.get("skill_catalog_dirs"),
@@ -708,31 +693,17 @@ class RuntimeConfigControlPlane:
         """
 
         prompts: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        runtime_conf = self.config.get("runtime", {})
-        if self.storage_mode() == "filesystem":
-            prompts_dir = self._prompts_dir()
-            if prompts_dir.exists():
-                for path in sorted(prompts_dir.rglob("*")):
-                    if not path.is_file() or path.suffix not in {".md", ".txt", ".prompt"}:
-                        continue
-                    prompt_ref = self._prompt_ref_from_path(path)
-                    prompts.append({
-                        "prompt_ref": prompt_ref,
-                        "content": path.read_text(encoding="utf-8"),
-                        "source": "filesystem",
-                    })
-                    seen.add(prompt_ref)
-        for prompt_ref, content in sorted(dict(runtime_conf.get("prompts", {}) or {}).items()):
-            prompt_ref = str(prompt_ref)
-            if prompt_ref in seen:
-                continue
-            prompts.append({
-                "prompt_ref": prompt_ref,
-                "content": str(content or ""),
-                "source": "inline",
-            })
-            seen.add(prompt_ref)
+        prompts_dir = self._prompts_dir()
+        if prompts_dir.exists():
+            for path in sorted(prompts_dir.rglob("*")):
+                if not path.is_file() or path.suffix not in {".md", ".txt", ".prompt"}:
+                    continue
+                prompt_ref = self._prompt_ref_from_path(path)
+                prompts.append({
+                    "prompt_ref": prompt_ref,
+                    "content": path.read_text(encoding="utf-8"),
+                    "source": "filesystem",
+                })
         return prompts
 
     def get_prompt(self, prompt_ref: str) -> dict[str, Any] | None:
@@ -748,23 +719,14 @@ class RuntimeConfigControlPlane:
         prompt_ref = str(prompt_ref or "").strip()
         if not prompt_ref:
             return None
-        if self.storage_mode() == "filesystem":
-            path = self._resolve_prompt_path(prompt_ref)
-            if path is not None and path.exists():
-                return {
-                    "prompt_ref": prompt_ref,
-                    "content": path.read_text(encoding="utf-8"),
-                    "source": "filesystem",
-                }
-        runtime_conf = self.config.get("runtime", {})
-        prompts_conf = dict(runtime_conf.get("prompts", {}) or {})
-        if prompt_ref not in prompts_conf:
-            return None
-        return {
-            "prompt_ref": prompt_ref,
-            "content": str(prompts_conf[prompt_ref] or ""),
-            "source": "inline",
-        }
+        path = self._resolve_prompt_path(prompt_ref)
+        if path is not None and path.exists():
+            return {
+                "prompt_ref": prompt_ref,
+                "content": path.read_text(encoding="utf-8"),
+                "source": "filesystem",
+            }
+        return None
 
     async def upsert_prompt(self, prompt_ref: str, content: str) -> dict[str, Any]:
         """新增或更新一个 prompt.
@@ -780,19 +742,9 @@ class RuntimeConfigControlPlane:
         prompt_ref = str(prompt_ref or "").strip()
         if not prompt_ref.startswith("prompt/"):
             raise ValueError("prompt_ref must start with 'prompt/'")
-        if self.storage_mode() == "filesystem":
-            path = self._path_for_prompt_ref(prompt_ref)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
-        else:
-            data = self.config.to_dict()
-            runtime_conf = dict(data.get("runtime", {}) or {})
-            prompts_conf = dict(runtime_conf.get("prompts", {}) or {})
-            prompts_conf[prompt_ref] = str(content)
-            runtime_conf["prompts"] = prompts_conf
-            data["runtime"] = runtime_conf
-            self.config.replace(data)
-            self.config.save()
+        path = self._path_for_prompt_ref(prompt_ref)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
         await self.reload_runtime_configuration()
         result = self.get_prompt(prompt_ref)
         if result is None:
@@ -810,24 +762,12 @@ class RuntimeConfigControlPlane:
         """
 
         existed = False
-        if self.storage_mode() == "filesystem":
-            path = self._resolve_prompt_path(prompt_ref)
-            if path is None:
-                path = self._path_for_prompt_ref(prompt_ref)
-            if path.exists():
-                path.unlink()
-                existed = True
-        else:
-            data = self.config.to_dict()
-            runtime_conf = dict(data.get("runtime", {}) or {})
-            prompts_conf = dict(runtime_conf.get("prompts", {}) or {})
-            if prompt_ref in prompts_conf:
-                prompts_conf.pop(prompt_ref, None)
-                runtime_conf["prompts"] = prompts_conf
-                data["runtime"] = runtime_conf
-                self.config.replace(data)
-                self.config.save()
-                existed = True
+        path = self._resolve_prompt_path(prompt_ref)
+        if path is None:
+            path = self._path_for_prompt_ref(prompt_ref)
+        if path.exists():
+            path.unlink()
+            existed = True
         if existed:
             await self.reload_runtime_configuration()
         return existed
@@ -1062,7 +1002,7 @@ class RuntimeConfigControlPlane:
 
         if self.rebind_agent_loader is None:
             return
-        self.rebind_agent_loader(self.default_frontstage_agent, self.session_bundle_loader)
+        self.rebind_agent_loader(self.session_bundle_loader)
 
     def _filesystem_conf(self) -> dict[str, object]:
         """读取 `runtime.filesystem` 配置块.
@@ -1173,11 +1113,11 @@ class RuntimeConfigControlPlane:
     def _computer_root_dir(self) -> Path:
         """返回 computer runtime 根目录."""
 
-        return _resolve_filesystem_path(
+        runtime_conf = dict(self.config.get("runtime", {}) or {})
+        computer_conf = dict(runtime_conf.get("computer", {}) or {})
+        return _resolve_runtime_path(
             self.config,
-            self._filesystem_conf(),
-            key="computer_root_dir",
-            default=str(Path.home() / ".acabot" / "workspaces"),
+            computer_conf.get("root_dir", "workspaces"),
         )
 
     def _sticky_notes_dir(self) -> Path:
@@ -1186,7 +1126,7 @@ class RuntimeConfigControlPlane:
         runtime_conf = dict(self.config.get("runtime", {}) or {})
         return _resolve_runtime_path(
             self.config,
-            runtime_conf.get("sticky_notes_dir", "sticky-notes"),
+            runtime_conf.get("sticky_notes_dir", "sticky_notes"),
         )
 
     def _long_term_memory_storage_dir(self) -> Path:
@@ -1196,7 +1136,7 @@ class RuntimeConfigControlPlane:
         long_term_memory_conf = dict(runtime_conf.get("long_term_memory", {}) or {})
         return _resolve_runtime_path(
             self.config,
-            long_term_memory_conf.get("storage_dir", "long-term-memory/lancedb"),
+            long_term_memory_conf.get("storage_dir", "long_term_memory/lancedb"),
         )
 
     def _backend_session_path(self) -> Path:
@@ -1219,7 +1159,6 @@ class RuntimeConfigControlPlane:
         config_path = Path(str(self.config.path or "config.yaml")).resolve()
         return {
             "config_path": str(config_path),
-            "storage_mode": self.storage_mode(),
             "filesystem_base_dir": str(base_dir.resolve()),
             "prompts_dir": str(self._prompts_dir().resolve()),
             "sessions_dir": str(self._sessions_dir().resolve()),

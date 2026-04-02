@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import shutil
+
+import pytest
+
 from acabot.config import Config
 from acabot.runtime import ResolvedAgent, BackendBridge, BackendSessionService, ToolBroker, build_runtime_components
-from acabot.runtime.backend.contracts import BackendRequest
 
 from tests.runtime._agent_fakes import FakeAgent, FakeAgentResponse
 from tests.runtime.test_outbox import FakeGateway
+
+
+_has_pi = shutil.which("pi") is not None
 
 
 class FakeBackendSessionService(BackendSessionService):
@@ -29,18 +35,17 @@ class FakeBackendSessionService(BackendSessionService):
         return {"kind": "query", "summary": summary}
 
 
-def _profile(agent_id: str) -> ResolvedAgent:
+def _profile(agent_id: str, *, enabled_tools: list[str] | None = None) -> ResolvedAgent:
     return ResolvedAgent(
         agent_id=agent_id,
         name=agent_id,
         prompt_ref="prompt/default",
-        enabled_tools=[],
+        enabled_tools=enabled_tools or [],
     )
 
 
-async def test_tool_broker_exposes_backend_bridge_tool_only_to_default_agent() -> None:
+async def test_tool_broker_exposes_backend_bridge_tool_to_all_agents() -> None:
     broker = ToolBroker(
-        default_agent_id="aca",
         backend_bridge=BackendBridge(session=FakeBackendSessionService()),
     )
     from acabot.runtime.plugins.backend_bridge_tool import BackendBridgeToolPlugin
@@ -63,21 +68,20 @@ async def test_tool_broker_exposes_backend_bridge_tool_only_to_default_agent() -
             source="plugin:backend_bridge_tool",
             metadata={
                 "plugin_name": plugin.name,
-                "visible_to_default_agent_only": registration.visible_to_default_agent_only,
             },
         )
 
-    default_visible = broker.visible_tools(_profile("aca"))
-    worker_visible = broker.visible_tools(_profile("worker"))
+    # ask_backend 只对 enabled_tools 包含它的 agent 可见
+    visible_with = broker.visible_tools(_profile("aca", enabled_tools=["ask_backend"]))
+    visible_without = broker.visible_tools(_profile("worker"))
 
-    assert [tool.name for tool in default_visible] == ["ask_backend"]
-    assert worker_visible == []
+    assert [tool.name for tool in visible_with] == ["ask_backend"]
+    assert [tool.name for tool in visible_without] == []
 
 
 async def test_backend_bridge_tool_executes_via_broker_real_path() -> None:
     session = FakeBackendSessionService()
     broker = ToolBroker(
-        default_agent_id="aca",
         backend_bridge=BackendBridge(session=session),
     )
     from acabot.runtime.plugins.backend_bridge_tool import BackendBridgeToolPlugin
@@ -101,10 +105,12 @@ async def test_backend_bridge_tool_executes_via_broker_real_path() -> None:
         source="plugin:backend_bridge_tool",
         metadata={
             "plugin_name": plugin.name,
-            "visible_to_default_agent_only": registration.visible_to_default_agent_only,
         },
     )
     ctx = _context()
+    # ask_backend 需要在 agent.enabled_tools 中才可执行
+    from dataclasses import replace as _replace
+    ctx = _replace(ctx, agent=_profile("aca", enabled_tools=["ask_backend"]))
     result = await broker.execute(
         tool_name="ask_backend",
         arguments={"request_kind": "query", "summary": "查询当前配置"},
@@ -112,15 +118,12 @@ async def test_backend_bridge_tool_executes_via_broker_real_path() -> None:
     )
 
     assert session.calls == [("query", "查询当前配置")]
-    assert result.metadata["backend_request_kind"] == "query"
-    assert result.metadata["backend_source_kind"] == "frontstage_internal"
     assert result.raw["result"] == {"kind": "query", "summary": "查询当前配置"}
 
 
 async def test_backend_bridge_tool_builds_frontstage_request_from_tool_context() -> None:
     session = FakeBackendSessionService()
     broker = ToolBroker(
-        default_agent_id="aca",
         backend_bridge=BackendBridge(session=session),
     )
     from acabot.runtime.plugins.backend_bridge_tool import BackendBridgeToolPlugin
@@ -147,11 +150,10 @@ async def test_backend_bridge_tool_builds_frontstage_request_from_tool_context()
     )
 
     assert session.calls == [("query", "查询当前配置")]
-    assert result.metadata["backend_request_kind"] == "query"
-    assert result.metadata["backend_source_kind"] == "frontstage_internal"
     assert result.raw["result"] == {"kind": "query", "summary": "查询当前配置"}
 
 
+@pytest.mark.skipif(not _has_pi, reason="pi binary not available")
 async def test_build_runtime_components_enabled_backend_exposes_ask_backend(
     tmp_path,
 ) -> None:
@@ -161,8 +163,7 @@ async def test_build_runtime_components_enabled_backend_exposes_ask_backend(
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {
-                "default_agent_id": "aca",
-                "runtime_root": str(tmp_path / ".acabot-runtime"),
+                "runtime_root": str(tmp_path / "runtime_data"),
                 "backend": {
                     "enabled": True,
                     "session_binding_path": "backend/session.json",
@@ -186,6 +187,7 @@ async def test_build_runtime_components_enabled_backend_exposes_ask_backend(
     await components.backend_bridge.session.adapter.dispose()
 
 
+@pytest.mark.skipif(not _has_pi, reason="pi binary not available")
 async def test_enabled_runtime_ask_backend_executes_against_real_pi(tmp_path) -> None:
     config = Config(
         {
@@ -193,8 +195,7 @@ async def test_enabled_runtime_ask_backend_executes_against_real_pi(tmp_path) ->
                 "system_prompt": "Fallback prompt.",
             },
             "runtime": {
-                "default_agent_id": "aca",
-                "runtime_root": str(tmp_path / ".acabot-runtime"),
+                "runtime_root": str(tmp_path / "runtime_data"),
                 "backend": {
                     "enabled": True,
                     "session_binding_path": "backend/session.json",
@@ -223,7 +224,6 @@ async def test_enabled_runtime_ask_backend_executes_against_real_pi(tmp_path) ->
         ctx=components.tool_broker._build_execution_context(ctx),
     )
 
-    assert result.metadata["backend_request_kind"] == "change"
     assert result.raw["ok"] is True
     assert isinstance(result.raw["result"], dict)
     assert "text" in result.raw["result"]

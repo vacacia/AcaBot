@@ -1,11 +1,11 @@
 """runtime.control.session_loader 负责把会话配置来源读成运行时对象.
 
-这个模块现在支持两类来源:
+这个模块现在只支持文件系统来源:
 
 - `SessionConfigLoader`: 从 `sessions/<platform>/<scope>/<id>/session.yaml` 读取正式会话配置
-- `ConfigBackedSessionConfigLoader`: 在纯内存配置场景下生成最小 SessionConfig
+- `StaticSessionConfigLoader`: 用于测试等场景的静态内存 loader
 
-两者输出的都是同一套 `SessionConfig` / `SurfaceConfig` / `MatchSpec` 契约.
+输出的都是同一套 `SessionConfig` / `SurfaceConfig` / `MatchSpec` 契约.
 """
 
 from __future__ import annotations
@@ -15,8 +15,6 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-
-from acabot.config import Config
 
 from ..contracts import (
     AdmissionDomainConfig,
@@ -30,6 +28,62 @@ from ..contracts import (
     SessionConfig,
     SurfaceConfig,
 )
+
+
+def _validate_session_id_part(part: str, *, session_id: str) -> str:
+    """校验单段 session_id 片段，避免路径穿越和歧义值."""
+    normalized = str(part or "").strip()
+    if not normalized:
+        raise ValueError(f"invalid session_id: {session_id}")
+    if normalized in {".", ".."}:
+        raise ValueError(f"invalid session_id: {session_id}")
+    if "/" in normalized or "\\" in normalized or "\x00" in normalized:
+        raise ValueError(f"invalid session_id: {session_id}")
+    return normalized
+
+
+def _require_mapping(raw: object, *, label: str, path: Path) -> dict[str, Any]:
+    """确保 raw 是一个 dict，否则报错。None/{} 均返回空 dict。"""
+    if raw is None:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    raise ValueError(f"{label} must be a mapping, got {type(raw).__name__}: {path}")
+
+
+def _require_list(raw: object, *, label: str, path: Path) -> list[Any]:
+    """确保 raw 是一个 list，否则报错。None/[] 均返回空 list。"""
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return raw
+    raise ValueError(f"{label} must be a list, got {type(raw).__name__}: {path}")
+
+
+def _require_string_list(raw: object, *, label: str, path: Path) -> list[str]:
+    """确保 raw 是一个字符串列表。"""
+    items = _require_list(raw, label=label, path=path)
+    return [str(item) for item in items]
+
+
+def _reject_routing_agent_override(payload: dict[str, Any], *, label: str, path: Path) -> None:
+    """不允许在 surface 级别覆盖 routing agent_id。"""
+    if payload.get("agent_id"):
+        raise ValueError(f"routing agent_id override is not supported in {label}: {path}")
+
+
+def _optional_str(value: object) -> str | None:
+    """转换为可选字符串。"""
+    if value is None or value == "":
+        return None
+    return str(value)
+
+
+def _optional_bool(value: object) -> bool | None:
+    """转换为可选布尔值。"""
+    if value is None:
+        return None
+    return bool(value)
 
 
 class SessionConfigLoader:
@@ -336,165 +390,7 @@ class StaticSessionConfigLoader:
         )
 
 
-class ConfigBackedSessionConfigLoader(StaticSessionConfigLoader):
-    """从 `Config` 生成最小 SessionConfig 的 loader.
-
-    这个 loader 只服务于没有 `sessions/` 文件真源的纯内存配置场景.
-    它输出的仍然是正式 `SessionConfig` 契约.
-    """
-
-    def __init__(self, config: Config) -> None:
-        """初始化 config-backed session loader.
-
-        Args:
-            config: 当前 runtime 配置.
-        """
-
-        runtime_conf = dict(config.get("runtime", {}) or {})
-        default_agent_id = str(runtime_conf.get("default_agent_id", "default") or "default")
-        computer_conf = dict(runtime_conf.get("computer", {}) or {})
-        computer_default = {
-            "backend": str(computer_conf.get("backend", "host") or "host"),
-            "allow_exec": bool(computer_conf.get("allow_exec", True)),
-            "allow_sessions": bool(computer_conf.get("allow_sessions", True)),
-        }
-        session = SessionConfig(
-            session_id="inline:default",
-            template_id="inline_default",
-            title="Inline Default Session",
-            frontstage_agent_id=default_agent_id,
-            selectors={},
-            surfaces=_default_surfaces(computer_default),
-            metadata={"config_path": "<inline-session:default>"},
-        )
-        super().__init__(session)
-
-
-def _default_surfaces(
-    computer_default: dict[str, Any],
-) -> dict[str, SurfaceConfig]:
-    """构造最小默认 surface 集合.
-
-    Args:
-        computer_default: 默认 computer 配置.
-
-    Returns:
-        dict[str, SurfaceConfig]: 内建最小 surface 集合.
-    """
-
-    def _surface(mode: str = "respond") -> SurfaceConfig:
-        return SurfaceConfig(
-            routing=RoutingDomainConfig(default={}),
-            admission=AdmissionDomainConfig(default={"mode": mode}),
-            context=ContextDomainConfig(default={}),
-            persistence=PersistenceDomainConfig(default={"persist_event": True}),
-            extraction=ExtractionDomainConfig(default={"tags": []}),
-            computer=ComputerDomainConfig(default=dict(computer_default)),
-        )
-
-    return {
-        "message.mention": _surface("respond"),
-        "message.reply_to_bot": _surface("respond"),
-        "message.command": _surface("respond"),
-        "message.private": _surface("respond"),
-        "message.plain": _surface("respond"),
-        "notice.default": _surface("respond"),
-    }
-
-
-def _optional_str(value: object) -> str | None:
-    """把可空值转成可选字符串.
-
-    Args:
-        value: 原始值.
-
-    Returns:
-        str | None: 空值返回 `None`, 否则返回字符串.
-    """
-
-    if value in (None, ""):
-        return None
-    return str(value)
-
-
-def _optional_bool(value: object) -> bool | None:
-    """把原始值转成可选布尔值.
-
-    Args:
-        value: 原始值.
-
-    Returns:
-        bool | None: 空值返回 `None`, 否则返回布尔值.
-    """
-
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"true", "1", "yes", "on"}:
-            return True
-        if normalized in {"false", "0", "no", "off"}:
-            return False
-    return bool(value)
-
-
-def _validate_session_id_part(part: str, *, session_id: str) -> str:
-    """校验单段 session_id 片段，避免路径穿越和歧义值."""
-
-    normalized = str(part or "").strip()
-    if not normalized:
-        raise ValueError(f"invalid session_id: {session_id}")
-    if normalized in {".", ".."}:
-        raise ValueError(f"invalid session_id: {session_id}")
-    if "/" in normalized or "\\" in normalized or "\x00" in normalized:
-        raise ValueError(f"invalid session_id: {session_id}")
-    return normalized
-
-
-def _reject_routing_agent_override(payload: dict[str, Any], *, label: str, path: Path) -> None:
-    """硬拒绝旧的 routing.agent_id 语义，避免静默失效."""
-
-    if "agent_id" in payload:
-        raise ValueError(f"routing agent_id override is not supported: {label} ({path})")
-
-
-def _require_mapping(raw: object, *, label: str, path: Path) -> dict[str, Any]:
-    """把 YAML 子块校验为 mapping."""
-
-    if raw in (None, ""):
-        return {}
-    if not isinstance(raw, dict):
-        raise ValueError(f"{label} block must be a mapping: {path}")
-    return dict(raw)
-
-
-def _require_list(raw: object, *, label: str, path: Path) -> list[Any]:
-    """把 YAML 子块校验为 list."""
-
-    if raw in (None, ""):
-        return []
-    if not isinstance(raw, list):
-        raise ValueError(f"{label} must be a list: {path}")
-    return list(raw)
-
-
-def _require_string_list(raw: object, *, label: str, path: Path) -> list[str]:
-    """把 YAML 子块校验为字符串列表."""
-
-    items = _require_list(raw, label=label, path=path)
-    normalized: list[str] = []
-    for item in items:
-        text = str(item or "").strip()
-        if not text:
-            continue
-        normalized.append(text)
-    return normalized
-
-
 __all__ = [
-    "ConfigBackedSessionConfigLoader",
     "SessionConfigLoader",
     "StaticSessionConfigLoader",
 ]

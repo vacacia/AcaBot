@@ -531,7 +531,7 @@ async def test_runtime_config_reload_keeps_builtin_core_tools(tmp_path: Path) ->
     result = await components.config_control_plane.reload_runtime_configuration()
     after = _tool_sources(components)
 
-    assert result["default_agent_id"] == "aca"
+    assert "session_count" in result
     assert before["read"] == "builtin:computer"
     assert before["Skill"] == "builtin:skills"
     assert before["delegate_subagent"] == "builtin:subagents"

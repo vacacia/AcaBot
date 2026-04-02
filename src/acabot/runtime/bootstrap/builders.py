@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from pathlib import Path
 from typing import Any
 
 from acabot.agent import BaseAgent
@@ -132,13 +131,10 @@ def build_computer_runtime(
     skill_catalog=None,
 ) -> ComputerRuntime:
     runtime_conf = config.get("runtime", {})
-    fs_conf = dict(runtime_conf.get("filesystem", {}))
     computer_conf = dict(runtime_conf.get("computer", {}))
-    root_dir = resolve_filesystem_path(
+    root_dir = resolve_runtime_path(
         config,
-        fs_conf,
-        key="computer_root_dir",
-        default=str(Path.home() / ".acabot" / "workspaces"),
+        computer_conf.get("root_dir", "workspaces"),
     )
     computer_config = ComputerRuntimeConfig(
         root_dir=str(root_dir),
@@ -215,7 +211,7 @@ def build_long_term_memory_store(config: Config) -> LanceDbLongTermMemoryStore:
     long_term_memory_conf = _long_term_memory_config(config)
     storage_dir = resolve_runtime_path(
         config,
-        long_term_memory_conf.get("storage_dir", "long-term-memory/lancedb"),
+        long_term_memory_conf.get("storage_dir", "long_term_memory/lancedb"),
     )
     try:
         from ..memory.long_term_memory.storage import LanceDbLongTermMemoryStore
@@ -399,7 +395,7 @@ def build_payload_json_writer(config: Config) -> PayloadJsonWriter:
     runtime_conf = config.get("runtime", {})
     root_dir = resolve_runtime_path(
         config,
-        runtime_conf.get("payload_json_dir", "debug/model-payloads"),
+        runtime_conf.get("payload_json_dir", "debug/model_payloads"),
     )
     return PayloadJsonWriter(root_dir=root_dir)
 
@@ -419,7 +415,7 @@ def build_skill_catalog(config: Config) -> SkillCatalog:
     skill_catalog_dirs = resolve_skill_catalog_dirs(
         config,
         fs_conf,
-        defaults=["./.agents/skills", "~/.agents/skills"],
+        defaults=["./extensions/skills"],
     )
     catalog = SkillCatalog(FileSystemSkillPackageLoader(skill_catalog_dirs))
     catalog.reload()
@@ -441,7 +437,7 @@ def build_subagent_catalog(config: Config) -> SubagentCatalog:
     subagent_catalog_dirs = resolve_subagent_catalog_dirs(
         config,
         fs_conf,
-        defaults=["./.agents/subagents", "~/.agents/subagents"],
+        defaults=["./extensions/subagents"],
     )
     catalog = SubagentCatalog(FileSystemSubagentPackageLoader(subagent_catalog_dirs))
     catalog.reload()

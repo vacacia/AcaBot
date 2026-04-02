@@ -179,7 +179,7 @@ def _build_app(
     agent_runtime = CapturingAgentRuntime()
     app = RuntimeApp(
         gateway=gateway,
-        router=RuntimeRouter(default_agent_id="unused", session_runtime=session_runtime),
+        router=RuntimeRouter(session_runtime=session_runtime),
         thread_manager=thread_manager,
         run_manager=run_manager,
         channel_event_store=InMemoryChannelEventStore(),

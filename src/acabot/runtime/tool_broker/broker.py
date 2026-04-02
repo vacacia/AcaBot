@@ -42,7 +42,6 @@ class ToolBroker:
         audit: ToolAudit | None = None,
         skill_catalog: SkillCatalog | None = None,
         subagent_catalog: SubagentCatalog | None = None,
-        default_agent_id: str = "",
         backend_bridge: BackendBridge | None = None,
     ) -> None:
         """初始化 ToolBroker.
@@ -52,7 +51,6 @@ class ToolBroker:
             audit: 可选的工具审计实现.
             skill_catalog: 可选的 skill catalog.
             subagent_catalog: 可选的 subagent catalog.
-            default_agent_id: 默认主 agent 标识.
             backend_bridge: 可选的后台桥接入口, 用于暴露 frontstage backend bridge tool.
         """
 
@@ -61,7 +59,6 @@ class ToolBroker:
         self.audit = audit or InMemoryToolAudit()
         self.skill_catalog = skill_catalog
         self.subagent_catalog = subagent_catalog
-        self.default_agent_id = str(default_agent_id or "")
         self.backend_bridge = backend_bridge
 
     def register_tool(
@@ -435,7 +432,10 @@ class ToolBroker:
         return summaries
 
     def _should_expose_backend_bridge_tool(self, agent: ResolvedAgent) -> bool:
-        """判断当前 agent 是否应看到 frontstage backend bridge tool."""
+        """判断当前 agent 是否应看到 frontstage backend bridge tool.
+
+        只在 backend bridge 已配置且 agent.enabled_tools 包含 ask_backend 时暴露。
+        """
 
         if self.backend_bridge is None:
             return False
@@ -448,10 +448,8 @@ class ToolBroker:
         registered = self._tools.get("ask_backend")
         if registered is None:
             return False
-        visible_to_default_only = bool(
-            registered.metadata.get("visible_to_default_agent_only", False)
-        )
-        if visible_to_default_only and self.default_agent_id and agent.agent_id != self.default_agent_id:
+        # 必须在 agent 的 enabled_tools 里才暴露，遵守 session-owned agent 能力边界
+        if "ask_backend" not in agent.enabled_tools:
             return False
         return True
 
@@ -797,7 +795,6 @@ class ToolBroker:
             visible_subagents=visible_subagents,
             metadata={
                 "backend_bridge": self.backend_bridge,
-                "default_agent_id": self.default_agent_id,
                 "visible_tools": visible_tools,
                 "visible_skills": visible_skills,
                 "visible_subagents": visible_subagents,

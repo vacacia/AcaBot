@@ -263,7 +263,6 @@ class RuntimeHttpApiServer:
             return 200, {
                 "ok": True,
                 "data": {
-                    "storage_mode": getattr(self.control_plane.config_control_plane, "storage_mode", lambda: "none")(),
                     "config_path": self.config.path or "config.yaml",
                     "webui_enabled": self.enabled,
                     "static_dir": str(self.static_dir) if self.static_dir is not None else "",

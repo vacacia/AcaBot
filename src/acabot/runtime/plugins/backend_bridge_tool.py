@@ -55,7 +55,6 @@ class BackendBridgeToolPlugin(RuntimePlugin):
                     },
                 ),
                 handler=self._ask_backend,
-                visible_to_default_agent_only=True,
             )
         ]
 

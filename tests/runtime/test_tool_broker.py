@@ -348,7 +348,6 @@ async def test_tool_broker_only_exposes_backend_bridge_tool_to_default_agent() -
             return True
 
     broker = ToolBroker(
-        default_agent_id="aca",
         backend_bridge=BackendBridge(session=ConfiguredBackendSessionService()),
     )
     plugin = BackendBridgeToolPlugin()
@@ -366,12 +365,13 @@ async def test_tool_broker_only_exposes_backend_bridge_tool_to_default_agent() -
         source="plugin:backend_bridge_tool",
         metadata={
             "plugin_name": plugin.name,
-            "visible_to_default_agent_only": registration.visible_to_default_agent_only,
         },
     )
 
-    default_visible = broker.visible_tools(_profile(enabled_tools=[]))
-    worker_visible = broker.visible_tools(
+    # ask_backend 只在 agent.enabled_tools 包含 "ask_backend" 时暴露
+    no_tools_visible = broker.visible_tools(_profile(enabled_tools=[]))
+    explicit_visible = broker.visible_tools(_profile(enabled_tools=["ask_backend"]))
+    worker_no_tools = broker.visible_tools(
         ResolvedAgent(
             agent_id="worker",
             name="Worker",
@@ -379,9 +379,19 @@ async def test_tool_broker_only_exposes_backend_bridge_tool_to_default_agent() -
             enabled_tools=[],
         )
     )
+    worker_with_backend = broker.visible_tools(
+        ResolvedAgent(
+            agent_id="worker",
+            name="Worker",
+            prompt_ref="prompt/default",
+            enabled_tools=["ask_backend"],
+        )
+    )
 
-    assert [tool.name for tool in default_visible] == ["ask_backend"]
-    assert worker_visible == []
+    assert [tool.name for tool in no_tools_visible] == []
+    assert [tool.name for tool in explicit_visible] == ["ask_backend"]
+    assert [tool.name for tool in worker_no_tools] == []
+    assert [tool.name for tool in worker_with_backend] == ["ask_backend"]
 
 
 async def test_tool_broker_policy_can_request_approval() -> None:

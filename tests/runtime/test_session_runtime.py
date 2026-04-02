@@ -3,11 +3,10 @@ from pathlib import Path
 
 import pytest
 
-from acabot.config import Config
 from acabot.runtime import RuntimeRouter
-from acabot.runtime.control.session_loader import ConfigBackedSessionConfigLoader
-from acabot.runtime.control.session_loader import SessionConfigLoader
+from acabot.runtime.control.session_loader import SessionConfigLoader, StaticSessionConfigLoader
 from acabot.runtime.control.session_runtime import SessionRuntime
+from acabot.runtime.contracts import SessionConfig
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
 
@@ -111,8 +110,25 @@ def test_session_loader_reads_surface_matrix_and_selectors(tmp_path: Path) -> No
     assert session.surfaces["message.mention"].computer.cases[0].use["backend"] == "host"
 
 
-def test_config_backed_session_loader_default_extraction_only_keeps_tags() -> None:
-    loader = ConfigBackedSessionConfigLoader(Config({"runtime": {"default_agent_id": "aca"}}))
+def _build_default_static_session() -> SessionConfig:
+    """构造一份带默认 extraction 的静态 session，用于替代已删除的 ConfigBackedSessionConfigLoader."""
+    from acabot.runtime.contracts import (
+        ExtractionDomainConfig,
+        SurfaceConfig,
+    )
+    surface_ids = [
+        "message.mention", "message.reply_to_bot", "message.command",
+        "message.private", "message.plain", "notice.default",
+    ]
+    surfaces = {
+        sid: SurfaceConfig(extraction=ExtractionDomainConfig(default={"tags": []}, cases=[]))
+        for sid in surface_ids
+    }
+    return SessionConfig(session_id="", template_id="default", frontstage_agent_id="aca", surfaces=surfaces)
+
+
+def test_static_session_loader_default_extraction_only_keeps_tags() -> None:
+    loader = StaticSessionConfigLoader(_build_default_static_session())
 
     session = loader.load_by_session_id("qq:group:123")
 
@@ -144,8 +160,10 @@ def test_session_runtime_builds_facts_and_resolves_surface(tmp_path: Path) -> No
     assert surface.surface_id == "message.mention"
 
 
-def test_runtime_router_inline_default_session_extraction_only_keeps_tags() -> None:
-    router = RuntimeRouter(default_agent_id="aca")
+def test_static_session_loader_inline_default_extraction_only_keeps_tags() -> None:
+    session_config = _build_default_static_session()
+    runtime = SessionRuntime(StaticSessionConfigLoader(session_config))
+    router = RuntimeRouter(session_runtime=runtime)
     facts = router.session_runtime.build_facts(_group_mention_event(sender_role="admin"))
 
     session = router.session_runtime.load_session(facts)
@@ -255,8 +273,10 @@ visible_subagents:
     assert decision.visible_subagents == ["excel-worker", "search-worker"]
 
 
-def test_runtime_router_inline_default_session_visible_subagents_is_empty() -> None:
-    router = RuntimeRouter(default_agent_id="aca")
+def test_static_session_loader_inline_default_visible_subagents_is_empty() -> None:
+    session_config = _build_default_static_session()
+    runtime = SessionRuntime(StaticSessionConfigLoader(session_config))
+    router = RuntimeRouter(session_runtime=runtime)
     facts = router.session_runtime.build_facts(_group_mention_event(sender_role="admin"))
     session = router.session_runtime.load_session(facts)
     surface = router.session_runtime.resolve_surface(facts, session)

@@ -8,7 +8,7 @@
       SoulSource
         |
         v
-    .acabot-runtime/self/*
+    runtime_data/soul/*
 
 这一层负责 `/self` 文件的受控读写:
 - 初始化 `today.md + daily/`

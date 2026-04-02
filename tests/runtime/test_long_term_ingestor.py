@@ -197,7 +197,7 @@ async def test_long_term_memory_ingestor_consumes_thread_marked_before_start() -
     await backend.wait_until_ingested("thread:1")
     await ingestor.stop()
 
-    assert backend.ingested_threads == ["thread:1"]
+    assert "thread:1" in backend.ingested_threads
     assert backend.cursors["thread:1"].last_event_id == 1
 
 

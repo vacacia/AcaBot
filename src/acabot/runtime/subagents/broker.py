@@ -25,19 +25,16 @@ class SubagentDelegationBroker:
         *,
         catalog: SubagentCatalog | None = None,
         execution_service=None,
-        default_agent_id: str = "",
     ) -> None:
         """初始化 delegation broker.
 
         Args:
             catalog: 可选的 subagent catalog.
             execution_service: 可选的本地 child run 执行入口.
-            default_agent_id: 默认主 agent 标识.
         """
 
         self.catalog = catalog
         self.execution_service = execution_service
-        self.default_agent_id = str(default_agent_id or "")
 
     async def delegate(
         self,

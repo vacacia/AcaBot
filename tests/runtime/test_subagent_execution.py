@@ -149,6 +149,22 @@ def _parent_agent(agent_id: str = "aca") -> ResolvedAgent:
     )
 
 
+def _write_prompt_file(
+    tmp_path: Path,
+    *,
+    ref: str,
+    body: str,
+) -> None:
+    prompts_dir = tmp_path / "prompts"
+    parts = ref.split("/", 1)
+    if len(parts) == 2:
+        prompt_file = prompts_dir / f"{parts[1]}.md"
+    else:
+        prompt_file = prompts_dir / f"{ref}.md"
+    prompt_file.parent.mkdir(parents=True, exist_ok=True)
+    prompt_file.write_text(body, encoding="utf-8")
+
+
 def _runtime_config(tmp_path: Path) -> Config:
     _write_session_bundle(
         tmp_path,
@@ -163,26 +179,21 @@ def _runtime_config(tmp_path: Path) -> Config:
         agent_id="worker",
         prompt_ref="prompt/worker",
     )
+    _write_prompt_file(tmp_path, ref="prompt/aca", body="You are Aca.")
+    _write_prompt_file(tmp_path, ref="prompt/worker", body="You are Worker.")
     return Config(
         {
             "agent": {
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
-                "default_agent_id": "aca",
-                "default_agent_name": "Aca",
-                "default_prompt_ref": "prompt/aca",
                 "filesystem": {
-                    "enabled": True,
                     "base_dir": str(tmp_path),
                     "sessions_dir": "sessions",
                     "skill_catalog_dirs": [_skills_dir()],
+                    "subagent_catalog_dirs": [str(tmp_path / ".agents" / "subagents")],
                 },
                 "skills": ["sample_configured_skill"],
-                "prompts": {
-                    "prompt/aca": "You are Aca.",
-                    "prompt/worker": "You are Worker.",
-                },
                 "plugins": [
                     "tests.runtime.runtime_plugin_samples:SampleConfiguredRuntimePlugin",
                 ],

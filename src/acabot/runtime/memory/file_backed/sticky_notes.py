@@ -10,7 +10,7 @@
                      StickyNoteFileStore
                             |
                             v
-         .acabot-runtime/sticky-notes/<entity_kind>/<entity_ref>/
+         runtime_data/sticky_notes/<entity_kind>/<entity_ref>/
                 |- readonly.md
                 `- editable.md
 

@@ -198,7 +198,10 @@ def test_build_skill_catalog_scans_all_project_and_user_skill_candidates(
         {
             "runtime": {
                 "filesystem": {
-                    "enabled": True,
+                    "skill_catalog_dirs": [
+                        "./.agents/skills",
+                        "~/.agents/skills",
+                    ],
                 }
             }
         },
@@ -251,7 +254,10 @@ def test_build_skill_catalog_visible_skills_prefers_project_scope_for_duplicate_
         {
             "runtime": {
                 "filesystem": {
-                    "enabled": True,
+                    "skill_catalog_dirs": [
+                        "./.agents/skills",
+                        "~/.agents/skills",
+                    ],
                 }
             }
         },

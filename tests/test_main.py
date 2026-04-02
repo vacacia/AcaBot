@@ -139,8 +139,23 @@ def test_create_message_store_returns_none_by_default() -> None:
     assert store is None
 
 
-def test_build_runtime_app_uses_factories_and_runtime_config() -> None:
+def test_build_runtime_app_uses_factories_and_runtime_config(tmp_path: Path) -> None:
     """build_runtime_app 能把 factory 和 runtime config 正确接到新主线."""
+
+    # Write session+agent+prompt files
+    session_dir = tmp_path / "sessions" / "qq" / "user" / "10001"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    (session_dir / "session.yaml").write_text(
+        "session:\n  id: qq:user:10001\n  template: qq_user\nfrontstage:\n  agent_id: aca\nsurfaces:\n  message.private:\n    admission:\n      default:\n        mode: respond\n",
+        encoding="utf-8",
+    )
+    (session_dir / "agent.yaml").write_text(
+        "agent_id: aca\nname: Aca\nprompt_ref: prompt/aca\nvisible_tools: []\nvisible_skills: []\nvisible_subagents: []\n",
+        encoding="utf-8",
+    )
+    prompts_dir = tmp_path / "prompts" / "aca"
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+    (prompts_dir / "index.md").write_text("You are Aca.", encoding="utf-8")
 
     seen: dict[str, Any] = {}
 
@@ -181,12 +196,7 @@ def test_build_runtime_app_uses_factories_and_runtime_config() -> None:
                 "system_prompt": "You are Aca.",
             },
             "runtime": {
-                "default_agent_id": "aca",
-                "default_agent_name": "Aca",
-                "default_prompt_ref": "prompt/aca",
-                "prompts": {
-                    "prompt/aca": "You are Aca."
-                },
+                "filesystem": {"base_dir": str(tmp_path)},
             },
         }
     )
@@ -196,20 +206,10 @@ def test_build_runtime_app_uses_factories_and_runtime_config() -> None:
         gateway_factory=gateway_factory,
         agent_factory=agent_factory,
     )
-    profile = components.agent_loader(
-        RouteDecision(
-            thread_id="qq:user:10001",
-            actor_id="qq:user:10001",
-            agent_id="aca",
-            channel_scope="qq:user:10001",
-        )
-    )
 
     assert seen["gateway"]["port"] == 9100
     assert seen["agent"]["max_tool_rounds"] == 9
-    assert components.router.default_agent_id == "aca"
     assert components.prompt_loader.load("prompt/aca") == "You are Aca."
-    assert profile.name == "Aca"
     assert isinstance(components.message_store, InMemoryMessageStore)
 
 
@@ -223,11 +223,6 @@ def test_build_runtime_app_keeps_bootstrap_sqlite_selection(tmp_path) -> None:
             },
             "runtime": {
                 "default_agent_id": "aca",
-                "default_agent_name": "Aca",
-                "default_prompt_ref": "prompt/aca",
-                "prompts": {
-                    "prompt/aca": "You are Aca."
-                },
                 "persistence": {
                     "sqlite_path": str(tmp_path / "runtime.sqlite3"),
                 },
@@ -322,9 +317,7 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
         ),
         skill_catalog=skill_catalog,
         subagent_catalog=subagent_catalog,
-        subagent_delegator=SubagentDelegationBroker(
-            default_agent_id="aca",
-        ),
+        subagent_delegator=SubagentDelegationBroker(),
         subagent_execution_service=LocalSubagentExecutionService(
             thread_manager=None,  # type: ignore[arg-type]
             run_manager=None,  # type: ignore[arg-type]

@@ -104,7 +104,10 @@ def test_skill_catalog_keeps_all_candidates_but_resolves_visible_skill_by_scope(
             {
                 "runtime": {
                     "filesystem": {
-                        "enabled": True,
+                        "skill_catalog_dirs": [
+                            "./.agents/skills",
+                            "~/.agents/skills",
+                        ],
                     }
                 }
             },

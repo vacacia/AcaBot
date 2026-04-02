@@ -24,7 +24,7 @@ class BackendSessionBinding:
 
 
 class BackendSessionBindingStore:
-    """读写 `.acabot-runtime/backend/session.json` 的最小存储层."""
+    """读写 `runtime_data/backend/session.json` 的最小存储层."""
 
     def __init__(self, path: str | Path) -> None:
         """保存 backend session binding 文件路径."""

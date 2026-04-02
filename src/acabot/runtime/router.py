@@ -21,7 +21,6 @@ from .contracts import (
     SessionConfig,
     SurfaceConfig,
 )
-from .control.session_loader import StaticSessionConfigLoader
 from .control.session_runtime import SessionRuntime
 
 
@@ -31,20 +30,15 @@ class RuntimeRouter:
     def __init__(
         self,
         *,
-        default_agent_id: str = "default",
-        session_runtime: SessionRuntime | None = None,
+        session_runtime: SessionRuntime,
     ) -> None:
         """初始化最小路由器.
 
         Args:
-            default_agent_id: 没有显式 session 文件时使用的默认 agent.
             session_runtime: 会话配置驱动的决策运行时.
         """
 
-        self.default_agent_id = default_agent_id
-        self.session_runtime = session_runtime or SessionRuntime(
-            StaticSessionConfigLoader(_default_session_config(default_agent_id))
-        )
+        self.session_runtime = session_runtime
 
     async def route(self, event: StandardEvent) -> RouteDecision:
         """把一条标准事件解析成 RouteDecision.
@@ -158,44 +152,6 @@ class RuntimeRouter:
         """
 
         return cls.build_channel_scope(event)
-
-
-def _default_session_config(default_agent_id: str) -> SessionConfig:
-    """构造 router 级最小内建 SessionConfig.
-
-    Args:
-        default_agent_id: 默认前台 agent.
-
-    Returns:
-        SessionConfig: 内建最小 session 配置.
-    """
-
-    def _surface() -> SurfaceConfig:
-        return SurfaceConfig(
-            routing=RoutingDomainConfig(default={}),
-            admission=AdmissionDomainConfig(default={"mode": "respond"}),
-            context=ContextDomainConfig(default={}),
-            persistence=PersistenceDomainConfig(default={"persist_event": True}),
-            extraction=ExtractionDomainConfig(default={"tags": []}),
-            computer=ComputerDomainConfig(default={"backend": "host", "allow_exec": True, "allow_sessions": True}),
-        )
-
-    return SessionConfig(
-        session_id="inline:default",
-        template_id="inline_default",
-        title="Inline Default Session",
-        frontstage_agent_id=default_agent_id,
-        selectors={},
-        surfaces={
-            "message.mention": _surface(),
-            "message.reply_to_bot": _surface(),
-            "message.command": _surface(),
-            "message.private": _surface(),
-            "message.plain": _surface(),
-            "notice.default": _surface(),
-        },
-        metadata={"config_path": "<inline-session:router>"},
-    )
 
 
 __all__ = ["RuntimeRouter"]

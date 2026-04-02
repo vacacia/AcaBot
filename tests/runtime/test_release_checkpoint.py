@@ -226,6 +226,50 @@ def _event(*, event_id: str = "evt-1", text: str = "hello") -> StandardEvent:
     )
 
 
+def _write_session_bundle(db_path: Path, *, session_id: str, agent_id: str, prompt_ref: str, enabled_tools: list[str] | None = None) -> None:
+    base = db_path.parent
+    platform, scope_kind, identifier = session_id.split(":", 2)
+    bundle_dir = base / "sessions" / platform / scope_kind / identifier
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "session.yaml").write_text(
+        "\n".join(
+            [
+                "session:",
+                f"  id: {session_id}",
+                "frontstage:",
+                f"  agent_id: {agent_id}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    tools_yaml = "\n".join(f"  - {t}" for t in (enabled_tools or []))
+    (bundle_dir / "agent.yaml").write_text(
+        "\n".join(
+            [
+                f"agent_id: {agent_id}",
+                f"prompt_ref: {prompt_ref}",
+                "visible_tools:",
+                tools_yaml if tools_yaml else "  []",
+                "visible_skills: []",
+                "visible_subagents: []",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_prompt_file(db_path: Path, *, ref: str, body: str) -> None:
+    base = db_path.parent
+    prompts_dir = base / "prompts"
+    parts = ref.split("/", 1)
+    if len(parts) == 2:
+        prompt_file = prompts_dir / f"{parts[1]}.md"
+    else:
+        prompt_file = prompts_dir / f"{ref}.md"
+    prompt_file.parent.mkdir(parents=True, exist_ok=True)
+    prompt_file.write_text(body, encoding="utf-8")
+
+
 def _config(db_path: Path, *, enabled_tools: list[str] | None = None) -> Config:
     """构造带 SQLite 持久化的 runtime 配置.
 
@@ -237,12 +281,20 @@ def _config(db_path: Path, *, enabled_tools: list[str] | None = None) -> Config:
         一份 Config.
     """
 
+    base = db_path.parent
+    _write_prompt_file(db_path, ref="prompt/default", body="You are Aca.")
+    _write_session_bundle(
+        db_path,
+        session_id="qq:user:10001",
+        agent_id="aca",
+        prompt_ref="prompt/default",
+        enabled_tools=enabled_tools,
+    )
     return Config(
         {
             "runtime": {
-                "default_agent_id": "aca",
-                "prompts": {
-                    "prompt/default": "You are Aca.",
+                "filesystem": {
+                    "base_dir": str(base),
                 },
                 "profiles": {
                     "aca": {

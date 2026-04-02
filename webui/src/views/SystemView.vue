@@ -47,9 +47,7 @@ type AdminsConfig = {
 
 type PathOverview = {
   config_path: string
-  storage_mode: string
   filesystem_base_dir: string
-  profiles_dir: string
   prompts_dir: string
   sessions_dir: string
   computer_root_dir: string
@@ -63,7 +61,6 @@ type PathOverview = {
 type SystemConfigurationSnapshot = {
   meta: {
     config_path: string
-    storage_mode: string
   }
   gateway: GatewayConfig
   filesystem: FilesystemConfig
@@ -84,9 +81,7 @@ type FeedbackState = {
 }
 
 type ReloadResult = {
-  default_agent_id: string
-  profile_count: number
-  storage_mode: string
+  session_count: number
 }
 
 const cachedSnapshot = peekCachedGet<SystemConfigurationSnapshot>(SYSTEM_CONFIGURATION_PATH)
@@ -153,11 +148,6 @@ const summaryCards = computed(() => {
       helper: "系统页里的共享设置最终都会写回这一份配置文件。",
     },
     {
-      title: "当前存储模式",
-      value: pathOverview.value.storage_mode,
-      helper: "决定 profile 和 prompt 是走内联配置，还是文件系统目录。",
-    },
-    {
       title: "Backend 会话文件",
       value: pathOverview.value.backend_session_path,
       helper: "用于标记 backend 会话绑定和运行时状态落点。",
@@ -174,11 +164,6 @@ const runtimePathRows = computed(() => {
       label: "文件系统根目录",
       helper: "相对路径会基于这里解析。",
       value: pathOverview.value.filesystem_base_dir,
-    },
-    {
-      label: "Profiles 目录",
-      helper: "文件系统 profile 模式下实际读取的位置。",
-      value: pathOverview.value.profiles_dir,
     },
     {
       label: "Prompts 目录",
@@ -396,8 +381,7 @@ async function reloadConfiguration(): Promise<void> {
     const result = await apiPost<ReloadResult>("/api/runtime/reload-config", {})
     setFeedback(
       "is-ok",
-      `系统配置已重新读取。当前默认 agent 是 ${result.default_agent_id}，共装配 ${result.profile_count} 个 profile。`,
-      `storage_mode=${result.storage_mode}`,
+      `系统配置已重新读取。当前 ${result.session_count} 个 session。`,
     )
     await refreshAfterMutation()
   } catch (error) {
@@ -516,10 +500,6 @@ onMounted(() => {
           </div>
         </div>
 
-        <p v-if="!draft.filesystem.enabled" class="ds-status is-warning">
-          当前文件系统扫描还没有开启。你现在保存的是目录真源；只有启用文件系统扫描后，这些目录才会参与 catalog 发现。
-        </p>
-
         <div class="catalog-stack">
           <div class="catalog-item">
             <EditableListField
@@ -537,7 +517,7 @@ onMounted(() => {
                 <div>
                   <h3>当前实际扫描到的技能目录</h3>
                   <p class="ds-summary">
-                    这里显示的是已经生效的目录，不是你尚未保存的草稿。留空时会回退到默认值：{{ draft.filesystem.default_skill_catalog_dirs.join("、") || "无" }}。
+                    这里显示的是已经生效的目录，不是你尚未保存的草稿。留空时会回退到默认值：{{ draft.filesystem.default_skill_catalog_dirs.join("、") || "./extensions/skills" }}。
                   </p>
                 </div>
               </div>
@@ -571,7 +551,7 @@ onMounted(() => {
                 <div>
                   <h3>当前实际扫描到的子代理目录</h3>
                   <p class="ds-summary">
-                    如果你没有显式填写，系统会回退到默认值：{{ draft.filesystem.default_subagent_catalog_dirs.join("、") || "无" }}。
+                    如果你没有显式填写，系统会回退到默认值：{{ draft.filesystem.default_subagent_catalog_dirs.join("、") || "./extensions/subagents" }}。
                   </p>
                 </div>
               </div>
@@ -662,10 +642,6 @@ onMounted(() => {
             <article class="ds-surface ds-card-padding-sm summary-card">
               <p class="summary-label">当前配置文件位置</p>
               <code class="ds-mono summary-value">{{ pathOverview.config_path }}</code>
-            </article>
-            <article class="ds-surface ds-card-padding-sm summary-card">
-              <p class="summary-label">当前存储模式</p>
-              <code class="ds-mono summary-value">{{ pathOverview.storage_mode }}</code>
             </article>
             <article class="ds-surface ds-card-padding-sm summary-card">
               <p class="summary-label">文件系统根目录</p>
