@@ -84,7 +84,6 @@ class RuntimePluginContext:
     data_dir: Path                      # 插件专属可写目录：runtime_data/plugins/<id>/data/
     gateway: GatewayProtocol
     tool_broker: ToolBroker
-    model_registry_manager: FileSystemModelRegistryManager | None = None
     reference_backend: ReferenceBackend | None = None
     sticky_notes: StickyNoteService | None = None
     computer_runtime: ComputerRuntime | None = None
@@ -94,80 +93,21 @@ class RuntimePluginContext:
 
 原来的 `config` 字段（整个全局 Config 对象）改成 `plugin_config`（这个插件的最终配置 dict）。插件不再拿到全局配置，只能看到自己那份。`get_plugin_config()` 方法删掉。
 
-### 新增能力：LLM 调用
-
-插件通过 `model_slots()` 声明模型槽位，runtime 在加载时注册为正式 ModelTarget（`plugin:<plugin_id>:<slot_id>`）。操作者在 WebUI 的 model bindings 里给这个 target 绑定具体的 provider + preset。
-
-插件运行时通过 `context.model_registry_manager.resolve_target_request(f"plugin:{plugin_id}:{slot_id}")` 拿到 `RuntimeModelRequest`，然后用 `litellm.acompletion()` 调用。这和 LTM 模块的调用方式完全一致。
-
-```python
-# 插件中的 LLM 调用示例
-class AnalysisPlugin(RuntimePlugin):
-    def model_slots(self) -> list[RuntimePluginModelSlot]:
-        return [
-            RuntimePluginModelSlot(
-                slot_id="analyze",
-                task_kind="chat",
-                description="话题分析用的模型",
-            )
-        ]
-
-    async def do_analysis(self, messages: list[dict]) -> str:
-        target_id = f"plugin:{self.name}:analyze"
-        request = self.model_registry_manager.resolve_target_request(target_id)
-        if request is None:
-            raise RuntimeError("模型未配置")
-        from litellm import acompletion
-        response = await acompletion(
-            model=request.model,
-            messages=messages,
-            **request.extra_params,
-        )
-        return response.choices[0].message.content
-```
-
 ### 新增能力：插件数据目录
 
 `context.data_dir` 指向 `runtime_data/plugins/<plugin_id>/data/`，Host 在 load_plugin 时自动创建。插件可以在这个目录下自由读写文件（缓存、数据库、生成的报告等）。
 
-### 新增能力：定时任务
+### 依赖其他基础设施的能力（本轮不实现，只预留接口位）
 
-插件可以在 `setup()` 时通过 Host 注册定时任务，Host 在 `unload_plugin()` / `teardown()` 时自动取消该插件注册的所有任务，防止泄漏。
+以下能力是插件体系需要的，但依赖尚未完成的 runtime 基础设施。本轮只在 `RuntimePluginContext` 上预留 `None` 字段，等基础设施就绪后接入。
 
-```python
-# plugin_runtime_host.py 新增
-class PluginTaskHandle:
-    """插件注册的后台任务的句柄"""
-    task_id: str
-    async def cancel(self) -> None: ...
+**LLM 调用** — 插件通过 `model_slots()` 声明模型槽位（这部分协议已存在），runtime 注册为 `plugin:<plugin_id>:<slot_id>` 的 ModelTarget，操作者在 WebUI 绑定模型。插件运行时需要一个统一的 model service 来执行调用，不直接碰 litellm。当前 runtime 还没有这个统一 service，等它就绪后注入 context。
 
-class PluginRuntimeHost:
-    # ...现有方法...
+**定时任务** — 插件需要注册定时/周期性任务的能力，框架在 unload/teardown 时自动取消。AcaBot 后续会有自己的定时任务基础设施，届时接入。
 
-    def register_periodic_task(
-        self,
-        plugin_id: str,
-        callback: Callable[[], Awaitable[None]],
-        interval_seconds: float,
-        *,
-        name: str = "",
-    ) -> PluginTaskHandle: ...
+**富消息发送** — 当前 Gateway 面向 LLM agent 的文本回复设计，不支持构造包含图片、视频、转发节点等 IM 原生消息组件的消息。需要链接解析、媒体转发等场景的插件在现有 Gateway 下无法实现这类功能。这是 Gateway 层的演进方向，不是插件协议层该解决的。
 
-    def cancel_plugin_tasks(self, plugin_id: str) -> None: ...
-```
-
-`register_periodic_task()` 内部用 `asyncio.create_task` + sleep 循环实现，不引入外部 scheduler 依赖。`unload_plugin()` 时自动调 `cancel_plugin_tasks()`。
-
-插件在 `setup()` 时保存 Host 引用（通过 context 传入）来注册任务：
-
-```python
-@dataclass
-class RuntimePluginContext:
-    # ...现有字段...
-    register_periodic_task: Callable[..., PluginTaskHandle] | None = None
-```
-
-这样插件不直接持有 Host 引用，只拿到一个注册函数。Host 在构造 context 时把自己的方法绑上去（已经绑好 plugin_id）。
+**平台适配器 API** — 获取群列表、成员信息、用户头像、上传群文件等操作，当前 GatewayProtocol 不提供。需要群分析等场景的插件依赖这些能力。同样是 Gateway 层的演进方向。
 
 
 ## plugin_package.py — PluginPackage 和 PackageCatalog
@@ -727,7 +667,7 @@ async def stop(self):
 ### context_factory
 
 ```python
-def make_context_factory(gateway, tool_broker, model_registry_manager, reference_backend, ...):
+def make_context_factory(gateway, tool_broker, reference_backend, ...):
     def factory(plugin_id: str, plugin_config: dict[str, Any]) -> RuntimePluginContext:
         data_dir = runtime_data_plugins_dir / plugin_id / "data"
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -737,7 +677,6 @@ def make_context_factory(gateway, tool_broker, model_registry_manager, reference
             data_dir=data_dir,
             gateway=gateway,
             tool_broker=tool_broker,
-            model_registry_manager=model_registry_manager,
             reference_backend=reference_backend,
             ...
         )
