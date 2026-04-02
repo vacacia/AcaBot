@@ -3147,6 +3147,52 @@ async def test_memory_page_shows_validation_when_creating_note_with_invalid_enti
         await server.stop()
 
 
+async def test_sticky_notes_page_prefers_available_user_note_on_first_load(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+        log_buffer=InMemoryLogBuffer(),
+    )
+    await components.control_plane.save_sticky_note_record(
+        entity_ref="qq:user:1733064202",
+        readonly="这是一条只读内容",
+        editable="这是一条可编辑内容",
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        result = await asyncio.to_thread(
+            run_page_script,
+            url=f"{base_url}/config/memory/sticky-notes",
+            width=1440,
+            height=1000,
+            wait_ms=2200,
+            script="""
+              const textareas = Array.from(document.querySelectorAll('textarea'));
+              return {
+                listText: document.querySelector('.note-list')?.textContent?.trim() || '',
+                emptyText: document.querySelector('.main-column .empty')?.textContent?.trim() || '',
+                readonlyValue: textareas[0]?.value || '',
+                editableValue: textareas[1]?.value || '',
+              };
+            """,
+        )
+
+        assert "qq:user:1733064202" in result["listText"]
+        assert result["emptyText"] == ""
+        assert result["readonlyValue"] == "这是一条只读内容"
+        assert result["editableValue"] == "这是一条可编辑内容"
+    finally:
+        await server.stop()
+
+
 async def test_logs_page_exists_and_exposes_mode_toggle(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     _write_config(config_path, webui_enabled=True, port=0)

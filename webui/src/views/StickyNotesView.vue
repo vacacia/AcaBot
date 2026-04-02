@@ -38,6 +38,10 @@ function readStoredEntityRef(): string {
   return localStorage.getItem(MEMORY_ENTITY_STORAGE_KEY) || ""
 }
 
+function nextEntityKind(entityKind: StickyEntityKind): StickyEntityKind {
+  return entityKind === "user" ? "conversation" : "user"
+}
+
 function inferEntityKind(entityRef: string): StickyEntityKind {
   const parts = entityRef.split(":")
   const segment = String(parts[1] || "").trim().toLowerCase()
@@ -51,7 +55,13 @@ const cachedNotes = peekCachedGet<{ entity_kind: StickyEntityKind; items: Sticky
 )
 const cachedNote = storedEntityRef ? peekCachedGet<StickyNoteItem>(noteItemPath(storedEntityRef)) : null
 
-const entityKind = ref<StickyEntityKind>(cachedNote ? inferEntityKind(cachedNote.entity_ref) : storedKind)
+const entityKind = ref<StickyEntityKind>(
+  cachedNote
+    ? inferEntityKind(cachedNote.entity_ref)
+    : storedEntityRef
+      ? inferEntityKind(storedEntityRef)
+      : storedKind,
+)
 const noteItems = ref<StickyNoteSummary[]>(cachedNotes?.items ?? [])
 const noteSearch = ref("")
 const draftEntityRef = ref(cachedNote?.entity_ref || storedEntityRef)
@@ -111,6 +121,14 @@ async function openKind(kind: StickyEntityKind, preserveCurrent = false): Promis
   }
   selectedEntityRef.value = ""
   noteItem.value = null
+}
+
+async function openFirstAvailableKind(preferredKind: StickyEntityKind): Promise<void> {
+  await openKind(preferredKind, true)
+  if (noteItems.value.length > 0) {
+    return
+  }
+  await openKind(nextEntityKind(preferredKind), true)
 }
 
 async function openNote(entityRef: string): Promise<void> {
@@ -198,7 +216,7 @@ async function saveEditable(content: string): Promise<void> {
 onMounted(() => {
   void (async () => {
     try {
-      await openKind(entityKind.value, true)
+      await openFirstAvailableKind(entityKind.value)
       if (storedEntityRef) {
         try {
           await openNote(storedEntityRef)
@@ -227,7 +245,7 @@ onBeforeUnmount(() => {
       <aside class="ds-panel ds-panel-padding sidebar-column note-panel">
         <div class="sidebar-header">
           <h2>Sticky Notes</h2>
-          <button class="refresh-btn" type="button" @click="void openKind(entityKind, true)" title="刷新">
+          <button class="refresh-btn" type="button" @click="void openFirstAvailableKind(entityKind)" title="刷新">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M11.67 2.33A6.27 6.27 0 007 .5C3.41.5 .5 3.41.5 7s2.91 6.5 6.5 6.5c3.08 0 5.64-2.13 6.33-5h-1.7A4.82 4.82 0 017 11.83 4.83 4.83 0 012.17 7 4.83 4.83 0 017 2.17c1.34 0 2.54.55 3.41 1.42L8.17 5.83H13.5V.5l-1.83 1.83z" fill="currentColor"/>
             </svg>
