@@ -63,7 +63,7 @@ Reconciler 是大脑，Host 是手脚。
 
 ## plugin_protocol.py — 插件接口定义
 
-从现有 `plugin_manager.py` 中提取，不改动接口本身。这一层是插件作者写代码时对接的契约，所有其他模块都依赖它，它不依赖任何人。
+从现有 `plugin_manager.py` 中提取，不改动接口本身。这一层是插件作者写代码时对接的契约，所有其他模块都依赖它，它不依赖插件控制面模块（package/spec/status/reconciler/host）。
 
 包含：
 
@@ -143,9 +143,15 @@ plugin:
 
 ### 导入路径约定
 
-现有的 Dockerfile 里已经有 `PYTHONPATH=/app/src:/app/extensions`，`extensions/` 在 sys.path 上。`extensions/plugins/` 是 Python 3.3+ 隐式命名空间包（不需要 `__init__.py`），所有插件在 `plugins.` 命名空间下，不污染顶层 import 空间。
+`extensions/plugins/` 是 Python 3.3+ 隐式命名空间包（不需要 `__init__.py`），所有插件在 `plugins.` 命名空间下，不污染顶层 import 空间。
 
 `plugins.ops_control:OpsControlPlugin` 表示 `from plugins.ops_control import OpsControlPlugin`。
+
+前提：`extensions/` 必须在 sys.path 上。三种运行方式各自保证：
+
+- **Docker**：Dockerfile 里 `PYTHONPATH=/app/src:/app/extensions`
+- **本地直接启动**：runtime bootstrap 时主动把 `extensions/` 加进 `sys.path`（基于 `config.base_dir()` 解析）
+- **测试**：`tests/conftest.py` 把 `extensions/` 加进 `sys.path`
 
 ### PackageCatalog
 
@@ -509,7 +515,20 @@ PUT  /api/system/plugins/config        → 删
 
 ### API 业务逻辑归属
 
-插件 API 的业务逻辑由 Reconciler + 各 Store 直接承载。`http_api.py` 只做路由和 JSON 序列化，直接调 `reconciler` / `spec_store` / `status_store` / `catalog`。不新建 PluginControlPlane 中间层。
+遵循现有分层约定（`08-webui-and-control-plane.md`）：业务逻辑放 control plane，`http_api.py` 只做 HTTP 适配。
+
+给 `RuntimeControlPlane` 增加一组插件资源方法：
+
+```python
+# control_plane.py 新增
+def list_plugins(self) -> list[PluginView]: ...
+def get_plugin(self, plugin_id: str) -> PluginView | None: ...
+async def update_plugin_spec(self, plugin_id: str, enabled: bool, config: dict) -> PluginView: ...
+async def delete_plugin_spec(self, plugin_id: str) -> PluginView: ...
+async def reconcile_all_plugins(self) -> list[PluginView]: ...
+```
+
+这些方法内部调 `reconciler` / `spec_store` / `catalog` / `status_store`。`http_api.py` 只做请求解析 + 调 control plane + 返回 JSON。
 
 ### /api/status 里的 loaded_plugins
 
@@ -656,7 +675,7 @@ def make_context_factory(gateway, tool_broker, reference_backend, ...):
 | `runtime/__init__.py` (line 228-242, 485-493) | 删 plugin_manager + 4 个旧插件类的 re-export，加新模块 export |
 | `plugins/__init__.py` | 删 3 个旧插件导出，只保留 BackendBridgeToolPlugin |
 | `plugins/backend_bridge_tool.py` | 保留，文件头标注过渡期死代码 |
-| `control_plane.py` | 删 `reload_plugins()`。`_list_loaded_plugins()` 保留，数据源换成 `host.loaded_plugin_ids()` |
+| `control_plane.py` | 删 `reload_plugins()`。`_list_loaded_plugins()` 保留，数据源换成 `host.loaded_plugin_ids()`。新增插件资源方法（list/get/update_spec/delete_spec/reconcile_all） |
 | `config_control_plane.py` | 删 `list_plugin_configs()`、`replace_plugin_configs()`、`_probe_plugin_import_error()`、`_plugin_name_from_path()`、`_plugin_display_name_from_path()` |
 | `http_api.py` (line 252) | 删 4 个旧插件端点，加 5 个新端点 |
 | `PluginsView.vue` | 重写 |
