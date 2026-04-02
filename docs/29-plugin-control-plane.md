@@ -97,9 +97,9 @@ class RuntimePluginContext:
 
 `context.data_dir` 指向 `runtime_data/plugins/<plugin_id>/data/`，Host 在 load_plugin 时自动创建。插件可以在这个目录下自由读写文件（缓存、数据库、生成的报告等）。
 
-### 依赖其他基础设施的能力（本轮不实现，只预留接口位）
+### 依赖其他基础设施的能力（本轮不实现）
 
-以下能力是插件体系需要的，但依赖尚未完成的 runtime 基础设施。本轮只在 `RuntimePluginContext` 上预留 `None` 字段，等基础设施就绪后接入。
+以下能力是插件体系需要的，但依赖尚未完成的 runtime 基础设施。本轮只在设计里记录方向，不进 `RuntimePluginContext` 的字段。等各自基础设施就绪后，再往 context 里加对应的注入。
 
 **LLM 调用** — 插件通过 `model_slots()` 声明模型槽位（这部分协议已存在），runtime 注册为 `plugin:<plugin_id>:<slot_id>` 的 ModelTarget，操作者在 WebUI 绑定模型。插件运行时需要一个统一的 model service 来执行调用，不直接碰 litellm。当前 runtime 还没有这个统一 service，等它就绪后注入 context。
 
@@ -168,7 +168,7 @@ plugin:
 前提：`extensions/` 必须在 sys.path 上。三种运行方式各自保证：
 
 - **Docker**：Dockerfile 里 `PYTHONPATH=/app/src:/app/extensions`
-- **本地直接启动**：runtime bootstrap 时主动把 `extensions/` 加进 `sys.path`（基于 `config.base_dir()` 解析）
+- **本地直接启动**：runtime bootstrap 时主动把 `extensions/` 加进 `sys.path`（基于项目根目录，和 `docs/28-directory-restructure.md` 中 extensions 路径解析一致，不基于 `config.base_dir()`）
 - **测试**：`tests/conftest.py` 把 `extensions/` 加进 `sys.path`
 
 ### PackageCatalog
@@ -178,7 +178,7 @@ class PackageCatalog:
     """扫描 extensions/plugins/ 下所有 plugin.yaml，构建 PluginPackage 集合"""
 
     def __init__(self, extensions_plugins_dir: Path): ...
-    def scan(self) -> dict[str, PluginPackage]: ...    # 重新扫描，刷新内部缓存
+    def scan(self) -> tuple[dict[str, PluginPackage], list[PackageScanError]]: ...
     def get(self, plugin_id: str) -> PluginPackage | None: ...  # 读最新缓存
 ```
 
@@ -242,7 +242,7 @@ class SpecStore:
 
     def __init__(self, plugins_config_dir: Path): ...
 
-    def load_all(self) -> dict[str, PluginSpec]: ...   # plugin_id 与目录名不一致 → 报错跳过
+    def load_all(self) -> tuple[dict[str, PluginSpec], list[SpecParseError]]: ...
     def load(self, plugin_id: str) -> PluginSpec | None: ...
     def save(self, spec: PluginSpec) -> None: ...       # 原子写（临时文件 + rename）
     def delete(self, plugin_id: str) -> None: ...       # 删文件+目录
@@ -404,11 +404,22 @@ class PluginReconciler:
 
 ```python
 async def reconcile_all(self) -> list[PluginStatus]:
-    packages = self.catalog.scan()       # 重新扫描，刷新缓存
-    specs = self.spec_store.load_all()
-    all_ids = set(packages) | set(specs) | self.host.loaded_plugin_ids()
+    packages, package_errors = self.catalog.scan()
+    specs, spec_errors = self.spec_store.load_all()
 
+    # 解析失败的直接生成 failed 状态
     results = []
+    error_ids: set[str] = set()
+    for err in package_errors:
+        error_ids.add(err.plugin_id)
+        results.append(PluginStatus(plugin_id=err.plugin_id, phase="failed", load_error=f"bad manifest: {err.error}", ...))
+    for err in spec_errors:
+        if err.plugin_id not in error_ids:
+            error_ids.add(err.plugin_id)
+            results.append(PluginStatus(plugin_id=err.plugin_id, phase="failed", load_error=f"bad spec: {err.error}", ...))
+
+    all_ids = set(packages) | set(specs) | self.host.loaded_plugin_ids() - error_ids
+
     for plugin_id in sorted(all_ids):
         status = await self._reconcile(
             plugin_id,
