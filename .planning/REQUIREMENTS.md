@@ -1,97 +1,175 @@
-# Requirements: AcaBot
+# Requirements: AcaBot v2 Runtime Infrastructure
 
-**Defined:** 2026-03-29
-**Core Value:** 操作者必须能通过一个真实可用的 WebUI 稳定地理解并控制 AcaBot 的行为。
+**Defined:** 2026-04-02
+**Core Value:** 让 AcaBot 的 runtime 基础设施从 MVP 水平提升到正式可用水平：插件可管理、消息能力完整、定时任务可用、运行状态可观测。
 
 ## v1 Requirements
 
-### 系统与运行时路径
+### Reference Backend Removal
 
-- [ ] **SYS-01**: 操作者可以通过系统页管理网关设置、管理员列表和 skill / subagent catalog 扫描根，并让变更作用到正式运行时真源
-- [ ] **SYS-02**: runtime 配置、数据目录、catalog、workspace、sticky notes、长期记忆等正式路径通过统一解析链得到，而不是散落在代码里的硬编码字符串
-- [ ] **SYS-03**: 操作者可以明确知道系统当前正式使用的配置路径和运行时数据位置，用于排障和维护
+- [ ] **REF-01**: Reference Backend 子系统完全删除，无残留导入
+- [ ] **REF-02**: BackendBridgeToolPlugin 与 Reference Backend 解耦，过渡期可用
+- [ ] **REF-03**: config.yaml 中 reference 相关配置项清理或标记废弃
 
-### 首页、日志与操作反馈
+### Plugin Management
 
-- [ ] **OPS-01**: 操作者可以在首页看到真实的 runtime、gateway 和 backend 状态，用来判断系统是否正常
-- [ ] **OPS-02**: WebUI 在配置保存、校验失败、热刷新失败或控制面应用失败时，会向操作者返回明确错误而不是静默失败
-- [ ] **OPS-03**: 日志页在当前 ring buffer 约束内保持可用，支持过滤、刷新、自动跟随和增量读取状态提示
+- [ ] **PLUG-01**: 插件身份从 import path 迁移到 plugin_id
+- [ ] **PLUG-02**: PluginPackage 从 extensions/plugins/ 扫描 plugin.yaml manifest
+- [ ] **PLUG-03**: PluginSpec（启用/禁用 + 配置覆盖）持久化到 runtime_config/plugins/
+- [ ] **PLUG-04**: PluginStatus（phase/error/tools/hooks）持久化到 runtime_data/plugins/
+- [ ] **PLUG-05**: PluginReconciler 实现 desired-state 收敛（reconcile_all + reconcile_one）
+- [ ] **PLUG-06**: PluginRuntimeHost 执行 load/unload/teardown/run_hooks
+- [ ] **PLUG-07**: 单插件异常不影响 runtime（错误隔离）
+- [ ] **PLUG-08**: 旧 plugin_manager.py（972 行）完全替换删除
+- [ ] **PLUG-09**: 旧插件（OpsControl/NapCatTools/ReferenceTools）删除
+- [ ] **PLUG-10**: REST API 5 个新端点替代旧 4 个端点
+- [ ] **PLUG-11**: WebUI 插件管理页（列表、状态徽章、enable/disable、schema 驱动配置表单）
+- [ ] **PLUG-12**: Bootstrap 集成（构造 catalog/spec_store/status_store/host/reconciler）
+- [ ] **PLUG-13**: Pipeline 集成（plugin_manager.run_hooks → host.run_hooks）
 
-### 模型与提示词
+### Scheduler
 
-- [ ] **MODEL-01**: 操作者可以通过模型供应商页管理 provider 连接配置，并让变更作用到正式 model registry
-- [ ] **MODEL-02**: 操作者可以通过模型预设页管理模型预设及其正式绑定关系，同时保持 model target registry 作为唯一正式模型来源
-- [ ] **PROMPT-01**: 操作者可以通过提示词页管理提示词真源，并在删除时看到引用约束
+- [ ] **SCHED-01**: 支持 cron 表达式定时任务（使用 croniter 解析）
+- [ ] **SCHED-02**: 支持 interval（固定间隔）定时任务
+- [ ] **SCHED-03**: 支持 one-shot（一次性延迟）任务
+- [ ] **SCHED-04**: 任务持久化，runtime 重启后恢复
+- [ ] **SCHED-05**: 任务可取消（按 task_id）
+- [ ] **SCHED-06**: Graceful shutdown（cancel all + gather，scheduler 最先停）
+- [ ] **SCHED-07**: 插件生命周期绑定（unload 时 unregister_by_owner 自动取消）
+- [ ] **SCHED-08**: RuntimeApp 生命周期集成（start 后启动，stop 时最先关闭）
 
-### 扩展能力
+### Logging / Observability
 
-- [ ] **EXT-01**: 操作者可以通过插件页管理插件启停和重载，并看到加载失败原因
-- [ ] **EXT-02**: 操作者可以通过技能页浏览实际 skill catalog 内容，并且内容来自系统当前配置的扫描根
-- [ ] **EXT-03**: 操作者可以通过 SubAgent 页浏览实际 subagent catalog 内容，并且内容来自系统当前配置的扫描根
+- [ ] **LOG-01**: 工具调用日志包含结构化字段（tool_name, duration, result_summary）
+- [ ] **LOG-02**: LLM token 用量 per run 记录（input/output/total tokens, model, cost）
+- [ ] **LOG-03**: 错误日志自动关联 run context（run_id, thread_id, agent_id）
+- [ ] **LOG-04**: WebUI 日志查看器能展示结构化字段（不只是纯文本）
+- [ ] **LOG-05**: LTM extraction/query 过程日志可见
+- [ ] **LOG-06**: structlog 集成（wrapping stdlib logging，contextvars 传播 run context）
 
-### Session 行为管理
+### LTM Data Safety
 
-- [ ] **SESS-01**: 操作者可以通过 Session 页管理 session 的基础设置和事件响应 surface
-- [ ] **SESS-02**: 操作者可以通过 Session 页管理上下文与工具可见性，并且这些设置基于当前 session/runtime 契约
-- [ ] **SESS-03**: Session 页的行为配置在运行时能够被校验和生效，并且不会重新引入已废弃的旧私有模型字段
+- [ ] **LTM-01**: asyncio.Lock 写序列化（防止并发写损坏）
+- [ ] **LTM-02**: 定期备份能力（通过 scheduler 触发）
+- [ ] **LTM-03**: 启动时完整性检查（检测损坏表/缺失 manifest）
+- [ ] **LTM-04**: LTM 失败时优雅降级（不阻断 pipeline，记录错误继续）
 
-### 记忆与长期记忆
+### Unified Message Tool
 
-- [ ] **MEM-01**: 操作者可以通过记忆页稳定管理 sticky notes
-- [ ] **LTM-01**: 操作者可以通过记忆页管理长期记忆的基础设置、模型绑定和专用提示词
-- [ ] **LTM-02**: 操作者可以以产品字段视角查看长期记忆条目，而不是直接面对底层存储实现
-- [ ] **LTM-03**: 长期记忆的提取 / 检索链路足够可靠、可解释，能支撑日常使用而不只是实验性质
+- [ ] **MSG-01**: 文本回复（基础 send text，保持现有行为）
+- [ ] **MSG-02**: 引用回复（reply_to 指定被引用消息）
+- [ ] **MSG-03**: @mention（指定用户 ID）
+- [ ] **MSG-04**: Emoji reaction（对消息添加 reaction）
+- [ ] **MSG-05**: 撤回消息（recall 指定消息）
+- [ ] **MSG-06**: 媒体/附件发送（图片、文件路径）
+- [ ] **MSG-07**: 工具层只表达意图，映射到 Action → Outbox → Gateway
+- [ ] **MSG-08**: 文转图渲染（Playwright render_markdown_to_image）
+- [ ] **MSG-09**: 跨会话消息发送（target 参数指定目标会话）
+- [ ] **MSG-10**: 具体工具 schema / 字段设计在 discuss-phase 时敲定
+
+### Playwright Integration
+
+- [ ] **PW-01**: render_markdown_to_image() 工具函数在 Outbox 层
+- [ ] **PW-02**: Singleton browser 实例管理（启动时创建，关闭时销毁）
+- [ ] **PW-03**: markdown-it-py → HTML → Playwright screenshot 流程
 
 ## v2 Requirements
 
-### 新用户上手
+### Plugin System
 
-- **DOCS-01**: 新操作者可以通过 Quickstart 在本地启动 AcaBot、接入 NapCat、打开 WebUI 并完成首次配置
-- **DOCS-02**: WebUI 关键页面具备最小必要的引导文案、空状态说明和上手提示
+- **PLUG-V2-01**: 插件依赖声明与拓扑排序加载
+- **PLUG-V2-02**: 插件资源用量追踪
+- **PLUG-V2-03**: 插件 marketplace
 
-### 更深入的长期记忆与运维能力
+### Scheduler
 
-- **LTM-04**: 操作者可以对长期记忆条目做更细粒度筛选、修订和验证
-- **OPS-04**: 日志页支持超出内存窗口的历史检索或持久化日志查看
+- **SCHED-V2-01**: Schedule-triggered agent runs（定时触发完整 agent pipeline）
+- **SCHED-V2-02**: WebUI 定时任务管理页面
+
+### Observability
+
+- **LOG-V2-01**: 完整 run trace 视图（WebUI）
+- **LOG-V2-02**: Memory 操作追踪
+- **LOG-V2-03**: Token budget 可视化
+- **LOG-V2-04**: OpenTelemetry 导出
+
+### Message Tool
+
+- **MSG-V2-01**: 合并转发消息
+- **MSG-V2-02**: 富文本编辑
+- **MSG-V2-03**: Interactive components（按钮、卡片）
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| WebUI 聊天工作区 | 当前后台控制台明确不做聊天工作区，优先把配置与运维面做实 |
-| 单独的平台页面 | 平台相关配置已决定并入系统页，不再拆独立导航 |
-| 插件市场 / 在线安装 / 版本管理 | 当前先把已有插件、skill、subagent 的可见性和控制面做实 |
-| 将底层数据库或内部目录结构原样暴露给普通操作者 | 优先暴露产品化配置与条目字段，而不是把实现细节直接变成产品界面 |
+| Plugin sandboxing | Python 无法真正隔离插件进程，单操作者场景不需要 |
+| Plugin marketplace | 单操作者 bot，不需要第三方分发 |
+| Distributed scheduler (Celery/Redis) | 单进程 runtime，asyncio scheduler 足够 |
+| Sub-second scheduler precision | chatbot 场景不需要高精度定时 |
+| Full prompt logging by default | 隐私风险 + 存储成本 |
+| OpenTelemetry (v1) | 单操作者场景 overkill，v2 考虑 |
+| Forward/合并转发 (v1) | OneBot v11 的合并转发 API 复杂，v1 先不做 |
+| Voice/TTS | 超出当前基础设施强化范围 |
+| Multiple gateway support | 当前只有 NapCat，不需要 |
 
 ## Traceability
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SYS-01 | Phase 1 | Pending |
-| SYS-02 | Phase 1 | Pending |
-| SYS-03 | Phase 1 | Pending |
-| OPS-01 | Phase 2 | Pending |
-| OPS-02 | Phase 1 | Pending |
-| OPS-03 | Phase 2 | Pending |
-| MODEL-01 | Phase 3 | Pending |
-| MODEL-02 | Phase 3 | Pending |
-| PROMPT-01 | Phase 3 | Pending |
-| EXT-01 | Phase 4 | Pending |
-| EXT-02 | Phase 4 | Pending |
-| EXT-03 | Phase 4 | Pending |
-| SESS-01 | Phase 5 | Pending |
-| SESS-02 | Phase 5 | Pending |
-| SESS-03 | Phase 5 | Pending |
-| MEM-01 | Phase 6 | Pending |
-| LTM-01 | Phase 6 | Pending |
-| LTM-02 | Phase 6 | Pending |
-| LTM-03 | Phase 7 | Pending |
+| REF-01 | — | Pending |
+| REF-02 | — | Pending |
+| REF-03 | — | Pending |
+| PLUG-01 | — | Pending |
+| PLUG-02 | — | Pending |
+| PLUG-03 | — | Pending |
+| PLUG-04 | — | Pending |
+| PLUG-05 | — | Pending |
+| PLUG-06 | — | Pending |
+| PLUG-07 | — | Pending |
+| PLUG-08 | — | Pending |
+| PLUG-09 | — | Pending |
+| PLUG-10 | — | Pending |
+| PLUG-11 | — | Pending |
+| PLUG-12 | — | Pending |
+| PLUG-13 | — | Pending |
+| SCHED-01 | — | Pending |
+| SCHED-02 | — | Pending |
+| SCHED-03 | — | Pending |
+| SCHED-04 | — | Pending |
+| SCHED-05 | — | Pending |
+| SCHED-06 | — | Pending |
+| SCHED-07 | — | Pending |
+| SCHED-08 | — | Pending |
+| LOG-01 | — | Pending |
+| LOG-02 | — | Pending |
+| LOG-03 | — | Pending |
+| LOG-04 | — | Pending |
+| LOG-05 | — | Pending |
+| LOG-06 | — | Pending |
+| LTM-01 | — | Pending |
+| LTM-02 | — | Pending |
+| LTM-03 | — | Pending |
+| LTM-04 | — | Pending |
+| MSG-01 | — | Pending |
+| MSG-02 | — | Pending |
+| MSG-03 | — | Pending |
+| MSG-04 | — | Pending |
+| MSG-05 | — | Pending |
+| MSG-06 | — | Pending |
+| MSG-07 | — | Pending |
+| MSG-08 | — | Pending |
+| MSG-09 | — | Pending |
+| MSG-10 | — | Pending |
+| PW-01 | — | Pending |
+| PW-02 | — | Pending |
+| PW-03 | — | Pending |
 
 **Coverage:**
-- v1 requirements: 19 total
-- Mapped to phases: 19
-- Unmapped: 0 ✓
+- v1 requirements: 43 total
+- Mapped to phases: 0
+- Unmapped: 43 ⚠️
 
 ---
-*Requirements defined: 2026-03-29*
-*Last updated: 2026-03-29 after initialization*
+*Requirements defined: 2026-04-02*
+*Last updated: 2026-04-02 after initial definition*
