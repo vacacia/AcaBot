@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from acabot.config import Config
 from acabot.runtime import ResolvedAgent, ComputerPolicy, ToolBroker, ToolExecutionContext, build_runtime_components
 from acabot.runtime.builtin_tools.computer import BuiltinComputerToolSurface
+from acabot.runtime.builtin_tools.message import BUILTIN_MESSAGE_TOOL_SOURCE
 from acabot.types import EventSource
 
 from tests.runtime._agent_fakes import FakeAgent, FakeAgentResponse
@@ -318,13 +319,14 @@ async def test_build_runtime_components_registers_core_tools_as_builtin_sources(
     assert sources["sticky_note_read"] == "builtin:sticky_notes"
     assert sources["sticky_note_append"] == "builtin:sticky_notes"
     assert sources["delegate_subagent"] == "builtin:subagents"
+    assert sources["message"] == BUILTIN_MESSAGE_TOOL_SOURCE
     assert "sticky_note_put" not in sources
     assert "sticky_note_get" not in sources
     assert "sticky_note_list" not in sources
     assert "sticky_note_delete" not in sources
 
 
-async def test_builtin_core_tools_survive_reconciler_run() -> None:
+async def test_builtin_core_tools_survive_reconciler_run(tmp_path: Path) -> None:
     """reconcile 外部 plugin 时, builtin core tool 也要一直留在 broker 里."""
 
     config = Config(
@@ -334,6 +336,7 @@ async def test_builtin_core_tools_survive_reconciler_run() -> None:
             },
             "runtime": {
                 "default_agent_id": "aca",
+                "runtime_root": str(tmp_path / "runtime_data"),
             },
         }
     )

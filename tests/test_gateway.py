@@ -378,6 +378,18 @@ class TestNapCatTranslation:
         assert payload["action"] == "delete_msg"
         assert payload["params"]["message_id"] == "12345"
 
+    def test_build_reaction(self, gw):
+        # reaction → set_msg_emoji_like API
+        target = EventSource(platform="qq", message_type="group", user_id="1", group_id="2")
+        action = Action(
+            action_type=ActionType.REACTION,
+            target=target,
+            payload={"message_id": "12345", "emoji_id": 76},
+        )
+        payload = gw.build_send_payload(action)
+        assert payload["action"] == "set_msg_emoji_like"
+        assert payload["params"] == {"message_id": "12345", "emoji_id": 76}
+
     def test_build_group_ban(self, gw):
         # 群禁言 → set_group_ban API, 包含 duration
         target = EventSource(platform="qq", message_type="group", user_id="1", group_id="444")
