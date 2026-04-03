@@ -117,59 +117,59 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| REF-01 | — | Pending |
-| REF-02 | — | Pending |
-| REF-03 | — | Pending |
-| PLUG-01 | — | Pending |
-| PLUG-02 | — | Pending |
-| PLUG-03 | — | Pending |
-| PLUG-04 | — | Pending |
-| PLUG-05 | — | Pending |
-| PLUG-06 | — | Pending |
-| PLUG-07 | — | Pending |
-| PLUG-08 | — | Pending |
-| PLUG-09 | — | Pending |
-| PLUG-10 | — | Pending |
-| PLUG-11 | — | Pending |
-| PLUG-12 | — | Pending |
-| PLUG-13 | — | Pending |
-| SCHED-01 | — | Pending |
-| SCHED-02 | — | Pending |
-| SCHED-03 | — | Pending |
-| SCHED-04 | — | Pending |
-| SCHED-05 | — | Pending |
-| SCHED-06 | — | Pending |
-| SCHED-07 | — | Pending |
-| SCHED-08 | — | Pending |
-| LOG-01 | — | Pending |
-| LOG-02 | — | Pending |
-| LOG-03 | — | Pending |
-| LOG-04 | — | Pending |
-| LOG-05 | — | Pending |
-| LOG-06 | — | Pending |
-| LTM-01 | — | Pending |
-| LTM-02 | — | Pending |
-| LTM-03 | — | Pending |
-| LTM-04 | — | Pending |
-| MSG-01 | — | Pending |
-| MSG-02 | — | Pending |
-| MSG-03 | — | Pending |
-| MSG-04 | — | Pending |
-| MSG-05 | — | Pending |
-| MSG-06 | — | Pending |
-| MSG-07 | — | Pending |
-| MSG-08 | — | Pending |
-| MSG-09 | — | Pending |
-| MSG-10 | — | Pending |
-| PW-01 | — | Pending |
-| PW-02 | — | Pending |
-| PW-03 | — | Pending |
+| REF-01 | 1 | Pending |
+| REF-02 | 1 | Pending |
+| REF-03 | 1 | Pending |
+| PLUG-01 | 2 | Pending |
+| PLUG-02 | 2 | Pending |
+| PLUG-03 | 2 | Pending |
+| PLUG-04 | 2 | Pending |
+| PLUG-05 | 2 | Pending |
+| PLUG-06 | 2 | Pending |
+| PLUG-07 | 2 | Pending |
+| PLUG-08 | 2 | Pending |
+| PLUG-09 | 2 | Pending |
+| PLUG-10 | 2 | Pending |
+| PLUG-11 | 2 | Pending |
+| PLUG-12 | 2 | Pending |
+| PLUG-13 | 2 | Pending |
+| SCHED-01 | 3a | Pending |
+| SCHED-02 | 3a | Pending |
+| SCHED-03 | 3a | Pending |
+| SCHED-04 | 3a | Pending |
+| SCHED-05 | 3a | Pending |
+| SCHED-06 | 3a | Pending |
+| SCHED-07 | 3a | Pending |
+| SCHED-08 | 3a | Pending |
+| LOG-01 | 3c | Pending |
+| LOG-02 | 3c | Pending |
+| LOG-03 | 3c | Pending |
+| LOG-04 | 3c | Pending |
+| LOG-05 | 3c | Pending |
+| LOG-06 | 3c | Pending |
+| LTM-01 | 3b | Pending |
+| LTM-02 | 3b | Pending |
+| LTM-03 | 3b | Pending |
+| LTM-04 | 3b | Pending |
+| MSG-01 | 4 | Pending |
+| MSG-02 | 4 | Pending |
+| MSG-03 | 4 | Pending |
+| MSG-04 | 4 | Pending |
+| MSG-05 | 4 | Pending |
+| MSG-06 | 4 | Pending |
+| MSG-07 | 4 | Pending |
+| MSG-08 | 4 | Pending |
+| MSG-09 | 4 | Pending |
+| MSG-10 | 4 | Pending |
+| PW-01 | 4 | Pending |
+| PW-02 | 4 | Pending |
+| PW-03 | 4 | Pending |
 
 **Coverage:**
-- v1 requirements: 43 total
-- Mapped to phases: 0
-- Unmapped: 43 ⚠️
+- v1 requirements: 47 total
+- Mapped to phases: 47
+- Unmapped: 0 ✅
 
 ---
 *Requirements defined: 2026-04-02*
-*Last updated: 2026-04-02 after initial definition*
+*Last updated: 2026-04-02 after roadmap creation — all 47 requirements mapped to phases*

@@ -1,139 +1,189 @@
-# Roadmap: AcaBot
+# Roadmap: AcaBot v2 Runtime Infrastructure
 
-## Overview
+**Created:** 2026-04-02
+**Granularity:** standard (6 phases, 3 parallelizable)
+**Parallelization:** enabled (Phases 3a/3b/3c run concurrently)
 
-这一轮路线不是再往系统里盲目堆新能力，而是把已经存在的 runtime、control plane、WebUI shell 和记忆能力收成一个真实可操作、可维护、可对外上手的后台控制台。执行顺序上，先统一路径与系统级真源，再让各页管理内容真正生效，之后把 Session 和记忆面收回 WebUI，最后再把长期记忆从“最小可运行”提升到“日常可用”。
+## Phase Overview
 
-## Phases
+```
+Phase 1: Reference Backend Removal          [3 reqs]   ──►
+Phase 2: Plugin Reconciler                   [13 reqs]  ──►
+Phase 3a: Scheduler                          [8 reqs]   ──┐
+Phase 3b: LTM Data Safety                   [4 reqs]   ──┼─► (parallel)
+Phase 3c: Logging & Observability            [6 reqs]   ──┘
+Phase 4: Unified Message Tool + Playwright   [13 reqs]  ──►
+                                              ─────────
+                                              47 total
+```
 
-**Phase Numbering:**
-- Integer phases (1, 2, 3): Planned milestone work
-- Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
+---
 
-Decimal phases appear between their surrounding integers in numeric order.
+## Phase 1: Reference Backend Removal
 
-- [x] **Phase 1: 系统页与运行时路径统一** - 收敛系统级配置、扫描根和运行时数据路径，建立正式真源
-- [ ] **Phase 2: 首页、日志与全局反馈可用化** - 让首页和日志页成为真实可靠的运维入口
-- [ ] **Phase 3: 模型与提示词控制面生效** - 打通 provider / model / prompt 页到正式配置链
-- [ ] **Phase 4: 插件与 catalog 页面生效** - 让插件、技能、SubAgent 页连接真实运行态与目录真源
-- [ ] **Phase 5: Session 行为管理回归 WebUI** - 让 Session 页重新成为正式行为配置入口
-- [ ] **Phase 6: 记忆页与 LTM 配置面可用** - 把 sticky notes 和 LTM 配置面收成正式产品能力
-- [ ] **Phase 7: 长期记忆可用性硬化** - 提升长期记忆链路质量、可解释性和日常可用度
+**Goal:** Delete the defunct Reference Backend subsystem, leaving zero dead imports and no runtime behavior change. Cleans the codebase before larger refactors.
 
-## Phase Details
+**Requirements:**
+- REF-01: Reference Backend subsystem completely deleted, no residual imports
+- REF-02: BackendBridgeToolPlugin decoupled from Reference Backend, transition-period usable
+- REF-03: config.yaml reference-related config items cleaned or marked deprecated
 
-### Phase 1: 系统页与运行时路径统一
-**Goal**: 收敛系统级配置、catalog 扫描根和运行时数据路径，让 WebUI 后续页面有稳定正式真源可写
-**Depends on**: Nothing (first phase)
-**Requirements**: [SYS-01, SYS-02, SYS-03, OPS-02]
-**UI hint**: yes
-**Success Criteria** (what must be TRUE):
-  1. 操作者可以从系统页编辑网关设置、管理员列表和 catalog 扫描根，并且这些变更进入正式运行时配置
-  2. runtime 配置、数据目录、catalog、workspace、sticky notes、LTM 路径有统一解析链，不再依赖分散硬编码
-  3. 操作者可以清楚知道当前系统实际使用的配置路径与数据位置
-  4. WebUI 对保存失败、校验失败和应用失败给出明确反馈
-**Plans**: 3 plans
+**Success Criteria:**
+1. `grep -r "reference" src/` returns zero hits on Reference Backend modules/imports (dead code gone)
+2. Bot starts successfully and completes a full request-response cycle (no runtime regression)
+3. BackendBridgeToolPlugin loads and its tools execute without error in a smoke test
+4. No config.yaml keys reference the deleted subsystem (or are explicitly marked `deprecated`)
 
-Plans:
-- [x] Plan 01 — 后端系统配置契约与路径总览
-- [x] Plan 02 — 可复用列表编辑器与管理员页迁移
-- [x] Plan 03 — 系统页重构与导航收敛
+**Dependencies:** None (standalone, reduces noise for subsequent phases)
+**Research flag:** Light — straightforward deletion with grep verification
 
-### Phase 2: 首页、日志与全局反馈可用化
-**Goal**: 让首页和日志页真正承担运维入口，而不是只保留展示壳
-**Depends on**: Phase 1
-**Requirements**: [OPS-01, OPS-03]
-**UI hint**: yes
-**Success Criteria** (what must be TRUE):
-  1. 首页显示的 runtime、gateway 和 backend 状态来自真实控制面数据
-  2. 日志页支持当前窗口内的过滤、刷新、自动跟随和增量读取状态提示
-  3. 操作者可以仅通过首页和日志页快速判断系统当前是否处于可运行状态
-**Plans**: 0 plans
+---
 
-Plans:
-- [ ] TBD (run `$gsd-plan-phase 2` to break down)
+## Phase 2: Plugin Reconciler
 
-### Phase 3: 模型与提示词控制面生效
-**Goal**: 打通模型供应商、模型预设和提示词页面到正式配置链，让这些页面成为可信入口
-**Depends on**: Phase 2
-**Requirements**: [MODEL-01, MODEL-02, PROMPT-01]
-**UI hint**: yes
-**Success Criteria** (what must be TRUE):
-  1. provider 页面编辑后会更新正式 model registry 配置
-  2. model 页面编辑后会更新正式 preset / binding 状态，并保持 model target registry 为唯一正式模型来源
-  3. prompt 页面编辑后会更新正式提示词真源，并正确处理删除约束
-**Plans**: 0 plans
+**Goal:** Replace the 972-line `plugin_manager.py` monolith with six focused modules implementing a desired-state reconciler pattern. Deliver declarative plugin management via API and WebUI.
 
-Plans:
-- [ ] TBD (run `$gsd-plan-phase 3` to break down)
+**Requirements:**
+- PLUG-01: Plugin identity migrated from import path to plugin_id
+- PLUG-02: PluginPackage scans extensions/plugins/ for plugin.yaml manifests
+- PLUG-03: PluginSpec (enable/disable + config override) persisted to runtime_config/plugins/
+- PLUG-04: PluginStatus (phase/error/tools/hooks) persisted to runtime_data/plugins/
+- PLUG-05: PluginReconciler implements desired-state convergence (reconcile_all + reconcile_one)
+- PLUG-06: PluginRuntimeHost executes load/unload/teardown/run_hooks
+- PLUG-07: Single-plugin exception does not affect runtime (error isolation)
+- PLUG-08: Old plugin_manager.py (972 lines) fully replaced and deleted
+- PLUG-09: Legacy plugins (OpsControl/NapCatTools/ReferenceTools) deleted
+- PLUG-10: REST API 5 new endpoints replace old 4 endpoints
+- PLUG-11: WebUI plugin management page (list, status badges, enable/disable, schema-driven config form)
+- PLUG-12: Bootstrap integration (construct catalog/spec_store/status_store/host/reconciler)
+- PLUG-13: Pipeline integration (plugin_manager.run_hooks -> host.run_hooks)
 
-### Phase 4: 插件与 catalog 页面生效
-**Goal**: 让插件、技能和 SubAgent 页面接入真实运行态与 catalog 真源
-**Depends on**: Phase 3
-**Requirements**: [EXT-01, EXT-02, EXT-03]
-**UI hint**: yes
-**Success Criteria** (what must be TRUE):
-  1. 插件页可以管理启停 / 重载，并清楚展示加载失败原因
-  2. 技能页展示的内容来自系统当前真实扫描根与 catalog 结果
-  3. SubAgent 页展示的内容来自系统当前真实扫描根与 catalog 结果
-**Plans**: 0 plans
+**Success Criteria:**
+1. A sample plugin with `plugin.yaml` is discovered, enabled via API, and its tools appear in ToolBroker
+2. Disabling a plugin via WebUI removes its tools from ToolBroker and sets Status.phase to `disabled`
+3. A plugin that raises during load is caught — Status shows `error` phase with `last_error`, other plugins remain functional
+4. Old `plugin_manager.py` file no longer exists; `git log` confirms deletion
+5. Full bot pipeline (gateway -> agent -> tool call -> reply) works with new plugin system
 
-Plans:
-- [ ] TBD (run `$gsd-plan-phase 4` to break down)
+**Dependencies:** Phase 1 (Reference Backend gone, so ReferenceToolsPlugin deletion is clean)
+**Research flag:** Heavy — need detailed audit of current plugin_manager.py load ordering and BackendBridgeToolPlugin transition
 
-### Phase 5: Session 行为管理回归 WebUI
-**Goal**: 让 Session 页围绕新的 session/runtime 契约重新上线，并成为正式行为配置入口
-**Depends on**: Phase 4
-**Requirements**: [SESS-01, SESS-02, SESS-03]
-**UI hint**: yes
-**Success Criteria** (what must be TRUE):
-  1. 操作者可以通过 Session 页管理基础设置和事件响应 surface
-  2. 操作者可以通过 Session 页管理上下文和工具可见性，且配置基于当前 session/runtime 契约
-  3. Session 配置变更能够通过校验并作用到运行时，而不会把系统拉回旧私有模型路径
-**Plans**: 0 plans
+---
 
-Plans:
-- [ ] TBD (run `$gsd-plan-phase 5` to break down)
+## Phase 3a: Scheduler
 
-### Phase 6: 记忆页与 LTM 配置面可用
-**Goal**: 把 sticky notes 与长期记忆的配置、模型、提示词和条目查看面收成正式产品能力
-**Depends on**: Phase 5
-**Requirements**: [MEM-01, LTM-01, LTM-02]
-**UI hint**: yes
-**Success Criteria** (what must be TRUE):
-  1. 记忆页可以稳定管理 sticky notes
-  2. 记忆页可以管理长期记忆基础设置、模型绑定和专用提示词
-  3. 长期记忆条目可以用正式产品字段视角查看，而不是直接暴露底层存储实现
-**Plans**: 0 plans
+**Goal:** Deliver a lightweight asyncio scheduler supporting cron, interval, and one-shot tasks with persistence, plugin lifecycle binding, and graceful shutdown.
 
-Plans:
-- [ ] TBD (run `$gsd-plan-phase 6` to break down)
+**Requirements:**
+- SCHED-01: Cron expression scheduling (croniter-based parsing)
+- SCHED-02: Interval (fixed-period) scheduling
+- SCHED-03: One-shot (single delayed execution) tasks
+- SCHED-04: Task persistence, recovery after runtime restart
+- SCHED-05: Task cancellation by task_id
+- SCHED-06: Graceful shutdown (cancel all + gather, scheduler stops first)
+- SCHED-07: Plugin lifecycle binding (unload triggers unregister_by_owner)
+- SCHED-08: RuntimeApp lifecycle integration (start after app start, stop first on shutdown)
 
-### Phase 7: 长期记忆可用性硬化
-**Goal**: 提升长期记忆提取 / 检索链路的可靠性、可解释性和日常可用度
-**Depends on**: Phase 6
-**Requirements**: [LTM-03]
-**UI hint**: no
-**Success Criteria** (what must be TRUE):
-  1. 长期记忆的提取 / 检索链路在日常使用中稳定可靠
-  2. 操作者能理解 LTM 为什么写入、为什么命中、为什么没命中
-  3. LTM 不再只是“能跑起来”的实验能力，而是可日常依赖的系统能力
-**Plans**: 0 plans
+**Success Criteria:**
+1. A cron-scheduled task fires at the expected time (verified by log output within 1-minute tolerance)
+2. After runtime restart, previously registered persistent tasks resume without re-registration
+3. Unloading a plugin automatically cancels all tasks owned by that plugin (no orphaned tasks)
+4. During shutdown, scheduler stops before other subsystems; no `Task was destroyed` warnings in logs
 
-Plans:
-- [ ] TBD (run `$gsd-plan-phase 7` to break down)
+**Dependencies:** Phase 2 (needs PluginRuntimeHost for lifecycle-bound cleanup via unregister_by_owner)
+**Parallel with:** Phase 3b, Phase 3c
 
-## Progress
+---
 
-**Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
+## Phase 3b: LTM Data Safety
 
-| Phase | Plans Complete | Status | Completed |
-|-------|----------------|--------|-----------|
-| 1. 系统页与运行时路径统一 | 3/3 | Completed | 2026-03-30 |
-| 2. 首页、日志与全局反馈可用化 | 0/0 | Not started | - |
-| 3. 模型与提示词控制面生效 | 0/0 | Not started | - |
-| 4. 插件与 catalog 页面生效 | 0/0 | Not started | - |
-| 5. Session 行为管理回归 WebUI | 0/0 | Not started | - |
-| 6. 记忆页与 LTM 配置面可用 | 0/0 | Not started | - |
-| 7. 长期记忆可用性硬化 | 0/0 | Not started | - |
+**Goal:** Protect LanceDB data integrity with write serialization, backup capability, startup validation, and graceful degradation.
+
+**Requirements:**
+- LTM-01: asyncio.Lock write serialization (prevent concurrent write corruption)
+- LTM-02: Periodic backup capability (triggered via scheduler)
+- LTM-03: Startup integrity check (detect corrupted tables / missing manifest)
+- LTM-04: Graceful degradation on LTM failure (don't block pipeline, log error and continue)
+
+**Success Criteria:**
+1. Two concurrent LTM write operations serialize correctly (no data loss, verified by reading back both writes)
+2. A scheduled backup produces a restorable snapshot in the configured backup directory
+3. On startup with a corrupted LanceDB table, bot logs a warning and continues operating with LTM disabled
+4. A mid-pipeline LTM failure (simulated) does not prevent the agent from completing its response
+
+**Dependencies:** Phase 2 (scheduler integration for periodic backup), but LTM-01/03/04 can start immediately
+**Parallel with:** Phase 3a, Phase 3c
+
+---
+
+## Phase 3c: Logging & Observability
+
+**Goal:** Enrich logging with structured fields at key emit sites, integrate structlog for async-safe context propagation, and render structured logs in WebUI.
+
+**Requirements:**
+- LOG-01: Tool call logs include structured fields (tool_name, duration, result_summary)
+- LOG-02: LLM token usage per run recorded (input/output/total tokens, model, cost)
+- LOG-03: Error logs auto-associate run context (run_id, thread_id, agent_id)
+- LOG-04: WebUI log viewer displays structured fields (not just plain text)
+- LOG-05: LTM extraction/query process logs visible
+- LOG-06: structlog integration (wrapping stdlib logging, contextvars propagation)
+
+**Success Criteria:**
+1. After a tool call, the log entry contains `tool_name`, `duration_ms`, and `result_summary` as queryable fields
+2. After an agent run, a log entry shows token breakdown (input/output/total) and model name
+3. WebUI log viewer renders structured fields as key-value pairs (not raw JSON strings)
+4. LTM extraction events appear in logs with timing and record count
+
+**Dependencies:** Phase 2 (needs plugin_id context for structured logging)
+**Parallel with:** Phase 3a, Phase 3b
+
+---
+
+## Phase 4: Unified Message Tool + Playwright
+
+**Goal:** Give the agent complete messaging capabilities (reply, quote, react, recall, media, cross-session) via a unified tool backed by platform-agnostic actions flowing through Outbox, plus text-to-image rendering.
+
+**Requirements:**
+- MSG-01: Text reply (basic send text, preserve existing behavior)
+- MSG-02: Quote reply (reply_to specifies quoted message)
+- MSG-03: @mention (specify user ID)
+- MSG-04: Emoji reaction (add reaction to message)
+- MSG-05: Message recall (recall specified message)
+- MSG-06: Media/attachment sending (image, file path)
+- MSG-07: Tool layer expresses intent only, mapped to Action -> Outbox -> Gateway
+- MSG-08: Text-to-image rendering (Playwright render_markdown_to_image)
+- MSG-09: Cross-session messaging (target parameter specifies destination session)
+- MSG-10: Tool schema / field design finalized during discuss phase
+- PW-01: render_markdown_to_image() utility function in Outbox layer
+- PW-02: Singleton browser instance management (create on start, destroy on close)
+- PW-03: markdown-it-py -> HTML -> Playwright screenshot pipeline
+
+**Success Criteria:**
+1. Agent successfully sends a quoted reply with @mention in a real conversation (verified in IM client)
+2. Agent sends an image generated from markdown via text-to-image rendering
+3. Cross-session message delivery works (agent sends to a different group/user than the triggering conversation)
+4. All message actions flow through Outbox (no direct Gateway calls from tool layer, verified by code review)
+5. Playwright browser instance starts once and is reused across multiple render calls (no process leak)
+
+**Dependencies:** Phases 2 + 3a + 3c (stable plugin system, scheduler for cross-session notifications, structured logging for tool call observability)
+**Research flag:** Heavy — message tool schema requires empirical LLM testing; GatewayProtocol extension needs OneBot v11 API review
+
+---
+
+## Coverage Validation
+
+| Requirement | Phase | Count |
+|-------------|-------|-------|
+| REF-01..03 | 1 | 3 |
+| PLUG-01..13 | 2 | 13 |
+| SCHED-01..08 | 3a | 8 |
+| LTM-01..04 | 3b | 4 |
+| LOG-01..06 | 3c | 6 |
+| MSG-01..10 | 4 | 10 |
+| PW-01..03 | 4 | 3 |
+| **Total** | | **47** |
+
+**Coverage: 47/47 v1 requirements mapped (100%)**
+
+---
+*Created: 2026-04-02*
