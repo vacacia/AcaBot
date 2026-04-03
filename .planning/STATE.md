@@ -3,20 +3,22 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 04
-status: in_progress
-last_updated: "2026-04-03T18:11:33.003Z"
+current_plan: 4
+status: Ready to execute
+stopped_at: Completed 04-03-PLAN.md
+last_updated: "2026-04-03T18:21:18.082Z"
 progress:
   total_phases: 6
   completed_phases: 5
   total_plans: 4
-  completed_plans: 2
+  completed_plans: 3
 ---
 
 # Project State
 
 **Current Phase:** 04
 **Phase Status:** In Progress
-**Current Plan:** 03
+**Current Plan:** 4
 **Total Plans in Phase:** 04
 **Updated:** 2026-04-04
 
@@ -37,7 +39,7 @@ progress:
 |------|------|--------|--------------|
 | 04-01 | 1 | **Executed ✅** | MSG-04, MSG-05, MSG-07, MSG-10 |
 | 04-02 | 2 | **Executed ✅** | MSG-01, MSG-02, MSG-03, MSG-06, MSG-09 |
-| 04-03 | 3 | Ready | MSG-08, PW-01, PW-02, PW-03 |
+| 04-03 | 3 | **Executed ✅** | MSG-08, PW-01, PW-02, PW-03 |
 | 04-04 | 4 | Ready | MSG-05, MSG-08, PW-01, PW-02, PW-03 |
 
 ## Verification Results
@@ -72,6 +74,8 @@ progress:
 - ✅ `tests/runtime/test_outbox.py` 全绿, `SEND_MESSAGE_INTENT` 物化顺序、`reply_to` 保留、images、render fallback 和 cross-session destination persistence 已固定
 - ✅ `tests/runtime/test_model_agent_runtime.py` 与 `tests/runtime/test_pipeline_runtime.py` 全绿, 默认回复抑制和 destination thread working memory 语义已固定
 - ✅ 总验证命令 `PYTHONPATH=src uv run pytest -q tests/runtime/test_outbox.py tests/runtime/test_model_agent_runtime.py tests/runtime/test_pipeline_runtime.py` 通过, 共 52 tests passed
+- ✅ `tests/runtime/test_render_service.py` 全绿, 锁定 unavailable fallback、lazy browser reuse、markdown+math HTML pipeline 和 internal runtime artifact path
+- ✅ 验证命令 `rg -n 'playwright|markdown-it-py|mdit-py-plugins|latex2mathml' pyproject.toml uv.lock Dockerfile Dockerfile.lite` 通过, 依赖图和镜像安装链一致
 
 ## Commits
 
@@ -95,6 +99,9 @@ progress:
 | 992e975 | test(04-02): add failing tests for reply suppression and destination thread updates |
 | aebf9b5 | feat(04-02): suppress duplicate replies and update destination threads |
 | c72ab8e | docs(04-02): sync send intent runtime contracts |
+| 97d4f37 | chore(04-03): move render deps into project graph |
+| 1bcb3e9 | test(04-03): add failing render service tests |
+| dfe13b9 | feat(04-03): add render service foundation |
 
 ## Decisions
 
@@ -110,17 +117,21 @@ progress:
 - D-09: OutboxItem 显式拆出 origin_thread_id、destination_thread_id、destination_conversation_id, cross-session 语义不再躲在 metadata 里
 - D-10: SEND_MESSAGE_INTENT 一律在 Outbox 物化成单条 SEND_SEGMENTS, `reply_to` 继续走 Action.reply_to
 - D-11: 默认回复抑制只认 `SEND_MESSAGE_INTENT + suppresses_default_reply`; `react` / `recall` 永远不抑制
+- [Phase 04]: RenderService 保持 optional backend registry；没有 backend 时返回 unavailable，而不是阻断 runtime 启动
+- [Phase 04]: Render artifacts 固定落在 runtime_data/render_artifacts，不复用 /workspace/attachments
+- [Phase 04]: Playwright backend 缓存 browser/playwright 对象并在第一次 render 时 lazy-init
 
 ## Performance Metrics
 
 | Phase | Plan | Duration | Tasks | Files | Completed |
 |-------|------|----------|-------|-------|-----------|
 | 04 | 02 | 6m | 3 | 11 | 2026-04-04 |
+| 04 | 03 | 5m | 2 | 10 | 2026-04-04 |
 
 ## Session Info
 
-- **Last Session:** 2026-04-04T02:10:39+08:00
-- **Stopped At:** Completed 04-02-PLAN.md
+- **Last Session:** 2026-04-03T18:21:18.078Z
+- **Stopped At:** Completed 04-03-PLAN.md
 
 ## Blockers
 

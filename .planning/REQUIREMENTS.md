@@ -70,8 +70,8 @@
 ### Playwright Integration
 
 - [ ] **PW-01**: render_markdown_to_image() 工具函数在 Outbox 层
-- [ ] **PW-02**: Singleton browser 实例管理（启动时创建，关闭时销毁）
-- [ ] **PW-03**: markdown-it-py → HTML → Playwright screenshot 流程
+- [x] **PW-02**: Singleton browser 实例管理（启动时创建，关闭时销毁）
+- [x] **PW-03**: markdown-it-py → HTML → Playwright screenshot 流程
 
 ## v2 Requirements
 
@@ -162,8 +162,8 @@
 | MSG-09 | 4 | Complete |
 | MSG-10 | 4 | Validated |
 | PW-01 | 4 | Pending |
-| PW-02 | 4 | Pending |
-| PW-03 | 4 | Pending |
+| PW-02 | 4 | Complete |
+| PW-03 | 4 | Complete |
 
 **Coverage:**
 - v1 requirements: 47 total
