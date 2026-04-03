@@ -251,6 +251,16 @@ from .control.session_loader import SessionConfigLoader, StaticSessionConfigLoad
 from .control.session_runtime import SessionRuntime
 from .memory.retrieval_planner import RetrievalPlanner
 from .router import RuntimeRouter
+from .scheduler import (
+    CronSchedule,
+    IntervalSchedule,
+    MisfirePolicy,
+    OneShotSchedule,
+    RuntimeScheduler,
+    ScheduleType,
+    ScheduledTaskInfo,
+    SQLiteScheduledTaskStore,
+)
 from .soul import SoulSource
 from .storage.runs import InMemoryRunManager, RunManager, StoreBackedRunManager
 from .skills import FileSystemSkillPackageLoader
@@ -552,4 +562,12 @@ __all__ = [
     "ToolExecutionContext",
     "ToolReplayResult",
     "ToolResult",
+    "CronSchedule",
+    "IntervalSchedule",
+    "MisfirePolicy",
+    "OneShotSchedule",
+    "RuntimeScheduler",
+    "ScheduleType",
+    "ScheduledTaskInfo",
+    "SQLiteScheduledTaskStore",
 ]

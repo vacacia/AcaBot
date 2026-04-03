@@ -10,6 +10,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "lancedb>=0.25.0",
     "pyarrow>=18.0.0",
+    "croniter>=2.0.0",
 ]
 
 [project.optional-dependencies]
