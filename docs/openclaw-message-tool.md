@@ -3,6 +3,39 @@
 本文档基于对 OpenClaw 源码的深入研究，系统整理了 `message` 工具的完整定义、Schema 结构、能力体系和执行路径。
 
 ---
+## 0. 工具参数
+
+`message` 的真实参数 = `action` + 通用字段 + 渠道扩展字段。可见字段会被当前渠道、账号配置和能力开关裁剪；无 `config` 时回退到通用 schema。
+
+| 组别 | 字段 | 值 / 类型 |
+|---|---|---|
+| 路由 | `channel`, `target`, `targets`, `accountId`, `dryRun` | `string` / `string[]` / `boolean` |
+| 发送 | `message`, `effectId` / `effect`, `media`, `filename`, `buffer`, `contentType` / `mimeType`, `caption`, `path` / `filePath`, `replyTo` / `threadId`, `quoteText` | 大多是 `string`；`buffer` 是 base64 |
+| 发送开关 | `asVoice`, `silent`, `bestEffort`, `gifPlayback`, `forceDocument`, `asDocument` | `boolean` |
+| 反应 | `messageId` / `message_id`, `emoji`, `remove`, `targetAuthor` / `targetAuthorUuid`, `groupId` | `string` / `boolean` |
+| 投票 | `pollId`, `pollOptionId` / `pollOptionIds`, `pollOptionIndex` / `pollOptionIndexes`, `pollQuestion`, `pollOption`, `pollDurationHours`, `pollMulti`, `pollDurationSeconds`, `pollAnonymous`, `pollPublic` | `string` / `string[]` / `number` / `boolean` |
+| 目录 | `channelId`, `chatId`, `channelIds`, `memberId`, `memberIdType`, `guildId`, `userId`, `openId`, `unionId`, `authorId`, `authorIds`, `roleId`, `roleIds`, `participant`, `includeMembers`, `members`, `scope`, `kind` | `string` / `string[]` / `boolean` |
+| 资源/事件 | `emojiName`, `stickerId`, `stickerName`, `stickerDesc`, `stickerTags`, `threadName`, `autoArchiveMin`, `appliedTags`, `query`, `eventName`, `eventType`, `startTime`, `endTime`, `desc`, `location`, `durationMin`, `until` | `string` / `string[]` / `number` |
+| 治理/状态/频道 | `reason`, `deleteDays`, `gatewayUrl`, `gatewayToken`, `timeoutMs`, `activityType`, `activityName`, `activityUrl`, `activityState`, `status`, `name`, `type`, `parentId`, `topic`, `position`, `nsfw`, `rateLimitPerUser`, `categoryId`, `clearParent` | `string` / `number` / `boolean` |
+
+`action` 可见值按 target mode 分组。实际可见集合是当前渠道插件和配置的子集。
+
+| mode | actions |
+|---|---|
+| `to` | `send`, `poll`, `poll-vote`, `react`, `reactions`, `read`, `edit`, `unsend`, `reply`, `sendWithEffect`, `renameGroup`, `setGroupIcon`, `addParticipant`, `removeParticipant`, `leaveGroup`, `sendAttachment`, `delete`, `pin`, `unpin`, `list-pins`, `permissions`, `thread-create`, `thread-reply`, `sticker`, `topic-create`, `topic-edit`, `upload-file` |
+| `channelId` | `channel-info`, `channel-edit`, `channel-delete`, `channel-move` |
+| `none` | `broadcast`, `thread-list`, `search`, `sticker-search`, `member-info`, `role-info`, `emoji-list`, `emoji-upload`, `sticker-upload`, `role-add`, `role-remove`, `channel-list`, `channel-create`, `category-create`, `category-edit`, `category-delete`, `voice-status`, `event-list`, `event-create`, `timeout`, `kick`, `ban`, `set-profile`, `set-presence`, `download-file` |
+
+动态字段只在对应渠道能力打开时出现。
+
+| 字段 | 条件 / 值 |
+|---|---|
+| `interactive` | `interactive` 能力开启；`blocks[].type` = `text` \| `buttons` \| `select`；`buttons[].style` = `primary` \| `secondary` \| `success` \| `danger` |
+| `buttons` | Telegram only；`[[{text, callback_data, style?}]]`；`style` = `primary` \| `success` \| `danger` |
+| `components` | Discord only；`text`, `reusable`, `container`, `blocks`, `modal`；按钮 `style` = `primary` \| `secondary` \| `success` \| `danger` \| `link`；select `type` = `string` \| `user` \| `role` \| `mentionable` \| `channel` |
+| `blocks` | Slack only；Block Kit 数组 |
+| `card` | Feishu / MSTeams；开放对象 |
+| `displayName` / `display_name` / `avatarUrl` / `avatar_url` / `avatarPath` / `avatar_path` | Matrix `set-profile` only |
 
 ## 1. 工具概述
 
