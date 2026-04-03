@@ -12,12 +12,14 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import logging
 from typing import Any
 
 from acabot.types import Action, ActionType
 
 from .gateway_protocol import GatewayProtocol
+from .ids import build_thread_id_from_conversation_id
 from .memory.long_term_ingestor import LongTermMemoryIngestor
 from .contracts import (
     DispatchReport,
@@ -81,6 +83,7 @@ class Outbox:
         report = DispatchReport()
         for item in items:
             try:
+                item = self._materialize_item(item)
                 logger.debug(
                     "Outbox send: run_id=%s action_id=%s action_type=%s thread=%s",
                     item.run_id,
@@ -153,13 +156,24 @@ class Outbox:
         return [
             # PlannedAction 只有 action + thread_content, 但发送时需要更多上下文
             OutboxItem(
-                thread_id=ctx.thread.thread_id,
+                thread_id=destination_thread_id,
                 run_id=ctx.run.run_id,
                 agent_id=ctx.agent.agent_id,
                 plan=plan,
-                metadata={"channel_scope": ctx.thread.channel_scope},
+                origin_thread_id=ctx.thread.thread_id,
+                destination_thread_id=destination_thread_id,
+                destination_conversation_id=destination_conversation_id,
+                append_to_origin_thread=destination_thread_id == ctx.thread.thread_id,
+                metadata={
+                    "channel_scope": destination_conversation_id,
+                    "origin_thread_id": ctx.thread.thread_id,
+                    "destination_conversation_id": destination_conversation_id,
+                },
             )
             for plan in ctx.actions
+            for destination_conversation_id, destination_thread_id in [
+                self._resolve_destination_contract(ctx=ctx, action=plan.action, metadata=plan.metadata)
+            ]
         ]
 
     async def _persist_success(
@@ -176,7 +190,7 @@ class Outbox:
         await self.store.save(
             MessageRecord(
                 message_uid=f"{item.run_id}:{item.plan.action_id}",
-                thread_id=item.thread_id,
+                thread_id=item.destination_thread_id,
                 run_id=item.run_id,
                 actor_id=f"agent:{item.agent_id}",
                 platform=action.target.platform,
@@ -195,18 +209,86 @@ class Outbox:
         )
         try:
             if self.long_term_memory_ingestor is not None:
-                self.long_term_memory_ingestor.mark_dirty(item.thread_id)
+                self.long_term_memory_ingestor.mark_dirty(item.destination_thread_id)
         except Exception:
             logger.exception(
                 "Failed to mark long-term memory dirty after message persist: thread=%s",
-                item.thread_id,
+                item.destination_thread_id,
             )
         logger.debug(
             "Outbox persisted assistant message: run_id=%s action_id=%s thread=%s",
             item.run_id,
             item.plan.action_id,
-            item.thread_id,
+            item.destination_thread_id,
         )
+
+    def _materialize_item(self, item: OutboxItem) -> OutboxItem:
+        """把高层 send intent 物化成真正可发送的低层消息动作."""
+
+        action = item.plan.action
+        if action.action_type != ActionType.SEND_MESSAGE_INTENT:
+            return item
+
+        segments = self._build_send_segments(action)
+        materialized_plan = replace(
+            item.plan,
+            action=Action(
+                action_type=ActionType.SEND_SEGMENTS,
+                target=action.target,
+                payload={"segments": segments},
+                reply_to=action.reply_to,
+            ),
+        )
+        return replace(item, plan=materialized_plan)
+
+    @staticmethod
+    def _build_send_segments(action: Action) -> list[dict[str, Any]]:
+        """按固定顺序把 send intent payload 编译成 OneBot 段列表."""
+
+        payload = dict(action.payload)
+        segments: list[dict[str, Any]] = []
+
+        at_user = str(payload.get("at_user", "") or "").strip()
+        if at_user:
+            segments.append({"type": "at", "data": {"qq": at_user}})
+
+        text = str(payload.get("text", "") or "").strip()
+        if text:
+            segments.append({"type": "text", "data": {"text": text}})
+
+        for image in payload.get("images", []) or []:
+            file_ref = str(image or "").strip()
+            if file_ref:
+                segments.append({"type": "image", "data": {"file": file_ref}})
+
+        render = str(payload.get("render", "") or "")
+        if render:
+            segments.append({"type": "text", "data": {"text": render}})
+
+        return segments
+
+    @staticmethod
+    def _resolve_destination_contract(
+        *,
+        ctx: RunContext,
+        action: Action,
+        metadata: dict[str, Any],
+    ) -> tuple[str, str]:
+        """解析本次动作的目标 conversation/thread contract."""
+
+        destination_conversation_id = str(metadata.get("destination_conversation_id", "") or "").strip()
+        if not destination_conversation_id:
+            destination_conversation_id = Outbox._conversation_id_from_target(action.target)
+        destination_thread_id = build_thread_id_from_conversation_id(destination_conversation_id)
+        return destination_conversation_id, destination_thread_id
+
+    @staticmethod
+    def _conversation_id_from_target(target: Any) -> str:
+        """从 Action.target 回推 canonical conversation_id."""
+
+        if getattr(target, "message_type", "") == "group":
+            return f"{target.platform}:group:{target.group_id}"
+        return f"{target.platform}:user:{target.user_id}"
 
     @staticmethod
     def _should_persist_action(action: Action) -> bool:
