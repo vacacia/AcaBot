@@ -15,7 +15,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from acabot.config import Config
 
 from .control_plane import RuntimeControlPlane
-from ..references import ReferenceDocumentInput
 
 
 def _to_jsonable(value: Any) -> Any:
@@ -686,9 +685,6 @@ class RuntimeHttpApiServer:
         if len(segments) >= 2 and segments[0] == "workspaces":
             return self._handle_workspaces(method=method, segments=segments[1:], query=query, payload=payload)
 
-        if len(segments) >= 2 and segments[0] == "references":
-            return self._handle_references(method=method, segments=segments[1:], query=query, payload=payload)
-
         return 404, {"ok": False, "error": f"unknown endpoint: {path}"}
 
     def _handle_models(
@@ -829,73 +825,6 @@ class RuntimeHttpApiServer:
                 )
             )
         return 404, {"ok": False, "error": "unknown workspace endpoint"}
-
-    def _handle_references(
-        self,
-        *,
-        method: str,
-        segments: list[str],
-        query: dict[str, list[str]],
-        payload: dict[str, Any],
-    ) -> tuple[int, dict[str, Any]]:
-        if segments == ["spaces"] and method == "GET":
-            tenant_id = _query_value(query, "tenant_id", "") or None
-            mode = _query_value(query, "mode", "") or None
-            return self._ok(
-                self._await(
-                    self.control_plane.list_reference_spaces(
-                        tenant_id=tenant_id,
-                        mode=mode or None,
-                    )
-                )
-            )
-        if segments == ["search"] and method == "GET":
-            return self._ok(
-                self._await(
-                    self.control_plane.search_reference(
-                        query=_query_value(query, "query", ""),
-                        tenant_id=_query_value(query, "tenant_id", ""),
-                        space_id=_query_value(query, "space_id", "") or None,
-                        mode=_query_value(query, "mode", "") or None,
-                        limit=_query_int(query, "limit", 10),
-                        body=_query_value(query, "body", "none") or "none",
-                        min_score=_query_float(query, "min_score", 0.0),
-                    )
-                )
-            )
-        if segments == ["document"] and method == "GET":
-            result = self._await(
-                self.control_plane.get_reference_document(
-                    ref_id=_query_value(query, "ref_id", ""),
-                    tenant_id=_query_value(query, "tenant_id", ""),
-                    body=_query_value(query, "body", "full") or "full",
-                )
-            )
-            if result is None:
-                return 404, {"ok": False, "error": "reference document not found"}
-            return self._ok(result)
-        if segments == ["documents"] and method == "POST":
-            documents = [
-                ReferenceDocumentInput(
-                    title=str(item.get("title", "") or ""),
-                    body=str(item.get("body", "") or ""),
-                    source_uri=str(item.get("source_uri", "") or ""),
-                    tags=[str(tag) for tag in list(item.get("tags", []) or [])],
-                    metadata=dict(item.get("metadata", {}) or {}),
-                )
-                for item in list(payload.get("documents", []) or [])
-            ]
-            return self._ok(
-                self._await(
-                    self.control_plane.add_reference_documents(
-                        tenant_id=str(payload.get("tenant_id", "") or ""),
-                        space_id=str(payload.get("space_id", "") or ""),
-                        mode=str(payload.get("mode", "readonly_reference") or "readonly_reference"),
-                        documents=documents,
-                    )
-                )
-            )
-        return 404, {"ok": False, "error": "unknown reference endpoint"}
 
     def _ok(self, data: Any) -> tuple[int, dict[str, Any]]:
         return 200, {"ok": True, "data": _to_jsonable(data)}

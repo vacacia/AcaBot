@@ -145,24 +145,6 @@ class FakeApprovalResumer(ApprovalResumer):
         return self.result
 
 
-class TrackingReferenceBackend:
-    """用于 stop 测试的 reference backend fake.
-
-    Attributes:
-        closed (bool): 是否调用过 close.
-    """
-
-    def __init__(self) -> None:
-        """初始化 TrackingReferenceBackend."""
-
-        self.closed = False
-
-    async def close(self) -> None:
-        """记录 close 调用."""
-
-        self.closed = True
-
-
 class AppShortcutHook(RuntimeHook):
     name = "app_shortcut"
 
@@ -965,30 +947,6 @@ async def test_runtime_app_reject_pending_approval_cancels_run() -> None:
     assert restored.status == "cancelled"
     assert restored.error == "operator denied shell access"
     assert app.list_pending_approvals() == []
-
-
-async def test_runtime_app_stop_closes_reference_backend() -> None:
-    gateway = TrackingGateway()
-    reference_backend = TrackingReferenceBackend()
-    app = RuntimeApp(
-        gateway=gateway,
-        router=_default_router(),
-        thread_manager=InMemoryThreadManager(),
-        run_manager=InMemoryRunManager(),
-        channel_event_store=InMemoryChannelEventStore(),
-        pipeline=ThreadPipeline(
-            agent_runtime=FakeAgentRuntime(),
-            outbox=Outbox(gateway=gateway, store=FakeMessageStore()),
-            run_manager=InMemoryRunManager(),
-            thread_manager=InMemoryThreadManager(),
-        ),
-        agent_loader=_agent_loader,
-        reference_backend=reference_backend,
-    )
-
-    await app.stop()
-
-    assert reference_backend.closed is True
 
 
 async def test_runtime_app_lazily_starts_plugins_on_first_event() -> None:

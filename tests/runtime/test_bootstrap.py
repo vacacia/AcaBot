@@ -26,10 +26,7 @@ from acabot.runtime import (
     ModelBinding,
     ModelPreset,
     ModelProvider,
-    LocalReferenceBackend,
-    NullReferenceBackend,
     OpenAICompatibleProviderConfig,
-    OpenVikingReferenceBackend,
     PayloadJsonWriter,
     RetrievalPlan,
     RunContext,
@@ -1432,29 +1429,6 @@ async def test_build_runtime_components_uses_sqlite_persistence_when_configured(
     assert [event.content_text for event in events] == ["hello"]
 
 
-def test_build_runtime_components_defaults_to_null_reference_backend() -> None:
-    config = Config(
-        {
-            "agent": {
-                "system_prompt": "You are Aca.",
-            },
-            "runtime": {
-            },
-        }
-    )
-
-    components = build_runtime_components(
-        config,
-        gateway=FakeGateway(),
-        agent=FakeAgent(FakeAgentResponse(text="ok")),
-    )
-
-    assert isinstance(components.reference_backend, NullReferenceBackend)
-    assert isinstance(components.retrieval_planner, RetrievalPlanner)
-    assert isinstance(components.context_compactor, ContextCompactor)
-    assert isinstance(components.context_compactor.summarizer, ModelContextSummarizer)
-
-
 def test_build_runtime_components_ignores_legacy_prompt_assembly_config() -> None:
     config = Config(
         {
@@ -1622,63 +1596,3 @@ def test_build_runtime_components_applies_context_compaction_config() -> None:
     assert components.context_compactor.config.tool_schema_reserve_tokens == 3300
     assert components.context_compactor.config.fallback_context_window == 32000
 
-
-def test_build_runtime_components_selects_local_reference_backend(tmp_path: Path) -> None:
-    sqlite_path = tmp_path / "reference.sqlite3"
-    config = Config(
-        {
-            "agent": {
-                "system_prompt": "You are Aca.",
-            },
-            "runtime": {
-                "reference": {
-                    "enabled": True,
-                    "provider": "local",
-                    "local": {
-                        "sqlite_path": str(sqlite_path),
-                    },
-                },
-            },
-        }
-    )
-
-    components = build_runtime_components(
-        config,
-        gateway=FakeGateway(),
-        agent=FakeAgent(FakeAgentResponse(text="ok")),
-    )
-
-    assert isinstance(components.reference_backend, LocalReferenceBackend)
-    assert components.reference_backend.db_path == sqlite_path
-
-
-def test_build_runtime_components_selects_openviking_reference_backend() -> None:
-    config = Config(
-        {
-            "agent": {
-                "system_prompt": "You are Aca.",
-            },
-            "runtime": {
-                "reference": {
-                    "enabled": True,
-                    "provider": "openviking",
-                    "openviking": {
-                        "mode": "embedded",
-                        "path": "./ref-data",
-                        "base_uri": "viking://resources/acabot-test",
-                    },
-                },
-            },
-        }
-    )
-
-    components = build_runtime_components(
-        config,
-        gateway=FakeGateway(),
-        agent=FakeAgent(FakeAgentResponse(text="ok")),
-    )
-
-    assert isinstance(components.reference_backend, OpenVikingReferenceBackend)
-    assert components.reference_backend.mode == "embedded"
-    assert components.reference_backend.path == "./ref-data"
-    assert components.reference_backend.base_uri == "viking://resources/acabot-test"

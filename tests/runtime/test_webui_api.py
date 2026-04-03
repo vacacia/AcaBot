@@ -1200,9 +1200,6 @@ async def test_runtime_http_api_server_serves_status_and_session_crud(tmp_path: 
 
         workspaces_result = await asyncio.to_thread(request_json, base_url, "/api/workspaces")
         assert workspaces_result["ok"] is True
-
-        references_result = await asyncio.to_thread(request_json, base_url, "/api/references/spaces")
-        assert references_result["ok"] is True
     finally:
         await server.stop()
 

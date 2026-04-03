@@ -61,7 +61,6 @@ from .builders import (
     build_message_store,
     build_model_registry_manager,
     build_payload_json_writer,
-    build_reference_backend,
     build_retrieval_planner,
     build_run_manager,
     build_skill_catalog,
@@ -114,7 +113,6 @@ def build_runtime_components(
     context_compactor=None,
     retrieval_planner=None,
     model_registry_manager=None,
-    reference_backend=None,
     plugin_manager=None,
     tool_broker=None,
     skill_catalog=None,
@@ -180,7 +178,6 @@ def build_runtime_components(
         run_manager=runtime_run_manager,
         skill_catalog=runtime_skill_catalog,
     )
-    runtime_reference_backend = reference_backend or build_reference_backend(config)
     runtime_model_registry_manager = model_registry_manager or build_model_registry_manager(
         config,
         target_catalog=runtime_model_target_catalog,
@@ -341,7 +338,6 @@ def build_runtime_components(
         config=config,
         gateway=gateway,
         tool_broker=runtime_tool_broker,
-        reference_backend=runtime_reference_backend,
         sticky_notes=runtime_sticky_notes,
         computer_runtime=runtime_computer_runtime,
         skill_catalog=runtime_skill_catalog,
@@ -352,7 +348,6 @@ def build_runtime_components(
     runtime_plugin_manager.config = config
     runtime_plugin_manager.gateway = gateway
     runtime_plugin_manager.tool_broker = runtime_tool_broker
-    runtime_plugin_manager.reference_backend = runtime_reference_backend
     runtime_plugin_manager.sticky_notes = runtime_sticky_notes
     runtime_plugin_manager.computer_runtime = runtime_computer_runtime
     runtime_plugin_manager.skill_catalog = runtime_skill_catalog
@@ -424,7 +419,6 @@ def build_runtime_components(
         pipeline=pipeline,
         agent_loader=runtime_agent_loader,
         approval_resumer=runtime_approval_resumer,
-        reference_backend=runtime_reference_backend,
         plugin_manager=runtime_plugin_manager,
         model_registry_manager=runtime_model_registry_manager,
         computer_runtime=runtime_computer_runtime,
@@ -448,7 +442,6 @@ def build_runtime_components(
         tool_broker=runtime_tool_broker,
         model_registry_manager=runtime_model_registry_manager,
         computer_runtime=runtime_computer_runtime,
-        reference_backend=runtime_reference_backend,
         config_control_plane=config_control_plane,
         log_buffer=log_buffer,
         ltm_store=runtime_long_term_memory_store,
@@ -479,7 +472,6 @@ def build_runtime_components(
         computer_runtime=runtime_computer_runtime,
         image_context_service=runtime_image_context_service,
         message_preparation_service=runtime_message_preparation_service,
-        reference_backend=runtime_reference_backend,
         plugin_manager=runtime_plugin_manager,
         control_plane=control_plane,
         config_control_plane=config_control_plane,

@@ -7,11 +7,9 @@
 from .backend_bridge_tool import BackendBridgeToolPlugin
 from .napcat_tools import NapCatToolsPlugin
 from .ops_control import OpsControlPlugin
-from .reference_tools import ReferenceToolsPlugin
 
 __all__ = [
     "BackendBridgeToolPlugin",
     "NapCatToolsPlugin",
     "OpsControlPlugin",
-    "ReferenceToolsPlugin",
 ]

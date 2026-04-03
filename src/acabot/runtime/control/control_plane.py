@@ -42,16 +42,6 @@ from ..model.model_registry import (
 )
 from ..contracts import ChannelEventRecord, MessageRecord, RunRecord
 from ..plugin_manager import RuntimePluginManager
-from ..references import (
-    ReferenceBackend,
-    ReferenceBodyLevel,
-    ReferenceDocument,
-    ReferenceDocumentInput,
-    ReferenceDocumentRef,
-    ReferenceHit,
-    ReferenceMode,
-    ReferenceSpace,
-)
 from ..storage.runs import RunManager
 from ..skills import SkillPackageManifest
 from ..skills import SkillCatalog
@@ -65,7 +55,6 @@ from ..memory.sticky_notes import StickyNoteService
 from ..storage.threads import ThreadManager
 from ..tool_broker import ToolBroker
 from .model_ops import RuntimeModelControlOps
-from .reference_ops import RuntimeReferenceControlOps
 from .snapshots import (
     ActiveRunSnapshot,
     AgentSkillSnapshot,
@@ -111,7 +100,6 @@ class RuntimeControlPlane:
         tool_broker: ToolBroker | None = None,
         model_registry_manager: FileSystemModelRegistryManager | None = None,
         computer_runtime: ComputerRuntime | None = None,
-        reference_backend: ReferenceBackend | None = None,
         config_control_plane: RuntimeConfigControlPlane | None = None,
         log_buffer: InMemoryLogBuffer | None = None,
         ltm_store: object | None = None,
@@ -133,7 +121,6 @@ class RuntimeControlPlane:
             tool_broker: 可选的 tool broker, 用于给 WebUI 提供工具目录.
             model_registry_manager: 可选的模型注册表管理器.
             computer_runtime: 可选的 computer 基础设施入口.
-            reference_backend: 可选的 reference backend.
             config_control_plane: 可选的 runtime 配置控制面.
             ltm_store: 可选的 LTM 存储实例 (LanceDbLongTermMemoryStore).
         """
@@ -152,7 +139,6 @@ class RuntimeControlPlane:
         self.tool_broker = tool_broker
         self.model_registry_manager = model_registry_manager
         self.computer_runtime = computer_runtime
-        self.reference_backend = reference_backend
         self.config_control_plane = config_control_plane
         self.log_buffer = log_buffer
         self.ltm_store = ltm_store
@@ -164,7 +150,6 @@ class RuntimeControlPlane:
             thread_manager=thread_manager,
             computer_runtime=computer_runtime,
         )
-        self.reference_ops = RuntimeReferenceControlOps(reference_backend=reference_backend)
 
     async def get_status(self) -> RuntimeStatusSnapshot:
         """读取当前 runtime 的最小状态快照.
@@ -1032,63 +1017,6 @@ class RuntimeControlPlane:
 
     async def list_mirrored_skills(self, *, thread_id: str) -> list[str]:
         return await self.workspace_ops.list_mirrored_skills(thread_id=thread_id)
-
-    async def list_reference_spaces(
-        self,
-        *,
-        tenant_id: str | None = None,
-        mode: ReferenceMode | None = None,
-    ) -> list[ReferenceSpace]:
-        return await self.reference_ops.list_reference_spaces(tenant_id=tenant_id, mode=mode)
-
-    async def search_reference(
-        self,
-        *,
-        query: str,
-        tenant_id: str,
-        space_id: str | None = None,
-        mode: ReferenceMode | None = None,
-        limit: int = 10,
-        body: ReferenceBodyLevel = "none",
-        min_score: float = 0.0,
-    ) -> list[ReferenceHit]:
-        return await self.reference_ops.search_reference(
-            query=query,
-            tenant_id=tenant_id,
-            space_id=space_id,
-            mode=mode,
-            limit=limit,
-            body=body,
-            min_score=min_score,
-        )
-
-    async def get_reference_document(
-        self,
-        *,
-        ref_id: str,
-        tenant_id: str,
-        body: ReferenceBodyLevel = "full",
-    ) -> ReferenceDocument | None:
-        return await self.reference_ops.get_reference_document(
-            ref_id=ref_id,
-            tenant_id=tenant_id,
-            body=body,
-        )
-
-    async def add_reference_documents(
-        self,
-        *,
-        tenant_id: str,
-        space_id: str,
-        mode: ReferenceMode,
-        documents: list[ReferenceDocumentInput],
-    ) -> list[ReferenceDocumentRef]:
-        return await self.reference_ops.add_reference_documents(
-            tenant_id=tenant_id,
-            space_id=space_id,
-            mode=mode,
-            documents=documents,
-        )
 
     async def list_workspace_activity(
         self,

@@ -36,7 +36,6 @@ from .contracts import (
 )
 from .plugin_manager import RuntimePluginManager
 from .pipeline import ThreadPipeline
-from .references import ReferenceBackend
 from .router import RuntimeRouter
 from .storage.runs import RunManager
 from .storage.stores import ChannelEventStore
@@ -63,7 +62,6 @@ class RuntimeApp:
         pipeline: ThreadPipeline,
         agent_loader: Callable[[RouteDecision], ResolvedAgent] | None = None,
         approval_resumer: ApprovalResumer | None = None,
-        reference_backend: ReferenceBackend | None = None,
         plugin_manager: RuntimePluginManager | None = None,
         model_registry_manager: FileSystemModelRegistryManager | None = None,
         computer_runtime: ComputerRuntime | None = None,
@@ -83,7 +81,6 @@ class RuntimeApp:
             pipeline: 真正执行一次 run 的 ThreadPipeline.
             agent_loader: 根据 RouteDecision 加载当前 run agent 快照的回调.
             approval_resumer: approval 通过后的续执行器.
-            reference_backend: `reference / notebook` provider. 默认允许 lazy init.
             plugin_manager: runtime world 的插件管理器.
             model_registry_manager: 运行时模型注册表管理器.
             computer_runtime: 运行时 computer 基础设施入口.
@@ -101,7 +98,6 @@ class RuntimeApp:
         self.pipeline = pipeline
         self.agent_loader = agent_loader
         self.approval_resumer = approval_resumer or NoopApprovalResumer()
-        self.reference_backend = reference_backend
         self.plugin_manager = plugin_manager
         self.model_registry_manager = model_registry_manager
         self.computer_runtime = computer_runtime
@@ -152,13 +148,6 @@ class RuntimeApp:
                 await self.plugin_manager.teardown_all()
             except Exception as exc:
                 logger.exception("Failed to teardown runtime plugins during shutdown")
-                if stop_error is None:
-                    stop_error = exc
-        if self.reference_backend is not None:
-            try:
-                await self.reference_backend.close()
-            except Exception as exc:
-                logger.exception("Failed to close reference backend during shutdown")
                 if stop_error is None:
                     stop_error = exc
         if self.long_term_memory_ingestor is not None:

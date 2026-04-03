@@ -243,7 +243,6 @@ from .plugins import (
     BackendBridgeToolPlugin,
     NapCatToolsPlugin,
     OpsControlPlugin,
-    ReferenceToolsPlugin,
 )
 from .control.prompt_loader import (
     ChainedPromptLoader,
@@ -254,20 +253,6 @@ from .control.prompt_loader import (
 )
 from .control.session_loader import SessionConfigLoader, StaticSessionConfigLoader
 from .control.session_runtime import SessionRuntime
-from .references import (
-    LocalReferenceBackend,
-    NullReferenceBackend,
-    OpenVikingReferenceBackend,
-    ReferenceBodyLevel,
-    ReferenceBackend,
-    ReferenceDocument,
-    ReferenceDocumentInput,
-    ReferenceDocumentRef,
-    ReferenceHit,
-    ReferenceMode,
-    ReferenceProviderMode,
-    ReferenceSpace,
-)
 from .memory.retrieval_planner import RetrievalPlanner
 from .router import RuntimeRouter
 from .soul import SoulSource
@@ -459,9 +444,7 @@ __all__ = [
     "NoopApprovalResumer",
     "ToolApprovalResumer",
     "NullContextSummarizer",
-    "NullReferenceBackend",
     "OutboxItem",
-    "OpenVikingReferenceBackend",
     "PendingApproval",
     "PendingApprovalRecord",
     "PlannedAction",
@@ -513,7 +496,6 @@ __all__ = [
     "BackendBridgeToolPlugin",
     "NapCatToolsPlugin",
     "OpsControlPlugin",
-    "ReferenceToolsPlugin",
     "RunContext",
     "RunManager",
     "RunRecord",
@@ -537,16 +519,6 @@ __all__ = [
     "StickyNoteFileStore",
     "StickyNoteRecord",
     "StickyNoteRenderer",
-    "ReferenceBackend",
-    "ReferenceBodyLevel",
-    "ReferenceDocument",
-    "ReferenceDocumentInput",
-    "ReferenceDocumentRef",
-    "ReferenceHit",
-    "ReferenceMode",
-    "ReferenceProviderMode",
-    "ReferenceSpace",
-    "LocalReferenceBackend",
     "StaticPromptLoader",
     "StoreBackedRunManager",
     "StoreBackedThreadManager",

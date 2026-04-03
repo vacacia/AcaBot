@@ -34,12 +34,6 @@ from ..model.model_registry import FileSystemModelRegistryManager
 from ..model.model_targets import MutableModelTargetCatalog
 from ..plugin_manager import RuntimePlugin
 from ..plugins import BackendBridgeToolPlugin
-from ..references import (
-    LocalReferenceBackend,
-    NullReferenceBackend,
-    OpenVikingReferenceBackend,
-    ReferenceBackend,
-)
 from ..skills import FileSystemSkillPackageLoader, SkillCatalog
 from ..storage.event_store import InMemoryChannelEventStore
 from ..storage.memory_store import InMemoryMessageStore
@@ -356,34 +350,6 @@ def build_memory_broker(
     return MemoryBroker(registry=registry)
 
 
-def build_reference_backend(config: Config) -> ReferenceBackend:
-    runtime_conf = config.get("runtime", {})
-    reference_conf = runtime_conf.get("reference", {})
-    if not bool(reference_conf.get("enabled", False)):
-        return NullReferenceBackend()
-
-    provider = str(reference_conf.get("provider", "local"))
-    if provider == "local":
-        local_conf = dict(reference_conf.get("local", {}))
-        sqlite_path = (
-            local_conf.get("sqlite_path")
-            or reference_conf.get("sqlite_path")
-            or get_persistence_sqlite_path(config)
-            or "data/reference.sqlite3"
-        )
-        return LocalReferenceBackend(str(resolve_runtime_path(config, sqlite_path)))
-
-    if provider == "openviking":
-        openviking_conf = dict(reference_conf.get("openviking", {}))
-        return OpenVikingReferenceBackend(
-            mode=str(openviking_conf.get("mode", "embedded")),
-            path=optional_str(openviking_conf.get("path")),
-            base_uri=str(openviking_conf.get("base_uri", "viking://resources/acabot")),
-        )
-
-    raise ValueError(f"unsupported runtime.reference provider: {provider}")
-
-
 def build_retrieval_planner(config: Config) -> RetrievalPlanner:
     _ = config
     return RetrievalPlanner()
@@ -502,7 +468,6 @@ __all__ = [
     "build_message_store",
     "build_model_registry_manager",
     "build_payload_json_writer",
-    "build_reference_backend",
     "build_retrieval_planner",
     "build_run_manager",
     "build_skill_catalog",

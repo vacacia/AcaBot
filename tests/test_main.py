@@ -25,7 +25,6 @@ from acabot.runtime import (
     LocalSubagentExecutionService,
     MemoryBroker,
     NoopApprovalResumer,
-    NullReferenceBackend,
     PayloadJsonWriter,
     RetrievalPlanner,
     RouteDecision,
@@ -342,7 +341,6 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
         ),
         image_context_service=None,  # type: ignore[arg-type]
         message_preparation_service=None,  # type: ignore[arg-type]
-        reference_backend=NullReferenceBackend(),
         plugin_manager=None,  # type: ignore[arg-type]
         control_plane=None,  # type: ignore[arg-type]
         config_control_plane=None,  # type: ignore[arg-type]

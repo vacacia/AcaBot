@@ -59,11 +59,6 @@ runtime:
     model_presets_dir: "models/presets"
     model_bindings_dir: "models/bindings"
 
-  # 可选: reference backend
-  # reference:
-  #   enabled: true
-  #   provider: "local"
-
 # --- Runtime plugin config ---
 plugins:
   ops_control:

@@ -28,7 +28,6 @@ from ..pipeline import ThreadPipeline
 from ..plugin_manager import RuntimePluginManager
 from ..contracts import ResolvedAgent, RouteDecision
 from ..control.prompt_loader import PromptLoader
-from ..references import ReferenceBackend
 from ..router import RuntimeRouter
 from ..skills import SkillCatalog
 from ..soul import SoulSource
@@ -67,7 +66,6 @@ class RuntimeComponents:
     computer_runtime: ComputerRuntime
     image_context_service: ImageContextService
     message_preparation_service: MessagePreparationService
-    reference_backend: ReferenceBackend
     plugin_manager: RuntimePluginManager
     control_plane: RuntimeControlPlane
     config_control_plane: RuntimeConfigControlPlane

@@ -35,7 +35,6 @@ from .computer import ComputerRuntime
 from .gateway_protocol import GatewayProtocol
 from .contracts import RunContext
 from .model.model_targets import MutableModelTargetCatalog, RuntimePluginModelSlot
-from .references import ReferenceBackend
 from .skills import SkillCatalog
 from .memory.sticky_notes import StickyNoteService
 from .tool_broker import ToolBroker
@@ -197,7 +196,6 @@ class RuntimePluginContext:
         config (Config): 项目配置对象.
         gateway (GatewayProtocol): 当前 gateway, 用于发送主动消息.
         tool_broker (ToolBroker): runtime 统一工具入口.
-        reference_backend (ReferenceBackend | None): reference provider.
         sticky_notes (StickyNoteService | None): sticky note 的受控服务层.
         computer_runtime (ComputerRuntime | None): computer 基础设施入口.
         skill_catalog (SkillCatalog | None): 统一 skill catalog.
@@ -207,7 +205,6 @@ class RuntimePluginContext:
     config: Config
     gateway: GatewayProtocol
     tool_broker: ToolBroker
-    reference_backend: ReferenceBackend | None = None
     sticky_notes: StickyNoteService | None = None
     computer_runtime: ComputerRuntime | None = None
     skill_catalog: SkillCatalog | None = None
@@ -318,7 +315,6 @@ class RuntimePluginManager:
         config (Config): 项目配置对象.
         gateway (GatewayProtocol): 当前 gateway.
         tool_broker (ToolBroker): runtime 工具入口.
-        reference_backend (ReferenceBackend | None): reference provider.
         sticky_notes (StickyNoteService | None): sticky note 服务.
         skill_catalog (SkillCatalog | None): 统一 skill catalog.
         control_plane (RuntimeControlPlane | None): 本地 control plane 入口.
@@ -336,7 +332,6 @@ class RuntimePluginManager:
         config: Config,
         gateway: GatewayProtocol,
         tool_broker: ToolBroker,
-        reference_backend: ReferenceBackend | None = None,
         sticky_notes: StickyNoteService | None = None,
         computer_runtime: ComputerRuntime | None = None,
         skill_catalog: SkillCatalog | None = None,
@@ -353,7 +348,6 @@ class RuntimePluginManager:
             config: 项目配置对象.
             gateway: 当前 gateway.
             tool_broker: runtime 工具入口.
-            reference_backend: 可选的 reference provider.
             sticky_notes: 可选的 sticky note 服务.
             computer_runtime: 可选的 computer 基础设施入口.
             skill_catalog: 可选的统一 skill catalog.
@@ -365,8 +359,6 @@ class RuntimePluginManager:
         self.config = config
         self.gateway = gateway
         self.tool_broker = tool_broker
-        # TODO: 收窄成 ReferenceService, 或者不暴露?
-        self.reference_backend = reference_backend
         self.sticky_notes = sticky_notes
         self.computer_runtime = computer_runtime
         self.skill_catalog = skill_catalog
@@ -476,7 +468,6 @@ class RuntimePluginManager:
                 config=self.config,
                 gateway=self.gateway,
                 tool_broker=self.tool_broker,
-                reference_backend=self.reference_backend,
                 sticky_notes=self.sticky_notes,
                 computer_runtime=self.computer_runtime,
                 skill_catalog=self.skill_catalog,
@@ -524,7 +515,6 @@ class RuntimePluginManager:
                 config=self.config,
                 gateway=self.gateway,
                 tool_broker=self.tool_broker,
-                reference_backend=self.reference_backend,
                 sticky_notes=self.sticky_notes,
                 computer_runtime=self.computer_runtime,
                 skill_catalog=self.skill_catalog,
@@ -572,7 +562,6 @@ class RuntimePluginManager:
             config=self.config,
             gateway=self.gateway,
             tool_broker=self.tool_broker,
-            reference_backend=self.reference_backend,
             sticky_notes=self.sticky_notes,
             computer_runtime=self.computer_runtime,
             skill_catalog=self.skill_catalog,
@@ -837,7 +826,6 @@ class RuntimePluginManager:
             config=self.config,
             gateway=self.gateway,
             tool_broker=self.tool_broker,
-            reference_backend=self.reference_backend,
             sticky_notes=self.sticky_notes,
             computer_runtime=self.computer_runtime,
             skill_catalog=self.skill_catalog,
