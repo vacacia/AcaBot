@@ -45,6 +45,7 @@ from ..plugin_status import StatusStore
 from ..plugin_runtime_host import PluginRuntimeHost
 from ..plugin_reconciler import PluginReconciler
 from ..plugins import BackendBridgeToolPlugin
+from ..render import PlaywrightRenderBackend, RenderService
 from ..scheduler import RuntimeScheduler, SQLiteScheduledTaskStore
 from ..control.prompt_loader import PromptLoader, ReloadablePromptLoader
 from ..router import RuntimeRouter
@@ -278,6 +279,15 @@ def build_runtime_components(
         resolution_service=runtime_message_resolution_service,
         projection_service=runtime_message_projection_service,
     )
+    runtime_render_service = RenderService(
+        runtime_root=resolve_runtime_path(config, ""),
+    )
+    runtime_playwright_render_backend = PlaywrightRenderBackend()
+    runtime_render_service.register_backend(
+        runtime_playwright_render_backend.name,
+        runtime_playwright_render_backend,
+        is_default=True,
+    )
     runtime_tool_broker = tool_broker or ToolBroker(
         skill_catalog=runtime_skill_catalog,
         subagent_catalog=runtime_subagent_catalog,
@@ -419,6 +429,7 @@ def build_runtime_components(
     outbox = Outbox(
         gateway=gateway,
         store=runtime_message_store,
+        render_service=runtime_render_service,
         long_term_memory_ingestor=runtime_long_term_memory_ingestor,
     )
     pipeline = ThreadPipeline(
@@ -541,6 +552,7 @@ def build_runtime_components(
         agent_runtime=agent_runtime,
         approval_resumer=runtime_approval_resumer,
         outbox=outbox,
+        render_service=runtime_render_service,
         pipeline=pipeline,
         backend_bridge=runtime_backend_bridge,
         backend_mode_registry=runtime_backend_mode_registry,

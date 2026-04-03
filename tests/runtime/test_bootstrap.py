@@ -103,6 +103,7 @@ def _fs_config(tmp_path: Path, extra: dict | None = None) -> Config:
         "agent": {"system_prompt": "You are Aca."},
         "runtime": {
             "filesystem": {"base_dir": str(tmp_path)},
+            "runtime_root": str(tmp_path / "runtime_data"),
         },
     }
     if extra:
@@ -347,6 +348,7 @@ async def test_build_runtime_components_runs_app_with_model_agent_runtime(tmp_pa
             },
             "runtime": {
                 "filesystem": {"base_dir": str(tmp_path)},
+                "runtime_root": str(tmp_path / "runtime_data"),
             },
         }
     )
@@ -377,6 +379,7 @@ def test_build_runtime_components_wires_optional_long_term_memory_ingestor(tmp_p
             },
             "runtime": {
                 "filesystem": {"base_dir": str(tmp_path)},
+                "runtime_root": str(tmp_path / "runtime_data"),
             },
         }
     )
@@ -499,6 +502,7 @@ async def test_build_runtime_components_creates_plugin_reconciler(tmp_path: Path
             },
             "runtime": {
                 "filesystem": {"base_dir": str(tmp_path)},
+                "runtime_root": str(tmp_path / "runtime_data"),
             },
         }
     )
@@ -525,6 +529,7 @@ async def test_build_runtime_components_has_reconciler_and_host(tmp_path: Path) 
             },
             "runtime": {
                 "filesystem": {"base_dir": str(tmp_path)},
+                "runtime_root": str(tmp_path / "runtime_data"),
             },
         }
     )
@@ -970,7 +975,10 @@ async def test_build_runtime_components_wires_tool_broker_into_agent_runtime(tmp
     config = Config(
         {
             "agent": {"system_prompt": "You are Aca."},
-            "runtime": {"filesystem": {"base_dir": str(tmp_path)}},
+            "runtime": {
+                "filesystem": {"base_dir": str(tmp_path)},
+                "runtime_root": str(tmp_path / "runtime_data"),
+            },
         }
     )
     broker = ToolBroker()
@@ -1008,7 +1016,10 @@ async def test_build_runtime_components_registers_builtin_computer_tools(tmp_pat
     config = Config(
         {
             "agent": {"system_prompt": "You are Aca."},
-            "runtime": {"filesystem": {"base_dir": str(tmp_path)}},
+            "runtime": {
+                "filesystem": {"base_dir": str(tmp_path)},
+                "runtime_root": str(tmp_path / "runtime_data"),
+            },
         }
     )
     components = build_runtime_components(
@@ -1103,6 +1114,7 @@ async def test_build_runtime_components_full_plugin_reload_keeps_builtin_plugins
                     "base_dir": str(tmp_path),
                     "skill_catalog_dirs": [str(skills_dir)],
                 },
+                "runtime_root": str(tmp_path / "runtime_data"),
             },
         }
     )
@@ -1144,6 +1156,7 @@ async def test_build_runtime_components_reload_keeps_conditional_subagent_delega
                     "base_dir": str(tmp_path),
                     "skill_catalog_dirs": [str(skills_dir)],
                 },
+                "runtime_root": str(tmp_path / "runtime_data"),
             },
         }
     )
@@ -1204,7 +1217,10 @@ async def test_build_runtime_components_default_approval_resume_replays_tool_cal
         Config(
             {
                 "agent": {"system_prompt": "You are Aca."},
-                "runtime": {"filesystem": {"base_dir": str(tmp_path)}},
+                "runtime": {
+                    "filesystem": {"base_dir": str(tmp_path)},
+                    "runtime_root": str(tmp_path / "runtime_data"),
+                },
             }
         ),
         gateway=gateway,
@@ -1263,7 +1279,10 @@ async def test_build_runtime_components_approval_resume_marks_completed_with_err
         Config(
             {
                 "agent": {"system_prompt": "You are Aca."},
-                "runtime": {"filesystem": {"base_dir": str(tmp_path)}},
+                "runtime": {
+                    "filesystem": {"base_dir": str(tmp_path)},
+                    "runtime_root": str(tmp_path / "runtime_data"),
+                },
             }
         ),
         gateway=gateway,
@@ -1328,7 +1347,10 @@ async def test_build_runtime_components_approval_resume_fails_closed_on_nested_a
         Config(
             {
                 "agent": {"system_prompt": "You are Aca."},
-                "runtime": {"filesystem": {"base_dir": str(tmp_path)}},
+                "runtime": {
+                    "filesystem": {"base_dir": str(tmp_path)},
+                    "runtime_root": str(tmp_path / "runtime_data"),
+                },
             }
         ),
         gateway=gateway,
@@ -1362,6 +1384,7 @@ async def test_build_runtime_components_uses_sqlite_persistence_when_configured(
             },
             "runtime": {
                 "filesystem": {"base_dir": str(tmp_path)},
+                "runtime_root": str(tmp_path / "runtime_data"),
                 "persistence": {
                     "sqlite_path": str(sqlite_path),
                 },

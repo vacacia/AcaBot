@@ -30,6 +30,7 @@ from ..plugin_runtime_host import PluginRuntimeHost
 from ..plugin_package import PackageCatalog
 from ..plugin_spec import SpecStore
 from ..plugin_status import StatusStore
+from ..render import RenderService
 from ..contracts import ResolvedAgent, RouteDecision
 from ..control.prompt_loader import PromptLoader
 from ..router import RuntimeRouter
@@ -84,6 +85,7 @@ class RuntimeComponents:
     agent_runtime: AgentRuntime
     approval_resumer: ApprovalResumer
     outbox: Outbox
+    render_service: RenderService
     pipeline: ThreadPipeline
     backend_bridge: BackendBridge
     backend_mode_registry: BackendModeRegistry

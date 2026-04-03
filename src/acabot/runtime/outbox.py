@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import logging
+from pathlib import Path
 from typing import Any
 
 from acabot.types import Action, ActionType
@@ -28,6 +29,7 @@ from .contracts import (
     OutboxItem,
     RunContext,
 )
+from .render import RenderService
 from .storage.stores import MessageStore
 
 logger = logging.getLogger("acabot.runtime.outbox")
@@ -44,6 +46,7 @@ class Outbox:
         *,
         gateway: GatewayProtocol,
         store: MessageStore,
+        render_service: RenderService | None = None,
         long_term_memory_ingestor: LongTermMemoryIngestor | None = None,
     ) -> None:
         """初始化 Outbox.
@@ -51,11 +54,15 @@ class Outbox:
         Args:
             gateway: 实际执行发送动作的网关.
             store: 用于保存成功出站消息的消息存储.
+            render_service: 负责编译 render 内容的渲染服务.
             long_term_memory_ingestor: 长期记忆写入线入口.
         """
 
         self.gateway = gateway
         self.store = store
+        self.render_service = render_service or RenderService(
+            runtime_root=Path.cwd() / "runtime_data",
+        )
         self.long_term_memory_ingestor = long_term_memory_ingestor
 
     async def dispatch(self, ctx: RunContext) -> DispatchReport:
@@ -83,7 +90,7 @@ class Outbox:
         report = DispatchReport()
         for item in items:
             try:
-                item = self._materialize_item(item)
+                item = await self._materialize_item(item)
                 logger.debug(
                     "Outbox send: run_id=%s action_id=%s action_type=%s thread=%s",
                     item.run_id,
@@ -222,14 +229,14 @@ class Outbox:
             item.destination_thread_id,
         )
 
-    def _materialize_item(self, item: OutboxItem) -> OutboxItem:
+    async def _materialize_item(self, item: OutboxItem) -> OutboxItem:
         """把高层 send intent 物化成真正可发送的低层消息动作."""
 
         action = item.plan.action
         if action.action_type != ActionType.SEND_MESSAGE_INTENT:
             return item
 
-        segments = self._build_send_segments(action)
+        segments = await self._build_send_segments(item=item, action=action)
         materialized_plan = replace(
             item.plan,
             action=Action(
@@ -241,8 +248,12 @@ class Outbox:
         )
         return replace(item, plan=materialized_plan)
 
-    @staticmethod
-    def _build_send_segments(action: Action) -> list[dict[str, Any]]:
+    async def _build_send_segments(
+        self,
+        *,
+        item: OutboxItem,
+        action: Action,
+    ) -> list[dict[str, Any]]:
         """按固定顺序把 send intent payload 编译成 OneBot 段列表."""
 
         payload = dict(action.payload)
@@ -263,9 +274,50 @@ class Outbox:
 
         render = str(payload.get("render", "") or "")
         if render:
-            segments.append({"type": "text", "data": {"text": render}})
+            segments.extend(
+                await self._build_render_segments(
+                    markdown_text=render,
+                    conversation_id=item.destination_conversation_id,
+                    run_id=item.run_id,
+                )
+            )
 
         return segments
+
+    async def _build_render_segments(
+        self,
+        *,
+        markdown_text: str,
+        conversation_id: str,
+        run_id: str,
+    ) -> list[dict[str, Any]]:
+        """把 render markdown 编译成图片段, 失败时退回原始文本."""
+
+        try:
+            result = await self.render_service.render_markdown_to_image(
+                markdown_text=markdown_text,
+                conversation_id=conversation_id,
+                run_id=run_id,
+            )
+        except Exception:
+            logger.exception(
+                "Render service crashed, fallback to raw markdown text: conversation=%s run_id=%s",
+                conversation_id,
+                run_id,
+            )
+            return [{"type": "text", "data": {"text": markdown_text}}]
+
+        if result.status == "ok" and result.artifact_path is not None:
+            return [{"type": "image", "data": {"file": str(result.artifact_path)}}]
+
+        logger.warning(
+            "Render unavailable, fallback to raw markdown text: conversation=%s run_id=%s status=%s error=%s",
+            conversation_id,
+            run_id,
+            result.status,
+            result.error,
+        )
+        return [{"type": "text", "data": {"text": markdown_text}}]
 
     @staticmethod
     def _resolve_destination_contract(

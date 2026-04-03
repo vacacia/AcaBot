@@ -25,16 +25,25 @@ class RenderService:
 
         self.runtime_root = Path(runtime_root).expanduser()
         self._backends: dict[str, RenderBackend] = {}
+        self._default_backend_name: str | None = None
         for backend in backends or []:
             self.register_backend(backend.name, backend)
 
-    def register_backend(self, name: str, backend: RenderBackend) -> None:
+    def register_backend(
+        self,
+        name: str,
+        backend: RenderBackend,
+        *,
+        is_default: bool = False,
+    ) -> None:
         """注册一个 render backend."""
 
         backend_name = str(name or "").strip()
         if not backend_name:
             raise ValueError("backend name cannot be empty")
         self._backends[backend_name] = backend
+        if is_default or self._default_backend_name is None:
+            self._default_backend_name = backend_name
 
     def unregister_backend(self, name: str) -> RenderBackend | None:
         """移除一个 render backend."""
@@ -42,7 +51,10 @@ class RenderService:
         backend_name = str(name or "").strip()
         if not backend_name:
             return None
-        return self._backends.pop(backend_name, None)
+        backend = self._backends.pop(backend_name, None)
+        if backend_name == self._default_backend_name:
+            self._default_backend_name = next(iter(self._backends), None)
+        return backend
 
     def get_backend(self, name: str) -> RenderBackend | None:
         """按名字获取 backend."""
@@ -101,6 +113,8 @@ class RenderService:
 
         if backend_name is not None:
             return self.get_backend(backend_name)
+        if self._default_backend_name is not None:
+            return self.get_backend(self._default_backend_name)
         return next(iter(self._backends.values()), None)
 
     def _missing_backend_error(self, backend_name: str | None) -> str:
