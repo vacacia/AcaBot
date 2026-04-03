@@ -18,6 +18,7 @@ from acabot.types import Action, ActionType
 from .agent_runtime import AgentRuntime
 from .computer import ComputerRuntime
 from .control.log_setup import bind_run_context, clear_run_context
+from .ids import build_thread_id_from_conversation_id
 from .memory.context_compactor import ContextCompactor
 from .inbound.message_preparation import MessagePreparationService
 from .memory.file_backed import StickyNoteFileStore
@@ -339,13 +340,36 @@ class ThreadPipeline:
         if ctx.delivery_report is None:
             return
 
+        threads_to_save: dict[str, object] = {ctx.thread.thread_id: ctx.thread}
+        destination_threads: dict[str, object] = {}
+
         async with ctx.thread.lock:
             for item in ctx.delivery_report.delivered_items:
-                if item.plan.thread_content:
+                if not item.plan.thread_content:
+                    continue
+                if item.destination_thread_id == ctx.thread.thread_id:
                     ctx.thread.working_messages.append(
                         {"role": "assistant", "content": item.plan.thread_content}
                     )
-            await self.thread_manager.save(ctx.thread)
+                    ctx.thread.last_event_at = ctx.event.timestamp
+                    continue
+                destination_thread = destination_threads.get(item.destination_thread_id)
+                if destination_thread is None:
+                    destination_thread = await self.thread_manager.get_or_create(
+                        thread_id=item.destination_thread_id,
+                        channel_scope=item.destination_conversation_id,
+                        last_event_at=ctx.event.timestamp,
+                    )
+                    destination_threads[item.destination_thread_id] = destination_thread
+                    threads_to_save[item.destination_thread_id] = destination_thread
+                async with destination_thread.lock:
+                    destination_thread.working_messages.append(
+                        {"role": "assistant", "content": item.plan.thread_content}
+                    )
+                    destination_thread.last_event_at = ctx.event.timestamp
+
+        for thread in threads_to_save.values():
+            await self.thread_manager.save(thread)
 
     async def _finish_run(self, ctx: RunContext) -> None:
         """根据 runtime 状态和 delivery 结果收尾 run.
@@ -556,13 +580,23 @@ class ThreadPipeline:
 
         delivered_items = [
             OutboxItem(
-                thread_id=ctx.thread.thread_id,
+                thread_id=destination_thread_id,
                 run_id=ctx.run.run_id,
                 agent_id=ctx.agent.agent_id,
                 plan=plan,
-                metadata={"delivery_mode": "internal"},
+                origin_thread_id=ctx.thread.thread_id,
+                destination_thread_id=destination_thread_id,
+                destination_conversation_id=destination_conversation_id,
+                append_to_origin_thread=destination_thread_id == ctx.thread.thread_id,
+                metadata={
+                    "delivery_mode": "internal",
+                    "channel_scope": destination_conversation_id,
+                },
             )
             for plan in ctx.actions
+            for destination_conversation_id, destination_thread_id in [
+                ThreadPipeline._resolve_delivery_destination(ctx=ctx, plan=plan)
+            ]
         ]
         return DispatchReport(
             results=[
@@ -575,3 +609,22 @@ class ThreadPipeline:
             ],
             delivered_items=delivered_items,
         )
+
+    @staticmethod
+    def _resolve_delivery_destination(
+        *,
+        ctx: RunContext,
+        plan: PlannedAction,
+    ) -> tuple[str, str]:
+        """为 pipeline 内部送达语义解析 destination conversation/thread."""
+
+        destination_conversation_id = str(
+            plan.metadata.get("destination_conversation_id", "") or ""
+        ).strip()
+        if not destination_conversation_id:
+            if plan.action.target.message_type == "group":
+                destination_conversation_id = f"{plan.action.target.platform}:group:{plan.action.target.group_id}"
+            else:
+                destination_conversation_id = f"{plan.action.target.platform}:user:{plan.action.target.user_id}"
+        destination_thread_id = build_thread_id_from_conversation_id(destination_conversation_id)
+        return destination_conversation_id, destination_thread_id

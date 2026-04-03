@@ -370,7 +370,7 @@ class ModelAgentRuntime(AgentRuntime):
 
         text = str(getattr(response, "text", "") or "")
         actions = list(tool_runtime.state.user_actions)
-        if text:
+        if text and not self._suppresses_default_reply(actions):
             actions.append(self._build_text_reply_action(ctx, text))
         actions.extend(self._attachment_to_actions(ctx, getattr(response, "attachments", []) or []))
         return AgentRuntimeResult(
@@ -384,6 +384,17 @@ class ModelAgentRuntime(AgentRuntime):
             metadata=metadata,
             raw=getattr(response, "raw", None),
         )
+
+    @staticmethod
+    def _suppresses_default_reply(actions: list[PlannedAction]) -> bool:
+        """判断当前动作集合是否应抑制默认 assistant 文本回复."""
+
+        for plan in actions:
+            if plan.action.action_type != ActionType.SEND_MESSAGE_INTENT:
+                continue
+            if plan.metadata.get("suppresses_default_reply") is True:
+                return True
+        return False
 
     def _build_waiting_approval_result(
         self,
