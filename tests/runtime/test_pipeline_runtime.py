@@ -10,6 +10,7 @@ from acabot.runtime import (
     ContextCompactionConfig,
     ContextCompactor,
     ContextDecision,
+    DispatchReport,
     InMemoryRunManager,
     InMemoryThreadManager,
     InMemoryToolAudit,
@@ -26,6 +27,7 @@ from acabot.runtime import (
     PlannedAction,
     RouteDecision,
     RunContext,
+    RunRecord,
     RuntimeModelRequest,
     RetrievalPlanner,
     StaticPromptLoader,
@@ -279,6 +281,82 @@ def test_pipeline_cross_session_contract_targets_destination_thread_id() -> None
     assert item.destination_thread_id == "qq:group:20002"
     assert item.destination_conversation_id == destination_conversation_id
     assert item.append_to_origin_thread is False
+
+
+async def test_thread_pipeline_updates_destination_thread_for_cross_session_delivery() -> None:
+    thread_manager = CountingThreadManager()
+    gateway = FakeGateway()
+    store = FakeMessageStore()
+    outbox = Outbox(gateway=gateway, store=store)
+    pipeline = ThreadPipeline(
+        agent_runtime=FakeAgentRuntime(),
+        outbox=outbox,
+        run_manager=InMemoryRunManager(),
+        thread_manager=thread_manager,
+    )
+    event = _event()
+    decision = _decision()
+    origin_thread = await thread_manager.get_or_create(
+        thread_id=decision.thread_id,
+        channel_scope=decision.channel_scope,
+        last_event_at=event.timestamp,
+    )
+    origin_thread.working_messages.append({"role": "user", "content": "hello"})
+    destination_conversation_id = "qq:group:20002"
+    destination_thread_id = build_thread_id_from_conversation_id(destination_conversation_id)
+    ctx = RunContext(
+        run=RunRecord(
+            run_id="run:1",
+            thread_id=decision.thread_id,
+            actor_id=decision.actor_id,
+            agent_id=decision.agent_id,
+            trigger_event_id=event.event_id,
+            status="running",
+            started_at=event.timestamp,
+        ),
+        event=event,
+        decision=decision,
+        thread=origin_thread,
+        agent=_profile(),
+        delivery_report=DispatchReport(
+            delivered_items=[
+                OutboxItem(
+                    thread_id=destination_thread_id,
+                    origin_thread_id=origin_thread.thread_id,
+                    destination_thread_id=destination_thread_id,
+                    destination_conversation_id=destination_conversation_id,
+                    append_to_origin_thread=False,
+                    run_id="run:1",
+                    agent_id="aca",
+                    plan=PlannedAction(
+                        action_id="action:cross-session",
+                        action=Action(
+                            action_type=ActionType.SEND_SEGMENTS,
+                            target=EventSource(
+                                platform="qq",
+                                message_type="group",
+                                user_id="10001",
+                                group_id="20002",
+                            ),
+                            payload={"segments": [{"type": "text", "data": {"text": "cross-session hello"}}]},
+                        ),
+                        thread_content="cross-session hello",
+                    ),
+                )
+            ]
+        ),
+    )
+
+    await pipeline._update_thread_after_send(ctx)
+
+    destination_thread = await thread_manager.get(destination_thread_id)
+    assert destination_thread is not None
+    assert origin_thread.working_messages == [{"role": "user", "content": "hello"}]
+    assert destination_thread.channel_scope == destination_conversation_id
+    assert destination_thread.working_messages[-1] == {
+        "role": "assistant",
+        "content": "cross-session hello",
+    }
 
 
 async def test_thread_pipeline_runs_minimal_text_flow() -> None:

@@ -35,6 +35,7 @@ from acabot.runtime import (
     ToolPolicyDecision,
     ToolResult,
     ToolRuntime,
+    ToolRuntimeState,
 )
 from acabot.types import Action, ActionType, EventSource, MsgSegment, StandardEvent
 
@@ -562,6 +563,93 @@ async def test_model_agent_runtime_turns_attachments_into_actions() -> None:
     assert result.actions[1].action.action_type == ActionType.SEND_SEGMENTS
     assert result.actions[1].action.payload["segments"][0]["type"] == "image"
     assert result.actions[2].action.payload["segments"][0]["data"]["text"] == "[audio: https://example.com/a.mp3]"
+
+
+async def test_model_agent_runtime_suppresses_default_reply_for_content_send_intent() -> None:
+    agent = FakeAgent(AgentResponse(text="final reply", model_used="test-model"))
+
+    async def resolver(ctx: RunContext) -> ToolRuntime:
+        return ToolRuntime(
+            state=ToolRuntimeState(
+                user_actions=[
+                    PlannedAction(
+                        action_id="action:tool:send",
+                        action=Action(
+                            action_type=ActionType.SEND_MESSAGE_INTENT,
+                            target=ctx.event.source,
+                            payload={
+                                "text": "tool send",
+                                "images": [],
+                                "render": None,
+                                "at_user": None,
+                                "target": "qq:user:10001",
+                            },
+                        ),
+                        thread_content="tool send",
+                        metadata={
+                            "message_action": "send",
+                            "suppresses_default_reply": True,
+                        },
+                    )
+                ]
+            )
+        )
+
+    runtime = ModelAgentRuntime(
+        agent=agent,
+        prompt_loader=StaticPromptLoader({"prompt/default": "You are Aca."}),
+        tool_runtime_resolver=resolver,
+    )
+    ctx = _context()
+
+    result = await runtime.execute(ctx)
+
+    assert [item.action.action_type for item in result.actions] == [ActionType.SEND_MESSAGE_INTENT]
+
+
+async def test_model_agent_runtime_keeps_default_reply_for_react_and_recall() -> None:
+    agent = FakeAgent(AgentResponse(text="final reply", model_used="test-model"))
+
+    async def resolver(ctx: RunContext) -> ToolRuntime:
+        return ToolRuntime(
+            state=ToolRuntimeState(
+                user_actions=[
+                    PlannedAction(
+                        action_id="action:tool:react",
+                        action=Action(
+                            action_type=ActionType.REACTION,
+                            target=ctx.event.source,
+                            payload={"message_id": "msg-1", "emoji_id": 76},
+                        ),
+                        metadata={"suppresses_default_reply": True},
+                    ),
+                    PlannedAction(
+                        action_id="action:tool:recall",
+                        action=Action(
+                            action_type=ActionType.RECALL,
+                            target=ctx.event.source,
+                            payload={"message_id": "msg-2"},
+                        ),
+                        metadata={"suppresses_default_reply": True},
+                    ),
+                ]
+            )
+        )
+
+    runtime = ModelAgentRuntime(
+        agent=agent,
+        prompt_loader=StaticPromptLoader({"prompt/default": "You are Aca."}),
+        tool_runtime_resolver=resolver,
+    )
+    ctx = _context()
+
+    result = await runtime.execute(ctx)
+
+    assert [item.action.action_type for item in result.actions] == [
+        ActionType.REACTION,
+        ActionType.RECALL,
+        ActionType.SEND_TEXT,
+    ]
 
 
 async def test_model_agent_runtime_builds_waiting_approval_result() -> None:
