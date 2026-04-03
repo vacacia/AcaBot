@@ -14,6 +14,7 @@ from ..skills import SkillCatalog
 from ..subagents import SubagentDelegationBroker
 from ..tool_broker import ToolBroker
 from .computer import BUILTIN_COMPUTER_TOOL_SOURCE, BuiltinComputerToolSurface
+from .message import BUILTIN_MESSAGE_TOOL_SOURCE, BuiltinMessageToolSurface
 from .skills import BUILTIN_SKILL_TOOL_SOURCE, BuiltinSkillToolSurface
 from .sticky_notes import BUILTIN_STICKY_NOTE_TOOL_SOURCE, BuiltinStickyNoteToolSurface
 from .subagents import BUILTIN_SUBAGENT_TOOL_SOURCE, BuiltinSubagentToolSurface
@@ -62,6 +63,7 @@ def register_core_builtin_tools(
         skill_catalog=skill_catalog,
         computer_runtime=computer_runtime,
     )
+    message_surface = BuiltinMessageToolSurface()
     sticky_note_surface = BuiltinStickyNoteToolSurface(
         sticky_note_service=sticky_note_service,
     )
@@ -71,6 +73,7 @@ def register_core_builtin_tools(
     return {
         BUILTIN_COMPUTER_TOOL_SOURCE: computer_surface.register(tool_broker),
         BUILTIN_SKILL_TOOL_SOURCE: skill_surface.register(tool_broker),
+        BUILTIN_MESSAGE_TOOL_SOURCE: message_surface.register(tool_broker),
         BUILTIN_STICKY_NOTE_TOOL_SOURCE: sticky_note_surface.register(tool_broker),
         BUILTIN_SUBAGENT_TOOL_SOURCE: subagent_surface.register(tool_broker),
     }
@@ -81,10 +84,12 @@ def register_core_builtin_tools(
 
 __all__ = [
     "BUILTIN_COMPUTER_TOOL_SOURCE",
+    "BUILTIN_MESSAGE_TOOL_SOURCE",
     "BUILTIN_SKILL_TOOL_SOURCE",
     "BUILTIN_STICKY_NOTE_TOOL_SOURCE",
     "BUILTIN_SUBAGENT_TOOL_SOURCE",
     "BuiltinComputerToolSurface",
+    "BuiltinMessageToolSurface",
     "BuiltinSkillToolSurface",
     "BuiltinStickyNoteToolSurface",
     "BuiltinSubagentToolSurface",

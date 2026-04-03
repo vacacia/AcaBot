@@ -851,6 +851,15 @@ class NapCatGateway(BaseGateway):
 
         if action.action_type in (ActionType.SEND_TEXT, ActionType.SEND_SEGMENTS):
             return self._build_msg_payload(action, target, echo)
+        if action.action_type == ActionType.REACTION:
+            return {
+                "action": "set_msg_emoji_like",
+                "params": {
+                    "message_id": action.payload["message_id"],
+                    "emoji_id": action.payload["emoji_id"],
+                },
+                "echo": echo,
+            }
         if action.action_type == ActionType.RECALL:
             return {"action": "delete_msg", "params": {"message_id": action.payload["message_id"]}, "echo": echo}
         if action.action_type == ActionType.GROUP_BAN:
