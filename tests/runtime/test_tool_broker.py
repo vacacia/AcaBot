@@ -10,6 +10,7 @@
 """
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -28,7 +29,7 @@ from acabot.runtime import (
     ToolRuntimeState,
     WorkspaceState,
 )
-from acabot.runtime.plugin_manager import RuntimePluginContext
+from acabot.runtime.plugin_protocol import RuntimePluginContext
 from acabot.runtime.plugins.backend_bridge_tool import BackendBridgeToolPlugin
 
 from .test_outbox import FakeGateway
@@ -339,7 +340,7 @@ async def test_tool_broker_policy_can_reject_tool() -> None:
 async def test_tool_broker_only_exposes_backend_bridge_tool_to_default_agent() -> None:
     from acabot.runtime import BackendBridge, BackendSessionService
     from acabot.runtime.plugins.backend_bridge_tool import BackendBridgeToolPlugin
-    from acabot.runtime.plugin_manager import RuntimePluginContext
+    from acabot.runtime.plugin_protocol import RuntimePluginContext
     from acabot.config import Config
     from .test_outbox import FakeGateway
 
@@ -353,7 +354,9 @@ async def test_tool_broker_only_exposes_backend_bridge_tool_to_default_agent() -
     plugin = BackendBridgeToolPlugin()
     await plugin.setup(
         RuntimePluginContext(
-            config=Config({}),
+            plugin_id="backend_bridge_tool",
+            plugin_config={},
+            data_dir=Path("/tmp/acabot-test-plugin-data"),
             gateway=FakeGateway(),
             tool_broker=broker,
         )

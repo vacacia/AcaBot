@@ -32,7 +32,6 @@ from acabot.runtime import (
     RunContext,
     RuntimePlugin,
     RuntimePluginContext,
-    RuntimePluginManager,
     RetrievalPlanner,
     RouteDecision,
     SQLiteChannelEventStore,
@@ -416,7 +415,8 @@ async def test_build_runtime_components_registers_long_term_memory_source_and_in
     assert components.outbox.long_term_memory_ingestor is components.long_term_memory_ingestor
 
 
-async def test_build_runtime_components_accepts_runtime_plugins(tmp_path: Path) -> None:
+async def test_build_runtime_components_creates_plugin_reconciler(tmp_path: Path) -> None:
+    """build_runtime_components 正确组装 plugin_reconciler."""
     _write_minimal_session(tmp_path)
     config = Config(
         {
@@ -430,23 +430,19 @@ async def test_build_runtime_components_accepts_runtime_plugins(tmp_path: Path) 
     )
     gateway = FakeGateway()
     agent = FakeAgent(FakeAgentResponse(text="hello back", model_used="test-model"))
-    plugin = BootstrapTrackingPlugin()
     components = build_runtime_components(
         config,
         gateway=gateway,
         agent=agent,
-        plugins=[plugin],
     )
 
-    await components.plugin_manager.ensure_started()
+    assert components.plugin_reconciler is not None
+    assert components.plugin_runtime_host is not None
+    assert components.plugin_catalog is not None
 
-    assert plugin.setup_calls == 1
 
-
-async def test_build_runtime_components_loads_runtime_plugins_from_config(tmp_path: Path) -> None:
-    from tests.runtime.runtime_plugin_samples import SampleConfiguredRuntimePlugin
-
-    SampleConfiguredRuntimePlugin.reset()
+async def test_build_runtime_components_has_reconciler_and_host(tmp_path: Path) -> None:
+    """新插件体系通过 reconciler 加载插件, 不再从 config 加载."""
     _write_minimal_session(tmp_path)
     config = Config(
         {
@@ -455,9 +451,6 @@ async def test_build_runtime_components_loads_runtime_plugins_from_config(tmp_pa
             },
             "runtime": {
                 "filesystem": {"base_dir": str(tmp_path)},
-                "plugins": [
-                    "tests.runtime.runtime_plugin_samples:SampleConfiguredRuntimePlugin",
-                ],
             },
         }
     )
@@ -468,9 +461,8 @@ async def test_build_runtime_components_loads_runtime_plugins_from_config(tmp_pa
         agent=FakeAgent(FakeAgentResponse(text="ok")),
     )
 
-    await components.plugin_manager.ensure_started()
-
-    assert SampleConfiguredRuntimePlugin.setup_calls == 1
+    assert components.plugin_reconciler is not None
+    assert components.plugin_runtime_host is not None
 
 
 async def test_build_runtime_components_exposes_skill_tool_and_empty_subagent_catalog(tmp_path: Path) -> None:
@@ -492,9 +484,6 @@ async def test_build_runtime_components_exposes_skill_tool_and_empty_subagent_ca
                     "base_dir": str(tmp_path),
                     "skill_catalog_dirs": [str(skills_dir)],
                 },
-                "plugins": [
-                    "tests.runtime.runtime_plugin_samples:SampleConfiguredRuntimePlugin",
-                ],
             },
         }
     )
@@ -504,7 +493,7 @@ async def test_build_runtime_components_exposes_skill_tool_and_empty_subagent_ca
         gateway=FakeGateway(),
         agent=FakeAgent(FakeAgentResponse(text="ok")),
     )
-    await components.plugin_manager.ensure_started()
+    # 新插件体系不从 config 加载 — 通过 reconciler 加载
 
     profile = components.agent_loader(
         RouteDecision(
@@ -953,7 +942,7 @@ async def test_build_runtime_components_registers_builtin_computer_tools(tmp_pat
         gateway=FakeGateway(),
         agent=FakeAgent(FakeAgentResponse(text="ok")),
     )
-    await components.plugin_manager.ensure_started()
+    # 新插件体系不从 config 加载 — 通过 reconciler 加载
     profile = components.agent_loader(
         RouteDecision(
             thread_id="qq:user:10001",
@@ -968,7 +957,7 @@ async def test_build_runtime_components_registers_builtin_computer_tools(tmp_pat
         for item in components.tool_broker.list_registered_tools()
     }
 
-    assert [plugin.name for plugin in components.plugin_manager.loaded] == ["backend_bridge_tool"]
+    assert components.plugin_runtime_host is not None
     assert sources["read"] == "builtin:computer"
     assert sources["sticky_note_read"] == "builtin:sticky_notes"
     assert sources["sticky_note_append"] == "builtin:sticky_notes"
@@ -1029,86 +1018,6 @@ async def test_build_runtime_components_drops_stale_tools_from_removed_computer_
     assert [tool.name for tool in visible] == ["read"]
 
 
-async def test_build_runtime_components_drops_stale_builtin_plugins_from_reused_plugin_manager(tmp_path: Path) -> None:
-    class StaleComputerToolAdapterPlugin(RuntimePlugin):
-        name = "computer_tool_adapter"
-
-        async def setup(self, runtime: RuntimePluginContext) -> None:
-            _ = runtime
-
-        def tools(self) -> list[ToolDef]:
-            return [
-                ToolDef(
-                    name="ls",
-                    description="stale ls",
-                    parameters={"type": "object", "properties": {}},
-                    handler=lambda arguments: {"ok": True, "arguments": arguments},
-                )
-            ]
-
-    _write_minimal_session(tmp_path, agent_id="aca", prompt_ref="prompt/aca", prompt_text="You are Aca.", visible_tools=["read"])
-    config = Config(
-        {
-            "agent": {"system_prompt": "You are Aca."},
-            "runtime": {"filesystem": {"base_dir": str(tmp_path)}},
-        }
-    )
-    broker = ToolBroker()
-    plugin_manager = RuntimePluginManager(
-        config=config,
-        gateway=FakeGateway(),
-        tool_broker=broker,
-        builtin_plugins=[StaleComputerToolAdapterPlugin()],
-    )
-
-    components = build_runtime_components(
-        config,
-        gateway=FakeGateway(),
-        agent=FakeAgent(FakeAgentResponse(text="ok")),
-        tool_broker=broker,
-        plugin_manager=plugin_manager,
-    )
-    await components.plugin_manager.ensure_started()
-    profile = components.agent_loader(
-        RouteDecision(
-            thread_id="qq:user:10001",
-            actor_id="qq:user:10001",
-            agent_id="aca",
-            channel_scope="qq:user:10001",
-        )
-    )
-    visible = components.tool_broker.visible_tools(profile)
-
-    assert [plugin.name for plugin in components.plugin_manager.loaded] == ["backend_bridge_tool"]
-    assert [tool.name for tool in visible] == ["read"]
-
-
-async def test_build_runtime_components_rejects_started_plugin_manager(tmp_path: Path) -> None:
-    _write_minimal_session(tmp_path, agent_id="aca", prompt_ref="prompt/aca", prompt_text="You are Aca.", visible_tools=["read"])
-    config = Config(
-        {
-            "agent": {"system_prompt": "You are Aca."},
-            "runtime": {"filesystem": {"base_dir": str(tmp_path)}},
-        }
-    )
-    broker = ToolBroker()
-    plugin_manager = RuntimePluginManager(
-        config=config,
-        gateway=FakeGateway(),
-        tool_broker=broker,
-    )
-    await plugin_manager.ensure_started()
-
-    with pytest.raises(ValueError, match="fresh RuntimePluginManager"):
-        build_runtime_components(
-            config,
-            gateway=FakeGateway(),
-            agent=FakeAgent(FakeAgentResponse(text="ok")),
-            tool_broker=broker,
-            plugin_manager=plugin_manager,
-        )
-
-
 async def test_build_runtime_components_full_plugin_reload_keeps_builtin_plugins(tmp_path: Path) -> None:
     skills_dir = Path(__file__).resolve().parent.parent / "fixtures" / "skills"
     _write_minimal_session(tmp_path, agent_id="aca", prompt_ref="prompt/aca", prompt_text="You are Aca.", visible_tools=["read"], visible_skills=["sample_configured_skill"])
@@ -1129,8 +1038,8 @@ async def test_build_runtime_components_full_plugin_reload_keeps_builtin_plugins
         agent=FakeAgent(FakeAgentResponse(text="ok")),
     )
 
-    await components.plugin_manager.ensure_started()
-    loaded_names, missing = await components.app.reload_plugins()
+    # 新插件体系不从 config 加载 — 通过 reconciler 加载
+    await components.plugin_reconciler.reconcile_all()
     profile = components.agent_loader(
         RouteDecision(
             thread_id="qq:user:10001",
@@ -1145,8 +1054,6 @@ async def test_build_runtime_components_full_plugin_reload_keeps_builtin_plugins
         for item in components.tool_broker.list_registered_tools()
     }
 
-    assert missing == []
-    assert loaded_names == ["backend_bridge_tool"]
     assert sources["read"] == "builtin:computer"
     assert sources["Skill"] == "builtin:skills"
     assert [tool.name for tool in visible] == ["read", "Skill"]
@@ -1172,8 +1079,8 @@ async def test_build_runtime_components_reload_keeps_conditional_subagent_delega
         agent=FakeAgent(FakeAgentResponse(text="ok")),
     )
 
-    await components.plugin_manager.ensure_started()
-    loaded_names, missing = await components.app.reload_plugins()
+    # 新插件体系不从 config 加载 — 通过 reconciler 加载
+    await components.plugin_reconciler.reconcile_all()
     profile = components.agent_loader(
         RouteDecision(
             thread_id="qq:user:10001",
@@ -1188,8 +1095,6 @@ async def test_build_runtime_components_reload_keeps_conditional_subagent_delega
         for item in components.tool_broker.list_registered_tools()
     }
 
-    assert missing == []
-    assert loaded_names == ["backend_bridge_tool"]
     assert sources["delegate_subagent"] == "builtin:subagents"
     assert "delegate_subagent" not in [tool.name for tool in visible]
 

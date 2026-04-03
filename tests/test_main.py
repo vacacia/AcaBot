@@ -341,7 +341,11 @@ def _runtime_components_for_main_test(app: Any) -> RuntimeComponents:
         ),
         image_context_service=None,  # type: ignore[arg-type]
         message_preparation_service=None,  # type: ignore[arg-type]
-        plugin_manager=None,  # type: ignore[arg-type]
+        plugin_reconciler=None,  # type: ignore[arg-type]
+        plugin_runtime_host=None,  # type: ignore[arg-type]
+        plugin_catalog=None,  # type: ignore[arg-type]
+        plugin_spec_store=None,  # type: ignore[arg-type]
+        plugin_status_store=None,  # type: ignore[arg-type]
         control_plane=None,  # type: ignore[arg-type]
         config_control_plane=None,  # type: ignore[arg-type]
         prompt_loader=None,  # type: ignore[arg-type]

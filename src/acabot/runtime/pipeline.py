@@ -29,7 +29,8 @@ from .contracts import (
 )
 from .memory.memory_broker import MemoryBroker, MemoryBrokerResult
 from .outbox import Outbox
-from .plugin_manager import RuntimeHookPoint, RuntimePluginManager
+from .plugin_protocol import RuntimeHookPoint, RuntimeHookResult
+from .plugin_runtime_host import PluginRuntimeHost
 from .memory.retrieval_planner import RetrievalPlanner
 from .soul import SoulSource
 from .storage.runs import RunManager
@@ -45,7 +46,7 @@ class ThreadPipeline:
     当前版本已经接入:
     - MemoryBroker retrieval skeleton
     - ToolBroker approval audit 回写
-    - RuntimePluginManager hooks
+    - PluginRuntimeHost hooks
     """
 
     def __init__(
@@ -61,7 +62,7 @@ class ThreadPipeline:
         computer_runtime: ComputerRuntime | None = None,
         message_preparation_service: MessagePreparationService | None = None,
         tool_broker: ToolBroker | None = None,
-        plugin_manager: RuntimePluginManager | None = None,
+        plugin_runtime_host: PluginRuntimeHost | None = None,
         soul_source: SoulSource | None = None,
         sticky_notes_source: StickyNoteFileStore | None = None,
     ) -> None:
@@ -78,7 +79,7 @@ class ThreadPipeline:
             computer_runtime: 可选的 ComputerRuntime. 用于 workspace 准备和附件 staging.
             message_preparation_service: 可选的 MessagePreparationService. 用于把消息补齐并生成 history/model 输入.
             tool_broker: 可选的 ToolBroker. 用于 approval prompt 的 audit 回写.
-            plugin_manager: 可选的 RuntimePluginManager. 用于 runtime hooks.
+            plugin_runtime_host: 可选的 PluginRuntimeHost. 用于 runtime hooks.
             soul_source: 可选的 soul 文件真源.
             sticky_notes_source: 可选的 sticky note 文件真源.
         """
@@ -93,7 +94,7 @@ class ThreadPipeline:
         self.computer_runtime = computer_runtime
         self.message_preparation_service = message_preparation_service
         self.tool_broker = tool_broker
-        self.plugin_manager = plugin_manager
+        self.plugin_runtime_host = plugin_runtime_host
         self.soul_source = soul_source
         self.sticky_notes_source = sticky_notes_source
     # region execute
@@ -441,33 +442,19 @@ class ThreadPipeline:
             logger.exception("Failed to mark run as failed: run_id=%s", run_id)
 
     async def _run_plugin_hooks(self, point: RuntimeHookPoint, ctx: RunContext):
-        """执行指定切入点的 runtime hooks.
+        """执行指定切入点的 runtime hooks."""
 
-        Args:
-            point: 当前 hook 切入点.
-            ctx: 当前 run 的执行上下文.
-
-        Returns:
-            RuntimePluginManager 聚合后的 RuntimeHookResult.
-        """
-
-        if self.plugin_manager is None:
-            from .plugin_manager import RuntimeHookResult
-
+        if self.plugin_runtime_host is None:
             return RuntimeHookResult()
-        return await self.plugin_manager.run_hooks(point, ctx)
+        return await self.plugin_runtime_host.run_hooks(point, ctx)
 
     async def _run_error_hooks(self, ctx: RunContext) -> None:
-        """在 pipeline 异常时尽力触发 error hooks.
+        """在 pipeline 异常时尽力触发 error hooks."""
 
-        Args:
-            ctx: 当前 run 的执行上下文.
-        """
-
-        if self.plugin_manager is None:
+        if self.plugin_runtime_host is None:
             return
         try:
-            await self.plugin_manager.run_hooks(RuntimeHookPoint.ON_ERROR, ctx)
+            await self.plugin_runtime_host.run_hooks(RuntimeHookPoint.ON_ERROR, ctx)
         except Exception:
             logger.exception("Failed to run runtime error hooks: run_id=%s", ctx.run.run_id)
 

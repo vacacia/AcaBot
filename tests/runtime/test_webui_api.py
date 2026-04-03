@@ -1139,31 +1139,9 @@ async def test_runtime_http_api_server_serves_status_and_session_crud(tmp_path: 
         assert "next_seq" in logs["data"]
         assert "reset_required" in logs["data"]
 
-        plugins_config = await asyncio.to_thread(request_json, base_url, "/api/system/plugins/config")
-        assert plugins_config["ok"] is True
-        assert "items" in plugins_config["data"]
-
-        if plugins_config["data"]["items"]:
-            first = plugins_config["data"]["items"][0]
-            assert str(first.get("name", "")).strip() != ""
-            assert str(first.get("display_name", "")).strip() != ""
-            toggled = await asyncio.to_thread(
-                request_json,
-                base_url,
-                "/api/system/plugins/config",
-                method="PUT",
-                payload={
-                    "items": [
-                        {
-                            "path": first["path"],
-                            "enabled": False,
-                        }
-                    ]
-                },
-            )
-            assert toggled["ok"] is True
-            assert any(item["path"] == first["path"] and item["enabled"] is False for item in toggled["data"]["items"])
-            assert first["name"] not in [plugin.name for plugin in components.plugin_manager.loaded]
+        plugins_list = await asyncio.to_thread(request_json, base_url, "/api/system/plugins")
+        assert plugins_list["ok"] is True
+        assert "plugins" in plugins_list["data"]
 
         created = await asyncio.to_thread(
             request_json,
@@ -1844,6 +1822,8 @@ runtime:
 
 
 async def test_runtime_http_api_server_plugin_configs_include_display_names(tmp_path: Path) -> None:
+    pytest.skip("旧 plugin config API 已删除, 新 API 在 test_plugin_integration 里覆盖")
+    pytest.skip("旧 plugin config API 已删除, 新 API 在 test_plugin_integration 里覆盖")
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         """
@@ -1896,6 +1876,8 @@ runtime:
 
 
 async def test_runtime_http_api_server_plugin_config_put_refreshes_live_plugins(tmp_path: Path) -> None:
+    pytest.skip("旧 plugin config API 已删除, 新 API 在 test_plugin_integration 里覆盖")
+    pytest.skip("旧 plugin config API 已删除, 新 API 在 test_plugin_integration 里覆盖")
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         """
@@ -1959,6 +1941,7 @@ runtime:
 
 
 async def test_runtime_http_api_server_marks_broken_plugin_paths_in_config_view(tmp_path: Path) -> None:
+    pytest.skip("旧 plugin config API 已删除, 新 API 在 test_plugin_integration 里覆盖")
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         """

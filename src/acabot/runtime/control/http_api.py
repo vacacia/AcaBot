@@ -312,14 +312,28 @@ class RuntimeHttpApiServer:
         if segments == ["plugins"] and method == "GET":
             status = self._await(self.control_plane.get_status())
             return self._ok({"loaded_plugins": status.loaded_plugins})
-        if segments == ["plugins", "reload"] and method == "POST":
-            return self._ok(
-                self._await(
-                    self.control_plane.reload_plugins(
-                        [str(item) for item in list(payload.get("plugin_names", []) or [])]
-                    )
+        if segments == ["system", "plugins"] and method == "GET":
+            return self._ok({"plugins": self.control_plane.list_plugins()})
+        if len(segments) == 3 and segments[0] == "system" and segments[1] == "plugins" and method == "GET":
+            plugin_id = segments[2]
+            result = self.control_plane.get_plugin(plugin_id)
+            if result is None:
+                return 404, {"ok": False, "error": f"plugin not found: {plugin_id}"}
+            return self._ok(result)
+        if len(segments) == 4 and segments[:2] == ["system", "plugins"] and segments[3] == "spec" and method == "PUT":
+            plugin_id = segments[2]
+            return self._ok(self._await(
+                self.control_plane.update_plugin_spec(
+                    plugin_id,
+                    enabled=bool(payload.get("enabled", False)),
+                    config=dict(payload.get("config", {}) or {}),
                 )
-            )
+            ))
+        if len(segments) == 4 and segments[:2] == ["system", "plugins"] and segments[3] == "spec" and method == "DELETE":
+            plugin_id = segments[2]
+            return self._ok(self._await(self.control_plane.delete_plugin_spec(plugin_id)))
+        if segments == ["system", "plugins", "reconcile"] and method == "POST":
+            return self._ok({"plugins": self._await(self.control_plane.reconcile_all_plugins())})
         if segments == ["system", "logs"] and method == "GET":
             return self._ok(
                 self._await(
@@ -328,16 +342,6 @@ class RuntimeHttpApiServer:
                         level=_query_value(query, "level", ""),
                         keyword=_query_value(query, "keyword", ""),
                         limit=_query_int(query, "limit", 500),
-                    )
-                )
-            )
-        if segments == ["system", "plugins", "config"] and method == "GET":
-            return self._ok(self._await(self.control_plane.list_plugin_configs()))
-        if segments == ["system", "plugins", "config"] and method == "PUT":
-            return self._ok(
-                self._await(
-                    self.control_plane.replace_plugin_configs(
-                        [dict(item) for item in list(payload.get("items", []) or [])]
                     )
                 )
             )

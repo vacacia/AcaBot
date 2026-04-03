@@ -1,5 +1,7 @@
 """runtime.plugins.backend_bridge_tool 暴露前台到后台的单一 bridge tool."""
 
+# 过渡期代码 — 不走新插件体系, bootstrap 直接注册 tool. 后续重做时删除.
+
 from __future__ import annotations
 
 from typing import Any
@@ -8,7 +10,7 @@ from acabot.agent import ToolSpec
 
 from ..backend.bridge import BackendBridge
 from ..backend.contracts import BackendRequest, BackendSourceRef
-from ..plugin_manager import RuntimePlugin, RuntimePluginContext, RuntimeToolRegistration
+from ..plugin_protocol import RuntimePlugin, RuntimePluginContext, RuntimeToolRegistration
 from ..tool_broker import ToolExecutionContext, ToolResult
 
 

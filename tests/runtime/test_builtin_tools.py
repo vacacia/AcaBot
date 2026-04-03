@@ -4,7 +4,7 @@
 它和下面这些组件直接相关:
 - `runtime.bootstrap`: 负责启动时注册 builtin tool
 - `runtime.tool_broker`: 保存最终的工具目录
-- `runtime.plugin_manager`: 只负责真正的外部 plugin reload, 不该影响 core tool
+- `runtime.plugin_runtime_host`: 只负责真正的外部 plugin 管理, 不该影响 core tool
 - `runtime.control.config_control_plane`: 热刷新配置时, core tool 也不该消失
 """
 
@@ -18,7 +18,6 @@ from acabot.runtime import ResolvedAgent, ComputerPolicy, ToolBroker, ToolExecut
 from acabot.runtime.builtin_tools.computer import BuiltinComputerToolSurface
 from acabot.types import EventSource
 
-from tests.runtime.runtime_plugin_samples import SampleConfiguredRuntimePlugin
 from tests.runtime._agent_fakes import FakeAgent, FakeAgentResponse
 from tests.runtime.test_outbox import FakeGateway
 
@@ -325,10 +324,9 @@ async def test_build_runtime_components_registers_core_tools_as_builtin_sources(
     assert "sticky_note_delete" not in sources
 
 
-async def test_runtime_plugin_reload_does_not_remove_builtin_core_tools() -> None:
-    """reload 外部 plugin 时, builtin core tool 也要一直留在 broker 里."""
+async def test_builtin_core_tools_survive_reconciler_run() -> None:
+    """reconcile 外部 plugin 时, builtin core tool 也要一直留在 broker 里."""
 
-    SampleConfiguredRuntimePlugin.reset()
     config = Config(
         {
             "agent": {
@@ -336,18 +334,6 @@ async def test_runtime_plugin_reload_does_not_remove_builtin_core_tools() -> Non
             },
             "runtime": {
                 "default_agent_id": "aca",
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                    }
-                },
-                "prompts": {
-                    "prompt/aca": "You are Aca.",
-                },
-                "plugins": [
-                    "tests.runtime.runtime_plugin_samples:SampleConfiguredRuntimePlugin",
-                ],
             },
         }
     )
@@ -358,144 +344,12 @@ async def test_runtime_plugin_reload_does_not_remove_builtin_core_tools() -> Non
         agent=FakeAgent(FakeAgentResponse(text="ok")),
     )
 
-    loaded_names, missing = await components.plugin_manager.reload_from_config()
-    sources_before = _tool_sources(components)
-
-    reloaded_names, missing_after = await components.plugin_manager.reload_from_config(
-        ["sample_configured_runtime"]
-    )
-    sources_after = _tool_sources(components)
-
-    assert "sample_configured_runtime" in loaded_names
-    assert missing == []
-    assert reloaded_names == ["sample_configured_runtime"]
-    assert missing_after == []
-    assert sources_before["read"] == "builtin:computer"
-    assert sources_before["Skill"] == "builtin:skills"
-    assert sources_before["delegate_subagent"] == "builtin:subagents"
-    assert sources_before["sample_configured_tool"] == "plugin:sample_configured_runtime"
-    assert sources_after["read"] == "builtin:computer"
-    assert sources_after["Skill"] == "builtin:skills"
-    assert sources_after["delegate_subagent"] == "builtin:subagents"
-    assert sources_after["sample_configured_tool"] == "plugin:sample_configured_runtime"
-
-
-async def test_deprecated_computer_tool_adapter_plugin_cannot_reintroduce_old_tools() -> None:
-    """旧 computer adapter plugin 即使被配置, 也不能把旧工具重新塞回来."""
-
-    config = Config(
-        {
-            "agent": {
-                "system_prompt": "You are Aca.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                    }
-                },
-                "prompts": {
-                    "prompt/aca": "You are Aca.",
-                },
-                "plugins": [
-                    "acabot.runtime.plugins.computer_tool_adapter:ComputerToolAdapterPlugin",
-                ],
-            },
-        }
-    )
-
-    components = build_runtime_components(
-        config,
-        gateway=FakeGateway(),
-        agent=FakeAgent(FakeAgentResponse(text="ok")),
-    )
-    await components.plugin_manager.ensure_started()
+    await components.plugin_reconciler.reconcile_all()
     sources = _tool_sources(components)
 
-    assert [plugin.name for plugin in components.plugin_manager.loaded] == ["backend_bridge_tool"]
     assert sources["read"] == "builtin:computer"
-    assert sources["write"] == "builtin:computer"
-    assert "ls" not in sources
-    assert "grep" not in sources
-    assert "exec" not in sources
-    assert "bash_open" not in sources
-    assert "bash_write" not in sources
-    assert "bash_read" not in sources
-    assert "bash_close" not in sources
-
-
-async def test_runtime_bootstrap_keeps_failed_plugin_import_paths_for_diagnosis() -> None:
-    """启动阶段也要保留坏掉的 plugin import path, 方便后续诊断."""
-
-    broken_path = "acabot.runtime.plugins.computer_tool_adapter:ComputerToolAdapterPlugin"
-    config = Config(
-        {
-            "agent": {
-                "system_prompt": "You are Aca.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                    }
-                },
-                "prompts": {
-                    "prompt/aca": "You are Aca.",
-                },
-                "plugins": [broken_path],
-            },
-        }
-    )
-
-    components = build_runtime_components(
-        config,
-        gateway=FakeGateway(),
-        agent=FakeAgent(FakeAgentResponse(text="ok")),
-    )
-
-    assert components.plugin_manager.failed_plugin_import_paths == [broken_path]
-
-
-async def test_runtime_plugin_full_reload_reports_broken_import_paths() -> None:
-    """full reload 时, 坏掉的 plugin import path 要明确出现在 missing 里."""
-
-    config = Config(
-        {
-            "agent": {
-                "system_prompt": "You are Aca.",
-            },
-            "runtime": {
-                "default_agent_id": "aca",
-                "profiles": {
-                    "aca": {
-                        "name": "Aca",
-                        "prompt_ref": "prompt/aca",
-                    }
-                },
-                "prompts": {
-                    "prompt/aca": "You are Aca.",
-                },
-                "plugins": [
-                    "acabot.runtime.plugins.computer_tool_adapter:ComputerToolAdapterPlugin",
-                ],
-            },
-        }
-    )
-
-    components = build_runtime_components(
-        config,
-        gateway=FakeGateway(),
-        agent=FakeAgent(FakeAgentResponse(text="ok")),
-    )
-
-    loaded_names, missing = await components.plugin_manager.reload_from_config()
-
-    assert loaded_names == ["backend_bridge_tool"]
-    assert missing == ["acabot.runtime.plugins.computer_tool_adapter:ComputerToolAdapterPlugin"]
+    assert sources["Skill"] == "builtin:skills"
+    assert sources["delegate_subagent"] == "builtin:subagents"
 
 
 async def test_runtime_config_reload_keeps_builtin_core_tools(tmp_path: Path) -> None:

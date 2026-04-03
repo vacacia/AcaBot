@@ -25,7 +25,11 @@ from ..memory.sticky_notes import StickyNoteService
 from ..model.model_registry import FileSystemModelRegistryManager
 from ..outbox import Outbox
 from ..pipeline import ThreadPipeline
-from ..plugin_manager import RuntimePluginManager
+from ..plugin_reconciler import PluginReconciler
+from ..plugin_runtime_host import PluginRuntimeHost
+from ..plugin_package import PackageCatalog
+from ..plugin_spec import SpecStore
+from ..plugin_status import StatusStore
 from ..contracts import ResolvedAgent, RouteDecision
 from ..control.prompt_loader import PromptLoader
 from ..router import RuntimeRouter
@@ -66,7 +70,11 @@ class RuntimeComponents:
     computer_runtime: ComputerRuntime
     image_context_service: ImageContextService
     message_preparation_service: MessagePreparationService
-    plugin_manager: RuntimePluginManager
+    plugin_reconciler: PluginReconciler
+    plugin_runtime_host: PluginRuntimeHost
+    plugin_catalog: PackageCatalog
+    plugin_spec_store: SpecStore
+    plugin_status_store: StatusStore
     control_plane: RuntimeControlPlane
     config_control_plane: RuntimeConfigControlPlane
     prompt_loader: PromptLoader

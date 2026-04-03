@@ -49,14 +49,16 @@ async def test_tool_broker_exposes_backend_bridge_tool_to_all_agents() -> None:
         backend_bridge=BackendBridge(session=FakeBackendSessionService()),
     )
     from acabot.runtime.plugins.backend_bridge_tool import BackendBridgeToolPlugin
-    from acabot.runtime.plugin_manager import RuntimePluginContext
-    from acabot.config import Config
+    from acabot.runtime.plugin_protocol import RuntimePluginContext
+    from pathlib import Path as _Path
     from tests.runtime.test_outbox import FakeGateway
 
     plugin = BackendBridgeToolPlugin()
     await plugin.setup(
         RuntimePluginContext(
-            config=Config({}),
+            plugin_id="backend_bridge_tool",
+            plugin_config={},
+            data_dir=_Path("/tmp/acabot-test-plugin-data"),
             gateway=FakeGateway(),
             tool_broker=broker,
         )
@@ -85,15 +87,17 @@ async def test_backend_bridge_tool_executes_via_broker_real_path() -> None:
         backend_bridge=BackendBridge(session=session),
     )
     from acabot.runtime.plugins.backend_bridge_tool import BackendBridgeToolPlugin
-    from acabot.runtime.plugin_manager import RuntimePluginContext
-    from acabot.config import Config
+    from acabot.runtime.plugin_protocol import RuntimePluginContext
+    from pathlib import Path as _Path
     from tests.runtime.test_outbox import FakeGateway
     from tests.runtime.test_model_agent_runtime import _context
 
     plugin = BackendBridgeToolPlugin()
     await plugin.setup(
         RuntimePluginContext(
-            config=Config({}),
+            plugin_id="backend_bridge_tool",
+            plugin_config={},
+            data_dir=_Path("/tmp/acabot-test-plugin-data"),
             gateway=FakeGateway(),
             tool_broker=broker,
         )
@@ -127,15 +131,17 @@ async def test_backend_bridge_tool_builds_frontstage_request_from_tool_context()
         backend_bridge=BackendBridge(session=session),
     )
     from acabot.runtime.plugins.backend_bridge_tool import BackendBridgeToolPlugin
-    from acabot.runtime.plugin_manager import RuntimePluginContext
-    from acabot.config import Config
+    from acabot.runtime.plugin_protocol import RuntimePluginContext
+    from pathlib import Path as _Path
     from tests.runtime.test_outbox import FakeGateway
     from tests.runtime.test_model_agent_runtime import _context
 
     plugin = BackendBridgeToolPlugin()
     await plugin.setup(
         RuntimePluginContext(
-            config=Config({}),
+            plugin_id="backend_bridge_tool",
+            plugin_config={},
+            data_dir=_Path("/tmp/acabot-test-plugin-data"),
             gateway=FakeGateway(),
             tool_broker=broker,
         )
@@ -178,7 +184,7 @@ async def test_build_runtime_components_enabled_backend_exposes_ask_backend(
         gateway=FakeGateway(),
         agent=FakeAgent(FakeAgentResponse(text="ok")),
     )
-    await components.plugin_manager.ensure_started()
+    # 新插件体系不需要 ensure_started
 
     visible = components.tool_broker.visible_tools(_profile("aca"))
 
@@ -210,7 +216,7 @@ async def test_enabled_runtime_ask_backend_executes_against_real_pi(tmp_path) ->
         gateway=FakeGateway(),
         agent=FakeAgent(FakeAgentResponse(text="ok")),
     )
-    await components.plugin_manager.ensure_started()
+    # 新插件体系不需要 ensure_started
 
     from tests.runtime.test_model_agent_runtime import _context
 

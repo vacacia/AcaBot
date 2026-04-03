@@ -18,12 +18,12 @@ from acabot.runtime import (
     InMemoryRunManager,
     InMemoryThreadManager,
     Outbox,
+    PluginRuntimeHost,
     RouteDecision,
     RuntimeApp,
     RuntimeControlPlane,
     RuntimePlugin,
     RuntimePluginContext,
-    RuntimePluginManager,
     RuntimeRouter,
     FileSystemSubagentPackageLoader,
     SkillCatalog,
@@ -147,13 +147,8 @@ async def test_runtime_control_plane_reports_status_snapshot(tmp_path: Path) -> 
     channel_event_store = InMemoryChannelEventStore()
     outbox = Outbox(gateway=gateway, store=FakeMessageStore())
     skill_catalog = _catalog()
-    plugin_manager = RuntimePluginManager(
-        config=Config({}),
-        gateway=gateway,
-        tool_broker=ToolBroker(skill_catalog=skill_catalog),
-        skill_catalog=skill_catalog,
-        plugins=[StatusRuntimePlugin()],
-    )
+    tool_broker = ToolBroker(skill_catalog=skill_catalog)
+    plugin_host = PluginRuntimeHost(tool_broker=tool_broker)
     app = RuntimeApp(
         gateway=gateway,
         router=RuntimeRouter(session_runtime=SessionRuntime(StaticSessionConfigLoader(SessionConfig(session_id="", template_id="default", frontstage_agent_id="aca")))),
@@ -165,18 +160,17 @@ async def test_runtime_control_plane_reports_status_snapshot(tmp_path: Path) -> 
             outbox=outbox,
             run_manager=run_manager,
             thread_manager=thread_manager,
-            plugin_manager=plugin_manager,
+            plugin_runtime_host=plugin_host,
         ),
         agent_loader=_agent_loader,
-        plugin_manager=plugin_manager,
+        plugin_runtime_host=plugin_host,
     )
     control_plane = RuntimeControlPlane(
         app=app,
         run_manager=run_manager,
-        plugin_manager=plugin_manager,
+        plugin_runtime_host=plugin_host,
         skill_catalog=skill_catalog,
     )
-    await plugin_manager.ensure_started()
 
     running = await run_manager.open(
         event=_event(),
@@ -206,7 +200,7 @@ async def test_runtime_control_plane_reports_status_snapshot(tmp_path: Path) -> 
 
     status = await control_plane.get_status()
 
-    assert status.loaded_plugins == ["status_runtime"]
+    assert status.loaded_plugins == []
     assert status.loaded_skills == ["excel_processing", "sample_configured_skill"]
     assert status.interrupted_run_ids == [running.run_id]
     assert status.active_run_count == 1

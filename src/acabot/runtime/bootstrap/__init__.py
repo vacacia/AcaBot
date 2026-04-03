@@ -36,19 +36,19 @@ from ..model.model_agent_runtime import ModelAgentRuntime
 from ..model.model_targets import MutableModelTargetCatalog, build_agent_model_targets
 from ..outbox import Outbox
 from ..pipeline import ThreadPipeline
-from ..plugin_manager import (
-    RuntimePlugin,
-    RuntimePluginManager,
-    load_runtime_plugins_from_config,
-    load_runtime_plugins_from_config_with_failures,
-)
+from ..plugin_protocol import RuntimePluginContext
+from ..plugin_package import PackageCatalog
+from ..plugin_spec import SpecStore
+from ..plugin_status import StatusStore
+from ..plugin_runtime_host import PluginRuntimeHost
+from ..plugin_reconciler import PluginReconciler
+from ..plugins import BackendBridgeToolPlugin
 from ..control.prompt_loader import PromptLoader, ReloadablePromptLoader
 from ..router import RuntimeRouter
 from ..subagents import SubagentDelegationBroker
 from ..subagents.execution import LocalSubagentExecutionService
 from ..tool_broker import ToolBroker
 from .builders import (
-    build_builtin_runtime_plugins,
     build_channel_event_store,
     build_computer_runtime,
     build_context_compactor,
@@ -67,7 +67,7 @@ from .builders import (
     build_subagent_catalog,
     build_thread_manager,
 )
-from .config import resolve_runtime_path
+from .config import resolve_filesystem_path, resolve_runtime_path
 from .components import RuntimeComponents
 from .loaders import (
     BootstrapDefaults,
@@ -113,14 +113,12 @@ def build_runtime_components(
     context_compactor=None,
     retrieval_planner=None,
     model_registry_manager=None,
-    plugin_manager=None,
     tool_broker=None,
     skill_catalog=None,
     subagent_catalog=None,
     subagent_delegator=None,
     long_term_memory_ingestor: LongTermMemoryIngestor | None = None,
     approval_resumer: ApprovalResumer | None = None,
-    plugins: list[RuntimePlugin] | None = None,
     log_buffer=None,
 ) -> RuntimeComponents:
     """根据配置和注入依赖组装一套最小 runtime 组件."""
@@ -327,32 +325,61 @@ def build_runtime_components(
     ) -> None:
         runtime_agent_loader_state["session_bundle_loader"] = next_session_bundle_loader
 
-    builtin_plugins = build_builtin_runtime_plugins()
-    failed_plugin_import_paths: list[str] = []
-    configured_plugins = plugins
-    if configured_plugins is None:
-        configured_plugins, failed_plugin_import_paths = load_runtime_plugins_from_config_with_failures(config)
-    if plugin_manager is not None and getattr(plugin_manager, "_started", False):
-        raise ValueError("build_runtime_components() requires a fresh RuntimePluginManager")
-    runtime_plugin_manager = plugin_manager or RuntimePluginManager(
-        config=config,
-        gateway=gateway,
-        tool_broker=runtime_tool_broker,
-        sticky_notes=runtime_sticky_notes,
-        computer_runtime=runtime_computer_runtime,
-        skill_catalog=runtime_skill_catalog,
-        model_target_catalog=runtime_model_registry_manager.target_catalog,
-        builtin_plugins=builtin_plugins,
-        plugins=configured_plugins,
+    # --- 新插件体系 ---
+    extensions_plugins_dir = config.base_dir() / "extensions" / "plugins"
+    runtime_config_plugins_dir = resolve_filesystem_path(
+        config,
+        dict(runtime_conf.get("filesystem", {})),
+        key="plugins_dir",
+        default="plugins",
     )
-    runtime_plugin_manager.config = config
-    runtime_plugin_manager.gateway = gateway
-    runtime_plugin_manager.tool_broker = runtime_tool_broker
-    runtime_plugin_manager.sticky_notes = runtime_sticky_notes
-    runtime_plugin_manager.computer_runtime = runtime_computer_runtime
-    runtime_plugin_manager.skill_catalog = runtime_skill_catalog
-    runtime_plugin_manager.configure_builtin_plugins(builtin_plugins)
-    runtime_plugin_manager.failed_plugin_import_paths = list(failed_plugin_import_paths)
+    runtime_data_plugins_dir = resolve_runtime_path(config, "plugins")
+
+    runtime_plugin_catalog = PackageCatalog(extensions_plugins_dir)
+    runtime_plugin_spec_store = SpecStore(runtime_config_plugins_dir)
+    runtime_plugin_status_store = StatusStore(runtime_data_plugins_dir)
+    runtime_plugin_host = PluginRuntimeHost(
+        tool_broker=runtime_tool_broker,
+        model_target_catalog=runtime_model_registry_manager.target_catalog,
+    )
+
+    # control_plane_ref 用闭包延迟绑定
+    _control_plane_ref: list[RuntimeControlPlane | None] = [None]
+
+    def _plugin_context_factory(plugin_id: str, plugin_config: dict) -> RuntimePluginContext:
+        from pathlib import Path as _Path
+        data_dir = runtime_data_plugins_dir / plugin_id / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        return RuntimePluginContext(
+            plugin_config=plugin_config,
+            plugin_id=plugin_id,
+            data_dir=data_dir,
+            gateway=gateway,
+            tool_broker=runtime_tool_broker,
+            sticky_notes=runtime_sticky_notes,
+            computer_runtime=runtime_computer_runtime,
+            skill_catalog=runtime_skill_catalog,
+            control_plane=_control_plane_ref[0],
+        )
+
+    runtime_plugin_reconciler = PluginReconciler(
+        catalog=runtime_plugin_catalog,
+        spec_store=runtime_plugin_spec_store,
+        status_store=runtime_plugin_status_store,
+        host=runtime_plugin_host,
+        context_factory=_plugin_context_factory,
+    )
+
+    # BackendBridgeToolPlugin 直接注册 tool, 不经过 Reconciler
+    _bridge_plugin = BackendBridgeToolPlugin()
+    _bridge_plugin._backend_bridge = runtime_tool_broker.backend_bridge
+    for _reg in _bridge_plugin.runtime_tools():
+        runtime_tool_broker.register_tool(
+            _reg.spec,
+            _reg.handler,
+            source="builtin:backend_bridge",
+            metadata={"plugin_name": "backend_bridge_tool"},
+        )
     runtime_approval_resumer = approval_resumer or ToolApprovalResumer(
         thread_manager=runtime_thread_manager,
         agent_loader=runtime_agent_loader,
@@ -382,7 +409,7 @@ def build_runtime_components(
         computer_runtime=runtime_computer_runtime,
         message_preparation_service=runtime_message_preparation_service,
         tool_broker=runtime_tool_broker,
-        plugin_manager=runtime_plugin_manager,
+        plugin_runtime_host=runtime_plugin_host,
         soul_source=runtime_soul_source,
         sticky_notes_source=runtime_sticky_notes_source,
     )
@@ -404,10 +431,9 @@ def build_runtime_components(
         model_registry_manager=runtime_model_registry_manager,
         skill_catalog=runtime_skill_catalog,
         subagent_catalog=runtime_subagent_catalog,
-        plugin_manager=runtime_plugin_manager,
+        plugin_reconciler=runtime_plugin_reconciler,
         tool_broker=runtime_tool_broker,
         subagent_delegator=runtime_subagent_delegator,
-        builtin_plugin_factory=build_builtin_runtime_plugins,
         rebind_agent_loader=rebind_agent_loader,
     )
     app = RuntimeApp(
@@ -419,7 +445,8 @@ def build_runtime_components(
         pipeline=pipeline,
         agent_loader=runtime_agent_loader,
         approval_resumer=runtime_approval_resumer,
-        plugin_manager=runtime_plugin_manager,
+        plugin_reconciler=runtime_plugin_reconciler,
+        plugin_runtime_host=runtime_plugin_host,
         model_registry_manager=runtime_model_registry_manager,
         computer_runtime=runtime_computer_runtime,
         long_term_memory_ingestor=runtime_long_term_memory_ingestor,
@@ -436,7 +463,11 @@ def build_runtime_components(
         soul_source=runtime_soul_source,
         sticky_notes_source=runtime_sticky_notes_source,
         sticky_notes=runtime_sticky_notes,
-        plugin_manager=runtime_plugin_manager,
+        plugin_reconciler=runtime_plugin_reconciler,
+        plugin_runtime_host=runtime_plugin_host,
+        plugin_catalog=runtime_plugin_catalog,
+        plugin_spec_store=runtime_plugin_spec_store,
+        plugin_status_store=runtime_plugin_status_store,
         skill_catalog=runtime_skill_catalog,
         subagent_catalog=runtime_subagent_catalog,
         tool_broker=runtime_tool_broker,
@@ -446,8 +477,7 @@ def build_runtime_components(
         log_buffer=log_buffer,
         ltm_store=runtime_long_term_memory_store,
     )
-    runtime_plugin_manager.attach_control_plane(control_plane)
-    runtime_plugin_manager.attach_computer_runtime(runtime_computer_runtime)
+    _control_plane_ref[0] = control_plane
 
     return RuntimeComponents(
         gateway=gateway,
@@ -472,7 +502,11 @@ def build_runtime_components(
         computer_runtime=runtime_computer_runtime,
         image_context_service=runtime_image_context_service,
         message_preparation_service=runtime_message_preparation_service,
-        plugin_manager=runtime_plugin_manager,
+        plugin_reconciler=runtime_plugin_reconciler,
+        plugin_runtime_host=runtime_plugin_host,
+        plugin_catalog=runtime_plugin_catalog,
+        plugin_spec_store=runtime_plugin_spec_store,
+        plugin_status_store=runtime_plugin_status_store,
         control_plane=control_plane,
         config_control_plane=config_control_plane,
         prompt_loader=prompt_loader,

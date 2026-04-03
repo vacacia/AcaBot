@@ -279,7 +279,7 @@ async def test_delegate_subagent_uses_subagent_prompt_body(tmp_path) -> None:
         agent=agent,
         model_registry_manager=await _model_registry_manager(tmp_path),
     )
-    await components.plugin_manager.ensure_started()
+    # 新插件体系不需要 ensure_started
 
     parent_run = await components.run_manager.open(
         event=_event(),
@@ -329,7 +329,7 @@ async def test_delegate_subagent_uses_manifest_model_target_override(
         agent=agent,
         model_registry_manager=await _model_registry_manager(tmp_path),
     )
-    await components.plugin_manager.ensure_started()
+    # 新插件体系不需要 ensure_started
 
     parent_run = await components.run_manager.open(
         event=_event(),
@@ -375,7 +375,7 @@ async def test_delegate_subagent_builds_subagent_computer_policy(tmp_path) -> No
         gateway=FakeGateway(),
         agent=FakeAgent(FakeAgentResponse(text="worker summary", model_used="gpt-parent")),
     )
-    await components.plugin_manager.ensure_started()
+    # 新插件体系不需要 ensure_started
 
     captured = {}
 
@@ -459,7 +459,21 @@ async def test_subagent_can_use_plugin_tool_when_subagent_definition_enables_it(
         agent=agent,
         model_registry_manager=await _model_registry_manager(tmp_path),
     )
-    await components.plugin_manager.ensure_started()
+    # 手动注册 plugin tool 模拟新插件体系注册后的状态
+    from acabot.agent import ToolSpec
+    components.tool_broker.register_tool(
+        ToolSpec(
+            name="sample_configured_tool",
+            description="A sample plugin tool.",
+            parameters={"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]},
+        ),
+        handler=lambda arguments, ctx: __import__("acabot.runtime.tool_broker", fromlist=["ToolResult"]).ToolResult(
+            llm_content=str(arguments.get("text", "")),
+            raw={"echo": arguments.get("text", "")},
+        ),
+        source="plugin:sample_configured_runtime",
+        metadata={"plugin_name": "sample_configured_runtime"},
+    )
 
     parent_run = await components.run_manager.open(
         event=_event(),
@@ -544,7 +558,7 @@ async def test_subagent_child_run_cannot_enter_waiting_approval(tmp_path: Path) 
         tool_broker=broker,
         model_registry_manager=await _model_registry_manager(tmp_path),
     )
-    await components.plugin_manager.ensure_started()
+    # 新插件体系不需要 ensure_started
 
     parent_run = await components.run_manager.open(
         event=_event(),

@@ -32,8 +32,6 @@ from ..memory.sticky_note_renderer import StickyNoteRenderer
 from ..model.model_embedding_runtime import ModelEmbeddingRuntime
 from ..model.model_registry import FileSystemModelRegistryManager
 from ..model.model_targets import MutableModelTargetCatalog
-from ..plugin_manager import RuntimePlugin
-from ..plugins import BackendBridgeToolPlugin
 from ..skills import FileSystemSkillPackageLoader, SkillCatalog
 from ..storage.event_store import InMemoryChannelEventStore
 from ..storage.memory_store import InMemoryMessageStore
@@ -63,14 +61,6 @@ from .config import (
 if TYPE_CHECKING:
     from ..memory.long_term_memory.storage import LanceDbLongTermMemoryStore
 
-
-def build_builtin_runtime_plugins(_agents: object | None = None) -> list[RuntimePlugin]:
-    """组装当前仍然走 plugin 生命周期的内置插件.
-
-    Returns:
-        list[RuntimePlugin]: 仍然通过 plugin manager 装配的内置插件列表.
-    """
-    return [BackendBridgeToolPlugin()]
 
 def build_model_registry_manager(
     config: Config,
@@ -455,7 +445,6 @@ def build_context_compactor(
 
 
 __all__ = [
-    "build_builtin_runtime_plugins",
     "build_channel_event_store",
     "build_computer_runtime",
     "build_context_compactor",

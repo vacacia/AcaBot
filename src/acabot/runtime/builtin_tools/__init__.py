@@ -4,7 +4,7 @@
 它和下面这些组件直接相关:
 - `runtime.bootstrap`: 启动时调用这里把 builtin tool 接进 ToolBroker
 - `runtime.tool_broker`: 保存稳定的 builtin tool 目录
-- `runtime.plugin_manager`: 管理扩展 plugin 的生命周期
+- `runtime.plugin_runtime_host`: 管理扩展 plugin 的生命周期
 """
 
 from __future__ import annotations

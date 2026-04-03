@@ -213,7 +213,7 @@ async def test_build_runtime_components_enabled_backend_admin_bang_routes_to_rea
         gateway=gateway,
         agent=FakeAgent(FakeAgentResponse(text="ok")),
     )
-    await components.plugin_manager.ensure_started()
+    # 新插件体系不需要 ensure_started
     components.app.install()
 
     await gateway.handler(_event(user_id="10001", text="!Reply with exactly: ADMIN_BANG_OK"))
@@ -253,7 +253,7 @@ async def test_build_runtime_components_enabled_backend_maintain_followup_routes
         gateway=gateway,
         agent=FakeAgent(FakeAgentResponse(text="ok")),
     )
-    await components.plugin_manager.ensure_started()
+    # 新插件体系不需要 ensure_started
     components.app.install()
 
     await gateway.handler(_event(user_id="10001", text="/maintain"))

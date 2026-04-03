@@ -103,7 +103,6 @@ from .control.control_plane import (
     ActiveRunSnapshot,
     AgentSkillSnapshot,
     AgentSwitchSnapshot,
-    PluginReloadSnapshot,
     RuntimeControlPlane,
     RuntimeStatusSnapshot,
     SkillSnapshot,
@@ -225,24 +224,21 @@ from .contracts import (
 )
 from .outbox import Outbox
 from .pipeline import ThreadPipeline
-from .plugin_manager import (
+from .plugin_protocol import (
     RuntimeHook,
     RuntimeHookPoint,
-    RuntimeHookRegistry,
     RuntimeHookResult,
     RuntimePlugin,
     RuntimePluginContext,
-    RuntimePluginManager,
-    RuntimePluginSpec,
     RuntimeToolRegistration,
-    load_runtime_plugin,
-    load_runtime_plugins_from_config,
-    parse_runtime_plugin_spec,
 )
+from .plugin_package import PackageCatalog, PackageScanError, PluginPackage
+from .plugin_spec import PluginSpec, SpecParseError, SpecStore
+from .plugin_status import PluginPhase, PluginStatus, StatusStore
+from .plugin_runtime_host import PluginLoadSnapshot, PluginRuntimeHost
+from .plugin_reconciler import PluginReconciler
 from .plugins import (
     BackendBridgeToolPlugin,
-    NapCatToolsPlugin,
-    OpsControlPlugin,
 )
 from .control.prompt_loader import (
     ChainedPromptLoader,
@@ -351,7 +347,18 @@ __all__ = [
     "ActiveRunSnapshot",
     "AgentSkillSnapshot",
     "AgentSwitchSnapshot",
-    "PluginReloadSnapshot",
+    "PluginReconciler",
+    "PluginRuntimeHost",
+    "PluginLoadSnapshot",
+    "PluginPackage",
+    "PackageCatalog",
+    "PackageScanError",
+    "PluginSpec",
+    "SpecParseError",
+    "SpecStore",
+    "PluginPhase",
+    "PluginStatus",
+    "StatusStore",
     "RuntimeControlPlane",
     "RuntimeStatusSnapshot",
     "SkillSnapshot",
@@ -467,12 +474,9 @@ __all__ = [
     "RuntimeApp",
     "RuntimeHook",
     "RuntimeHookPoint",
-    "RuntimeHookRegistry",
     "RuntimeHookResult",
     "RuntimePlugin",
     "RuntimePluginContext",
-    "RuntimePluginManager",
-    "RuntimePluginSpec",
     "RuntimeToolRegistration",
     "DelegationMode",
     "SkillCatalog",
@@ -490,12 +494,7 @@ __all__ = [
     "SubagentPackageManifest",
     "SubagentDelegationBroker",
     "LocalSubagentExecutionService",
-    "load_runtime_plugin",
-    "load_runtime_plugins_from_config",
-    "parse_runtime_plugin_spec",
     "BackendBridgeToolPlugin",
-    "NapCatToolsPlugin",
-    "OpsControlPlugin",
     "RunContext",
     "RunManager",
     "RunRecord",

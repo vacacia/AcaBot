@@ -33,7 +33,7 @@ from ..computer import ComputerPolicy, parse_computer_policy
 from ..contracts import ResolvedAgent, SessionBundle
 from ..model.model_registry import FileSystemModelRegistryManager
 from ..model.model_targets import build_agent_model_targets
-from ..plugin_manager import RuntimePluginManager, RuntimePluginSpec, load_runtime_plugin
+from ..plugin_reconciler import PluginReconciler
 from ..router import RuntimeRouter
 from ..skills import FileSystemSkillPackageLoader, SkillCatalog
 from ..skills.loader import SkillDiscoveryRoot
@@ -196,10 +196,9 @@ class RuntimeConfigControlPlane:
         model_registry_manager: FileSystemModelRegistryManager | None = None,
         skill_catalog: SkillCatalog | None = None,
         subagent_catalog: SubagentCatalog | None = None,
-        plugin_manager: RuntimePluginManager | None = None,
+        plugin_reconciler: PluginReconciler | None = None,
         tool_broker=None,
         subagent_delegator=None,
-        builtin_plugin_factory: Callable[[], list[Any]] | None = None,
         rebind_agent_loader: Callable[[SessionBundleLoader | None], None] | None = None,
     ) -> None:
         """初始化 RuntimeConfigControlPlane.
@@ -212,10 +211,9 @@ class RuntimeConfigControlPlane:
             prompt_loader: 可热刷新的 prompt loader.
             skill_catalog: 可选 skill catalog.
             subagent_catalog: 可选 subagent catalog.
-            plugin_manager: 可选 runtime plugin manager.
+            plugin_reconciler: 可选 plugin reconciler.
             tool_broker: 可选 tool broker.
             subagent_delegator: 可选 subagent delegator.
-            builtin_plugin_factory: builtin plugin 工厂.
         """
 
         self.config = config
@@ -226,10 +224,9 @@ class RuntimeConfigControlPlane:
         self.model_registry_manager = model_registry_manager
         self.skill_catalog = skill_catalog
         self.subagent_catalog = subagent_catalog
-        self.plugin_manager = plugin_manager
+        self.plugin_reconciler = plugin_reconciler
         self.tool_broker = tool_broker
         self.subagent_delegator = subagent_delegator
-        self.builtin_plugin_factory = builtin_plugin_factory
         self.rebind_agent_loader = rebind_agent_loader
 
     async def reload_runtime_configuration(self) -> dict[str, Any]:
@@ -261,14 +258,8 @@ class RuntimeConfigControlPlane:
         self._rebind_agent_loader()
         self.router.session_runtime = _build_session_runtime(self.config)
 
-        if self.plugin_manager is not None:
-            builtin_plugins = (
-                self.builtin_plugin_factory()
-                if self.builtin_plugin_factory is not None
-                else []
-            )
-            await self.plugin_manager.replace_builtin_plugins(builtin_plugins)
-            await self.plugin_manager.reload_from_config()
+        if self.plugin_reconciler is not None:
+            await self.plugin_reconciler.reconcile_all()
         await self._refresh_session_agent_targets()
         return {
             "session_count": len(self.list_sessions()),
@@ -771,118 +762,6 @@ class RuntimeConfigControlPlane:
         if existed:
             await self.reload_runtime_configuration()
         return existed
-
-    def list_plugin_configs(self) -> list[dict[str, Any]]:
-        """返回 runtime.plugins 的配置视图.
-
-        Returns:
-            list[dict[str, Any]]: 当前插件配置列表.
-        """
-
-        runtime_conf = dict(self.config.get("runtime", {}) or {})
-        raw_plugins = list(runtime_conf.get("plugins", []) or [])
-        items: list[dict[str, Any]] = []
-        for raw in raw_plugins:
-            if isinstance(raw, str):
-                import_path = raw
-                enabled = True
-            elif isinstance(raw, dict):
-                import_path = str(raw.get("path", "") or raw.get("import_path", "") or "")
-                enabled = bool(raw.get("enabled", True))
-                if not import_path:
-                    continue
-            else:
-                continue
-
-            load_error = self._probe_plugin_import_error(import_path) if enabled else ""
-            items.append({
-                "path": import_path,
-                "enabled": enabled,
-                "name": self._plugin_name_from_path(import_path),
-                "display_name": self._plugin_display_name_from_path(import_path),
-                "loadable": load_error == "",
-                "load_error": load_error,
-            })
-        return items
-
-    async def replace_plugin_configs(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """整批替换 runtime.plugins 配置并热刷新.
-
-        Args:
-            items: 新的插件配置列表.
-
-        Returns:
-            list[dict[str, Any]]: 热刷新后的插件配置视图.
-        """
-
-        normalized: list[dict[str, Any]] = []
-        for item in items:
-            import_path = str(item.get("path", "") or item.get("import_path", "") or "").strip()
-            if not import_path:
-                continue
-            normalized.append({
-                "path": import_path,
-                "enabled": bool(item.get("enabled", True)),
-            })
-        data = self.config.to_dict()
-        runtime_conf = dict(data.get("runtime", {}) or {})
-        runtime_conf["plugins"] = normalized
-        data["runtime"] = runtime_conf
-        self.config.replace(data)
-        self.config.save()
-        await self.reload_runtime_configuration()
-        return self.list_plugin_configs()
-
-    @staticmethod
-    def _probe_plugin_import_error(import_path: str) -> str:
-        """检查一条 plugin import path 当前是否能成功加载.
-
-        Args:
-            import_path: 目标插件导入路径.
-
-        Returns:
-            str: 成功时返回空字符串, 失败时返回简短错误文本.
-        """
-
-        try:
-            load_runtime_plugin(RuntimePluginSpec(import_path=import_path))
-        except Exception as exc:
-            return str(exc)
-        return ""
-
-    @staticmethod
-    def _plugin_name_from_path(import_path: str) -> str:
-        """从导入路径提取插件名.
-
-        Args:
-            import_path: 插件导入路径.
-
-        Returns:
-            str: 插件名.
-        """
-
-        module_path, _, symbol_name = str(import_path).partition(":")
-        if symbol_name:
-            return symbol_name
-        return module_path.rsplit(".", 1)[-1]
-
-    @classmethod
-    def _plugin_display_name_from_path(cls, import_path: str) -> str:
-        """把插件导入路径整理成更适合人看的名字.
-
-        Args:
-            import_path: 插件导入路径.
-
-        Returns:
-            str: 适合展示的插件名字.
-        """
-
-        raw_name = cls._plugin_name_from_path(import_path)
-        normalized = re.sub(r"Plugin$", "", raw_name)
-        words = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", normalized).strip()
-        if words:
-            return words
-        return raw_name
 
     @staticmethod
     def _session_agent_id(session_id: str) -> str:

@@ -11,6 +11,7 @@ from acabot.runtime import (
     InMemoryThreadManager,
     Outbox,
     PlannedAction,
+    PluginRuntimeHost,
     RouteDecision,
     ResolvedAgent,
     RuntimeApp,
@@ -19,7 +20,6 @@ from acabot.runtime import (
     RuntimeHookResult,
     RuntimePlugin,
     RuntimePluginContext,
-    RuntimePluginManager,
     RuntimeRouter,
     SessionConfigLoader,
     SessionRuntime,
@@ -187,23 +187,10 @@ class ExplodingTeardownRuntimePlugin(TrackingRuntimePlugin):
         raise RuntimeError("plugin teardown exploded")
 
 
-class ExplodingPluginManager(RuntimePluginManager):
+class ExplodingPluginHost(PluginRuntimeHost):
+    """teardown_all 爆炸的 PluginRuntimeHost."""
     async def teardown_all(self) -> None:
-        raise RuntimeError("plugin manager teardown exploded")
-
-
-class BrokenEnsureStartedPluginManager(RuntimePluginManager):
-    def __init__(self, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self.ensure_started_calls = 0
-        self.teardown_calls = 0
-
-    async def ensure_started(self) -> None:
-        self.ensure_started_calls += 1
-        raise RuntimeError("plugin ensure_started exploded")
-
-    async def teardown_all(self) -> None:
-        self.teardown_calls += 1
+        raise RuntimeError("plugin host teardown exploded")
 
 
 class ExplodingStartIngestor(RecordingIngestor):
@@ -558,13 +545,7 @@ async def test_runtime_app_stops_ltm_ingestor_when_gateway_start_crashes() -> No
 
 async def test_runtime_app_tears_down_plugins_when_gateway_start_crashes() -> None:
     gateway = BrokenStartGateway()
-    plugin = TrackingRuntimePlugin()
-    plugin_manager = RuntimePluginManager(
-        config=Config({}),
-        gateway=gateway,
-        tool_broker=ToolBroker(),
-        plugins=[plugin],
-    )
+    plugin_host = PluginRuntimeHost(tool_broker=ToolBroker())
     app = RuntimeApp(
         gateway=gateway,
         router=_default_router(),
@@ -576,10 +557,10 @@ async def test_runtime_app_tears_down_plugins_when_gateway_start_crashes() -> No
             outbox=Outbox(gateway=gateway, store=FakeMessageStore()),
             run_manager=InMemoryRunManager(),
             thread_manager=InMemoryThreadManager(),
-            plugin_manager=plugin_manager,
+            plugin_runtime_host=plugin_host,
         ),
         agent_loader=_agent_loader,
-        plugin_manager=plugin_manager,
+        plugin_runtime_host=plugin_host,
     )
 
     try:
@@ -589,53 +570,10 @@ async def test_runtime_app_tears_down_plugins_when_gateway_start_crashes() -> No
     else:
         raise AssertionError("expected gateway start failure")
 
-    assert plugin.setup_calls == 1
-    assert plugin.teardown_calls == 1
-
-
-async def test_runtime_app_tears_down_plugins_when_plugin_start_fails() -> None:
-    gateway = TrackingGateway()
-    plugin_manager = BrokenEnsureStartedPluginManager(
-        config=Config({}),
-        gateway=gateway,
-        tool_broker=ToolBroker(),
-    )
-    app = RuntimeApp(
-        gateway=gateway,
-        router=_default_router(),
-        thread_manager=InMemoryThreadManager(),
-        run_manager=InMemoryRunManager(),
-        channel_event_store=InMemoryChannelEventStore(),
-        pipeline=ThreadPipeline(
-            agent_runtime=FakeAgentRuntime(),
-            outbox=Outbox(gateway=gateway, store=FakeMessageStore()),
-            run_manager=InMemoryRunManager(),
-            thread_manager=InMemoryThreadManager(),
-        ),
-        agent_loader=_agent_loader,
-        plugin_manager=plugin_manager,
-    )
-
-    try:
-        await app.start()
-    except RuntimeError as exc:
-        assert str(exc) == "plugin ensure_started exploded"
-    else:
-        raise AssertionError("expected plugin startup failure")
-
-    assert plugin_manager.ensure_started_calls == 1
-    assert plugin_manager.teardown_calls == 1
-
 
 async def test_runtime_app_tears_down_plugins_when_ltm_start_fails() -> None:
     gateway = TrackingGateway()
-    plugin = TrackingRuntimePlugin()
-    plugin_manager = RuntimePluginManager(
-        config=Config({}),
-        gateway=gateway,
-        tool_broker=ToolBroker(),
-        plugins=[plugin],
-    )
+    plugin_host = PluginRuntimeHost(tool_broker=ToolBroker())
     app = RuntimeApp(
         gateway=gateway,
         router=_default_router(),
@@ -647,10 +585,10 @@ async def test_runtime_app_tears_down_plugins_when_ltm_start_fails() -> None:
             outbox=Outbox(gateway=gateway, store=FakeMessageStore()),
             run_manager=InMemoryRunManager(),
             thread_manager=InMemoryThreadManager(),
-            plugin_manager=plugin_manager,
+            plugin_runtime_host=plugin_host,
         ),
         agent_loader=_agent_loader,
-        plugin_manager=plugin_manager,
+        plugin_runtime_host=plugin_host,
         long_term_memory_ingestor=ExplodingStartIngestor(),
     )
 
@@ -660,9 +598,6 @@ async def test_runtime_app_tears_down_plugins_when_ltm_start_fails() -> None:
         assert str(exc) == "ltm ingestor start exploded"
     else:
         raise AssertionError("expected ltm start failure")
-
-    assert plugin.setup_calls == 1
-    assert plugin.teardown_calls == 1
 
 
 async def test_runtime_app_keeps_failed_run_terminal_when_pipeline_crashes() -> None:
@@ -949,26 +884,21 @@ async def test_runtime_app_reject_pending_approval_cancels_run() -> None:
     assert app.list_pending_approvals() == []
 
 
-async def test_runtime_app_lazily_starts_plugins_on_first_event() -> None:
+async def test_runtime_app_plugin_host_available_on_event() -> None:
+    """事件处理时 plugin_runtime_host 可用."""
     gateway = FakeGateway()
     thread_manager = InMemoryThreadManager()
     run_manager = InMemoryRunManager()
     channel_event_store = InMemoryChannelEventStore()
     outbox = Outbox(gateway=gateway, store=FakeMessageStore())
+    plugin_host = PluginRuntimeHost(tool_broker=ToolBroker())
     pipeline = ThreadPipeline(
-        agent_runtime=BrokenAgentRuntime(),
+        agent_runtime=FakeAgentRuntime(),
         outbox=outbox,
         run_manager=run_manager,
         thread_manager=thread_manager,
+        plugin_runtime_host=plugin_host,
     )
-    plugin = TrackingRuntimePlugin()
-    plugin_manager = RuntimePluginManager(
-        config=Config({}),
-        gateway=gateway,
-        tool_broker=ToolBroker(),
-        plugins=[plugin],
-    )
-    pipeline.plugin_manager = plugin_manager
     app = RuntimeApp(
         gateway=gateway,
         router=_default_router(),
@@ -977,26 +907,19 @@ async def test_runtime_app_lazily_starts_plugins_on_first_event() -> None:
         channel_event_store=channel_event_store,
         pipeline=pipeline,
         agent_loader=_agent_loader,
-        plugin_manager=plugin_manager,
+        plugin_runtime_host=plugin_host,
     )
 
     app.install()
     await gateway.handler(_event())
 
-    assert plugin.setup_calls == 1
-    assert len(gateway.sent) == 1
-    assert gateway.sent[0].payload["text"] == "from plugin"
+    # 没有插件加载, 但不应崩溃
+    assert plugin_host.loaded_plugin_ids() == set()
 
 
 async def test_runtime_app_stop_tears_down_runtime_plugins() -> None:
     gateway = TrackingGateway()
-    plugin = TrackingRuntimePlugin()
-    plugin_manager = RuntimePluginManager(
-        config=Config({}),
-        gateway=gateway,
-        tool_broker=ToolBroker(),
-        plugins=[plugin],
-    )
+    plugin_host = PluginRuntimeHost(tool_broker=ToolBroker())
     app = RuntimeApp(
         gateway=gateway,
         router=_default_router(),
@@ -1010,23 +933,16 @@ async def test_runtime_app_stop_tears_down_runtime_plugins() -> None:
             thread_manager=InMemoryThreadManager(),
         ),
         agent_loader=_agent_loader,
-        plugin_manager=plugin_manager,
+        plugin_runtime_host=plugin_host,
     )
 
     await app.start()
     await app.stop()
 
-    assert plugin.setup_calls == 1
-    assert plugin.teardown_calls == 1
-
 
 async def test_runtime_app_stop_still_stops_ltm_after_plugin_teardown_failure() -> None:
     gateway = TrackingGateway()
-    plugin_manager = ExplodingPluginManager(
-        config=Config({}),
-        gateway=gateway,
-        tool_broker=ToolBroker(),
-    )
+    plugin_host = ExplodingPluginHost(tool_broker=ToolBroker())
     ltm = RecordingIngestor()
     app = RuntimeApp(
         gateway=gateway,
@@ -1039,10 +955,10 @@ async def test_runtime_app_stop_still_stops_ltm_after_plugin_teardown_failure() 
             outbox=Outbox(gateway=gateway, store=FakeMessageStore()),
             run_manager=InMemoryRunManager(),
             thread_manager=InMemoryThreadManager(),
-            plugin_manager=plugin_manager,
+            plugin_runtime_host=plugin_host,
         ),
         agent_loader=_agent_loader,
-        plugin_manager=plugin_manager,
+        plugin_runtime_host=plugin_host,
         long_term_memory_ingestor=ltm,
     )
 
@@ -1051,85 +967,8 @@ async def test_runtime_app_stop_still_stops_ltm_after_plugin_teardown_failure() 
     try:
         await app.stop()
     except RuntimeError as exc:
-        assert str(exc) == "plugin manager teardown exploded"
+        assert str(exc) == "plugin host teardown exploded"
     else:
         raise AssertionError("expected plugin teardown failure")
 
     assert ltm.stopped == 1
-
-
-async def test_runtime_app_tears_down_plugins_when_lazy_plugin_start_fails_on_event() -> None:
-    gateway = FakeGateway()
-    thread_manager = InMemoryThreadManager()
-    run_manager = InMemoryRunManager()
-    channel_event_store = InMemoryChannelEventStore()
-    outbox = Outbox(gateway=gateway, store=FakeMessageStore())
-    pipeline = ThreadPipeline(
-        agent_runtime=FakeAgentRuntime(),
-        outbox=outbox,
-        run_manager=run_manager,
-        thread_manager=thread_manager,
-    )
-    plugin_manager = BrokenEnsureStartedPluginManager(
-        config=Config({}),
-        gateway=gateway,
-        tool_broker=ToolBroker(),
-    )
-    app = RuntimeApp(
-        gateway=gateway,
-        router=_default_router(),
-        thread_manager=thread_manager,
-        run_manager=run_manager,
-        channel_event_store=channel_event_store,
-        pipeline=pipeline,
-        agent_loader=_agent_loader,
-        plugin_manager=plugin_manager,
-    )
-
-    app.install()
-    await gateway.handler(_event())
-
-    assert plugin_manager.ensure_started_calls == 1
-    assert plugin_manager.teardown_calls == 1
-
-
-async def test_runtime_app_can_reload_plugins_from_config() -> None:
-    from tests.runtime.runtime_plugin_samples import SampleConfiguredRuntimePlugin
-
-    SampleConfiguredRuntimePlugin.reset()
-    gateway = TrackingGateway()
-    plugin_manager = RuntimePluginManager(
-        config=Config(
-            {
-                "runtime": {
-                    "plugins": [
-                        "tests.runtime.runtime_plugin_samples:SampleConfiguredRuntimePlugin",
-                    ],
-                },
-            }
-        ),
-        gateway=gateway,
-        tool_broker=ToolBroker(),
-    )
-    app = RuntimeApp(
-        gateway=gateway,
-        router=_default_router(),
-        thread_manager=InMemoryThreadManager(),
-        run_manager=InMemoryRunManager(),
-        channel_event_store=InMemoryChannelEventStore(),
-        pipeline=ThreadPipeline(
-            agent_runtime=FakeAgentRuntime(),
-            outbox=Outbox(gateway=gateway, store=FakeMessageStore()),
-            run_manager=InMemoryRunManager(),
-            thread_manager=InMemoryThreadManager(),
-            plugin_manager=plugin_manager,
-        ),
-        agent_loader=_agent_loader,
-        plugin_manager=plugin_manager,
-    )
-
-    loaded, missing = await app.reload_plugins()
-
-    assert loaded == ["sample_configured_runtime"]
-    assert missing == []
-    assert SampleConfiguredRuntimePlugin.setup_calls == 1

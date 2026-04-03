@@ -59,15 +59,6 @@ class GatewayStatusSnapshot:
 
 
 @dataclass(slots=True)
-class PluginReloadSnapshot:
-    """一次 plugin reload 的最小结果."""
-
-    requested_plugins: list[str] = field(default_factory=list)
-    loaded_plugins: list[str] = field(default_factory=list)
-    missing_plugins: list[str] = field(default_factory=list)
-
-
-@dataclass(slots=True)
 class AgentSwitchSnapshot:
     """一次 thread agent switch 或控制面切换操作的结果."""
 

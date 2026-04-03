@@ -33,7 +33,8 @@ from .contracts import (
     RunRecord,
     RunStep,
 )
-from .plugin_manager import RuntimePluginManager
+from .plugin_reconciler import PluginReconciler
+from .plugin_runtime_host import PluginRuntimeHost
 from .pipeline import ThreadPipeline
 from .router import RuntimeRouter
 from .storage.runs import RunManager
@@ -61,7 +62,8 @@ class RuntimeApp:
         pipeline: ThreadPipeline,
         agent_loader: Callable[[RouteDecision], ResolvedAgent] | None = None,
         approval_resumer: ApprovalResumer | None = None,
-        plugin_manager: RuntimePluginManager | None = None,
+        plugin_reconciler: PluginReconciler | None = None,
+        plugin_runtime_host: PluginRuntimeHost | None = None,
         model_registry_manager: FileSystemModelRegistryManager | None = None,
         computer_runtime: ComputerRuntime | None = None,
         long_term_memory_ingestor: LongTermMemoryIngestor | None = None,
@@ -80,7 +82,8 @@ class RuntimeApp:
             pipeline: 真正执行一次 run 的 ThreadPipeline.
             agent_loader: 根据 RouteDecision 加载当前 run agent 快照的回调.
             approval_resumer: approval 通过后的续执行器.
-            plugin_manager: runtime world 的插件管理器.
+            plugin_reconciler: 可选的 plugin reconciler.
+            plugin_runtime_host: 可选的 plugin runtime host.
             model_registry_manager: 运行时模型注册表管理器.
             computer_runtime: 运行时 computer 基础设施入口.
             long_term_memory_ingestor: 长期记忆写入线入口.
@@ -97,7 +100,8 @@ class RuntimeApp:
         self.pipeline = pipeline
         self.agent_loader = agent_loader
         self.approval_resumer = approval_resumer or NoopApprovalResumer()
-        self.plugin_manager = plugin_manager
+        self.plugin_reconciler = plugin_reconciler
+        self.plugin_runtime_host = plugin_runtime_host
         self.model_registry_manager = model_registry_manager
         self.computer_runtime = computer_runtime
         self.long_term_memory_ingestor = long_term_memory_ingestor
@@ -116,7 +120,8 @@ class RuntimeApp:
         """安装事件处理器并启动 gateway."""
 
         await self.recover_active_runs()
-        await self._ensure_plugins_started()
+        if self.plugin_reconciler is not None:
+            await self.plugin_reconciler.reconcile_all()
         try:
             if self.long_term_memory_ingestor is not None:
                 await self.long_term_memory_ingestor.start()
@@ -128,9 +133,9 @@ class RuntimeApp:
                     await self.long_term_memory_ingestor.stop()
                 except Exception:
                     logger.exception("Failed to stop long-term memory ingestor after gateway start failure")
-            if self.plugin_manager is not None:
+            if self.plugin_runtime_host is not None:
                 try:
-                    await self.plugin_manager.teardown_all()
+                    await self.plugin_runtime_host.teardown_all()
                 except Exception:
                     logger.exception("Failed to teardown runtime plugins after gateway start failure")
             raise
@@ -142,9 +147,9 @@ class RuntimeApp:
             await self.gateway.stop()
         except Exception as exc:
             stop_error = exc
-        if self.plugin_manager is not None:
+        if self.plugin_runtime_host is not None:
             try:
-                await self.plugin_manager.teardown_all()
+                await self.plugin_runtime_host.teardown_all()
             except Exception as exc:
                 logger.exception("Failed to teardown runtime plugins during shutdown")
                 if stop_error is None:
@@ -158,20 +163,6 @@ class RuntimeApp:
                     stop_error = exc
         if stop_error is not None:
             raise stop_error
-
-    async def reload_plugins(self, plugin_names: list[str] | None = None) -> tuple[list[str], list[str]]:
-        """按当前配置重载 runtime plugins.
-
-        Args:
-            plugin_names: 可选的插件名列表. 缺省时重载全部插件.
-
-        Returns:
-            `(loaded_plugins, missing_plugins)` 元组.
-        """
-
-        if self.plugin_manager is None:
-            return [], list(plugin_names or [])
-        return await self.plugin_manager.reload_from_config(plugin_names)
 
     async def handle_event(self, event: StandardEvent) -> None:
         """处理一条来自 gateway 的标准事件.
@@ -193,7 +184,6 @@ class RuntimeApp:
             )
             if await self._handle_backend_entrypoint(event):
                 return
-            await self._ensure_plugins_started()
             decision = await self.router.route(event)
             logger.debug(
                 "Route resolved: event_id=%s agent=%s run_mode=%s thread=%s channel=%s",
@@ -490,26 +480,6 @@ class RuntimeApp:
                 "Failed to mark long-term memory dirty after event persist: thread=%s",
                 thread_id,
             )
-
-    async def _ensure_plugins_started(self) -> None:
-        """确保 runtime plugins 已经完成启动.
-
-        合并 启动 plugins + 启动失败时清理现场, 不把 runtime 留在“plugin 半启动”的脏状态
-        
-        Returns:
-            None.
-        """
-
-        if self.plugin_manager is None:
-            return
-        try:
-            await self.plugin_manager.ensure_started()
-        except Exception:
-            try:
-                await self.plugin_manager.teardown_all()
-            except Exception:
-                logger.exception("Failed to teardown runtime plugins after startup failure")
-            raise
 
     @staticmethod
     def _build_channel_event_record(

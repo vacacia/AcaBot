@@ -41,7 +41,11 @@ from ..model.model_registry import (
     ModelReloadSnapshot,
 )
 from ..contracts import ChannelEventRecord, MessageRecord, RunRecord
-from ..plugin_manager import RuntimePluginManager
+from ..plugin_reconciler import PluginReconciler
+from ..plugin_runtime_host import PluginRuntimeHost
+from ..plugin_package import PackageCatalog
+from ..plugin_spec import PluginSpec, SpecStore
+from ..plugin_status import PluginStatus, StatusStore
 from ..storage.runs import RunManager
 from ..skills import SkillPackageManifest
 from ..skills import SkillCatalog
@@ -61,7 +65,6 @@ from .snapshots import (
     AgentSwitchSnapshot,
     BackendStatusSnapshot,
     GatewayStatusSnapshot,
-    PluginReloadSnapshot,
     RuntimeStatusSnapshot,
     SkillSnapshot,
     SubagentSnapshot,
@@ -94,7 +97,11 @@ class RuntimeControlPlane:
         soul_source: SoulSource | None = None,
         sticky_notes_source: StickyNoteFileStore | None = None,
         sticky_notes: StickyNoteService | None = None,
-        plugin_manager: RuntimePluginManager | None = None,
+        plugin_reconciler: PluginReconciler | None = None,
+        plugin_runtime_host: PluginRuntimeHost | None = None,
+        plugin_catalog: PackageCatalog | None = None,
+        plugin_spec_store: SpecStore | None = None,
+        plugin_status_store: StatusStore | None = None,
         skill_catalog: SkillCatalog | None = None,
         subagent_catalog: SubagentCatalog | None = None,
         tool_broker: ToolBroker | None = None,
@@ -115,7 +122,11 @@ class RuntimeControlPlane:
             soul_source: 可选的 soul 文件真源服务.
             sticky_notes_source: 可选的 sticky note 文件真源服务.
             sticky_notes: 可选的 sticky note 服务层.
-            plugin_manager: 可选的 runtime plugin manager.
+            plugin_reconciler: 可选的 plugin reconciler.
+            plugin_runtime_host: 可选的 plugin runtime host.
+            plugin_catalog: 可选的 plugin catalog.
+            plugin_spec_store: 可选的 plugin spec store.
+            plugin_status_store: 可选的 plugin status store.
             skill_catalog: 可选的统一 skill catalog.
             subagent_catalog: 可选的 subagent catalog.
             tool_broker: 可选的 tool broker, 用于给 WebUI 提供工具目录.
@@ -133,7 +144,11 @@ class RuntimeControlPlane:
         self.soul_source = soul_source
         self.sticky_notes_source = sticky_notes_source
         self.sticky_notes = sticky_notes
-        self.plugin_manager = plugin_manager
+        self.plugin_reconciler = plugin_reconciler
+        self.plugin_runtime_host = plugin_runtime_host
+        self.plugin_catalog = plugin_catalog
+        self.plugin_spec_store = plugin_spec_store
+        self.plugin_status_store = plugin_status_store
         self.skill_catalog = skill_catalog
         self.subagent_catalog = subagent_catalog
         self.tool_broker = tool_broker
@@ -178,23 +193,6 @@ class RuntimeControlPlane:
             loaded_plugins=self._list_loaded_plugins(),
             loaded_skills=self._list_loaded_skills(),
             interrupted_run_ids=list(self.app.last_recovery_report.interrupted_run_ids),
-        )
-
-    async def reload_plugins(self, plugin_names: list[str] | None = None) -> PluginReloadSnapshot:
-        """按当前配置重载 runtime plugins.
-
-        Args:
-            plugin_names: 可选的插件名列表. 为空时执行全量重载.
-
-        Returns:
-            一份 PluginReloadSnapshot.
-        """
-
-        loaded, missing = await self.app.reload_plugins(plugin_names)
-        return PluginReloadSnapshot(
-            requested_plugins=list(plugin_names or []),
-            loaded_plugins=list(loaded),
-            missing_plugins=list(missing),
         )
 
     async def get_gateway_status(self) -> GatewayStatusSnapshot:
@@ -1045,9 +1043,9 @@ class RuntimeControlPlane:
             已加载插件名列表.
         """
 
-        if self.plugin_manager is None:
+        if self.plugin_runtime_host is None:
             return []
-        return [plugin.name for plugin in self.plugin_manager.loaded]
+        return sorted(self.plugin_runtime_host.loaded_plugin_ids())
 
     def _list_loaded_skills(self) -> list[str]:
         """列出当前已注册 skill 名列表.
@@ -1131,6 +1129,148 @@ class RuntimeControlPlane:
             model_target=item.model_target or "",
             effective=effective,
         )
+
+    # region 新插件体系 API
+
+    def list_plugins(self) -> list[dict[str, object]]:
+        """列出所有插件的合并视图.
+
+        Returns:
+            每个插件一个字典, 包含 package/spec/status/effective_config.
+        """
+
+        all_ids: set[str] = set()
+        packages: dict[str, object] = {}
+        specs: dict[str, PluginSpec] = {}
+        statuses: dict[str, PluginStatus] = {}
+
+        if self.plugin_catalog is not None:
+            scanned, _ = self.plugin_catalog.scan()
+            for pid, pkg in scanned.items():
+                all_ids.add(pid)
+                packages[pid] = {
+                    "plugin_id": pkg.plugin_id,
+                    "display_name": pkg.display_name,
+                    "entrypoint": pkg.entrypoint,
+                    "version": pkg.version,
+                    "default_config": dict(pkg.default_config),
+                }
+        if self.plugin_spec_store is not None:
+            loaded_specs, _ = self.plugin_spec_store.load_all()
+            for pid, spec in loaded_specs.items():
+                all_ids.add(pid)
+                specs[pid] = spec
+        if self.plugin_status_store is not None:
+            for pid, st in self.plugin_status_store.load_all().items():
+                all_ids.add(pid)
+                statuses[pid] = st
+
+        result: list[dict[str, object]] = []
+        for pid in sorted(all_ids):
+            pkg_view = packages.get(pid)
+            spec = specs.get(pid)
+            st = statuses.get(pid)
+            default_config = dict(
+                (scanned[pid].default_config if pid in scanned else {})
+            ) if self.plugin_catalog is not None and pid in (scanned if self.plugin_catalog is not None else {}) else {}
+            spec_config = dict(spec.config) if spec is not None else {}
+            effective_config = {**default_config, **spec_config}
+            result.append({
+                "plugin_id": pid,
+                "package": pkg_view,
+                "spec": {
+                    "plugin_id": spec.plugin_id,
+                    "enabled": spec.enabled,
+                    "config": dict(spec.config),
+                } if spec is not None else None,
+                "status": {
+                    "plugin_id": st.plugin_id,
+                    "phase": st.phase,
+                    "load_error": st.load_error,
+                    "registered_tools": list(st.registered_tools),
+                    "registered_hooks": list(st.registered_hooks),
+                    "updated_at": st.updated_at,
+                } if st is not None else None,
+                "effective_config": effective_config,
+            })
+        return result
+
+    def get_plugin(self, plugin_id: str) -> dict[str, object] | None:
+        """获取单个插件的合并视图.
+
+        Args:
+            plugin_id: 目标插件 ID.
+
+        Returns:
+            合并视图字典, 不存在时返回 None.
+        """
+
+        for item in self.list_plugins():
+            if item["plugin_id"] == plugin_id:
+                return item
+        return None
+
+    async def update_plugin_spec(
+        self,
+        plugin_id: str,
+        *,
+        enabled: bool,
+        config: dict,
+    ) -> dict[str, object]:
+        """创建或更新插件 spec 并触发单插件 reconcile.
+
+        Args:
+            plugin_id: 目标插件 ID.
+            enabled: 是否启用.
+            config: 操作者配置覆盖.
+
+        Returns:
+            该插件的合并视图.
+        """
+
+        if self.plugin_spec_store is None:
+            raise RuntimeError("plugin spec store unavailable")
+        spec = PluginSpec(plugin_id=plugin_id, enabled=enabled, config=dict(config))
+        self.plugin_spec_store.save(spec)
+        if self.plugin_reconciler is not None:
+            await self.plugin_reconciler.reconcile_one(plugin_id)
+        view = self.get_plugin(plugin_id)
+        if view is None:
+            return {"plugin_id": plugin_id}
+        return view
+
+    async def delete_plugin_spec(self, plugin_id: str) -> dict[str, object]:
+        """删除插件 spec 并触发单插件 reconcile.
+
+        Args:
+            plugin_id: 目标插件 ID.
+
+        Returns:
+            该插件的合并视图.
+        """
+
+        if self.plugin_spec_store is None:
+            raise RuntimeError("plugin spec store unavailable")
+        self.plugin_spec_store.delete(plugin_id)
+        if self.plugin_reconciler is not None:
+            await self.plugin_reconciler.reconcile_one(plugin_id)
+        view = self.get_plugin(plugin_id)
+        if view is None:
+            return {"plugin_id": plugin_id}
+        return view
+
+    async def reconcile_all_plugins(self) -> list[dict[str, object]]:
+        """全量 reconcile 所有插件.
+
+        Returns:
+            所有插件的合并视图列表.
+        """
+
+        if self.plugin_reconciler is not None:
+            await self.plugin_reconciler.reconcile_all()
+        return self.list_plugins()
+
+    # endregion 新插件体系 API
 
 
 # endregion

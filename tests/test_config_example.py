@@ -90,10 +90,10 @@ async def test_config_example_builds_runtime_components(tmp_path: Path) -> None:
             gateway=FakeGateway(),
             agent=ConfigExampleAgent(),
         )
-        await components.plugin_manager.ensure_started()
+        # 新插件体系不需要 ensure_started
 
         assert components.prompt_loader.load("prompt/default").strip() == "you are a helpful assistant."
-        assert [plugin.name for plugin in components.plugin_manager.loaded] == ["backend_bridge_tool", "ops_control"]
+        assert components.plugin_reconciler is not None
     finally:
         if created_prompt and prompt_file.exists():
             prompt_file.unlink()

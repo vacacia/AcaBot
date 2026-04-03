@@ -5,7 +5,7 @@ from __future__ import annotations
 from acabot.config import Config
 from acabot.runtime import ToolBroker
 from acabot.runtime.plugins.backend_bridge_tool import BackendBridgeToolPlugin
-from acabot.runtime.plugin_manager import RuntimePluginContext
+from acabot.runtime.plugin_protocol import RuntimePluginContext
 
 from tests.runtime.test_model_agent_runtime import _context
 from tests.runtime.test_outbox import FakeGateway
