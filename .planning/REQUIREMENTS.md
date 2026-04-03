@@ -63,13 +63,13 @@
 - [x] **MSG-05**: 撤回消息（recall 指定消息）
 - [x] **MSG-06**: 媒体/附件发送（图片、文件路径）
 - [x] **MSG-07**: 工具层只表达意图，映射到 Action → Outbox → Gateway
-- [ ] **MSG-08**: 文转图渲染（Playwright render_markdown_to_image）
+- [x] **MSG-08**: 文转图渲染（Playwright render_markdown_to_image）
 - [x] **MSG-09**: 跨会话消息发送（target 参数指定目标会话）
 - [x] **MSG-10**: 具体工具 schema / 字段设计在 discuss-phase 时敲定
 
 ### Playwright Integration
 
-- [ ] **PW-01**: render_markdown_to_image() 工具函数在 Outbox 层
+- [x] **PW-01**: render_markdown_to_image() 工具函数在 Outbox 层
 - [x] **PW-02**: Singleton browser 实例管理（启动时创建，关闭时销毁）
 - [x] **PW-03**: markdown-it-py → HTML → Playwright screenshot 流程
 
@@ -158,10 +158,10 @@
 | MSG-05 | 4 | Validated |
 | MSG-06 | 4 | Complete |
 | MSG-07 | 4 | Validated |
-| MSG-08 | 4 | Pending |
+| MSG-08 | 4 | Complete |
 | MSG-09 | 4 | Complete |
 | MSG-10 | 4 | Validated |
-| PW-01 | 4 | Pending |
+| PW-01 | 4 | Complete |
 | PW-02 | 4 | Complete |
 | PW-03 | 4 | Complete |
 

@@ -4,14 +4,14 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 04
 current_plan: 4
-status: Ready to execute
-stopped_at: Completed 04-03-PLAN.md
-last_updated: "2026-04-03T18:21:18.082Z"
+status: Phase complete — ready for verification
+stopped_at: Completed 04-04-PLAN.md
+last_updated: "2026-04-03T18:33:20.485Z"
 progress:
   total_phases: 6
-  completed_phases: 5
+  completed_phases: 1
   total_plans: 4
-  completed_plans: 3
+  completed_plans: 4
 ---
 
 # Project State
@@ -120,6 +120,9 @@ progress:
 - [Phase 04]: RenderService 保持 optional backend registry；没有 backend 时返回 unavailable，而不是阻断 runtime 启动
 - [Phase 04]: Render artifacts 固定落在 runtime_data/render_artifacts，不复用 /workspace/attachments
 - [Phase 04]: Playwright backend 缓存 browser/playwright 对象并在第一次 render 时 lazy-init
+- [Phase 04]: bootstrap 显式注册 PlaywrightRenderBackend 为默认 render backend, 不靠隐式发现
+- [Phase 04]: RuntimeApp.stop() 负责关闭共享 render service, render artifact 继续留在 runtime_data/render_artifacts
+- [Phase 04]: Outbox 只通过注入的 RenderService 处理 render, backend unavailable/error 时回退原始 markdown
 
 ## Performance Metrics
 
@@ -127,11 +130,12 @@ progress:
 |-------|------|----------|-------|-------|-----------|
 | 04 | 02 | 6m | 3 | 11 | 2026-04-04 |
 | 04 | 03 | 5m | 2 | 10 | 2026-04-04 |
+| Phase 04 P04 | 6m | 2 tasks | 12 files |
 
 ## Session Info
 
-- **Last Session:** 2026-04-03T18:21:18.078Z
-- **Stopped At:** Completed 04-03-PLAN.md
+- **Last Session:** 2026-04-03T18:33:20.482Z
+- **Stopped At:** Completed 04-04-PLAN.md
 
 ## Blockers
 
