@@ -9,7 +9,7 @@ from dataclasses import replace
 import logging
 import time
 import uuid
-from typing import Callable
+from typing import Callable, TYPE_CHECKING
 
 from acabot.types import Action, ActionType, StandardEvent
 
@@ -41,6 +41,9 @@ from .storage.runs import RunManager
 from .storage.stores import ChannelEventStore
 from .storage.threads import ThreadManager
 
+if TYPE_CHECKING:
+    from .scheduler import RuntimeScheduler
+
 logger = logging.getLogger("acabot.runtime.app")
 
 
@@ -70,6 +73,7 @@ class RuntimeApp:
         backend_bridge: BackendBridge | None = None,
         backend_mode_registry: BackendModeRegistry | None = None,
         backend_admin_actor_ids: set[str] | None = None,
+        scheduler: RuntimeScheduler | None = None,
     ) -> None:
         """初始化 RuntimeApp.
 
@@ -90,6 +94,7 @@ class RuntimeApp:
             backend_bridge: 可选的后台桥接入口.
             backend_mode_registry: 可选的管理员后台模式注册表.
             backend_admin_actor_ids: 可直接进入后台入口的管理员 actor 集合.
+            scheduler: 可选的定时任务调度器.
         """
 
         self.gateway = gateway
@@ -108,6 +113,7 @@ class RuntimeApp:
         self.backend_bridge = backend_bridge
         self.backend_mode_registry = backend_mode_registry
         self.backend_admin_actor_ids = set(backend_admin_actor_ids or set())
+        self.scheduler = scheduler
         self.last_recovery_report = RecoveryReport()
         self._pending_approvals: dict[str, PendingApprovalRecord] = {}
 
@@ -125,9 +131,16 @@ class RuntimeApp:
         try:
             if self.long_term_memory_ingestor is not None:
                 await self.long_term_memory_ingestor.start()
+            if self.scheduler is not None:
+                await self.scheduler.start()
             self.install()
             await self.gateway.start()
         except Exception:
+            if self.scheduler is not None:
+                try:
+                    await self.scheduler.stop()
+                except Exception:
+                    logger.exception("Failed to stop scheduler after startup failure")
             if self.long_term_memory_ingestor is not None:
                 try:
                     await self.long_term_memory_ingestor.stop()
@@ -147,6 +160,14 @@ class RuntimeApp:
             await self.gateway.stop()
         except Exception as exc:
             stop_error = exc
+        # Scheduler 在 plugin teardown 之前停止, 防止 teardown 期间还有定时任务触发
+        if self.scheduler is not None:
+            try:
+                await self.scheduler.stop()
+            except Exception as exc:
+                logger.exception("Failed to stop scheduler during shutdown")
+                if stop_error is None:
+                    stop_error = exc
         if self.plugin_runtime_host is not None:
             try:
                 await self.plugin_runtime_host.teardown_all()

@@ -43,6 +43,7 @@ from ..plugin_status import StatusStore
 from ..plugin_runtime_host import PluginRuntimeHost
 from ..plugin_reconciler import PluginReconciler
 from ..plugins import BackendBridgeToolPlugin
+from ..scheduler import RuntimeScheduler, SQLiteScheduledTaskStore
 from ..control.prompt_loader import PromptLoader, ReloadablePromptLoader
 from ..router import RuntimeRouter
 from ..subagents import SubagentDelegationBroker
@@ -325,6 +326,12 @@ def build_runtime_components(
     ) -> None:
         runtime_agent_loader_state["session_bundle_loader"] = next_session_bundle_loader
 
+    # --- 定时任务调度器 ---
+    from .config import get_persistence_sqlite_path
+    scheduler_sqlite_path = get_persistence_sqlite_path(config)
+    scheduler_store = SQLiteScheduledTaskStore(db_path=scheduler_sqlite_path) if scheduler_sqlite_path else None
+    runtime_scheduler = RuntimeScheduler(store=scheduler_store)
+
     # --- 新插件体系 ---
     extensions_plugins_dir = config.base_dir() / "extensions" / "plugins"
     runtime_config_plugins_dir = resolve_filesystem_path(
@@ -341,6 +348,7 @@ def build_runtime_components(
     runtime_plugin_host = PluginRuntimeHost(
         tool_broker=runtime_tool_broker,
         model_target_catalog=runtime_model_registry_manager.target_catalog,
+        scheduler=runtime_scheduler,
     )
 
     # control_plane_ref 用闭包延迟绑定
@@ -360,6 +368,7 @@ def build_runtime_components(
             computer_runtime=runtime_computer_runtime,
             skill_catalog=runtime_skill_catalog,
             control_plane=_control_plane_ref[0],
+            scheduler=runtime_scheduler,
         )
 
     runtime_plugin_reconciler = PluginReconciler(
@@ -453,6 +462,7 @@ def build_runtime_components(
         backend_bridge=runtime_backend_bridge,
         backend_mode_registry=runtime_backend_mode_registry,
         backend_admin_actor_ids=runtime_backend_admin_actor_ids,
+        scheduler=runtime_scheduler,
     )
     control_plane = RuntimeControlPlane(
         app=app,
@@ -520,6 +530,7 @@ def build_runtime_components(
         backend_mode_registry=runtime_backend_mode_registry,
         app=app,
         long_term_memory_ingestor=runtime_long_term_memory_ingestor,
+        scheduler=runtime_scheduler,
     )
 
 

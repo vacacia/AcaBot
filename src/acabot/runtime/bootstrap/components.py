@@ -42,6 +42,7 @@ from ..subagents import SubagentCatalog, SubagentDelegationBroker
 from ..subagents.execution import LocalSubagentExecutionService
 from ..tool_broker import ToolBroker
 from ..approval_resumer import ApprovalResumer
+from ..scheduler import RuntimeScheduler
 
 
 @dataclass(slots=True)
@@ -88,6 +89,7 @@ class RuntimeComponents:
     backend_mode_registry: BackendModeRegistry
     app: RuntimeApp
     long_term_memory_ingestor: LongTermMemoryIngestor | None = None
+    scheduler: RuntimeScheduler | None = None
 
 
 __all__ = ["RuntimeComponents"]

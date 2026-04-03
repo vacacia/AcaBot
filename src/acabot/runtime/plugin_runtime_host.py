@@ -27,6 +27,7 @@ from .plugin_package import PluginPackage
 if TYPE_CHECKING:
     from .contracts import RunContext
     from .model.model_targets import MutableModelTargetCatalog
+    from .scheduler import RuntimeScheduler
 
 logger = logging.getLogger("acabot.runtime.plugin")
 
@@ -108,16 +109,19 @@ class PluginRuntimeHost:
         self,
         tool_broker: ToolBroker,
         model_target_catalog: MutableModelTargetCatalog | None = None,
+        scheduler: RuntimeScheduler | None = None,
     ) -> None:
         """初始化 PluginRuntimeHost.
 
         Args:
             tool_broker: runtime 工具入口.
             model_target_catalog: 可选的模型 target 目录.
+            scheduler: 可选的定时任务调度器, 用于 unload 时自动清理插件注册的定时任务.
         """
 
         self._tool_broker = tool_broker
         self._model_target_catalog = model_target_catalog
+        self._scheduler = scheduler
         self._loaded: dict[str, RuntimePlugin] = {}
         self._hook_registry = RuntimeHookRegistry()
         self._plugin_hooks: dict[str, list[tuple[RuntimeHookPoint, RuntimeHook]]] = {}
@@ -281,6 +285,17 @@ class PluginRuntimeHost:
                 plugin_id,
                 ",".join(removed),
             )
+
+        # 1.5 注销定时任务
+        if self._scheduler is not None:
+            source_tag = self._plugin_tool_sources.get(plugin_id, f"plugin:{plugin_id}")
+            cancelled_tasks = await self._scheduler.unregister_by_owner(source_tag)
+            if cancelled_tasks:
+                logger.info(
+                    "Plugin scheduled tasks cancelled: plugin=%s count=%d",
+                    plugin_id,
+                    len(cancelled_tasks),
+                )
 
         # 2. 注销 model targets
         if self._model_target_catalog is not None:

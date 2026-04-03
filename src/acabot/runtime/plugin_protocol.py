@@ -33,6 +33,7 @@ from acabot.runtime.computer import ComputerRuntime
 
 if TYPE_CHECKING:
     from acabot.runtime.control.control_plane import RuntimeControlPlane
+    from acabot.runtime.scheduler import RuntimeScheduler
 
 logger = logging.getLogger("acabot.runtime.plugin")
 
@@ -141,6 +142,7 @@ class RuntimePluginContext:
     computer_runtime: ComputerRuntime | None = None
     skill_catalog: SkillCatalog | None = None
     control_plane: RuntimeControlPlane | None = None
+    scheduler: RuntimeScheduler | None = None
 
 
 class RuntimePlugin(ABC):
