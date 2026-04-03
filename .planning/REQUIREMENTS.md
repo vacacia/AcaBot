@@ -59,13 +59,13 @@
 - [ ] **MSG-01**: 文本回复（基础 send text，保持现有行为）
 - [ ] **MSG-02**: 引用回复（reply_to 指定被引用消息）
 - [ ] **MSG-03**: @mention（指定用户 ID）
-- [ ] **MSG-04**: Emoji reaction（对消息添加 reaction）
-- [ ] **MSG-05**: 撤回消息（recall 指定消息）
+- [x] **MSG-04**: Emoji reaction（对消息添加 reaction）
+- [x] **MSG-05**: 撤回消息（recall 指定消息）
 - [ ] **MSG-06**: 媒体/附件发送（图片、文件路径）
-- [ ] **MSG-07**: 工具层只表达意图，映射到 Action → Outbox → Gateway
+- [x] **MSG-07**: 工具层只表达意图，映射到 Action → Outbox → Gateway
 - [ ] **MSG-08**: 文转图渲染（Playwright render_markdown_to_image）
 - [ ] **MSG-09**: 跨会话消息发送（target 参数指定目标会话）
-- [ ] **MSG-10**: 具体工具 schema / 字段设计在 discuss-phase 时敲定
+- [x] **MSG-10**: 具体工具 schema / 字段设计在 discuss-phase 时敲定
 
 ### Playwright Integration
 
@@ -154,13 +154,13 @@
 | MSG-01 | 4 | Pending |
 | MSG-02 | 4 | Pending |
 | MSG-03 | 4 | Pending |
-| MSG-04 | 4 | Pending |
-| MSG-05 | 4 | Pending |
+| MSG-04 | 4 | Validated |
+| MSG-05 | 4 | Validated |
 | MSG-06 | 4 | Pending |
-| MSG-07 | 4 | Pending |
+| MSG-07 | 4 | Validated |
 | MSG-08 | 4 | Pending |
 | MSG-09 | 4 | Pending |
-| MSG-10 | 4 | Pending |
+| MSG-10 | 4 | Validated |
 | PW-01 | 4 | Pending |
 | PW-02 | 4 | Pending |
 | PW-03 | 4 | Pending |

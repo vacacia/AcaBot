@@ -170,7 +170,7 @@ Phase 4: Unified Message Tool + Playwright   [13 reqs]  ──►
 **Plans:** 4 plans
 
 Plans:
-- [ ] `04-01-PLAN.md` — Add the unified `message` builtin tool surface, lock the schema, and wire NapCat reaction payloads
+- [x] `04-01-PLAN.md` — Add the unified `message` builtin tool surface, lock the schema, and wire NapCat reaction payloads
 - [ ] `04-02-PLAN.md` — Materialize `SEND_MESSAGE_INTENT`, fix cross-session persistence semantics, and suppress duplicate default replies
 - [ ] `04-03-PLAN.md` — Add the render module, project dependencies, internal artifact helpers, and Playwright backend tests
 - [ ] `04-04-PLAN.md` — Wire the default render service into bootstrap, Outbox, app shutdown, and sync docs/regression tests
