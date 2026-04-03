@@ -21,6 +21,7 @@ from acabot.runtime import (
     ModelAgentRuntime,
     ModelContextSummarizer,
     Outbox,
+    OutboxItem,
     PayloadJsonWriter,
     PlannedAction,
     RouteDecision,
@@ -32,6 +33,7 @@ from acabot.runtime import (
     ToolBroker,
     ToolPolicyDecision,
 )
+from acabot.runtime.ids import build_thread_id_from_conversation_id
 from acabot.types import Action, ActionType, EventAttachment, EventSource, MsgSegment, StandardEvent
 from acabot.runtime.control.log_buffer import InMemoryLogBuffer, InMemoryLogHandler
 from acabot.runtime.control.log_setup import configure_structlog
@@ -244,6 +246,39 @@ def _summary_request(model: str = "summary-model") -> RuntimeModelRequest:
         preset_id="preset/summary",
         provider_params={"base_url": "https://example.invalid/v1"},
     )
+
+
+def test_pipeline_cross_session_contract_targets_destination_thread_id() -> None:
+    destination_conversation_id = "qq:group:20002"
+    destination_thread_id = build_thread_id_from_conversation_id(destination_conversation_id)
+    item = OutboxItem(
+        thread_id="qq:user:10001",
+        origin_thread_id="qq:user:10001",
+        destination_thread_id=destination_thread_id,
+        destination_conversation_id=destination_conversation_id,
+        append_to_origin_thread=False,
+        run_id="run:1",
+        agent_id="aca",
+        plan=PlannedAction(
+            action_id="action:cross-session",
+            action=Action(
+                action_type=ActionType.SEND_TEXT,
+                target=EventSource(
+                    platform="qq",
+                    message_type="group",
+                    user_id="10001",
+                    group_id="20002",
+                ),
+                payload={"text": "cross-session hello"},
+            ),
+            thread_content="cross-session hello",
+        ),
+    )
+
+    assert item.origin_thread_id == "qq:user:10001"
+    assert item.destination_thread_id == "qq:group:20002"
+    assert item.destination_conversation_id == destination_conversation_id
+    assert item.append_to_origin_thread is False
 
 
 async def test_thread_pipeline_runs_minimal_text_flow() -> None:

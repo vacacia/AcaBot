@@ -1,3 +1,5 @@
+import pytest
+
 from acabot.runtime import (
     ResolvedAgent,
     MessageStore,
@@ -10,6 +12,11 @@ from acabot.runtime import (
     RunRecord,
     SequencedMessageRecord,
     ThreadState,
+)
+from acabot.runtime.ids import (
+    build_event_source_from_conversation_id,
+    build_thread_id_from_conversation_id,
+    parse_conversation_id,
 )
 from acabot.types import Action, ActionType, EventSource, MsgSegment, StandardEvent
 
@@ -95,6 +102,99 @@ class RecordingIngestor:
 class ExplodingIngestor(RecordingIngestor):
     def mark_dirty(self, thread_id: str) -> None:
         raise RuntimeError(f"boom:{thread_id}")
+
+
+@pytest.mark.parametrize(
+    ("conversation_id", "actor_user_id", "expected_source"),
+    [
+        (
+            "qq:group:20002",
+            "10001",
+            EventSource(
+                platform="qq",
+                message_type="group",
+                user_id="10001",
+                group_id="20002",
+            ),
+        ),
+        (
+            "qq:user:30003",
+            "10001",
+            EventSource(
+                platform="qq",
+                message_type="private",
+                user_id="30003",
+                group_id=None,
+            ),
+        ),
+    ],
+)
+def test_conversation_id_helpers_build_canonical_destination_event_source(
+    conversation_id: str,
+    actor_user_id: str,
+    expected_source: EventSource,
+) -> None:
+    platform, scope_value = parse_conversation_id(conversation_id)
+
+    assert platform == "qq"
+    assert scope_value == conversation_id.split(":", 2)[2]
+    assert (
+        build_event_source_from_conversation_id(
+            conversation_id,
+            actor_user_id=actor_user_id,
+        )
+        == expected_source
+    )
+    assert build_thread_id_from_conversation_id(conversation_id) == conversation_id
+
+
+@pytest.mark.parametrize(
+    "invalid_conversation_id",
+    [
+        "",
+        "group:20002",
+        "qq:channel:20002",
+        "discord:group:20002",
+        "qq:group:",
+    ],
+)
+def test_conversation_id_helpers_reject_non_canonical_targets(
+    invalid_conversation_id: str,
+) -> None:
+    with pytest.raises(ValueError):
+        parse_conversation_id(invalid_conversation_id)
+
+
+def test_outbox_item_keeps_origin_and_destination_thread_separate() -> None:
+    item = OutboxItem(
+        thread_id="qq:user:10001",
+        origin_thread_id="qq:user:10001",
+        destination_thread_id="qq:group:20002",
+        destination_conversation_id="qq:group:20002",
+        append_to_origin_thread=False,
+        run_id="run:1",
+        agent_id="aca",
+        plan=PlannedAction(
+            action_id="action:1",
+            action=Action(
+                action_type=ActionType.SEND_TEXT,
+                target=EventSource(
+                    platform="qq",
+                    message_type="group",
+                    user_id="10001",
+                    group_id="20002",
+                ),
+                payload={"text": "hello"},
+            ),
+            thread_content="hello",
+        ),
+    )
+
+    assert item.thread_id == "qq:user:10001"
+    assert item.origin_thread_id == "qq:user:10001"
+    assert item.destination_thread_id == "qq:group:20002"
+    assert item.destination_conversation_id == "qq:group:20002"
+    assert item.append_to_origin_thread is False
 
 
 async def test_outbox_sends_and_persists_success() -> None:
