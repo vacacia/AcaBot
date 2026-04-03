@@ -16,8 +16,12 @@ prompt 文件统一放在同级 prompts/ 目录下, 由 _load_prompt() 加载.
 from __future__ import annotations
 
 import json
+import logging
+import time
 from pathlib import Path
 from typing import Any
+
+import structlog
 
 from acabot.agent.base import BaseAgent
 
@@ -32,6 +36,8 @@ from .extractor import (
 )
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
+logger = logging.getLogger("acabot.runtime.memory.long_term_memory.model_clients")
+slog = structlog.get_logger("acabot.runtime.memory.long_term_memory.model_clients")
 
 
 def _load_prompt(filename: str) -> str:
@@ -115,6 +121,7 @@ class LtmExtractorClient:
             WindowExtractionError: target 未配置 / 模型返回非法 JSON / entry 校验失败.
         """
 
+        started_at = time.monotonic()
         request = self._require_target_request("system:ltm_extract")
         payload = build_extraction_window_payload(
             conversation_id=conversation_id,
@@ -132,7 +139,7 @@ class LtmExtractorClient:
             parsed = json.loads(str(getattr(response, "text", "") or ""))
         except json.JSONDecodeError as exc:
             raise WindowExtractionError(f"extractor response is not valid JSON: {exc}") from exc
-        return parse_extractor_response(
+        entries = parse_extractor_response(
             response=parsed,
             anchor_map=payload.anchor_map,
             fact_roles=payload.fact_roles,
@@ -140,6 +147,14 @@ class LtmExtractorClient:
             extractor_version=self.extractor_version,
             now_ts=now_ts,
         )
+        slog.info(
+            "LTM extraction completed",
+            model=request.model,
+            conversation_id=conversation_id,
+            entry_count=len(entries),
+            duration_ms=round((time.monotonic() - started_at) * 1000, 1),
+        )
+        return entries
 
     def _require_target_request(self, target_id: str) -> RuntimeModelRequest:
         """从 model registry 解析一个必需的模型 target.
@@ -224,8 +239,17 @@ class LtmEmbeddingClient:
 
         if not texts:
             return []
+        started_at = time.monotonic()
         request = self._require_target_request("system:ltm_embed")
-        return await self.embedding_runtime.embed_texts(request, texts)
+        vectors = await self.embedding_runtime.embed_texts(request, texts)
+        slog.info(
+            "LTM embedding generated",
+            model=request.model,
+            text_count=len(texts),
+            vector_count=len(vectors),
+            duration_ms=round((time.monotonic() - started_at) * 1000, 1),
+        )
+        return vectors
 
     def _require_target_request(self, target_id: str) -> RuntimeModelRequest:
         """从 model registry 解析一个必需的模型 target.
@@ -304,43 +328,62 @@ class LtmQueryPlannerClient:
             RuntimeError: target 未配置 / 模型返回非法 JSON.
         """
 
+        started_at = time.monotonic()
         request = self._require_target_request("system:ltm_query_plan")
         system_prompt = _load_prompt("query_planner_system.txt")
-        response = await self.agent.complete(
-            system_prompt=system_prompt,
-            messages=[
-                {
-                    "role": "user",
-                    "content": json.dumps(request_payload, ensure_ascii=False),
-                }
-            ],
-            model=request.model,
-            request_options=request.to_request_options(),
-        )
-        if getattr(response, "error", None):
-            raise RuntimeError(str(response.error))
         try:
-            parsed = json.loads(str(getattr(response, "text", "") or ""))
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"query planner response is not valid JSON: {exc}") from exc
-        # 兼容模型把结果包在 {"plan": {...}} 里的情况
-        if isinstance(parsed, dict) and isinstance(parsed.get("plan"), dict):
-            parsed = dict(parsed.get("plan") or {})
-        if not isinstance(parsed, dict):
-            raise RuntimeError("query planner response must be a JSON object")
-        return {
-            "semantic_queries": [
-                str(item).strip()
-                for item in list(parsed.get("semantic_queries", []) or [])
-                if str(item).strip()
-            ],
-            "lexical_queries": [
-                str(item).strip()
-                for item in list(parsed.get("lexical_queries", []) or [])
-                if str(item).strip()
-            ],
-            "symbolic_filters": self._normalize_symbolic_filters(parsed.get("symbolic_filters", {})),
-        }
+            response = await self.agent.complete(
+                system_prompt=system_prompt,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": json.dumps(request_payload, ensure_ascii=False),
+                    }
+                ],
+                model=request.model,
+                request_options=request.to_request_options(),
+            )
+            if getattr(response, "error", None):
+                raise RuntimeError(str(response.error))
+            try:
+                parsed = json.loads(str(getattr(response, "text", "") or ""))
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(f"query planner response is not valid JSON: {exc}") from exc
+            # 兼容模型把结果包在 {"plan": {...}} 里的情况
+            if isinstance(parsed, dict) and isinstance(parsed.get("plan"), dict):
+                parsed = dict(parsed.get("plan") or {})
+            if not isinstance(parsed, dict):
+                raise RuntimeError("query planner response must be a JSON object")
+            result = {
+                "semantic_queries": [
+                    str(item).strip()
+                    for item in list(parsed.get("semantic_queries", []) or [])
+                    if str(item).strip()
+                ],
+                "lexical_queries": [
+                    str(item).strip()
+                    for item in list(parsed.get("lexical_queries", []) or [])
+                    if str(item).strip()
+                ],
+                "symbolic_filters": self._normalize_symbolic_filters(parsed.get("symbolic_filters", {})),
+            }
+            slog.info(
+                "LTM query planner completed",
+                model=request.model,
+                conversation_id=str(request_payload.get("conversation_id", "") or ""),
+                semantic_queries=len(result["semantic_queries"]),
+                lexical_queries=len(result["lexical_queries"]),
+                has_symbolic=bool(result["symbolic_filters"]),
+                duration_ms=round((time.monotonic() - started_at) * 1000, 1),
+            )
+            return result
+        except Exception:
+            logger.exception(
+                "LTM query planner failed: conversation_id=%s model=%s",
+                str(request_payload.get("conversation_id", "") or ""),
+                request.model,
+            )
+            raise
 
     def _require_target_request(self, target_id: str) -> RuntimeModelRequest:
         """从 model registry 解析一个必需的模型 target.

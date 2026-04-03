@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-from typing import Any
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 from acabot.agent import BaseAgent
 from acabot.config import Config
@@ -60,6 +62,9 @@ from .config import (
 
 if TYPE_CHECKING:
     from ..memory.long_term_memory.storage import LanceDbLongTermMemoryStore
+
+
+logger = logging.getLogger("acabot.runtime.bootstrap")
 
 
 def build_model_registry_manager(
@@ -189,7 +194,7 @@ def build_long_term_memory_store(config: Config) -> LanceDbLongTermMemoryStore:
         config: 当前 runtime 配置.
 
     Returns:
-        LanceDbLongTermMemoryStore: 已准备好的 LanceDB 存储对象.
+        LanceDbLongTermMemoryStore: 已通过完整性校验的 LanceDB 存储对象.
     """
 
     long_term_memory_conf = _long_term_memory_config(config)
@@ -205,7 +210,44 @@ def build_long_term_memory_store(config: Config) -> LanceDbLongTermMemoryStore:
             "runtime.long_term_memory.enabled=true requires LanceDB runtime dependencies; "
             f"missing module: {missing_module}"
         ) from exc
-    return LanceDbLongTermMemoryStore(storage_dir)
+    store = LanceDbLongTermMemoryStore(storage_dir)
+    validation = store.validate()
+    for warning in validation.warnings:
+        logger.warning("LTM 校验警告: %s", warning)
+    if not validation.ok:
+        for error in validation.errors:
+            logger.error("LTM 校验错误: %s", error)
+        raise RuntimeError(f"LTM 存储完整性校验失败: {'; '.join(validation.errors)}")
+    return store
+
+
+def build_ltm_backup_task(
+    config: Config,
+    *,
+    store: LanceDbLongTermMemoryStore,
+) -> tuple[Callable[[], Awaitable[None]], int] | None:
+    """构造 LTM 定期备份任务."""
+
+    long_term_memory_conf = dict(config.get("runtime", {}).get("long_term_memory", {}))
+    backup_conf = dict(long_term_memory_conf.get("backup", {}))
+    if not bool(backup_conf.get("enabled", False)):
+        return None
+
+    interval_hours = max(1, int(backup_conf.get("interval_hours", 24) or 24))
+    max_backups = max(0, int(backup_conf.get("max_backups", 5) or 5))
+    backup_dir = resolve_runtime_path(
+        config,
+        backup_conf.get("backup_dir", "long_term_memory/backups"),
+    )
+
+    async def _backup_callback() -> None:
+        await asyncio.to_thread(
+            store.backup,
+            backup_dir,
+            max_backups=max_backups,
+        )
+
+    return _backup_callback, interval_hours * 3600
 
 
 def build_long_term_memory_source(
@@ -450,6 +492,7 @@ __all__ = [
     "build_context_compactor",
     "build_default_computer_policy",
     "build_long_term_memory_ingestor",
+    "build_ltm_backup_task",
     "build_long_term_memory_source",
     "build_long_term_memory_store",
     "build_long_term_memory_write_port",

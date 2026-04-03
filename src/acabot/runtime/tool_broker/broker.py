@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 from inspect import isawaitable
 from typing import Any
+
+import structlog
 
 from acabot.agent import ToolDef, ToolExecutionResult, ToolSpec
 from acabot.agent.tool import normalize_tool_result
@@ -30,6 +33,7 @@ from .contracts import (
 from .policy import AllowAllToolPolicy, InMemoryToolAudit, ToolAudit, ToolPolicy
 
 logger = logging.getLogger("acabot.runtime.tool_broker")
+slog = structlog.get_logger("acabot.runtime.tool_broker")
 
 
 class ToolBroker:
@@ -532,6 +536,7 @@ class ToolBroker:
         arguments: dict[str, Any],
         ctx: ToolExecutionContext,
     ) -> ToolResult:
+        started_at = time.monotonic()
         audit_record = await self._audit_start(
             tool_name=tool_name,
             arguments=arguments,
@@ -546,6 +551,7 @@ class ToolBroker:
                 ctx=ctx,
                 tool_name=tool_name,
                 arguments=arguments,
+                started_at=started_at,
             )
 
         if "visible_tools" in ctx.metadata:
@@ -559,6 +565,7 @@ class ToolBroker:
                 ctx=ctx,
                 tool_name=tool_name,
                 arguments=arguments,
+                started_at=started_at,
             )
 
         decision = await self._allow(
@@ -583,6 +590,7 @@ class ToolBroker:
                 tool_name=tool_name,
                 arguments=arguments,
                 metadata=dict(decision.metadata),
+                started_at=started_at,
             )
 
         try:
@@ -596,6 +604,7 @@ class ToolBroker:
                 ctx=ctx,
                 tool_name=tool_name,
                 arguments=arguments,
+                started_at=started_at,
             )
 
         normalized = self._normalize_result(raw)
@@ -607,6 +616,13 @@ class ToolBroker:
 
         audit_record = await self.audit.complete(audit_record, result=normalized)
         self._append_audit(ctx, audit_record)
+        self._log_tool_success(
+            ctx=ctx,
+            tool_name=tool_name,
+            source=registered.source,
+            result=normalized,
+            duration_ms=self._duration_ms(started_at),
+        )
         return normalized
 
     async def replay_approved_tool(
@@ -765,6 +781,13 @@ class ToolBroker:
         if existing_record is not None:
             existing_record = await self.audit.complete(existing_record, result=normalized)
             self._append_audit(ctx, existing_record)
+        self._log_tool_success(
+            ctx=ctx,
+            tool_name=pending.tool_name,
+            source=registered.source,
+            result=normalized,
+            duration_ms=None,
+        )
         return ToolReplayResult(
             ok=True,
             result=normalized,
@@ -991,6 +1014,7 @@ class ToolBroker:
         tool_name: str,
         arguments: dict[str, Any],
         metadata: dict[str, Any] | None = None,
+        started_at: float | None = None,
     ) -> ToolResult:
         result = self._error_result(
             message,
@@ -1004,6 +1028,12 @@ class ToolBroker:
             metadata=metadata,
         )
         self._append_audit(ctx, audit_record)
+        self._log_tool_rejection(
+            ctx=ctx,
+            tool_name=tool_name,
+            reason=message,
+            duration_ms=self._duration_ms(started_at),
+        )
         return result
 
     async def _fail(
@@ -1014,10 +1044,17 @@ class ToolBroker:
         ctx: ToolExecutionContext,
         tool_name: str,
         arguments: dict[str, Any],
+        started_at: float | None = None,
     ) -> ToolResult:
         result = self._error_result(message, tool_name=tool_name, arguments=arguments)
         audit_record = await self.audit.fail(audit_record, error=message)
         self._append_audit(ctx, audit_record)
+        self._log_tool_failure(
+            ctx=ctx,
+            tool_name=tool_name,
+            error=message,
+            duration_ms=self._duration_ms(started_at),
+        )
         return result
 
     @staticmethod
@@ -1047,6 +1084,95 @@ class ToolBroker:
                 **dict(metadata or {}),
             },
             raw=payload,
+        )
+
+    @staticmethod
+    def _duration_ms(started_at: float | None) -> float | None:
+        if started_at is None:
+            return None
+        return round((time.monotonic() - started_at) * 1000, 1)
+
+    @staticmethod
+    def _summarize_result(result: ToolResult, *, limit: int = 160) -> str:
+        content = result.llm_content
+        if isinstance(content, list):
+            try:
+                text = json.dumps(content, ensure_ascii=False, separators=(",", ":"))
+            except Exception:
+                text = str(content)
+        else:
+            text = str(content or "")
+        text = " ".join(text.split())
+        if text:
+            return text[:limit]
+        if result.attachments:
+            return f"{len(result.attachments)} attachment(s)"
+        if result.metadata:
+            return f"metadata_keys={','.join(sorted(result.metadata))}"
+        return "empty result"
+
+    @staticmethod
+    def _tool_context_fields(ctx: ToolExecutionContext) -> dict[str, Any]:
+        return {
+            "run_id": ctx.run_id,
+            "thread_id": ctx.thread_id,
+            "agent_id": ctx.agent_id,
+            "actor_id": ctx.actor_id,
+        }
+
+    def _log_tool_success(
+        self,
+        *,
+        ctx: ToolExecutionContext,
+        tool_name: str,
+        source: str,
+        result: ToolResult,
+        duration_ms: float | None,
+    ) -> None:
+        payload = {
+            **self._tool_context_fields(ctx),
+            "tool_name": tool_name,
+            "source": source,
+            "duration_ms": duration_ms,
+            "result_summary": self._summarize_result(result),
+            "attachment_count": len(result.attachments),
+        }
+        slog.info("Tool executed", **payload)
+
+    def _log_tool_rejection(
+        self,
+        *,
+        ctx: ToolExecutionContext,
+        tool_name: str,
+        reason: str,
+        duration_ms: float | None,
+    ) -> None:
+        slog.warning(
+            "Tool rejected",
+            **{
+                **self._tool_context_fields(ctx),
+                "tool_name": tool_name,
+                "reason": reason,
+                "duration_ms": duration_ms,
+            },
+        )
+
+    def _log_tool_failure(
+        self,
+        *,
+        ctx: ToolExecutionContext,
+        tool_name: str,
+        error: str,
+        duration_ms: float | None,
+    ) -> None:
+        slog.error(
+            "Tool execution failed",
+            **{
+                **self._tool_context_fields(ctx),
+                "tool_name": tool_name,
+                "error": error,
+                "duration_ms": duration_ms,
+            },
         )
 
 

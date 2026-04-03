@@ -16,6 +16,11 @@
 
 from __future__ import annotations
 
+import logging
+import shutil
+import threading
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +31,8 @@ import pyarrow as pa
 
 from ..long_term_ingestor import ThreadLtmCursor
 from .contracts import FailedWindowRecord, MemoryEntry, MemoryProvenance
+
+logger = logging.getLogger("acabot.runtime.memory.long_term_memory")
 
 
 # region helpers
@@ -394,6 +401,23 @@ def _time_overlaps(
 
 
 # region storage
+
+
+@dataclass(slots=True)
+class LtmValidationResult:
+    """LTM 存储校验结果.
+
+    Attributes:
+        ok: 校验是否通过.
+        warnings: 非致命问题列表.
+        errors: 致命问题列表.
+    """
+
+    ok: bool
+    warnings: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+
 class LanceDbLongTermMemoryStore:
     """LanceDbLongTermMemoryStore 表示 LTM 的单一存储实现.
 
@@ -410,11 +434,114 @@ class LanceDbLongTermMemoryStore:
 
         self.root_dir = Path(root_dir)
         self.root_dir.mkdir(parents=True, exist_ok=True)
+        self._write_lock = threading.Lock()
         self._db = lancedb.connect(str(self.root_dir))
         self._entries = self._ensure_table("memory_entries", _entry_table_schema())
         self._entries.create_fts_index("lexical_text", replace=True)
         self._cursors = self._ensure_table("thread_cursors", _cursor_table_schema())
         self._failed_windows = self._ensure_table("failed_windows", _failed_window_table_schema())
+
+    def validate(self) -> LtmValidationResult:
+        """校验 LanceDB 存储完整性.
+
+        Returns:
+            当前存储的完整性校验结果.
+        """
+
+        warnings: list[str] = []
+        errors: list[str] = []
+
+        checks = (
+            (
+                "memory_entries",
+                self._entries,
+                {
+                    "entry_id",
+                    "conversation_id",
+                    "topic",
+                    "lossless_restatement",
+                    "lexical_text",
+                },
+            ),
+            (
+                "thread_cursors",
+                self._cursors,
+                {
+                    "thread_id",
+                    "last_event_id",
+                    "last_message_id",
+                    "updated_at",
+                },
+            ),
+            (
+                "failed_windows",
+                self._failed_windows,
+                {
+                    "window_id",
+                    "conversation_id",
+                    "thread_id",
+                    "fact_ids",
+                },
+            ),
+        )
+
+        for table_name, table, expected_columns in checks:
+            try:
+                arrow_table = table.to_arrow()
+            except Exception as exc:
+                errors.append(f"{table_name} 表读取失败: {exc}")
+                continue
+            missing_columns = expected_columns - set(arrow_table.column_names)
+            if missing_columns:
+                errors.append(
+                    f"{table_name} 表缺少必需列: {sorted(missing_columns)}"
+                )
+
+        return LtmValidationResult(
+            ok=not errors,
+            warnings=warnings,
+            errors=errors,
+        )
+
+    def backup(self, target_dir: str | Path, *, max_backups: int = 5) -> Path:
+        """创建 LanceDB 数据目录的一致性备份."""
+
+        target = Path(target_dir)
+        target.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        backup_path = target / f"lancedb-backup-{timestamp}"
+        suffix = 1
+        while backup_path.exists():
+            backup_path = target / f"lancedb-backup-{timestamp}-{suffix}"
+            suffix += 1
+
+        with self._write_lock:
+            shutil.copytree(self.root_dir, backup_path)
+
+        logger.info("LTM 备份完成: %s", backup_path)
+
+        if max_backups > 0:
+            self._cleanup_old_backups(target, max_backups=max_backups)
+
+        return backup_path
+
+    @staticmethod
+    def _cleanup_old_backups(target_dir: Path, *, max_backups: int) -> None:
+        """清理旧备份, 只保留最近 `max_backups` 份."""
+
+        prefix = "lancedb-backup-"
+        backups = sorted(
+            (
+                path
+                for path in target_dir.iterdir()
+                if path.is_dir() and path.name.startswith(prefix)
+            ),
+            key=lambda path: path.name,
+            reverse=True,
+        )
+        for old_backup in backups[max_backups:]:
+            shutil.rmtree(old_backup, ignore_errors=True)
+            logger.info("已清理旧 LTM 备份: %s", old_backup.name)
 
     def upsert_entries(
         self,
@@ -429,23 +556,24 @@ class LanceDbLongTermMemoryStore:
             vectors: 预留给向量列的并行向量列表. 当前版本先不落表.
         """
 
-        _ = vectors
-        current_rows = {
-            str(row.get("entry_id", "") or ""): row
-            for row in self._entries.to_arrow().to_pylist()
-        }
-        vector_rows = list(vectors or [])
-        for index, entry in enumerate(entries):
-            incoming_row = _entry_to_record(
-                entry,
-                vector=vector_rows[index] if index < len(vector_rows) else None,
-            )
-            current_rows[entry.entry_id] = _merge_entry_record(
-                current_rows.get(entry.entry_id),
-                incoming_row,
-            )
-        self._normalize_entry_vectors(list(current_rows.values()))
-        self._rewrite_entries_table(list(current_rows.values()))
+        with self._write_lock:
+            _ = vectors
+            current_rows = {
+                str(row.get("entry_id", "") or ""): row
+                for row in self._entries.to_arrow().to_pylist()
+            }
+            vector_rows = list(vectors or [])
+            for index, entry in enumerate(entries):
+                incoming_row = _entry_to_record(
+                    entry,
+                    vector=vector_rows[index] if index < len(vector_rows) else None,
+                )
+                current_rows[entry.entry_id] = _merge_entry_record(
+                    current_rows.get(entry.entry_id),
+                    incoming_row,
+                )
+            self._normalize_entry_vectors(list(current_rows.values()))
+            self._rewrite_entries_table(list(current_rows.values()))
 
     def get_entry(self, entry_id: str) -> MemoryEntry | None:
         """按 `entry_id` 读取一条 entry.
@@ -601,17 +729,18 @@ class LanceDbLongTermMemoryStore:
             cursor: 待保存游标.
         """
 
-        current_rows = {
-            str(row.get("thread_id", "") or ""): row
-            for row in self._cursors.to_arrow().to_pylist()
-        }
-        current_rows[cursor.thread_id] = _cursor_to_record(cursor)
-        self._rewrite_table(
-            table_name="thread_cursors",
-            schema=_cursor_table_schema(),
-            rows=list(current_rows.values()),
-        )
-        self._cursors = self._db.open_table("thread_cursors")
+        with self._write_lock:
+            current_rows = {
+                str(row.get("thread_id", "") or ""): row
+                for row in self._cursors.to_arrow().to_pylist()
+            }
+            current_rows[cursor.thread_id] = _cursor_to_record(cursor)
+            self._rewrite_table(
+                table_name="thread_cursors",
+                schema=_cursor_table_schema(),
+                rows=list(current_rows.values()),
+            )
+            self._cursors = self._db.open_table("thread_cursors")
 
     def load_cursor(self, thread_id: str) -> ThreadLtmCursor | None:
         """读取一个 thread 的写入游标.
@@ -640,17 +769,18 @@ class LanceDbLongTermMemoryStore:
             record: 待保存的失败窗口对象.
         """
 
-        current_rows = {
-            str(row.get("window_id", "") or ""): row
-            for row in self._failed_windows.to_arrow().to_pylist()
-        }
-        current_rows[record.window_id] = _failed_window_to_record(record)
-        self._rewrite_table(
-            table_name="failed_windows",
-            schema=_failed_window_table_schema(),
-            rows=list(current_rows.values()),
-        )
-        self._failed_windows = self._db.open_table("failed_windows")
+        with self._write_lock:
+            current_rows = {
+                str(row.get("window_id", "") or ""): row
+                for row in self._failed_windows.to_arrow().to_pylist()
+            }
+            current_rows[record.window_id] = _failed_window_to_record(record)
+            self._rewrite_table(
+                table_name="failed_windows",
+                schema=_failed_window_table_schema(),
+                rows=list(current_rows.values()),
+            )
+            self._failed_windows = self._db.open_table("failed_windows")
 
     def list_failed_windows(self, conversation_id: str) -> list[FailedWindowRecord]:
         """列出一个对话容器下的失败窗口.
@@ -797,13 +927,14 @@ class LanceDbLongTermMemoryStore:
             找到并删除返回 True, 否则返回 False.
         """
 
-        all_rows = self._entries.to_arrow().to_pylist()
-        new_rows = [r for r in all_rows if r.get("entry_id") != entry_id]
-        if len(new_rows) == len(all_rows):
-            return False
-        self._normalize_entry_vectors(new_rows)
-        self._rewrite_entries_table(new_rows)
-        return True
+        with self._write_lock:
+            all_rows = self._entries.to_arrow().to_pylist()
+            new_rows = [r for r in all_rows if r.get("entry_id") != entry_id]
+            if len(new_rows) == len(all_rows):
+                return False
+            self._normalize_entry_vectors(new_rows)
+            self._rewrite_entries_table(new_rows)
+            return True
 
     def delete_entries_by_conversation(self, conversation_id: str) -> int:
         """Delete all entries belonging to a conversation.
@@ -815,13 +946,14 @@ class LanceDbLongTermMemoryStore:
             被删除的条目数.
         """
 
-        all_rows = self._entries.to_arrow().to_pylist()
-        new_rows = [r for r in all_rows if r.get("conversation_id") != conversation_id]
-        deleted_count = len(all_rows) - len(new_rows)
-        if deleted_count > 0:
-            self._normalize_entry_vectors(new_rows)
-            self._rewrite_entries_table(new_rows)
-        return deleted_count
+        with self._write_lock:
+            all_rows = self._entries.to_arrow().to_pylist()
+            new_rows = [r for r in all_rows if r.get("conversation_id") != conversation_id]
+            deleted_count = len(all_rows) - len(new_rows)
+            if deleted_count > 0:
+                self._normalize_entry_vectors(new_rows)
+                self._rewrite_entries_table(new_rows)
+            return deleted_count
 
     def update_entry(
         self,
@@ -848,32 +980,33 @@ class LanceDbLongTermMemoryStore:
 
         import time
 
-        all_rows = self._entries.to_arrow().to_pylist()
-        target_index = None
-        for i, r in enumerate(all_rows):
-            if r.get("entry_id") == entry_id:
-                target_index = i
-                break
-        if target_index is None:
-            return None
-        row = all_rows[target_index]
-        if topic is not None:
-            row["topic"] = topic
-        if lossless_restatement is not None:
-            row["lossless_restatement"] = lossless_restatement
-        if keywords is not None:
-            row["keywords"] = keywords
-            row["lexical_text"] = " ".join(keywords)
-        if persons is not None:
-            row["persons"] = persons
-        if entities is not None:
-            row["entities"] = entities
-        if location is not ...:
-            row["location"] = location or ""
-        row["updated_at"] = int(time.time())
-        self._normalize_entry_vectors(all_rows)
-        self._rewrite_entries_table(all_rows)
-        return _record_to_entry(row)
+        with self._write_lock:
+            all_rows = self._entries.to_arrow().to_pylist()
+            target_index = None
+            for i, r in enumerate(all_rows):
+                if r.get("entry_id") == entry_id:
+                    target_index = i
+                    break
+            if target_index is None:
+                return None
+            row = all_rows[target_index]
+            if topic is not None:
+                row["topic"] = topic
+            if lossless_restatement is not None:
+                row["lossless_restatement"] = lossless_restatement
+            if keywords is not None:
+                row["keywords"] = keywords
+                row["lexical_text"] = " ".join(keywords)
+            if persons is not None:
+                row["persons"] = persons
+            if entities is not None:
+                row["entities"] = entities
+            if location is not ...:
+                row["location"] = location or ""
+            row["updated_at"] = int(time.time())
+            self._normalize_entry_vectors(all_rows)
+            self._rewrite_entries_table(all_rows)
+            return _record_to_entry(row)
 
     def _ensure_table(self, table_name: str, schema: pa.Schema):
         """确保一个 LanceDB 表存在.
@@ -979,4 +1112,4 @@ def _cosine_similarity(left: list[float], right: list[float]) -> float:
 # endregion
 
 
-__all__ = ["LanceDbLongTermMemoryStore"]
+__all__ = ["LanceDbLongTermMemoryStore", "LtmValidationResult"]

@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 from unittest.mock import AsyncMock, patch
 
@@ -8,6 +10,8 @@ from acabot.agent import (
     ToolSpec,
 )
 from acabot.agent.agent import LitellmAgent
+from acabot.runtime.control.log_buffer import InMemoryLogBuffer, InMemoryLogHandler
+from acabot.runtime.control.log_setup import configure_structlog
 
 
 def _make_msg(**kwargs):
@@ -92,6 +96,70 @@ class TestLitellmAgent:
 
         assert resp.error == "model is required"
         assert resp.model_used == ""
+
+    async def test_run_emits_structured_usage_log(self, agent):
+        configure_structlog()
+        buffer = InMemoryLogBuffer(max_entries=10)
+        handler = InMemoryLogHandler(buffer)
+        logger = logging.getLogger("acabot.agent")
+        logger.handlers = [handler]
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+
+        mock_resp = AsyncMock()
+        mock_resp.choices = [
+            type("C", (), {"message": type("M", (), {"content": "Hello!", "tool_calls": None})()})()
+        ]
+        mock_resp.usage = type(
+            "U",
+            (),
+            {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        )()
+
+        with patch("acabot.agent.agent.acompletion", return_value=mock_resp):
+            resp = await agent.run(
+                system_prompt="test",
+                messages=[{"role": "user", "content": "hi"}],
+                model="gpt-4o-mini",
+            )
+
+        assert resp.text == "Hello!"
+        snapshot = buffer.list_entries(keyword="LLM run completed", limit=10)
+        assert len(snapshot["items"]) == 1
+        assert snapshot["items"][0]["extra"]["model"] == "gpt-4o-mini"
+        assert snapshot["items"][0]["extra"]["total_tokens"] == 15
+
+    async def test_complete_emits_structured_usage_log(self, agent):
+        configure_structlog()
+        buffer = InMemoryLogBuffer(max_entries=10)
+        handler = InMemoryLogHandler(buffer)
+        logger = logging.getLogger("acabot.agent")
+        logger.handlers = [handler]
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+
+        mock_resp = AsyncMock()
+        mock_resp.choices = [
+            type("C", (), {"message": type("M", (), {"content": "Hi", "tool_calls": None})()})()
+        ]
+        mock_resp.usage = type(
+            "U",
+            (),
+            {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+        )()
+
+        with patch("acabot.agent.agent.acompletion", return_value=mock_resp):
+            resp = await agent.complete(
+                system_prompt="test",
+                messages=[{"role": "user", "content": "hi"}],
+                model="gpt-4o-mini",
+            )
+
+        assert resp.text == "Hi"
+        snapshot = buffer.list_entries(keyword="LLM complete finished", limit=10)
+        assert len(snapshot["items"]) == 1
+        assert snapshot["items"][0]["extra"]["model"] == "gpt-4o-mini"
+        assert snapshot["items"][0]["extra"]["total_tokens"] == 3
 
 
 class TestToolCalling:

@@ -14,6 +14,7 @@ from acabot.runtime import (
     PluginRuntimeHost,
     RouteDecision,
     ResolvedAgent,
+    RuntimeScheduler,
     RuntimeApp,
     RuntimeHook,
     RuntimeHookPoint,
@@ -197,6 +198,17 @@ class ExplodingStartIngestor(RecordingIngestor):
     async def start(self) -> None:
         await super().start()
         raise RuntimeError("ltm ingestor start exploded")
+
+
+class DummyLtmStore:
+    def __init__(self) -> None:
+        self.calls: list[tuple[Path, int]] = []
+
+    def backup(self, target_dir: str | Path, *, max_backups: int = 5) -> Path:
+        path = Path(target_dir)
+        self.calls.append((path, max_backups))
+        path.mkdir(parents=True, exist_ok=True)
+        return path / "lancedb-backup-test"
 
 
 async def test_runtime_app_installs_handler_and_processes_event() -> None:
@@ -571,9 +583,9 @@ async def test_runtime_app_tears_down_plugins_when_gateway_start_crashes() -> No
         raise AssertionError("expected gateway start failure")
 
 
-async def test_runtime_app_tears_down_plugins_when_ltm_start_fails() -> None:
+async def test_runtime_app_degrades_when_ltm_start_fails() -> None:
     gateway = TrackingGateway()
-    plugin_host = PluginRuntimeHost(tool_broker=ToolBroker())
+    ingestor = ExplodingStartIngestor()
     app = RuntimeApp(
         gateway=gateway,
         router=_default_router(),
@@ -585,19 +597,70 @@ async def test_runtime_app_tears_down_plugins_when_ltm_start_fails() -> None:
             outbox=Outbox(gateway=gateway, store=FakeMessageStore()),
             run_manager=InMemoryRunManager(),
             thread_manager=InMemoryThreadManager(),
-            plugin_runtime_host=plugin_host,
         ),
         agent_loader=_agent_loader,
-        plugin_runtime_host=plugin_host,
-        long_term_memory_ingestor=ExplodingStartIngestor(),
+        long_term_memory_ingestor=ingestor,
     )
 
-    try:
-        await app.start()
-    except RuntimeError as exc:
-        assert str(exc) == "ltm ingestor start exploded"
-    else:
-        raise AssertionError("expected ltm start failure")
+    await app.start()
+
+    assert gateway.started is True
+    assert ingestor.started == 1
+    assert ingestor.stopped == 1
+    assert app.long_term_memory_ingestor is None
+
+    await app.stop()
+
+
+async def test_runtime_app_registers_ltm_backup_task_when_enabled(tmp_path: Path) -> None:
+    gateway = TrackingGateway()
+    scheduler = RuntimeScheduler()
+    ltm_store = DummyLtmStore()
+    config = Config(
+        {
+            "agent": {"system_prompt": "You are Aca."},
+            "runtime": {
+                "filesystem": {"base_dir": str(tmp_path)},
+                "runtime_root": str(tmp_path / "runtime_data"),
+                "long_term_memory": {
+                    "enabled": True,
+                    "backup": {
+                        "enabled": True,
+                        "interval_hours": 1,
+                        "max_backups": 5,
+                        "backup_dir": "long_term_memory/backups",
+                    },
+                },
+            },
+        }
+    )
+    app = RuntimeApp(
+        gateway=gateway,
+        router=_default_router(),
+        thread_manager=InMemoryThreadManager(),
+        run_manager=InMemoryRunManager(),
+        channel_event_store=InMemoryChannelEventStore(),
+        pipeline=ThreadPipeline(
+            agent_runtime=FakeAgentRuntime(),
+            outbox=Outbox(gateway=gateway, store=FakeMessageStore()),
+            run_manager=InMemoryRunManager(),
+            thread_manager=InMemoryThreadManager(),
+        ),
+        agent_loader=_agent_loader,
+        scheduler=scheduler,
+        ltm_store=ltm_store,
+        config=config,
+    )
+
+    await app.start()
+
+    tasks = scheduler.list_tasks()
+    assert len(tasks) == 1
+    assert tasks[0].task_id == "ltm_backup"
+    assert tasks[0].owner == "runtime.ltm"
+    assert tasks[0].schedule.seconds == 3600
+
+    await app.stop()
 
 
 async def test_runtime_app_keeps_failed_run_terminal_when_pipeline_crashes() -> None:

@@ -28,9 +28,9 @@ AcaBot 是一个 agentic chatbot runtime，通过 Gateway 接收 IM 平台事件
 - [ ] 插件管控重构（docs/29-plugin-control-plane.md 完整方案）
 - [ ] 统一 message 工具（方案待重新敲定）
 - [ ] Playwright + Chromium 集成（镜像依赖 + Outbox 渲染函数）
-- [ ] 定时任务基础设施（统一 scheduler，插件 + bot 核心均可用）
-- [ ] 日志内容优化（需调研后确定具体范围）
-- [ ] LTM 数据库安全性（数据完整性保障）
+- [x] 定时任务基础设施（统一 scheduler，插件 + bot 核心均可用）
+- [x] 日志内容优化（需调研后确定具体范围）
+- [x] LTM 数据库安全性（数据完整性保障）
 - [ ] 删除 Reference Backend（设计不合理，不再需要）
 
 ### Out of Scope

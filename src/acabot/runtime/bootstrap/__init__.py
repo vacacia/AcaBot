@@ -2,6 +2,8 @@ r"""runtime.bootstrap 提供 runtime 默认组装入口."""
 
 from __future__ import annotations
 
+import logging
+
 from acabot.agent import BaseAgent
 from acabot.config import Config
 
@@ -78,6 +80,9 @@ from .loaders import (
     build_session_bundle_loader,
     build_session_runtime,
 )
+
+
+logger = logging.getLogger("acabot.runtime.bootstrap")
 
 
 def _resolve_shared_admin_actor_ids(
@@ -187,35 +192,44 @@ def build_runtime_components(
     runtime_long_term_memory_ingestor = long_term_memory_ingestor
     runtime_fact_reader = None
     runtime_long_term_memory_store = None
-    if long_term_memory_enabled and (memory_broker is None or runtime_long_term_memory_ingestor is None):
-        runtime_long_term_memory_store = build_long_term_memory_store(config)
-    if long_term_memory_enabled and memory_broker is None:
-        if runtime_long_term_memory_store is None:
+    try:
+        if long_term_memory_enabled and (
+            memory_broker is None or runtime_long_term_memory_ingestor is None
+        ):
             runtime_long_term_memory_store = build_long_term_memory_store(config)
-        runtime_long_term_memory_source = build_long_term_memory_source(
-            config,
-            agent=agent,
-            store=runtime_long_term_memory_store,
-            model_registry_manager=runtime_model_registry_manager,
-        )
-    if long_term_memory_enabled and runtime_long_term_memory_ingestor is None:
-        if runtime_long_term_memory_store is None:
-            runtime_long_term_memory_store = build_long_term_memory_store(config)
-        runtime_fact_reader = StoreBackedConversationFactReader(
-            channel_event_store=runtime_channel_event_store,
-            message_store=runtime_message_store,
-        )
-        runtime_long_term_memory_write_port = build_long_term_memory_write_port(
-            config,
-            agent=agent,
-            store=runtime_long_term_memory_store,
-            model_registry_manager=runtime_model_registry_manager,
-        )
-        runtime_long_term_memory_ingestor = build_long_term_memory_ingestor(
-            thread_manager=runtime_thread_manager,
-            fact_reader=runtime_fact_reader,
-            write_port=runtime_long_term_memory_write_port,
-        )
+        if long_term_memory_enabled and memory_broker is None:
+            if runtime_long_term_memory_store is None:
+                runtime_long_term_memory_store = build_long_term_memory_store(config)
+            runtime_long_term_memory_source = build_long_term_memory_source(
+                config,
+                agent=agent,
+                store=runtime_long_term_memory_store,
+                model_registry_manager=runtime_model_registry_manager,
+            )
+        if long_term_memory_enabled and runtime_long_term_memory_ingestor is None:
+            if runtime_long_term_memory_store is None:
+                runtime_long_term_memory_store = build_long_term_memory_store(config)
+            runtime_fact_reader = StoreBackedConversationFactReader(
+                channel_event_store=runtime_channel_event_store,
+                message_store=runtime_message_store,
+            )
+            runtime_long_term_memory_write_port = build_long_term_memory_write_port(
+                config,
+                agent=agent,
+                store=runtime_long_term_memory_store,
+                model_registry_manager=runtime_model_registry_manager,
+            )
+            runtime_long_term_memory_ingestor = build_long_term_memory_ingestor(
+                thread_manager=runtime_thread_manager,
+                fact_reader=runtime_fact_reader,
+                write_port=runtime_long_term_memory_write_port,
+            )
+    except Exception:
+        logger.exception("LTM 初始化失败, 将在无长期记忆模式下运行")
+        runtime_long_term_memory_source = None
+        runtime_long_term_memory_ingestor = None
+        runtime_fact_reader = None
+        runtime_long_term_memory_store = None
     runtime_memory_broker = memory_broker or build_memory_broker(
         config,
         soul_source=runtime_soul_source,
@@ -463,6 +477,8 @@ def build_runtime_components(
         backend_mode_registry=runtime_backend_mode_registry,
         backend_admin_actor_ids=runtime_backend_admin_actor_ids,
         scheduler=runtime_scheduler,
+        ltm_store=runtime_long_term_memory_store,
+        config=config,
     )
     control_plane = RuntimeControlPlane(
         app=app,

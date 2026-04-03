@@ -16,12 +16,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
+import time
 from typing import Any, Protocol
+
+import structlog
 
 from ..memory_broker import MemoryAssemblySpec, MemoryBlock, SharedMemoryRetrievalRequest
 from .contracts import MemoryEntry
 from .ranking import merge_ranked_entry_hits
 from .renderer import LtmRenderer
+
+
+logger = logging.getLogger("acabot.runtime.memory.long_term_memory")
+slog = structlog.get_logger("acabot.runtime.memory.long_term_memory.source")
 
 
 class RetrievalStore(Protocol):
@@ -159,50 +167,76 @@ class LtmMemorySource:
             包含一个 MemoryBlock 的列表（source="long_term_memory", 
             priority=700）, 没有命中时返回空列表。
         """
-
-        # 第一步: 让 query planner 把原始请求拆成三组查询
-        plan = await self.query_planner.plan_query(self._build_plan_request(request))
+        started_at = time.monotonic()
         conversation_id = str(request.channel_scope or "").strip()
-
-        # 第二步: 三路召回
-        semantic_hits = await self._semantic_hits(
-            conversation_id=conversation_id,
-            semantic_queries=list(plan.get("semantic_queries", []) or []),
-            fallback_query=str(request.query_text or "").strip(),
-        )
-        lexical_hits = self._lexical_hits(
-            conversation_id=conversation_id,
-            lexical_queries=list(plan.get("lexical_queries", []) or []),
-            fallback_query=str(request.query_text or "").strip(),
-        )
-        symbolic_hits = self._symbolic_hits(
-            conversation_id=conversation_id,
-            symbolic_filters=dict(plan.get("symbolic_filters", {}) or {}),
-        )
-
-        # 第三步: 去重 + 位权排序 + 截断
-        ranked_hits = merge_ranked_entry_hits(
-            semantic_hits=semantic_hits,
-            lexical_hits=lexical_hits,
-            symbolic_hits=symbolic_hits,
-        )[: self.max_entries]
-        if not ranked_hits:
-            return []
-
-        # 第四步: 渲染成 XML, 包成 MemoryBlock
-        return [
-            MemoryBlock(
-                content=self.renderer.render(ranked_hits),
-                source="long_term_memory",
-                scope="conversation",
-                source_ids=[item.entry.entry_id for item in ranked_hits],
-                assembly=MemoryAssemblySpec(target_slot="message_prefix", priority=700),
-                metadata={
-                    "conversation_id": conversation_id,
-                    "hit_count": len(ranked_hits),
-                },
+        try:
+            # 第一步: 让 query planner 把原始请求拆成三组查询
+            plan = await self.query_planner.plan_query(self._build_plan_request(request))
+            slog.info(
+                "LTM query plan generated",
+                conversation_id=conversation_id,
+                semantic_queries=len(list(plan.get("semantic_queries", []) or [])),
+                lexical_queries=len(list(plan.get("lexical_queries", []) or [])),
+                has_symbolic=bool(dict(plan.get("symbolic_filters", {}) or {})),
+                duration_ms=round((time.monotonic() - started_at) * 1000, 1),
             )
-        ]
+
+            # 第二步: 三路召回
+            semantic_hits = await self._semantic_hits(
+                conversation_id=conversation_id,
+                semantic_queries=list(plan.get("semantic_queries", []) or []),
+                fallback_query=str(request.query_text or "").strip(),
+            )
+            lexical_hits = self._lexical_hits(
+                conversation_id=conversation_id,
+                lexical_queries=list(plan.get("lexical_queries", []) or []),
+                fallback_query=str(request.query_text or "").strip(),
+            )
+            symbolic_hits = self._symbolic_hits(
+                conversation_id=conversation_id,
+                symbolic_filters=dict(plan.get("symbolic_filters", {}) or {}),
+            )
+
+            # 第三步: 去重 + 位权排序 + 截断
+            ranked_hits = merge_ranked_entry_hits(
+                semantic_hits=semantic_hits,
+                lexical_hits=lexical_hits,
+                symbolic_hits=symbolic_hits,
+            )[: self.max_entries]
+            slog.info(
+                "LTM retrieval completed",
+                conversation_id=conversation_id,
+                semantic_hits=len(semantic_hits),
+                lexical_hits=len(lexical_hits),
+                symbolic_hits=len(symbolic_hits),
+                ranked_total=len(ranked_hits),
+                returned_blocks=1 if ranked_hits else 0,
+                duration_ms=round((time.monotonic() - started_at) * 1000, 1),
+            )
+            if not ranked_hits:
+                return []
+
+            # 第四步: 渲染成 XML, 包成 MemoryBlock
+            return [
+                MemoryBlock(
+                    content=self.renderer.render(ranked_hits),
+                    source="long_term_memory",
+                    scope="conversation",
+                    source_ids=[item.entry.entry_id for item in ranked_hits],
+                    assembly=MemoryAssemblySpec(target_slot="message_prefix", priority=700),
+                    metadata={
+                        "conversation_id": conversation_id,
+                        "hit_count": len(ranked_hits),
+                    },
+                )
+            ]
+        except Exception:
+            slog.exception(
+                "LTM retrieval failed",
+                conversation_id=conversation_id,
+                duration_ms=round((time.monotonic() - started_at) * 1000, 1),
+            )
+            return []
 
     async def _semantic_hits(
         self,

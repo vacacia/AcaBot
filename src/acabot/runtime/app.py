@@ -11,6 +11,7 @@ import time
 import uuid
 from typing import Callable, TYPE_CHECKING
 
+from acabot.config import Config
 from acabot.types import Action, ActionType, StandardEvent
 
 from .approval_resumer import ApprovalResumer, ApprovalResumeResult, NoopApprovalResumer
@@ -43,6 +44,7 @@ from .storage.threads import ThreadManager
 
 if TYPE_CHECKING:
     from .scheduler import RuntimeScheduler
+    from .memory.long_term_memory.storage import LanceDbLongTermMemoryStore
 
 logger = logging.getLogger("acabot.runtime.app")
 
@@ -74,6 +76,8 @@ class RuntimeApp:
         backend_mode_registry: BackendModeRegistry | None = None,
         backend_admin_actor_ids: set[str] | None = None,
         scheduler: RuntimeScheduler | None = None,
+        ltm_store: LanceDbLongTermMemoryStore | None = None,
+        config: Config | None = None,
     ) -> None:
         """初始化 RuntimeApp.
 
@@ -95,6 +99,8 @@ class RuntimeApp:
             backend_mode_registry: 可选的管理员后台模式注册表.
             backend_admin_actor_ids: 可直接进入后台入口的管理员 actor 集合.
             scheduler: 可选的定时任务调度器.
+            ltm_store: 可选的长期记忆存储.
+            config: 可选的 runtime 配置.
         """
 
         self.gateway = gateway
@@ -114,6 +120,8 @@ class RuntimeApp:
         self.backend_mode_registry = backend_mode_registry
         self.backend_admin_actor_ids = set(backend_admin_actor_ids or set())
         self.scheduler = scheduler
+        self._ltm_store = ltm_store
+        self._config = config
         self.last_recovery_report = RecoveryReport()
         self._pending_approvals: dict[str, PendingApprovalRecord] = {}
 
@@ -128,9 +136,37 @@ class RuntimeApp:
         await self.recover_active_runs()
         if self.plugin_reconciler is not None:
             await self.plugin_reconciler.reconcile_all()
-        try:
-            if self.long_term_memory_ingestor is not None:
+        if self.long_term_memory_ingestor is not None:
+            try:
                 await self.long_term_memory_ingestor.start()
+            except Exception:
+                logger.exception("LTM ingestor 启动失败, 将继续运行但无 LTM 写入能力")
+                try:
+                    await self.long_term_memory_ingestor.stop()
+                except Exception:
+                    logger.exception("Failed to stop partially started long-term memory ingestor")
+                self.long_term_memory_ingestor = None
+        if self.scheduler is not None and self._ltm_store is not None and self._config is not None:
+            try:
+                from .bootstrap.builders import build_ltm_backup_task
+                from .scheduler import IntervalSchedule
+
+                backup_task = build_ltm_backup_task(self._config, store=self._ltm_store)
+                if backup_task is not None:
+                    callback, interval_seconds = backup_task
+                    await self.scheduler.register(
+                        task_id="ltm_backup",
+                        owner="runtime.ltm",
+                        schedule=IntervalSchedule(seconds=interval_seconds),
+                        callback=callback,
+                        persist=False,
+                        misfire_policy="skip",
+                        metadata={"description": "LTM 定期备份"},
+                    )
+                    logger.info("LTM 定期备份任务已注册, 间隔 %d 秒", interval_seconds)
+            except Exception:
+                logger.exception("LTM 备份任务注册失败, 跳过定期备份")
+        try:
             if self.scheduler is not None:
                 await self.scheduler.start()
             self.install()

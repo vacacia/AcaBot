@@ -6,6 +6,7 @@
 """
 
 from dataclasses import dataclass, field
+import logging
 from pathlib import Path
 from typing import Any
 import shutil
@@ -411,8 +412,51 @@ async def test_build_runtime_components_registers_long_term_memory_source_and_in
         "sticky_notes",
         "long_term_memory",
     ]
+    assert components.control_plane.ltm_store is not None
+    assert components.app._ltm_store is components.control_plane.ltm_store
+    assert components.app._config is not None
     assert components.app.long_term_memory_ingestor is components.long_term_memory_ingestor
     assert components.outbox.long_term_memory_ingestor is components.long_term_memory_ingestor
+
+
+def test_build_runtime_components_degrades_when_ltm_init_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _write_minimal_session(tmp_path)
+    config = Config(
+        {
+            "agent": {
+                "system_prompt": "You are Aca.",
+            },
+            "runtime": {
+                "filesystem": {"base_dir": str(tmp_path)},
+                "runtime_root": str(tmp_path / "runtime_data"),
+                "long_term_memory": {
+                    "enabled": True,
+                },
+            },
+        }
+    )
+
+    def _boom(_config: Config):
+        raise RuntimeError("corrupted store")
+
+    monkeypatch.setattr("acabot.runtime.bootstrap.build_long_term_memory_store", _boom)
+
+    with caplog.at_level(logging.ERROR):
+        components = build_runtime_components(
+            config,
+            gateway=FakeGateway(),
+            agent=FakeAgent(FakeAgentResponse(text="ok")),
+        )
+
+    assert components.long_term_memory_ingestor is None
+    assert components.app.long_term_memory_ingestor is None
+    assert components.outbox.long_term_memory_ingestor is None
+    assert components.memory_broker.registry.get("long_term_memory") is None
+    assert "LTM 初始化失败" in caplog.text
 
 
 async def test_build_runtime_components_creates_plugin_reconciler(tmp_path: Path) -> None:
@@ -1500,4 +1544,3 @@ def test_build_runtime_components_applies_context_compaction_config() -> None:
     assert components.context_compactor.config.prompt_slot_reserve_tokens == 2200
     assert components.context_compactor.config.tool_schema_reserve_tokens == 3300
     assert components.context_compactor.config.fallback_context_window == 32000
-

@@ -1,3 +1,4 @@
+import logging
 import json
 from unittest.mock import AsyncMock, patch
 
@@ -32,6 +33,8 @@ from acabot.runtime import (
     ToolPolicyDecision,
 )
 from acabot.types import Action, ActionType, EventAttachment, EventSource, MsgSegment, StandardEvent
+from acabot.runtime.control.log_buffer import InMemoryLogBuffer, InMemoryLogHandler
+from acabot.runtime.control.log_setup import configure_structlog
 
 from .test_outbox import FakeGateway, FakeMessageStore
 
@@ -52,6 +55,27 @@ class FakeAgentRuntime(AgentRuntime):
                     thread_content="hello back",
                 )
             ],
+        )
+
+
+class UsageAgentRuntime(AgentRuntime):
+    async def execute(self, ctx: RunContext) -> AgentRuntimeResult:
+        return AgentRuntimeResult(
+            status="completed",
+            text="hello back",
+            actions=[
+                PlannedAction(
+                    action_id="action:reply",
+                    action=Action(
+                        action_type=ActionType.SEND_TEXT,
+                        target=ctx.event.source,
+                        payload={"text": "hello back"},
+                    ),
+                    thread_content="hello back",
+                )
+            ],
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            model_used="gpt-test",
         )
 
 
@@ -258,6 +282,61 @@ async def test_thread_pipeline_runs_minimal_text_flow() -> None:
     assert updated_run is not None
     assert updated_run.status == "completed"
     assert len(gateway.sent) == 1
+
+
+async def test_thread_pipeline_persists_token_usage_and_logs_it() -> None:
+    configure_structlog()
+    buffer = InMemoryLogBuffer(max_entries=10)
+    handler = InMemoryLogHandler(buffer)
+    logger = logging.getLogger("acabot.runtime.pipeline")
+    logger.handlers = [handler]
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+
+    thread_manager = InMemoryThreadManager()
+    run_manager = InMemoryRunManager()
+    gateway = FakeGateway()
+    store = FakeMessageStore()
+    outbox = Outbox(gateway=gateway, store=store)
+    pipeline = ThreadPipeline(
+        agent_runtime=UsageAgentRuntime(),
+        outbox=outbox,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+    )
+
+    event = _event()
+    decision = _decision()
+    thread = await thread_manager.get_or_create(
+        thread_id=decision.thread_id,
+        channel_scope=decision.channel_scope,
+        last_event_at=event.timestamp,
+    )
+    run = await run_manager.open(event=event, decision=decision)
+    ctx = RunContext(
+        run=run,
+        event=event,
+        decision=decision,
+        thread=thread,
+        agent=_profile(),
+        model_request=_model_request(),
+    )
+
+    await pipeline.execute(ctx)
+
+    updated_run = await run_manager.get(run.run_id)
+    assert updated_run is not None
+    assert updated_run.metadata["token_usage"] == {
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+        "total_tokens": 15,
+    }
+    assert updated_run.metadata["model_used"] == "gpt-test"
+
+    snapshot = buffer.list_entries(keyword="Run token usage", limit=10)
+    assert len(snapshot["items"]) == 1
+    assert snapshot["items"][0]["extra"]["run_id"] == run.run_id
+    assert snapshot["items"][0]["extra"]["total_tokens"] == 15
     assert thread.working_messages[0]["role"] == "user"
     assert thread.working_messages[1]["content"] == "hello back"
 

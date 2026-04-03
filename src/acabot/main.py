@@ -31,6 +31,7 @@ from .runtime import RuntimeComponents, build_runtime_components
 from .runtime.gateway_protocol import GatewayProtocol
 from .runtime.control.http_api import RuntimeHttpApiServer
 from .runtime.control.log_buffer import InMemoryLogBuffer, InMemoryLogHandler
+from .runtime.control.log_setup import configure_structlog
 from .runtime.storage.stores import MessageStore
 
 try:
@@ -206,6 +207,7 @@ def setup_logging(config: Config) -> None:
     logging.basicConfig(level=logging.WARNING, handlers=[handler, memory_handler], force=True)
     logging.getLogger("acabot").setLevel(level)
     logging.getLogger("websockets.server").addFilter(NoisyWebsocketHandshakeFilter())
+    configure_structlog()
 
 
 async def wait_for_shutdown_signal() -> None:

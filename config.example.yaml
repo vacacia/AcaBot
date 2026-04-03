@@ -39,6 +39,14 @@ runtime:
   computer:
     backend: "host"
 
+  long_term_memory:
+    enabled: false
+    # backup:
+    #   enabled: true
+    #   interval_hours: 24
+    #   max_backups: 5
+    #   backup_dir: "long_term_memory/backups"
+
   plugins:
     - "acabot.runtime.plugins.ops_control:OpsControlPlugin"
 

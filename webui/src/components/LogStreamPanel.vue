@@ -10,6 +10,7 @@ type LogItem = {
   logger: string
   message: string
   kind?: string
+  extra?: Record<string, unknown>
 }
 
 type LogPayload = {
@@ -83,6 +84,64 @@ function kindClass(kindName?: string): string {
       return "is-napcat-notice"
     default:
       return ""
+  }
+}
+
+function formatExtraValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "null"
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value)
+  }
+  if (typeof value === "string") {
+    return value.length > 96 ? `${value.slice(0, 93)}...` : value
+  }
+  try {
+    const json = JSON.stringify(value)
+    return json.length > 96 ? `${json.slice(0, 93)}...` : json
+  } catch {
+    return String(value)
+  }
+}
+
+function extraChipClass(key: string): string {
+  switch (key) {
+    case "run_id":
+    case "thread_id":
+    case "agent_id":
+      return "is-context"
+    case "tool_name":
+      return "is-tool"
+    case "duration_ms":
+      return "is-timing"
+    case "prompt_tokens":
+    case "completion_tokens":
+    case "total_tokens":
+      return "is-token"
+    case "error":
+      return "is-error-field"
+    default:
+      return ""
+  }
+}
+
+function keywordFromExtraValue(value: unknown, key: string): string {
+  if (typeof value === "string") {
+    return value.trim() || key
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value)
+  }
+  return key
+}
+
+function applyExtraFilter(key: string, value: unknown): void {
+  const nextKeyword = keywordFromExtraValue(value, key)
+  const previousKeyword = keyword.value
+  keyword.value = nextKeyword
+  if (previousKeyword === nextKeyword) {
+    void applyFilters()
   }
 }
 
@@ -266,6 +325,21 @@ onBeforeUnmount(() => {
           <span class="logger-chip">{{ item.logger }}</span>
         </div>
         <pre class="log-message">{{ item.message }}</pre>
+        <div v-if="item.extra && Object.keys(item.extra).length > 0" class="log-extra">
+          <button
+            v-for="(value, key) in item.extra"
+            :key="String(key)"
+            type="button"
+            class="extra-chip"
+            :class="extraChipClass(String(key))"
+            :title="`${String(key)}=${formatExtraValue(value)}`"
+            :aria-label="`按 ${String(key)} 过滤`"
+            @click="applyExtraFilter(String(key), value)"
+          >
+            <span class="extra-key">{{ key }}</span>
+            <span class="extra-value">{{ formatExtraValue(value) }}</span>
+          </button>
+        </div>
       </article>
     </div>
   </section>
@@ -392,6 +466,13 @@ button {
   color: var(--log-message);
 }
 
+.log-extra {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+
 .seq-chip,
 .time-chip,
 .level-chip,
@@ -417,6 +498,54 @@ button {
   color: var(--log-logger);
   max-width: 100%;
   overflow-wrap: anywhere;
+}
+
+.extra-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: rgba(19, 41, 68, 0.12);
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.35;
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  transition:
+    background 0.15s ease,
+    transform 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.extra-chip:hover {
+  background: rgba(19, 41, 68, 0.18);
+  transform: translateY(-1px);
+}
+
+.extra-chip:focus-visible {
+  outline: 2px solid rgba(59, 130, 246, 0.35);
+  outline-offset: 2px;
+}
+
+.extra-key {
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.extra-key::after {
+  content: "=";
+  opacity: 0.45;
+}
+
+.extra-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .level-chip {
@@ -499,6 +628,51 @@ button {
   color: #0f766e;
 }
 
+.extra-chip.is-context {
+  background: rgba(99, 102, 241, 0.12);
+  color: #4f46e5;
+}
+
+.extra-chip.is-context .extra-key {
+  color: #3730a3;
+}
+
+.extra-chip.is-tool {
+  background: rgba(16, 185, 129, 0.12);
+  color: #047857;
+}
+
+.extra-chip.is-tool .extra-key {
+  color: #065f46;
+}
+
+.extra-chip.is-timing {
+  background: rgba(245, 158, 11, 0.12);
+  color: #b45309;
+}
+
+.extra-chip.is-timing .extra-key {
+  color: #92400e;
+}
+
+.extra-chip.is-token {
+  background: rgba(59, 130, 246, 0.12);
+  color: #1d4ed8;
+}
+
+.extra-chip.is-token .extra-key {
+  color: #1e40af;
+}
+
+.extra-chip.is-error-field {
+  background: rgba(239, 68, 68, 0.12);
+  color: #b91c1c;
+}
+
+.extra-chip.is-error-field .extra-key {
+  color: #991b1b;
+}
+
 .panel.is-dense {
   padding: 12px 14px;
 }
@@ -556,6 +730,16 @@ button {
   line-height: 1.35;
 }
 
+.panel.is-dense .log-extra {
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.panel.is-dense .extra-chip {
+  padding: 1px 7px;
+  font-size: 10px;
+}
+
 @media (max-width: 900px) {
   .panel-header {
     flex-direction: column;
@@ -578,6 +762,15 @@ button {
 
   .log-message {
     font-size: 11px;
+  }
+
+  .log-extra {
+    gap: 4px;
+  }
+
+  .extra-chip {
+    width: 100%;
+    justify-content: space-between;
   }
 }
 </style>

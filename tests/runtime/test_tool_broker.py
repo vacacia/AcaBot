@@ -10,6 +10,7 @@
 """
 
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,8 @@ from acabot.runtime import (
     ToolRuntimeState,
     WorkspaceState,
 )
+from acabot.runtime.control.log_buffer import InMemoryLogBuffer, InMemoryLogHandler
+from acabot.runtime.control.log_setup import configure_structlog
 from acabot.runtime.plugin_protocol import RuntimePluginContext
 from acabot.runtime.plugins.backend_bridge_tool import BackendBridgeToolPlugin
 
@@ -64,6 +67,17 @@ def _profile(*, enabled_tools: list[str]) -> ResolvedAgent:
         prompt_ref="prompt/default",
         enabled_tools=list(enabled_tools),
     )
+
+
+def _tool_logger_buffer() -> InMemoryLogBuffer:
+    configure_structlog()
+    buffer = InMemoryLogBuffer(max_entries=20)
+    handler = InMemoryLogHandler(buffer)
+    logger = logging.getLogger("acabot.runtime.tool_broker")
+    logger.handlers = [handler]
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    return buffer
 
 
 async def test_tool_broker_filters_visible_tools_by_profile() -> None:
@@ -442,3 +456,104 @@ async def test_tool_broker_policy_can_request_approval() -> None:
     record = audit.records[pending.tool_call_id]
     assert record.status == "waiting_approval"
     assert record.metadata["approval_id"] == pending.approval_id
+
+
+async def test_tool_broker_emits_structured_success_log() -> None:
+    buffer = _tool_logger_buffer()
+    broker = ToolBroker()
+
+    async def handler(arguments: dict[str, Any], ctx) -> ToolResult:
+        _ = arguments, ctx
+        return ToolResult(llm_content="hello from tool")
+
+    broker.register_tool(
+        ToolSpec(
+            name="echo",
+            description="Echo a message",
+            parameters={"type": "object", "properties": {}},
+        ),
+        handler,
+    )
+    ctx = _context()
+    ctx.agent.enabled_tools = ["echo"]
+
+    result = await broker.execute(
+        tool_name="echo",
+        arguments={"text": "hello"},
+        ctx=broker._build_execution_context(ctx),
+    )
+
+    assert result.llm_content == "hello from tool"
+    snapshot = buffer.list_entries(keyword="Tool executed", limit=10)
+    assert len(snapshot["items"]) == 1
+    item = snapshot["items"][0]
+    assert item["extra"]["tool_name"] == "echo"
+    assert item["extra"]["source"] == "runtime"
+    assert item["extra"]["result_summary"] == "hello from tool"
+    assert item["extra"]["duration_ms"] is not None
+
+
+async def test_tool_broker_emits_structured_rejection_log() -> None:
+    buffer = _tool_logger_buffer()
+    broker = ToolBroker()
+
+    async def handler(arguments: dict[str, Any], ctx) -> ToolResult:
+        _ = arguments, ctx
+        return ToolResult(llm_content="hidden")
+
+    broker.register_tool(
+        ToolSpec(
+            name="hidden_tool",
+            description="Hidden tool",
+            parameters={"type": "object", "properties": {}},
+        ),
+        handler,
+    )
+    ctx = _context()
+    ctx.agent.enabled_tools = []
+
+    result = await broker.execute(
+        tool_name="hidden_tool",
+        arguments={},
+        ctx=broker._build_execution_context(ctx),
+    )
+
+    assert "Tool not enabled for current run" in result.llm_content
+    snapshot = buffer.list_entries(keyword="Tool rejected", limit=10)
+    assert len(snapshot["items"]) == 1
+    item = snapshot["items"][0]
+    assert item["extra"]["tool_name"] == "hidden_tool"
+    assert "Tool not enabled" in item["extra"]["reason"]
+
+
+async def test_tool_broker_emits_structured_failure_log() -> None:
+    buffer = _tool_logger_buffer()
+    broker = ToolBroker()
+
+    async def handler(arguments: dict[str, Any], ctx) -> ToolResult:
+        _ = arguments, ctx
+        raise RuntimeError("boom")
+
+    broker.register_tool(
+        ToolSpec(
+            name="boom",
+            description="Explode",
+            parameters={"type": "object", "properties": {}},
+        ),
+        handler,
+    )
+    ctx = _context()
+    ctx.agent.enabled_tools = ["boom"]
+
+    result = await broker.execute(
+        tool_name="boom",
+        arguments={},
+        ctx=broker._build_execution_context(ctx),
+    )
+
+    assert "Tool execution failed" in result.llm_content
+    snapshot = buffer.list_entries(keyword="Tool execution failed", limit=10)
+    assert len(snapshot["items"]) == 1
+    item = snapshot["items"][0]
+    assert item["extra"]["tool_name"] == "boom"
+    assert item["extra"]["error"] == "Tool execution failed: boom"

@@ -7,6 +7,9 @@ from dataclasses import asdict, dataclass, replace
 import logging
 import threading
 import time
+from typing import Any
+
+from .log_setup import extract_extra_fields
 
 
 @dataclass(slots=True)
@@ -19,6 +22,11 @@ class LogEntry:
     message: str
     kind: str = "runtime"
     seq: int = 0
+    extra: dict[str, Any] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.extra is None:
+            self.extra = {}
 
 
 class InMemoryLogBuffer:
@@ -58,7 +66,10 @@ class InMemoryLogBuffer:
             items = [
                 item
                 for item in items
-                if normalized_keyword in item.message.lower() or normalized_keyword in item.logger.lower()
+                if normalized_keyword in item.message.lower()
+                or normalized_keyword in item.logger.lower()
+                or any(normalized_keyword in str(key).lower() for key in item.extra)
+                or any(normalized_keyword in str(value).lower() for value in item.extra.values())
             ]
         if normalized_after_seq:
             items = [item for item in items if int(item.seq or 0) > normalized_after_seq]
@@ -82,6 +93,7 @@ class InMemoryLogHandler(logging.Handler):
             message = record.getMessage()
         except Exception:
             message = str(record.msg)
+        extra = extract_extra_fields(record)
         self.buffer.append(
             LogEntry(
                 timestamp=time.time(),
@@ -89,6 +101,7 @@ class InMemoryLogHandler(logging.Handler):
                 logger=str(record.name or ""),
                 message=message,
                 kind=str(getattr(record, "log_kind", "") or "runtime"),
+                extra=extra,
             )
         )
 

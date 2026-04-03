@@ -1,6 +1,11 @@
 <!-- GSD:project-start source:PROJECT.md -->
 ## Project
 
+所有文档/代码注释/交流过程 全部使用 中文 + 英文标点符号
+阅读/data/workspace/agent/AcaBot/docs/00-ai-entry.md
+如果你是 gpt, 子代理请全部使用 GPT-5.4, 不要使用 GPT-5.4-mini 及 GPT-5.4 之前的模型
+
+---
 **AcaBot v2 — Runtime 基础设施强化**
 
 AcaBot 是一个 agentic chatbot runtime，通过 Gateway 接收 IM 平台事件，经过 session-config 路由引擎、LLM agent pipeline、工具调用，最终通过 Gateway 回复。当前核心 pipeline 已稳定运行，本轮工作聚焦于 runtime 基础设施的补全和重构——插件体系、消息工具、定时任务、日志、数据安全等，让 bot 从"能跑"进化到"好用、可扩展、可观测"。
@@ -15,6 +20,12 @@ AcaBot 是一个 agentic chatbot runtime，通过 Gateway 接收 IM 平台事件
 - **兼容性**: 插件重构需保证 BackendBridgeToolPlugin 过渡期可用
 - **单操作者**: AcaBot 面向单个操作者，不需要多租户隔离
 <!-- GSD:project-end -->
+
+## Known Test Failures
+
+运行全量测试时, 以下测试会失败, 属于已知问题, 不需要修复:
+
+- `tests/runtime/backend/test_pi_adapter.py` (3 个) — 需要真实 `pi` 可执行文件, 开发环境中不存在. 运行 pytest 时用 `--ignore=tests/runtime/backend/test_pi_adapter.py` 跳过.
 
 <!-- GSD:stack-start source:codebase/STACK.md -->
 ## Technology Stack

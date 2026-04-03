@@ -26,10 +26,11 @@ Replace the 959-line `plugin_manager.py` monolith with six focused modules imple
 - **D-04:** Plugin load failures shown as 'failed' badge on list item. Full error details (traceback, load_error) displayed in a modal dialog on click — not inline in the expand panel.
 
 ### WebUI rescan experience
-- **D-05:** Two-phase refresh for `POST /api/system/plugins/reconcile`:
-  1. First response returns package list immediately (all plugins show 'reconciling' transitional state)
-  2. After reconcile_all completes, frontend fetches final state via `GET /api/system/plugins`
-  This provides progressive feedback without SSE complexity.
+- **D-05:** Progressive feedback for `POST /api/system/plugins/reconcile`:
+  - 前端点击 "重新扫描" 后, 列表中所有插件临时显示 'reconciling' 过渡状态 (纯前端状态)
+  - `POST /api/system/plugins/reconcile` 单次调用, 返回完整最终结果
+  - 前端用返回值替换整个列表, 清除过渡状态
+  - 相比原始两阶段方案 (先返回 package 列表 + 再 GET 最终状态), 简化为单调用 + 前端过渡态, 避免不必要的 API 往返.
 
 ### Sample plugin
 - **D-06:** Ship a sample plugin in `extensions/plugins/` that serves as both SC#1 verification and developer template. Should be a small but real utility (not just echo), with `plugin.yaml` including `config_schema` to demonstrate schema-driven config form. Stays in repo as a reference for future plugin authors.

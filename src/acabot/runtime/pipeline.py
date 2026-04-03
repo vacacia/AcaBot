@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import logging
 
+import structlog
+
 from acabot.types import Action, ActionType
 
 from .agent_runtime import AgentRuntime
 from .computer import ComputerRuntime
+from .control.log_setup import bind_run_context, clear_run_context
 from .memory.context_compactor import ContextCompactor
 from .inbound.message_preparation import MessagePreparationService
 from .memory.file_backed import StickyNoteFileStore
@@ -38,6 +41,7 @@ from .tool_broker import ToolBroker
 from .storage.threads import ThreadManager
 
 logger = logging.getLogger("acabot.runtime.pipeline")
+slog = structlog.get_logger("acabot.runtime.pipeline")
 
 
 class ThreadPipeline:
@@ -107,6 +111,12 @@ class ThreadPipeline:
         """
         # 标记 run 状态为 running
         await self.run_manager.mark_running(ctx.run.run_id)
+        clear_run_context()
+        bind_run_context(
+            run_id=ctx.run.run_id,
+            thread_id=ctx.thread.thread_id,
+            agent_id=ctx.agent.agent_id,
+        )
         logger.debug(
             "Pipeline started: run_id=%s thread=%s agent=%s run_mode=%s deliver_actions=%s",
             ctx.run.run_id,
@@ -261,6 +271,8 @@ class ThreadPipeline:
                 ctx.run.run_id,
                 f"pipeline crashed: {exc}",
             )
+        finally:
+            clear_run_context()
 
     def build_text_reply_action(self, ctx: RunContext, text: str) -> PlannedAction:
         """为当前上下文构造一个最小纯文本回复动作.
@@ -346,6 +358,23 @@ class ThreadPipeline:
         if response is None:
             await self.run_manager.mark_failed(ctx.run.run_id, "missing runtime response")
             return
+
+        if response.usage:
+            token_usage = dict(response.usage)
+            ctx.run.metadata["token_usage"] = token_usage
+            model_used = str(getattr(response, "model_used", "") or ctx.metadata.get("model_used", "") or "")
+            if model_used:
+                ctx.run.metadata.setdefault("model_used", model_used)
+            slog.info(
+                "Run token usage",
+                run_id=ctx.run.run_id,
+                thread_id=ctx.thread.thread_id,
+                agent_id=ctx.agent.agent_id,
+                model=model_used,
+                prompt_tokens=int(token_usage.get("prompt_tokens", 0)),
+                completion_tokens=int(token_usage.get("completion_tokens", 0)),
+                total_tokens=int(token_usage.get("total_tokens", 0)),
+            )
 
         if response.status == "waiting_approval":
             pending = response.pending_approval

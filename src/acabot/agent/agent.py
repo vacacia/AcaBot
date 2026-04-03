@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import structlog
 from inspect import isawaitable
 from typing import Any
 
@@ -24,6 +25,7 @@ except ImportError:
 acompletion = _litellm_acompletion
 
 logger = logging.getLogger("acabot.agent")
+slog = structlog.get_logger("acabot.agent")
 
 
 class LitellmAgent(BaseAgent):
@@ -143,14 +145,15 @@ class LitellmAgent(BaseAgent):
                 )
                 continue
 
-            logger.info(
-                "LLM run completed: model=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s attachments=%s text_preview=%s",
-                use_model,
-                total_usage.get("prompt_tokens", 0),
-                total_usage.get("completion_tokens", 0),
-                total_usage.get("total_tokens", 0),
-                len(all_attachments),
-                self._preview_text(msg.content),
+            slog.info(
+                "LLM run completed",
+                model=use_model,
+                prompt_tokens=total_usage.get("prompt_tokens", 0),
+                completion_tokens=total_usage.get("completion_tokens", 0),
+                total_tokens=total_usage.get("total_tokens", 0),
+                attachments=len(all_attachments),
+                tool_rounds=len(tool_calls_made),
+                text_preview=self._preview_text(msg.content),
             )
             return AgentResponse(
                 text=msg.content or "",
@@ -209,13 +212,13 @@ class LitellmAgent(BaseAgent):
                 response = await response
             choice = response.choices[0]
             usage = response.usage
-            logger.debug(
-                "LLM complete finished: model=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s text_preview=%s",
-                use_model,
-                getattr(usage, "prompt_tokens", 0),
-                getattr(usage, "completion_tokens", 0),
-                getattr(usage, "total_tokens", 0),
-                self._preview_text(choice.message.content),
+            slog.info(
+                "LLM complete finished",
+                model=use_model,
+                prompt_tokens=getattr(usage, "prompt_tokens", 0),
+                completion_tokens=getattr(usage, "completion_tokens", 0),
+                total_tokens=getattr(usage, "total_tokens", 0),
+                text_preview=self._preview_text(choice.message.content),
             )
             return AgentResponse(
                 text=choice.message.content or "",
