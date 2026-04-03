@@ -84,7 +84,6 @@ class RuntimePluginContext:
     data_dir: Path                      # 插件专属可写目录：runtime_data/plugins/<id>/data/
     gateway: GatewayProtocol
     tool_broker: ToolBroker
-    reference_backend: ReferenceBackend | None = None
     sticky_notes: StickyNoteService | None = None
     computer_runtime: ComputerRuntime | None = None
     skill_catalog: SkillCatalog | None = None
@@ -668,7 +667,7 @@ spec_store = SpecStore(runtime_config_plugins_dir)
 status_store = StatusStore(runtime_data_plugins_dir)
 host = PluginRuntimeHost(tool_broker, model_target_catalog)
 
-context_factory = make_context_factory(gateway, tool_broker, reference_backend, ...)
+context_factory = make_context_factory(gateway, tool_broker, ...)
 reconciler = PluginReconciler(catalog, spec_store, status_store, host, context_factory)
 
 # app.py
@@ -682,7 +681,7 @@ async def stop(self):
 ### context_factory
 
 ```python
-def make_context_factory(gateway, tool_broker, reference_backend, ...):
+def make_context_factory(gateway, tool_broker, ...):
     def factory(plugin_id: str, plugin_config: dict[str, Any]) -> RuntimePluginContext:
         data_dir = runtime_data_plugins_dir / plugin_id / "data"
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -692,7 +691,6 @@ def make_context_factory(gateway, tool_broker, reference_backend, ...):
             data_dir=data_dir,
             gateway=gateway,
             tool_broker=tool_broker,
-            reference_backend=reference_backend,
             ...
         )
     return factory

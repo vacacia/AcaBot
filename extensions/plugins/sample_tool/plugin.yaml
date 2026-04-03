@@ -1,0 +1,12 @@
+plugin:
+  plugin_id: sample_tool
+  display_name: Sample Tool
+  version: "1"
+  default_config:
+    greeting: "Hello from AcaBot"
+  config_schema:
+    type: object
+    properties:
+      greeting:
+        type: string
+        description: "工具返回的问候语"
