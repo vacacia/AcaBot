@@ -4,18 +4,20 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 04
 status: in_progress
-last_updated: "2026-04-03T17:57:22Z"
+last_updated: "2026-04-03T18:11:33.003Z"
 progress:
   total_phases: 6
   completed_phases: 5
   total_plans: 4
-  completed_plans: 1
+  completed_plans: 2
 ---
 
 # Project State
 
 **Current Phase:** 04
 **Phase Status:** In Progress
+**Current Plan:** 03
+**Total Plans in Phase:** 04
 **Updated:** 2026-04-04
 
 ## Phase Progress
@@ -34,7 +36,7 @@ progress:
 | Plan | Wave | Status | Requirements |
 |------|------|--------|--------------|
 | 04-01 | 1 | **Executed ✅** | MSG-04, MSG-05, MSG-07, MSG-10 |
-| 04-02 | 2 | Ready | MSG-01, MSG-02, MSG-03, MSG-06, MSG-07, MSG-09 |
+| 04-02 | 2 | **Executed ✅** | MSG-01, MSG-02, MSG-03, MSG-06, MSG-09 |
 | 04-03 | 3 | Ready | MSG-08, PW-01, PW-02, PW-03 |
 | 04-04 | 4 | Ready | MSG-05, MSG-08, PW-01, PW-02, PW-03 |
 
@@ -67,6 +69,9 @@ progress:
 - ✅ `tests/runtime/test_message_tool.py` 全绿, 锁定 `message` tool schema、user_actions-only 行为、严格 reaction 失败语义和 D-08 文案
 - ✅ `tests/runtime/test_builtin_tools.py` 与 `tests/test_gateway.py` 全绿, `builtin:message` 注册链和 NapCat `set_msg_emoji_like` payload 已固定
 - ✅ 总验证命令 `PYTHONPATH=src uv run pytest -q tests/runtime/test_message_tool.py tests/runtime/test_builtin_tools.py tests/test_gateway.py` 通过, 共 39 tests passed
+- ✅ `tests/runtime/test_outbox.py` 全绿, `SEND_MESSAGE_INTENT` 物化顺序、`reply_to` 保留、images、render fallback 和 cross-session destination persistence 已固定
+- ✅ `tests/runtime/test_model_agent_runtime.py` 与 `tests/runtime/test_pipeline_runtime.py` 全绿, 默认回复抑制和 destination thread working memory 语义已固定
+- ✅ 总验证命令 `PYTHONPATH=src uv run pytest -q tests/runtime/test_outbox.py tests/runtime/test_model_agent_runtime.py tests/runtime/test_pipeline_runtime.py` 通过, 共 52 tests passed
 
 ## Commits
 
@@ -83,8 +88,15 @@ progress:
 | 893b56c | test(04-01): add failing tests for message registration and reaction payload |
 | 4231417 | feat(04-01): register message builtin and support reaction payloads |
 | e25b106 | docs(04-01): sync unified message tool contracts |
+| 0ab0293 | test(04-02): add failing test for destination-thread contracts |
+| 35a1ba5 | feat(04-02): define destination-thread send contracts |
+| 81c13ea | test(04-02): add failing test for send intent materialization |
+| 7ace988 | feat(04-02): materialize send intent in outbox |
+| 992e975 | test(04-02): add failing tests for reply suppression and destination thread updates |
+| aebf9b5 | feat(04-02): suppress duplicate replies and update destination threads |
+| c72ab8e | docs(04-02): sync send intent runtime contracts |
 
-## Decisions Log
+## Decisions
 
 - D-01: No config migration — treat old config as non-existent
 - D-02: ADR reference_backend field removed (Phase 1 already deleted the subsystem)
@@ -95,6 +107,20 @@ progress:
 - D-06: Sample plugin `sample_tool` ships as developer template with config_schema
 - D-07: Unified `message` tool keeps one model-facing name; only `send` becomes `SEND_MESSAGE_INTENT`
 - D-08: NapCat reaction delivery maps to `set_msg_emoji_like(message_id, emoji_id)`; `recall` stays on `delete_msg`
+- D-09: OutboxItem 显式拆出 origin_thread_id、destination_thread_id、destination_conversation_id, cross-session 语义不再躲在 metadata 里
+- D-10: SEND_MESSAGE_INTENT 一律在 Outbox 物化成单条 SEND_SEGMENTS, `reply_to` 继续走 Action.reply_to
+- D-11: 默认回复抑制只认 `SEND_MESSAGE_INTENT + suppresses_default_reply`; `react` / `recall` 永远不抑制
+
+## Performance Metrics
+
+| Phase | Plan | Duration | Tasks | Files | Completed |
+|-------|------|----------|-------|-------|-----------|
+| 04 | 02 | 6m | 3 | 11 | 2026-04-04 |
+
+## Session Info
+
+- **Last Session:** 2026-04-04T02:10:39+08:00
+- **Stopped At:** Completed 04-02-PLAN.md
 
 ## Blockers
 
