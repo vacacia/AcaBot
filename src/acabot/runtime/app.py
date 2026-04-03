@@ -32,7 +32,6 @@ from .contracts import (
     RunContext,
     RunRecord,
     RunStep,
-    ThreadState,
 )
 from .plugin_manager import RuntimePluginManager
 from .pipeline import ThreadPipeline
