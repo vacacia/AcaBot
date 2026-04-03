@@ -44,7 +44,7 @@ types → gateway / agent → runtime → webui（通过 HTTP API）
 
 **`main.py`** 只创建最外层对象（读配置、创建 gateway/agent、调 bootstrap），不是业务主线。
 
-**`runtime/bootstrap/`** 是真正的装配中心。`build_runtime_components()` 接线所有核心组件：RuntimeRouter、SessionRuntime、ThreadManager、RunManager、ToolBroker、ComputerRuntime、MemoryBroker、ThreadPipeline、RuntimeControlPlane、RuntimeHttpApiServer、PluginManager、Outbox。bootstrap 还负责把 builtin tool 直接注册到 ToolBroker（`builtin:computer`、`builtin:skills`、`builtin:subagents`），这条线是主线不是补丁。
+**`runtime/bootstrap/`** 是真正的装配中心。`build_runtime_components()` 接线所有核心组件：RuntimeRouter、SessionRuntime、ThreadManager、RunManager、ToolBroker、ComputerRuntime、MemoryBroker、ThreadPipeline、RuntimeControlPlane、RuntimeHttpApiServer、PluginManager、Outbox。bootstrap 还负责把 builtin tool 直接注册到 ToolBroker（`builtin:computer`、`builtin:message`、`builtin:skills`、`builtin:subagents`），这条线是主线不是补丁。
 
 **`RuntimeApp`** 是 runtime 总入口：启动 gateway 和 plugin、接住 gateway 上来的 event、做最小入口分流、调 router、创建/获取 thread 和 run、把 `RunContext` 交给 pipeline。
 

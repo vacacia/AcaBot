@@ -71,6 +71,13 @@ PlannedAction → Outbox → Gateway.send(Action) → 平台 API
 
 runtime 决定"做什么"，outbox 统一发送和消息入库，gateway 按平台协议发出去。改动涉及 ActionType、Outbox、Gateway.send() 时三处要一起看。
 
+NapCat 当前出站映射如下：
+- `SEND_TEXT` / `SEND_SEGMENTS` → `send_private_msg` 或 `send_group_msg`
+- `RECALL` → `delete_msg`
+- `REACTION` → `set_msg_emoji_like`
+
+`REACTION` 的 payload 约定为 `{"message_id": ..., "emoji_id": ...}`。gateway 只负责把这个底层动作翻成 NapCat 扩展 API, 不负责 emoji 名称解析。emoji alias / Unicode → `emoji_id` 的映射在统一 `message` builtin tool 里完成。
+
 ## call_api()
 
 不是所有平台能力都该抽成通用 ActionType。平台特有查询、一次性原生能力、只在某个平台上有意义的接口更适合 `call_api()`。当前典型例子：`get_msg`、`get_group_member_info`、`get_forward_msg`。要加"查平台原始数据"的功能时优先用 `call_api()`。

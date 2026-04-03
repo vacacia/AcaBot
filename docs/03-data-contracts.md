@@ -28,7 +28,9 @@ StandardEvent → EventFacts → SessionConfig/SurfaceResolution → 各 Decisio
 
 `src/acabot/types/action.py`。系统对外动作的统一格式。
 
-关键字段：`action_type`（SEND_TEXT / SEND_SEGMENTS / RECALL / GROUP_BAN / GROUP_KICK / TYPING / REACTION）、`target`、`payload`、`reply_to`。Action 只表达动作本身，不包含规划来源、thread 回写策略或消息事实记录决策。
+关键字段：`action_type`（SEND_MESSAGE_INTENT / SEND_TEXT / SEND_SEGMENTS / RECALL / GROUP_BAN / GROUP_KICK / TYPING / REACTION）、`target`、`payload`、`reply_to`。Action 只表达动作本身，不包含规划来源、thread 回写策略或消息事实记录决策。
+
+其中 `SEND_MESSAGE_INTENT` 是统一 `message` builtin tool 的高层发送意图，只给 `message.action="send"` 用。它先保留 `text`、`images`、`render`、`at_user`、`target` 这些上层字段，真正物化成平台消息的动作发生在 Outbox。`REACTION` 和 `RECALL` 继续是底层直通动作，不走高层内容编排链。
 
 ---
 

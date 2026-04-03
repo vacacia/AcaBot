@@ -21,10 +21,18 @@
 | 来源 | 工具 |
 |------|------|
 | `builtin:computer` | `read`、`write`、`edit`、`bash` |
+| `builtin:message` | `message` |
 | `builtin:skills` | `Skill` |
 | `builtin:subagents` | `delegate_subagent`（只在当前 run 的 `visible_subagents` 非空且 catalog 可解析时暴露） |
 
 Builtin tool 不允许被 plugin 同名覆盖。
+
+`message` 是统一的出站消息 surface。对模型只暴露一个工具名，`action` 目前锁定为 `send` / `react` / `recall` 三种：
+- `send` 产出高层 `SEND_MESSAGE_INTENT`，把 `text`、`images`、`render`、`at_user`、`target` 留给 Outbox 后续物化
+- `react` 直接产出底层 `REACTION`
+- `recall` 直接产出底层 `RECALL`
+
+`message.action="send"` 已经发出内容型消息时，本轮默认 assistant 文本回复会被 runtime 抑制。所以如果一条消息里既要文字说明又要图片或渲染图，必须在同一次 `send` 调用里把 `text`、`images`、`render` 组合完整。
 
 ### 特殊 Bridge Tool
 
