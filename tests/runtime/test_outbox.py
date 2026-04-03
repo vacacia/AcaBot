@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from acabot.runtime import (
@@ -18,6 +20,7 @@ from acabot.runtime.ids import (
     build_thread_id_from_conversation_id,
     parse_conversation_id,
 )
+from acabot.runtime.render.protocol import RenderResult
 from acabot.types import Action, ActionType, EventSource, MsgSegment, StandardEvent
 
 
@@ -102,6 +105,32 @@ class RecordingIngestor:
 class ExplodingIngestor(RecordingIngestor):
     def mark_dirty(self, thread_id: str) -> None:
         raise RuntimeError(f"boom:{thread_id}")
+
+
+class FakeRenderService:
+    def __init__(self, result: RenderResult) -> None:
+        self.result = result
+        self.calls: list[dict[str, str | None]] = []
+
+    async def render_markdown_to_image(
+        self,
+        *,
+        markdown_text: str,
+        conversation_id: str,
+        run_id: str,
+        backend_name: str | None = None,
+        filename_stem: str = "rendered",
+    ) -> RenderResult:
+        self.calls.append(
+            {
+                "markdown_text": markdown_text,
+                "conversation_id": conversation_id,
+                "run_id": run_id,
+                "backend_name": backend_name,
+                "filename_stem": filename_stem,
+            }
+        )
+        return self.result
 
 
 def _send_intent_context(
@@ -357,6 +386,86 @@ async def test_outbox_render_falls_back_to_plain_text_segment_without_backend() 
     report = await outbox.dispatch(ctx)
 
     assert report.has_failures is False
+    sent_action = gateway.sent[0]
+    assert sent_action.action_type == ActionType.SEND_SEGMENTS
+    assert sent_action.payload["segments"] == [
+        {"type": "text", "data": {"text": "# Title\n\n$E=mc^2$"}}
+    ]
+
+
+async def test_outbox_calls_injected_render_service_in_materialization(
+    tmp_path: Path,
+) -> None:
+    gateway = FakeGateway()
+    store = FakeMessageStore()
+    artifact_path = tmp_path / "runtime_data" / "render.png"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    render_service = FakeRenderService(
+        RenderResult.ok(
+            backend_name="playwright",
+            artifact_path=artifact_path,
+            html="<p>rendered</p>",
+        )
+    )
+    outbox = Outbox(
+        gateway=gateway,
+        store=store,
+        render_service=render_service,
+    )
+    ctx = _send_intent_context(
+        text="说明文字",
+        render="# Title",
+        thread_content="说明文字 [图片]",
+    )
+
+    report = await outbox.dispatch(ctx)
+
+    assert report.has_failures is False
+    assert render_service.calls == [
+        {
+            "markdown_text": "# Title",
+            "conversation_id": "qq:user:10001",
+            "run_id": "run:send-intent",
+            "backend_name": None,
+            "filename_stem": "rendered",
+        }
+    ]
+    sent_action = gateway.sent[0]
+    assert sent_action.action_type == ActionType.SEND_SEGMENTS
+    assert sent_action.payload["segments"] == [
+        {"type": "text", "data": {"text": "说明文字"}},
+        {"type": "image", "data": {"file": str(artifact_path)}},
+    ]
+
+
+@pytest.mark.parametrize("status", ["unavailable", "error"])
+async def test_outbox_render_falls_back_to_raw_text_when_injected_service_cannot_render(
+    status: str,
+) -> None:
+    gateway = FakeGateway()
+    store = FakeMessageStore()
+    if status == "unavailable":
+        result = RenderResult.unavailable(error="backend unavailable")
+    else:
+        result = RenderResult.error_result(
+            backend_name="playwright",
+            error="render exploded",
+        )
+    render_service = FakeRenderService(result)
+    outbox = Outbox(
+        gateway=gateway,
+        store=store,
+        render_service=render_service,
+    )
+    ctx = _send_intent_context(
+        render="# Title\n\n$E=mc^2$",
+        thread_content="# Title\n\n$E=mc^2$",
+    )
+
+    report = await outbox.dispatch(ctx)
+
+    assert report.has_failures is False
+    assert len(render_service.calls) == 1
     sent_action = gateway.sent[0]
     assert sent_action.action_type == ActionType.SEND_SEGMENTS
     assert sent_action.payload["segments"] == [

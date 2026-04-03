@@ -45,6 +45,7 @@ from acabot.runtime import (
     build_agent_model_targets,
     build_runtime_components,
 )
+from acabot.runtime.render import PlaywrightRenderBackend, RenderService
 from acabot.runtime.memory.long_term_memory.storage import LanceDbLongTermMemoryStore
 from acabot.runtime.contracts import PendingApproval
 from acabot.runtime.bootstrap.builders import build_payload_json_writer
@@ -391,6 +392,35 @@ def test_build_runtime_components_wires_optional_long_term_memory_ingestor(tmp_p
     assert components.long_term_memory_ingestor is ingestor
     assert components.app.long_term_memory_ingestor is ingestor
     assert components.outbox.long_term_memory_ingestor is ingestor
+
+
+def test_build_runtime_components_registers_playwright_backend_in_default_render_service(
+    tmp_path: Path,
+) -> None:
+    _write_minimal_session(tmp_path)
+    components = build_runtime_components(
+        _fs_config(tmp_path),
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+
+    assert isinstance(components.render_service, RenderService)
+    assert components.render_service.backend_names() == ("playwright",)
+    backend = components.render_service.get_backend("playwright")
+    assert isinstance(backend, PlaywrightRenderBackend)
+
+
+def test_build_runtime_components_injects_same_render_service_into_outbox(
+    tmp_path: Path,
+) -> None:
+    _write_minimal_session(tmp_path)
+    components = build_runtime_components(
+        _fs_config(tmp_path),
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+
+    assert components.outbox.render_service is components.render_service
 
 
 async def test_build_runtime_components_registers_long_term_memory_source_and_ingestor(
