@@ -37,6 +37,7 @@ from .contracts import (
 from .plugin_reconciler import PluginReconciler
 from .plugin_runtime_host import PluginRuntimeHost
 from .pipeline import ThreadPipeline
+from .render import RenderService
 from .router import RuntimeRouter
 from .storage.runs import RunManager
 from .storage.stores import ChannelEventStore
@@ -78,6 +79,7 @@ class RuntimeApp:
         scheduler: RuntimeScheduler | None = None,
         ltm_store: LanceDbLongTermMemoryStore | None = None,
         config: Config | None = None,
+        render_service: RenderService | None = None,
     ) -> None:
         """初始化 RuntimeApp.
 
@@ -101,6 +103,7 @@ class RuntimeApp:
             scheduler: 可选的定时任务调度器.
             ltm_store: 可选的长期记忆存储.
             config: 可选的 runtime 配置.
+            render_service: 出站 render 生命周期入口.
         """
 
         self.gateway = gateway
@@ -122,6 +125,7 @@ class RuntimeApp:
         self.scheduler = scheduler
         self._ltm_store = ltm_store
         self._config = config
+        self.render_service = render_service or getattr(pipeline.outbox, "render_service", None)
         self.last_recovery_report = RecoveryReport()
         self._pending_approvals: dict[str, PendingApprovalRecord] = {}
 
@@ -216,6 +220,13 @@ class RuntimeApp:
                 await self.long_term_memory_ingestor.stop()
             except Exception as exc:
                 logger.exception("Failed to stop long-term memory ingestor during shutdown")
+                if stop_error is None:
+                    stop_error = exc
+        if self.render_service is not None:
+            try:
+                await self.render_service.close()
+            except Exception as exc:
+                logger.exception("Failed to close render service during shutdown")
                 if stop_error is None:
                     stop_error = exc
         if stop_error is not None:

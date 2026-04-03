@@ -30,7 +30,7 @@ StandardEvent → EventFacts → SessionConfig/SurfaceResolution → 各 Decisio
 
 关键字段：`action_type`（SEND_MESSAGE_INTENT / SEND_TEXT / SEND_SEGMENTS / RECALL / GROUP_BAN / GROUP_KICK / TYPING / REACTION）、`target`、`payload`、`reply_to`。Action 只表达动作本身，不包含规划来源、thread 回写策略或消息事实记录决策。
 
-其中 `SEND_MESSAGE_INTENT` 是统一 `message` builtin tool 的高层发送意图，只给 `message.action="send"` 用。它先保留 `text`、`images`、`render`、`at_user`、`target` 这些上层字段，真正物化成平台消息的动作发生在 Outbox。`REACTION` 和 `RECALL` 继续是底层直通动作，不走高层内容编排链。
+其中 `SEND_MESSAGE_INTENT` 是统一 `message` builtin tool 的高层发送意图，只给 `message.action="send"` 用。它先保留 `text`、`images`、`render`、`at_user`、`target` 这些上层字段，真正物化成平台消息的动作发生在 Outbox：`text/images` 直接编译成 segment，`render` 先通过 render service 产出图片 artifact，成功时转成 image segment，失败时回退成原始 markdown 文本。`REACTION` 和 `RECALL` 继续是底层直通动作，不走高层内容编排链。
 
 ---
 
@@ -121,8 +121,8 @@ StandardEvent → EventFacts → SessionConfig/SurfaceResolution → 各 Decisio
 
 `OutboxItem` 现在显式保留两套目标语义：
 - `origin_thread_id`：本轮 run 的来源 thread，也就是用户当前正在触发的 runtime thread。
-- `destination_conversation_id`：真正要投递到的外部对话容器 ID。
-- `destination_thread_id`：真正落工作记忆、消息事实、LTM dirty 标记的 runtime thread。
+- `destination_conversation_id`：真正要投递到的外部对话容器 ID。它是平台侧语义，告诉 Gateway 往哪个 conversation 发。
+- `destination_thread_id`：真正落工作记忆、消息事实、LTM dirty 标记的 runtime thread。它是 runtime 侧语义，不一定等于来源 thread。
 - `append_to_origin_thread`：当前送达内容是否还要补回来源 thread。普通同会话回复为 `True`，cross-session send 为 `False`。
 
 `thread_id` 仍暂时保留给旧代码兼容，但新逻辑必须优先使用 `origin_thread_id` / `destination_thread_id`，不能再把 `conversation_id` 和 `thread_id` 当成一个字段混着传。

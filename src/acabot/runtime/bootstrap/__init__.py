@@ -490,6 +490,7 @@ def build_runtime_components(
         scheduler=runtime_scheduler,
         ltm_store=runtime_long_term_memory_store,
         config=config,
+        render_service=runtime_render_service,
     )
     control_plane = RuntimeControlPlane(
         app=app,

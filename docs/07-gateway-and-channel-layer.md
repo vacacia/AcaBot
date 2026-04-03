@@ -76,7 +76,9 @@ NapCat 当前出站映射如下：
 - `RECALL` → `delete_msg`
 - `REACTION` → `set_msg_emoji_like`
 
-`REACTION` 的 payload 约定为 `{"message_id": ..., "emoji_id": ...}`。gateway 只负责把这个底层动作翻成 NapCat 扩展 API, 不负责 emoji 名称解析。emoji alias / Unicode → `emoji_id` 的映射在统一 `message` builtin tool 里完成。
+`REACTION` 的 payload 约定为 `{"message_id": ..., "emoji_id": ...}`。这是 NapCat-specific 的低层动作：gateway 只负责把它翻成 `set_msg_emoji_like`，不负责 emoji 名称解析。emoji alias / Unicode → `emoji_id` 的映射在统一 `message` builtin tool 里完成。
+
+render 不属于 gateway。`message.send` 里的 `render` 字段会在 Outbox materialization 阶段通过 render service 先变成 image segment；Gateway 只接已经编译好的 `SEND_SEGMENTS`，不关心 markdown、Playwright 或 render artifact 生命周期。
 
 ## call_api()
 

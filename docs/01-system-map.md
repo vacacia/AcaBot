@@ -48,6 +48,8 @@ types → gateway / agent → runtime → webui（通过 HTTP API）
 
 **`RuntimeApp`** 是 runtime 总入口：启动 gateway 和 plugin、接住 gateway 上来的 event、做最小入口分流、调 router、创建/获取 thread 和 run、把 `RunContext` 交给 pipeline。
 
+统一 `message` tool 的发送主线也在这里接通：模型先调用 `message` builtin tool，tool 产出高层 `SEND_MESSAGE_INTENT`，随后进入 Outbox materialization，再由 Gateway 发到平台。
+
 ## 消息主线六步
 
 ### 1. Gateway 翻译平台消息
@@ -84,7 +86,7 @@ types → gateway / agent → runtime → webui（通过 HTTP API）
 
 `runtime/outbox.py`
 
-决定哪些动作发到平台、哪些属于送达事实、哪些写 `MessageStore`。统一 `message` tool 的 `SEND_MESSAGE_INTENT` 也在这里物化成真正的平台消息，并把 cross-session send 的送达事实定向写到 destination thread，而不是来源 thread。
+决定哪些动作发到平台、哪些属于送达事实、哪些写 `MessageStore`。统一 `message` tool 的 `SEND_MESSAGE_INTENT` 也在这里 materialize 成真正的平台消息：`at/text/images/render` 编译成一条 `SEND_SEGMENTS`，其中 `render` 通过注入的 render service 先转 runtime internal image artifact，再交给 Gateway 发送。cross-session send 的送达事实也在这里定向写到 destination thread，而不是来源 thread。
 
 ## Runtime 子域
 
