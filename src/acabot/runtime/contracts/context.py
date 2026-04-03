@@ -99,7 +99,22 @@ class OutboxItem:
     run_id: str
     agent_id: str
     plan: PlannedAction
+    origin_thread_id: str = ""
+    destination_thread_id: str = ""
+    destination_conversation_id: str = ""
+    append_to_origin_thread: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """补齐 origin / destination contract 的默认值."""
+
+        if not self.origin_thread_id:
+            self.origin_thread_id = self.thread_id
+        if not self.destination_thread_id:
+            self.destination_thread_id = self.thread_id
+        if not self.destination_conversation_id:
+            channel_scope = str(self.metadata.get("channel_scope", "") or "").strip()
+            self.destination_conversation_id = channel_scope or self.destination_thread_id
 
 
 @dataclass(slots=True)

@@ -134,9 +134,9 @@ def test_conversation_id_helpers_build_canonical_destination_event_source(
     actor_user_id: str,
     expected_source: EventSource,
 ) -> None:
-    platform, scope_value = parse_conversation_id(conversation_id)
+    scope_kind, scope_value = parse_conversation_id(conversation_id)
 
-    assert platform == "qq"
+    assert scope_kind == conversation_id.split(":", 2)[1]
     assert scope_value == conversation_id.split(":", 2)[2]
     assert (
         build_event_source_from_conversation_id(
