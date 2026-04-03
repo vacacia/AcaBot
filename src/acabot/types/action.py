@@ -16,6 +16,7 @@ class ActionType(str, Enum):
     扩展新操作: 增加枚举值 + Gateway 里处理对应 API.
     """
     # 消息类
+    SEND_MESSAGE_INTENT = "send_message_intent"
     SEND_TEXT = "send_text"
     SEND_SEGMENTS = "send_segments"
     RECALL = "recall"
