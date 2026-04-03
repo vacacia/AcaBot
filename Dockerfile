@@ -31,13 +31,13 @@ COPY pyproject.toml ./
 COPY src/ src/
 RUN uv pip install --system .
 
-# ── Playwright + Chromium（含系统依赖） ──
-RUN pip install playwright && playwright install --with-deps chromium
+# ── Playwright browser 安装（依赖已由项目安装） ──
+RUN python -m playwright install --with-deps chromium
 
 # ── Bot 常用 Python 库 ──
 RUN uv pip install --system \
     httpx beautifulsoup4 lxml \
-    Pillow markdown-it-py Jinja2 \
+    Pillow Jinja2 \
     pandas openpyxl matplotlib seaborn \
     weasyprint yt-dlp \
     numpy scipy

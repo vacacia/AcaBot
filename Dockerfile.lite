@@ -15,8 +15,8 @@ COPY pyproject.toml ./
 COPY src/ src/
 RUN uv pip install --system .
 
-# ── Playwright + Chromium（含系统依赖） ──
-RUN pip install playwright && playwright install --with-deps chromium
+# ── Playwright browser 安装（依赖已由项目安装） ──
+RUN python -m playwright install --with-deps chromium
 
 # ── 扩展 ──
 COPY extensions/ extensions/
