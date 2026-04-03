@@ -104,6 +104,93 @@ class ExplodingIngestor(RecordingIngestor):
         raise RuntimeError(f"boom:{thread_id}")
 
 
+def _send_intent_context(
+    *,
+    text: str | None = None,
+    images: list[str] | None = None,
+    render: str | None = None,
+    reply_to: str | None = None,
+    at_user: str | None = None,
+    target: str | None = None,
+    thread_content: str | None = None,
+) -> RunContext:
+    event_source = EventSource(
+        platform="qq",
+        message_type="private",
+        user_id="10001",
+        group_id=None,
+    )
+    destination_conversation_id = target or "qq:user:10001"
+    action_target = (
+        build_event_source_from_conversation_id(
+            destination_conversation_id,
+            actor_user_id=event_source.user_id,
+        )
+        if target is not None
+        else event_source
+    )
+    return RunContext(
+        run=RunRecord(
+            run_id="run:send-intent",
+            thread_id="qq:user:10001",
+            actor_id="qq:user:10001",
+            agent_id="aca",
+            trigger_event_id="evt-1",
+            status="running",
+            started_at=1,
+        ),
+        event=StandardEvent(
+            event_id="evt-1",
+            event_type="message",
+            platform="qq",
+            timestamp=1,
+            source=event_source,
+            segments=[MsgSegment(type="text", data={"text": "hello"})],
+            raw_message_id="raw-msg-1",
+            sender_nickname="Acacia",
+            sender_role=None,
+        ),
+        decision=RouteDecision(
+            thread_id="qq:user:10001",
+            actor_id="qq:user:10001",
+            agent_id="aca",
+            channel_scope="qq:user:10001",
+        ),
+        thread=ThreadState(
+            thread_id="qq:user:10001",
+            channel_scope="qq:user:10001",
+        ),
+        agent=ResolvedAgent(
+            agent_id="aca",
+            name="Aca",
+            prompt_ref="prompt/default",
+        ),
+        actions=[
+            PlannedAction(
+                action_id="action:send-intent",
+                action=Action(
+                    action_type=ActionType.SEND_MESSAGE_INTENT,
+                    target=action_target,
+                    payload={
+                        "text": text,
+                        "images": list(images or []),
+                        "render": render,
+                        "at_user": at_user,
+                        "target": destination_conversation_id,
+                    },
+                    reply_to=reply_to,
+                ),
+                thread_content=thread_content,
+                metadata={
+                    "message_action": "send",
+                    "suppresses_default_reply": True,
+                    "destination_conversation_id": destination_conversation_id,
+                },
+            )
+        ],
+    )
+
+
 @pytest.mark.parametrize(
     ("conversation_id", "actor_user_id", "expected_source"),
     [
@@ -195,6 +282,110 @@ def test_outbox_item_keeps_origin_and_destination_thread_separate() -> None:
     assert item.destination_thread_id == "qq:group:20002"
     assert item.destination_conversation_id == "qq:group:20002"
     assert item.append_to_origin_thread is False
+
+
+async def test_outbox_materializes_send_intent_text_and_reply_to_into_one_action() -> None:
+    gateway = FakeGateway()
+    store = FakeMessageStore()
+    outbox = Outbox(gateway=gateway, store=store)
+    ctx = _send_intent_context(
+        text="hello world",
+        reply_to="msg-42",
+        thread_content="hello world",
+    )
+
+    report = await outbox.dispatch(ctx)
+
+    assert report.has_failures is False
+    assert len(gateway.sent) == 1
+    sent_action = gateway.sent[0]
+    assert sent_action.action_type == ActionType.SEND_SEGMENTS
+    assert sent_action.reply_to == "msg-42"
+    assert sent_action.payload["segments"] == [
+        {"type": "text", "data": {"text": "hello world"}}
+    ]
+
+
+async def test_outbox_builds_at_segment_before_text() -> None:
+    gateway = FakeGateway()
+    store = FakeMessageStore()
+    outbox = Outbox(gateway=gateway, store=store)
+    ctx = _send_intent_context(
+        text="大家好",
+        at_user="20002",
+        thread_content="@20002 大家好",
+    )
+
+    report = await outbox.dispatch(ctx)
+
+    assert report.has_failures is False
+    sent_action = gateway.sent[0]
+    assert sent_action.action_type == ActionType.SEND_SEGMENTS
+    assert sent_action.payload["segments"][0] == {"type": "at", "data": {"qq": "20002"}}
+    assert sent_action.payload["segments"][1] == {"type": "text", "data": {"text": "大家好"}}
+
+
+async def test_outbox_materializes_images() -> None:
+    gateway = FakeGateway()
+    store = FakeMessageStore()
+    outbox = Outbox(gateway=gateway, store=store)
+    ctx = _send_intent_context(
+        images=["/tmp/cat.png", "https://example.com/cat.jpg"],
+        thread_content="[图片][图片]",
+    )
+
+    report = await outbox.dispatch(ctx)
+
+    assert report.has_failures is False
+    sent_action = gateway.sent[0]
+    assert sent_action.action_type == ActionType.SEND_SEGMENTS
+    assert sent_action.payload["segments"] == [
+        {"type": "image", "data": {"file": "/tmp/cat.png"}},
+        {"type": "image", "data": {"file": "https://example.com/cat.jpg"}},
+    ]
+
+
+async def test_outbox_render_falls_back_to_plain_text_segment_without_backend() -> None:
+    gateway = FakeGateway()
+    store = FakeMessageStore()
+    outbox = Outbox(gateway=gateway, store=store)
+    ctx = _send_intent_context(
+        render="# Title\n\n$E=mc^2$",
+        thread_content="# Title\n\n$E=mc^2$",
+    )
+
+    report = await outbox.dispatch(ctx)
+
+    assert report.has_failures is False
+    sent_action = gateway.sent[0]
+    assert sent_action.action_type == ActionType.SEND_SEGMENTS
+    assert sent_action.payload["segments"] == [
+        {"type": "text", "data": {"text": "# Title\n\n$E=mc^2$"}}
+    ]
+
+
+async def test_outbox_persists_cross_session_delivery_to_destination() -> None:
+    gateway = FakeGateway()
+    store = FakeMessageStore()
+    ltm = RecordingIngestor()
+    outbox = Outbox(gateway=gateway, store=store, long_term_memory_ingestor=ltm)
+    ctx = _send_intent_context(
+        text="cross-session hello",
+        target="qq:group:20002",
+        thread_content="cross-session hello",
+    )
+
+    report = await outbox.dispatch(ctx)
+
+    assert report.has_failures is False
+    delivered_item = report.delivered_items[0]
+    assert delivered_item.origin_thread_id == "qq:user:10001"
+    assert delivered_item.destination_thread_id == "qq:group:20002"
+    assert delivered_item.destination_conversation_id == "qq:group:20002"
+    assert delivered_item.append_to_origin_thread is False
+    assert store.saved[0].thread_id == "qq:group:20002"
+    assert store.saved[0].metadata["channel_scope"] == "qq:group:20002"
+    assert ltm.marked_threads == ["qq:group:20002"]
 
 
 async def test_outbox_sends_and_persists_success() -> None:
