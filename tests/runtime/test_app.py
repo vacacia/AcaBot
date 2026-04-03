@@ -211,6 +211,20 @@ class DummyLtmStore:
         return path / "lancedb-backup-test"
 
 
+class TrackingRenderService:
+    def __init__(self) -> None:
+        self.closed = 0
+
+    async def close(self) -> None:
+        self.closed += 1
+
+
+class ExplodingRenderService(TrackingRenderService):
+    async def close(self) -> None:
+        await super().close()
+        raise RuntimeError("render service close exploded")
+
+
 async def test_runtime_app_installs_handler_and_processes_event() -> None:
     gateway = FakeGateway()
     thread_manager = InMemoryThreadManager()
@@ -1035,3 +1049,69 @@ async def test_runtime_app_stop_still_stops_ltm_after_plugin_teardown_failure() 
         raise AssertionError("expected plugin teardown failure")
 
     assert ltm.stopped == 1
+
+
+async def test_runtime_app_stop_closes_render_service_once() -> None:
+    gateway = TrackingGateway()
+    render_service = TrackingRenderService()
+    outbox = Outbox(
+        gateway=gateway,
+        store=FakeMessageStore(),
+        render_service=render_service,
+    )
+    app = RuntimeApp(
+        gateway=gateway,
+        router=_default_router(),
+        thread_manager=InMemoryThreadManager(),
+        run_manager=InMemoryRunManager(),
+        channel_event_store=InMemoryChannelEventStore(),
+        pipeline=ThreadPipeline(
+            agent_runtime=FakeAgentRuntime(),
+            outbox=outbox,
+            run_manager=InMemoryRunManager(),
+            thread_manager=InMemoryThreadManager(),
+        ),
+        agent_loader=_agent_loader,
+        render_service=render_service,
+    )
+
+    await app.start()
+    await app.stop()
+
+    assert render_service.closed == 1
+
+
+async def test_runtime_app_stop_surfaces_render_service_close_failure() -> None:
+    gateway = TrackingGateway()
+    render_service = ExplodingRenderService()
+    outbox = Outbox(
+        gateway=gateway,
+        store=FakeMessageStore(),
+        render_service=render_service,
+    )
+    app = RuntimeApp(
+        gateway=gateway,
+        router=_default_router(),
+        thread_manager=InMemoryThreadManager(),
+        run_manager=InMemoryRunManager(),
+        channel_event_store=InMemoryChannelEventStore(),
+        pipeline=ThreadPipeline(
+            agent_runtime=FakeAgentRuntime(),
+            outbox=outbox,
+            run_manager=InMemoryRunManager(),
+            thread_manager=InMemoryThreadManager(),
+        ),
+        agent_loader=_agent_loader,
+        render_service=render_service,
+    )
+
+    await app.start()
+
+    try:
+        await app.stop()
+    except RuntimeError as exc:
+        assert str(exc) == "render service close exploded"
+    else:
+        raise AssertionError("expected render close failure")
+
+    assert render_service.closed == 1
