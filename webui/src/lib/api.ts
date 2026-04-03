@@ -143,8 +143,8 @@ function cachePrefixesForPath(path: string): string[] {
   if (path.startsWith("/api/runtime/reload-config")) {
     return ["/api/runtime/reload-config", "/api/system/configuration", "/api/admins"]
   }
-  if (path.startsWith("/api/system/plugins/config") || path.startsWith("/api/plugins/reload")) {
-    return ["/api/system/plugins/config", "/api/status"]
+  if (path.startsWith("/api/system/plugins")) {
+    return ["/api/system/plugins", "/api/status"]
   }
   if (path.startsWith("/api/soul")) {
     return ["/api/soul"]
