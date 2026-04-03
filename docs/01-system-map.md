@@ -78,13 +78,13 @@ types → gateway / agent → runtime → webui（通过 HTTP API）
 
 `runtime/model/model_agent_runtime.py`
 
-读取 prompt、解析当前 run 可见的 tools、通过 ContextAssembler 组装最终上下文、调 `BaseAgent.run()`、把结果转成 runtime 结构。
+读取 prompt、解析当前 run 可见的 tools、通过 ContextAssembler 组装最终上下文、调 `BaseAgent.run()`、把结果转成 runtime 结构。默认 assistant 文本回复是否要补发，也在这里决定：内容型 `SEND_MESSAGE_INTENT` 已存在时，本轮不再额外补 `SEND_TEXT`。
 
 ### 6. Outbox 发消息
 
 `runtime/outbox.py`
 
-决定哪些动作发到平台、哪些属于送达事实、哪些写 `MessageStore`。
+决定哪些动作发到平台、哪些属于送达事实、哪些写 `MessageStore`。统一 `message` tool 的 `SEND_MESSAGE_INTENT` 也在这里物化成真正的平台消息，并把 cross-session send 的送达事实定向写到 destination thread，而不是来源 thread。
 
 ## Runtime 子域
 

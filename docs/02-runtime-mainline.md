@@ -112,6 +112,7 @@ RunContext 携带 SessionRuntime 算出的全部决策（event_facts、surface_r
 - **消息整理和模型输入分开**：`message_preparation_service` 产出 history 版、model 版和 memory_candidates 版，pipeline 再决定各版本去向。改图片理解、reply 展开、history 投影时看 preparation service。
 - **compaction/retrieval/memory 都在 agent 前**：模型看到的上下文是 compaction 后的工作记忆 + retrieval planner 的 retained history/summary + memory broker 取回的记忆 + 当前轮 model_content。
 - **hook 是正式扩展点**：ON_EVENT、PRE_AGENT、POST_AGENT、BEFORE_SEND、ON_SENT。横切逻辑优先用 hook。
+- **cross-session send 只回写 destination thread**：`OutboxItem` 会同时带 `origin_thread_id` 和 `destination_thread_id`。`ThreadPipeline._update_thread_after_send()` 在同会话时继续写当前 thread；目标 thread 不同时，会单独 `get_or_create(destination_thread_id, channel_scope=destination_conversation_id)` 并把 assistant 内容写到目标 thread，来源 thread 只保留用户输入。
 
 ## Agent 阶段
 
@@ -126,9 +127,17 @@ PromptLoader.load(...)  →  ToolBroker.build_tool_runtime(...)
 
 `ask_backend` 是特殊工具（前台到后台 maintainer 的桥），不属于 `builtin:computer`，依赖 backend session 是否 configured，不是所有 agent 都能看见。
 
+`message.action="send"` 的默认回复抑制也在这里落地，而不是在 Gateway 或 Outbox 猜：如果 tool 已经产出内容型 `SEND_MESSAGE_INTENT`，`ModelAgentRuntime` 就不再额外拼一条默认 `SEND_TEXT`。
+
 ## Outbox 阶段
 
 `src/acabot/runtime/outbox.py` 把 `PlannedAction` 真正发出去并记录送达的消息事实。原则：只有真正产生消息事实的动作才写入 MessageStore，状态动作和管理动作不伪装成 assistant message。
+
+对统一 `message` tool 来说，`SEND_MESSAGE_INTENT` 不是最终要发的平台动作。Outbox 会在这里把它物化成一条低层 `SEND_SEGMENTS`：
+- 段顺序固定为 `at -> text -> images -> render-fallback-text`
+- `reply_to` 继续留在 `Action.reply_to`
+- `target` 解析出的 destination contract 会同时驱动消息事实落库、working memory 更新和 LTM dirty 标记
+- 当前没有 render backend 时，`render` 直接退化成普通 text segment，不中断发送链路
 
 ## 收尾阶段
 

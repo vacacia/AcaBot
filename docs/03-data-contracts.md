@@ -119,6 +119,14 @@ StandardEvent → EventFacts → SessionConfig/SurfaceResolution → 各 Decisio
 
 `PlannedAction`（待发送动作规划，含 `action_id`、`action`、`thread_content`、`commit_when`）→ `DeliveryResult`（单个动作投递结果，含 `ok`、`platform_message_id`、`error`）→ `OutboxItem`（Outbox 发送项）→ `DispatchReport`（一批动作的汇总结果，含 `results`、`delivered_items`、`failed_action_ids`、`has_failures`）。
 
+`OutboxItem` 现在显式保留两套目标语义：
+- `origin_thread_id`：本轮 run 的来源 thread，也就是用户当前正在触发的 runtime thread。
+- `destination_conversation_id`：真正要投递到的外部对话容器 ID。
+- `destination_thread_id`：真正落工作记忆、消息事实、LTM dirty 标记的 runtime thread。
+- `append_to_origin_thread`：当前送达内容是否还要补回来源 thread。普通同会话回复为 `True`，cross-session send 为 `False`。
+
+`thread_id` 仍暂时保留给旧代码兼容，但新逻辑必须优先使用 `origin_thread_id` / `destination_thread_id`，不能再把 `conversation_id` 和 `thread_id` 当成一个字段混着传。
+
 ### 审批和恢复
 
 `PendingApproval`（run 被工具打断后的审批现场）、`PendingApprovalRecord`（重启恢复后识别出的待审批记录）、`RecoveryReport`（启动恢复汇总）。
@@ -126,6 +134,8 @@ StandardEvent → EventFacts → SessionConfig/SurfaceResolution → 各 Decisio
 ### AgentRuntimeResult
 
 `contracts/context.py`。agent runtime 执行完后的返回（`status`、`text`、`actions`、`artifacts`、`usage`、`tool_calls`、`model_used`、`error`、`pending_approval`、`metadata`、`raw`）。不是最终送达结果——真正发送后的结果在 DispatchReport 里。
+
+默认 assistant 文本回复是否要追加，也在这一层决定：`ModelAgentRuntime._to_runtime_result()` 只要看到已提交动作里存在 `ActionType.SEND_MESSAGE_INTENT` 且 `metadata["suppresses_default_reply"] is True`，就不再额外补一条 `SEND_TEXT`。`REACTION` / `RECALL` 这类非内容型动作即使 metadata 里带了同名标记，也不会触发抑制。
 
 ### RunStep
 
