@@ -131,7 +131,7 @@ def test_context_assembler_orders_system_prompt_and_message_slots() -> None:
 
     assembled = assembler.assemble(ctx, base_prompt="base", tool_runtime=ToolRuntime())
 
-    assert assembled.system_prompt == "base"
+    assert assembled.system_prompt == "base\n\n所有工作都在 /workspace 中完成。"
     assert [item["content"] for item in assembled.messages] == ["self", "retrieved", "hello"]
 
 
@@ -202,3 +202,16 @@ def test_context_assembler_uses_memory_block_declared_target_slot() -> None:
 
     assert "外部 RAG 要求进入 system prompt" in assembled.system_prompt
     assert [item["content"] for item in assembled.messages] == ["sticky note", "hello"]
+
+
+def test_context_assembler_always_adds_workspace_system_reminder() -> None:
+    assembler = ContextAssembler()
+    ctx = _assembler_ctx(
+        retrieval_plan=RetrievalPlan(retained_history=[]),
+        message_projection=MessageProjection(history_text="hello", model_content="hello"),
+    )
+
+    assembled = assembler.assemble(ctx, base_prompt="base", tool_runtime=ToolRuntime())
+
+    assert "所有工作都在 /workspace 中完成" in assembled.system_prompt
+    assert "QQ 本地文件" not in assembled.system_prompt

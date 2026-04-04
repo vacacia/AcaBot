@@ -510,6 +510,30 @@ async def test_outbox_thread_projection_preserves_render_source_while_fact_text_
     }
 
 
+async def test_outbox_render_artifact_path_remains_runtime_internal(tmp_path: Path) -> None:
+    gateway = FakeGateway()
+    store = FakeMessageStore()
+    artifact_path = tmp_path / "runtime_data" / "render.png"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    render_service = FakeRenderService(
+        RenderResult.ok(
+            backend_name="playwright",
+            artifact_path=artifact_path,
+            html="<p>rendered</p>",
+        )
+    )
+    outbox = Outbox(gateway=gateway, store=store, render_service=render_service)
+    ctx = _send_intent_context(render="# Title")
+
+    report = await outbox.dispatch(ctx)
+
+    sent_action = gateway.sent[0]
+    assert report.has_failures is False
+    assert sent_action.payload["segments"] == [{"type": "image", "data": {"file": str(artifact_path)}}]
+    assert str(artifact_path).startswith(str(tmp_path / "runtime_data"))
+    assert not str(artifact_path).startswith("/workspace/")
+
+
 @pytest.mark.parametrize("status", ["unavailable", "error"])
 async def test_outbox_render_falls_back_to_raw_text_when_injected_service_cannot_render(
     status: str,

@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from acabot.config import Config
 from acabot.runtime import ResolvedAgent, ComputerPolicy, ToolBroker, ToolExecutionContext, build_runtime_components
 from acabot.runtime.builtin_tools.computer import BuiltinComputerToolSurface
-from acabot.runtime.builtin_tools.message import BUILTIN_MESSAGE_TOOL_SOURCE
+from acabot.runtime.builtin_tools.message import BUILTIN_MESSAGE_TOOL_SOURCE, BuiltinMessageToolSurface
 from acabot.types import EventSource
 
 from tests.runtime._agent_fakes import FakeAgent, FakeAgentResponse
@@ -577,6 +577,73 @@ async def test_builtin_computer_surface_keeps_image_blocks_in_read_result() -> N
     assert isinstance(result.llm_content, list)
     assert result.llm_content[0]["type"] == "text"
     assert result.llm_content[1]["type"] == "image_url"
+
+
+def test_message_tool_contract_describes_workspace_relative_local_file_rule() -> None:
+    broker = ToolBroker()
+    surface = BuiltinMessageToolSurface()
+    surface.register(broker)
+
+    registration = next(item for item in broker.list_registered_tools() if item["name"] == "message")
+    images_description = registration["parameters"]["properties"]["images"]["description"]
+
+    assert "relative paths under the workspace" in images_description
+    assert "copy or move it into the workspace first" in images_description
+
+
+async def test_message_tool_rewrites_relative_local_file_paths_into_workspace_world_paths() -> None:
+    broker = ToolBroker()
+    surface = BuiltinMessageToolSurface()
+    surface.register(broker)
+    ctx = _tool_execution_context(enabled_tools=["message"])
+
+    result = await broker.execute(
+        tool_name="message",
+        arguments={"action": "send", "images": ["reports/out.png"]},
+        ctx=ctx,
+    )
+
+    plan = result.user_actions[0]
+    assert plan.action.payload["images"] == ["/workspace/reports/out.png"]
+
+
+async def test_message_tool_rejects_absolute_local_file_paths_for_qq_send() -> None:
+    broker = ToolBroker()
+    surface = BuiltinMessageToolSurface()
+    surface.register(broker)
+    ctx = _tool_execution_context(enabled_tools=["message"])
+
+    result = await broker.execute(
+        tool_name="message",
+        arguments={"action": "send", "images": ["/tmp/out.png"]},
+        ctx=ctx,
+    )
+
+    assert "relative path" in result.llm_content
+    assert result.user_actions == []
+
+
+async def test_message_tool_rejects_parent_traversal_local_file_paths_for_qq_send() -> None:
+    broker = ToolBroker()
+    surface = BuiltinMessageToolSurface()
+    surface.register(broker)
+    ctx = _tool_execution_context(enabled_tools=["message"])
+
+    parent_result = await broker.execute(
+        tool_name="message",
+        arguments={"action": "send", "images": ["../secret/out.png"]},
+        ctx=ctx,
+    )
+    dotted_parent_result = await broker.execute(
+        tool_name="message",
+        arguments={"action": "send", "images": ["./../secret/out.png"]},
+        ctx=ctx,
+    )
+
+    assert "relative path" in parent_result.llm_content or "safe relative path" in parent_result.llm_content
+    assert parent_result.user_actions == []
+    assert "relative path" in dotted_parent_result.llm_content or "safe relative path" in dotted_parent_result.llm_content
+    assert dotted_parent_result.user_actions == []
 
 
 # endregion

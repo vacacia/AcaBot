@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from pathlib import PurePosixPath
 from typing import Any
 
 from acabot.agent import ToolSpec
@@ -24,6 +25,7 @@ from ..tool_broker import ToolBroker, ToolExecutionContext, ToolResult
 BUILTIN_MESSAGE_TOOL_SOURCE = "builtin:message"
 
 _CANONICAL_CONVERSATION_RE = re.compile(r"^qq:(group|user):[A-Za-z0-9._@!-]+$")
+_REMOTE_PREFIXES = ("http://", "https://", "data:", "base64://")
 _REACTION_EMOJI_IDS = {
     "thumbs_up": 76,
     "+1": 76,
@@ -86,13 +88,18 @@ class BuiltinMessageToolSurface:
                         "type": "array",
                         "items": {"type": "string"},
                         "description": (
-                            "Optional local file paths or remote URLs for action=send."
+                            "Optional remote URLs, inline data URLs, or QQ local file refs for "
+                            "action=send. QQ local files must be given as relative paths under the "
+                            "workspace. The tool rewrites those relative paths to internal "
+                            "/workspace/... refs before delivery. If you want to send a file from "
+                            "another visible path, copy or move it into the workspace first."
                         ),
                     },
                     "render": {
                         "type": "string",
                         "description": (
-                            "Optional Markdown plus LaTeX math source for action=send."
+                            "Optional Markdown plus LaTeX math source for action=send. The content "
+                            "will be rendered into an image and sent."
                         ),
                     },
                     "reply_to": {
@@ -266,8 +273,32 @@ class BuiltinMessageToolSurface:
             return []
         if not isinstance(value, list):
             raise ValueError("images must be a list of strings")
-        items = [str(item or "").strip() for item in value]
-        return [item for item in items if item]
+        normalized: list[str] = []
+        for item in value:
+            text = str(item or "").strip()
+            if not text:
+                continue
+            normalized.append(cls._normalize_send_image_ref(text))
+        return normalized
+
+    @classmethod
+    def _normalize_send_image_ref(cls, file_ref: str) -> str:
+        """规范 action=send 的图片引用.
+
+        远程 URL / data URL 直接透传；QQ 本地文件发送只接受 `/workspace` 下的安全相对路径。
+        """
+
+        raw = str(file_ref or "").strip()
+        if raw.startswith(_REMOTE_PREFIXES):
+            return raw
+        path = PurePosixPath(raw)
+        if path.is_absolute():
+            raise ValueError("QQ local file sends require a relative path under /workspace")
+        parts = path.parts
+        if not parts or any(part in {"", ".", ".."} for part in parts):
+            raise ValueError("QQ local file sends require a safe relative path under /workspace")
+        normalized = PurePosixPath(*parts).as_posix()
+        return f"/workspace/{normalized}"
 
     @classmethod
     def _resolve_send_target(
