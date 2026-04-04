@@ -29,30 +29,30 @@
 
 ### Scheduler
 
-- [x] **SCHED-01**: 支持 cron 表达式定时任务（使用 croniter 解析）
-- [x] **SCHED-02**: 支持 interval（固定间隔）定时任务
-- [x] **SCHED-03**: 支持 one-shot（一次性延迟）任务
-- [x] **SCHED-04**: 任务持久化，runtime 重启后恢复
-- [x] **SCHED-05**: 任务可取消（按 task_id）
-- [x] **SCHED-06**: Graceful shutdown（cancel all + gather，scheduler 最先停）
-- [x] **SCHED-07**: 插件生命周期绑定（unload 时 unregister_by_owner 自动取消）
-- [x] **SCHED-08**: RuntimeApp 生命周期集成（start 后启动，stop 时最先关闭）
+- [ ] **SCHED-01**: 支持 cron 表达式定时任务（使用 croniter 解析）
+- [ ] **SCHED-02**: 支持 interval（固定间隔）定时任务
+- [ ] **SCHED-03**: 支持 one-shot（一次性延迟）任务
+- [ ] **SCHED-04**: 任务持久化，runtime 重启后恢复
+- [ ] **SCHED-05**: 任务可取消（按 task_id）
+- [ ] **SCHED-06**: Graceful shutdown（cancel all + gather，scheduler 最先停）
+- [ ] **SCHED-07**: 插件生命周期绑定（unload 时 unregister_by_owner 自动取消）
+- [ ] **SCHED-08**: RuntimeApp 生命周期集成（start 后启动，stop 时最先关闭）
 
 ### Logging / Observability
 
-- [x] **LOG-01**: 工具调用日志包含结构化字段（tool_name, duration, result_summary）
-- [x] **LOG-02**: LLM token 用量 per run 记录（input/output/total tokens, model, cost）
-- [x] **LOG-03**: 错误日志自动关联 run context（run_id, thread_id, agent_id）
-- [x] **LOG-04**: WebUI 日志查看器能展示结构化字段（不只是纯文本）
-- [x] **LOG-05**: LTM extraction/query 过程日志可见
-- [x] **LOG-06**: structlog 集成（wrapping stdlib logging，contextvars 传播 run context）
+- [ ] **LOG-01**: 工具调用日志包含结构化字段（tool_name, duration, result_summary）
+- [ ] **LOG-02**: LLM token 用量 per run 记录（input/output/total tokens, model, cost）
+- [ ] **LOG-03**: 错误日志自动关联 run context（run_id, thread_id, agent_id）
+- [ ] **LOG-04**: WebUI 日志查看器能展示结构化字段（不只是纯文本）
+- [ ] **LOG-05**: LTM extraction/query 过程日志可见
+- [ ] **LOG-06**: structlog 集成（wrapping stdlib logging，contextvars 传播 run context）
 
 ### LTM Data Safety
 
-- [x] **LTM-01**: asyncio.Lock 写序列化（防止并发写损坏）
-- [x] **LTM-02**: 定期备份能力（通过 scheduler 触发）
-- [x] **LTM-03**: 启动时完整性检查（检测损坏表/缺失 manifest）
-- [x] **LTM-04**: LTM 失败时优雅降级（不阻断 pipeline，记录错误继续）
+- [ ] **LTM-01**: asyncio.Lock 写序列化（防止并发写损坏）
+- [ ] **LTM-02**: 定期备份能力（通过 scheduler 触发）
+- [ ] **LTM-03**: 启动时完整性检查（检测损坏表/缺失 manifest）
+- [ ] **LTM-04**: LTM 失败时优雅降级（不阻断 pipeline，记录错误继续）
 
 ### Unified Message Tool
 
@@ -63,7 +63,7 @@
 - [x] **MSG-05**: 撤回消息（recall 指定消息）
 - [x] **MSG-06**: 媒体/附件发送（图片、文件路径）
 - [x] **MSG-07**: 工具层只表达意图，映射到 Action → Outbox → Gateway
-- [x] **MSG-08**: 文转图渲染（Playwright render_markdown_to_image）
+- [ ] **MSG-08**: 文转图渲染（Playwright render_markdown_to_image）
 - [x] **MSG-09**: 跨会话消息发送（target 参数指定目标会话）
 - [x] **MSG-10**: 具体工具 schema / 字段设计在 discuss-phase 时敲定
 
@@ -117,40 +117,40 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| REF-01 | 1 | Validated |
-| REF-02 | 1 | Validated |
-| REF-03 | 1 | Validated |
-| PLUG-01 | 2 | Validated |
-| PLUG-02 | 2 | Validated |
-| PLUG-03 | 2 | Validated |
-| PLUG-04 | 2 | Validated |
-| PLUG-05 | 2 | Validated |
-| PLUG-06 | 2 | Validated |
-| PLUG-07 | 2 | Validated |
-| PLUG-08 | 2 | Validated |
-| PLUG-09 | 2 | Validated |
-| PLUG-10 | 2 | Validated |
-| PLUG-11 | 2 | Validated |
-| PLUG-12 | 2 | Validated |
-| PLUG-13 | 2 | Validated |
-| SCHED-01 | 3a | Validated |
-| SCHED-02 | 3a | Validated |
-| SCHED-03 | 3a | Validated |
-| SCHED-04 | 3a | Validated |
-| SCHED-05 | 3a | Validated |
-| SCHED-06 | 3a | Validated |
-| SCHED-07 | 3a | Validated |
-| SCHED-08 | 3a | Validated |
-| LOG-01 | 3c | Validated |
-| LOG-02 | 3c | Validated |
-| LOG-03 | 3c | Validated |
-| LOG-04 | 3c | Validated |
-| LOG-05 | 3c | Validated |
-| LOG-06 | 3c | Validated |
-| LTM-01 | 3b | Validated |
-| LTM-02 | 3b | Validated |
-| LTM-03 | 3b | Validated |
-| LTM-04 | 3b | Validated |
+| REF-01 | 5 | Validated |
+| REF-02 | 5 | Validated |
+| REF-03 | 5 | Validated |
+| PLUG-01 | 5 | Validated |
+| PLUG-02 | 5 | Validated |
+| PLUG-03 | 5 | Validated |
+| PLUG-04 | 5 | Validated |
+| PLUG-05 | 5 | Validated |
+| PLUG-06 | 5 | Validated |
+| PLUG-07 | 5 | Validated |
+| PLUG-08 | 5 | Validated |
+| PLUG-09 | 5 | Validated |
+| PLUG-10 | 5 | Validated |
+| PLUG-11 | 5 | Validated |
+| PLUG-12 | 5 | Validated |
+| PLUG-13 | 5 | Validated |
+| SCHED-01 | 6 | Pending |
+| SCHED-02 | 6 | Pending |
+| SCHED-03 | 6 | Pending |
+| SCHED-04 | 6 | Pending |
+| SCHED-05 | 6 | Pending |
+| SCHED-06 | 6 | Pending |
+| SCHED-07 | 6 | Pending |
+| SCHED-08 | 6 | Pending |
+| LOG-01 | 6 | Pending |
+| LOG-02 | 6 | Pending |
+| LOG-03 | 6 | Pending |
+| LOG-04 | 6 | Pending |
+| LOG-05 | 6 | Pending |
+| LOG-06 | 6 | Pending |
+| LTM-01 | 6 | Pending |
+| LTM-02 | 6 | Pending |
+| LTM-03 | 6 | Pending |
+| LTM-04 | 6 | Pending |
 | MSG-01 | 4 | Validated |
 | MSG-02 | 4 | Validated |
 | MSG-03 | 4 | Validated |
@@ -158,7 +158,7 @@
 | MSG-05 | 4 | Validated |
 | MSG-06 | 4 | Validated |
 | MSG-07 | 4 | Validated |
-| MSG-08 | 4 | Validated |
+| MSG-08 | 7 | Pending |
 | MSG-09 | 4 | Validated |
 | MSG-10 | 4 | Validated |
 | PW-01 | 4 | Validated |
@@ -167,9 +167,11 @@
 
 **Coverage:**
 - v1 requirements: 47 total
+- Validated: 28
+- Pending gap closure: 19
 - Mapped to phases: 47
 - Unmapped: 0 ✅
 
 ---
 *Requirements defined: 2026-04-02*
-*Last updated: 2026-04-04 after Phase 04 re-verification — v1 requirements validated against current phase artifacts*
+*Last updated: 2026-04-04 after Phase 05 foundation artifact backfill close-out*

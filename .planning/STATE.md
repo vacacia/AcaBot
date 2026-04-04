@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 04
+current_phase: 05
 current_plan: 4
-status: Phase 04 verified — milestone archive pending
-stopped_at: Milestone v1.0 summary generated
-resume_file: .planning/reports/MILESTONE_SUMMARY-v1.0.md
-last_updated: "2026-04-04T06:39:58Z"
+status: Phase 05 foundation artifact backfill completed — top-level traceability, audit evidence, and Nyquist close-out updated
+stopped_at: Completed 05-04-PLAN.md close-out
+resume_file: .planning/phases/05-foundation-artifact-backfill/05-04-SUMMARY.md
+last_updated: "2026-04-04T00:00:00Z"
 progress:
-  total_phases: 6
+  total_phases: 9
   completed_phases: 6
   total_plans: 4
   completed_plans: 4
@@ -17,10 +17,10 @@ progress:
 
 # Project State
 
-**Current Phase:** 04
-**Phase Status:** Verified — archive pending
-**Current Plan:** 4
-**Total Plans in Phase:** 04
+**Current Phase:** 05
+**Phase Status:** Foundation artifact backfill completed
+**Current Plan:** 05-04
+**Total Plans in Phase:** 4
 **Updated:** 2026-04-04
 
 ## Phase Progress
@@ -33,6 +33,9 @@ progress:
 | 3b | LTM Data Safety | **Executed ✅** | LTM-01..04 |
 | 3c | Logging & Observability | **Executed ✅** | LOG-01..06 |
 | 4 | Unified Message Tool + Playwright | **Verified ✅** | MSG-01..10, PW-01..03 |
+| 5 | Foundation Artifact Backfill | **Completed ✅** | REF-01..03, PLUG-01..13 |
+| 6 | Runtime Infra Artifact Backfill | **Queued ⏳** | SCHED-01..08, LTM-01..04, LOG-01..06 |
+| 7 | Render Readability + Workspace Boundary | **Queued ⏳** | MSG-08 |
 
 ## Active Plans
 
@@ -80,6 +83,13 @@ progress:
 - ✅ re-verify 已通过: `OutboundMessageProjection + source_intent + Outbox._ensure_thread_content()` 让真实 `message.send` 也能把 continuity 文本写回 destination thread
 - ✅ 追加验证命令 `PYTHONPATH=src uv run pytest -q tests/runtime/test_outbox.py -k 'thread_content or cross_session or render_fallback'` 通过, 共 3 tests passed
 - ✅ 追加验证命令 `PYTHONPATH=src uv run pytest -q tests/runtime/test_pipeline_runtime.py -k 'cross_session'` 通过, 共 2 tests passed
+
+### Phase 5
+
+- ✅ `.planning/REQUIREMENTS.md` 已把 `REF-01..03` 和 `PLUG-01..13` 全部改成 `[x]`, Traceability 也全部改成 `| 5 | Validated |`
+- ✅ Phase 01 / 02 的 summary、verification、validation 工件链已经补齐, foundation artifact chain 恢复完整
+- ✅ 重新运行 milestone audit 后, foundation orphan gap 已从顶层 audit 清空
+- ✅ Phase 05 自己已有 verification 和 validation close-out, 不再停在 draft / pending 状态
 
 ## Commits
 
@@ -144,7 +154,16 @@ progress:
 
 ## Blockers
 
-None.
+- Phase 06 not yet planned or executed: Phase 3a / 3b / 3c evidence chain still needs real GSD closure
+- Phase 07 not yet planned or executed: real-client render readability and workspace / `runtime_data` contract still open
+
+## Audit Result
+
+- Audit report: `.planning/v1.0-MILESTONE-AUDIT.md`
+- Current routing:
+  - next command -> `$gsd-plan-phase 06`
+  - after Phase 06 -> `$gsd-plan-phase 07`
+  - out-of-scope urgent bugs -> `$gsd-insert-phase`
 
 ---
-*Last updated: 2026-04-04*
+*Last updated: 2026-04-04 after Phase 05 foundation artifact backfill close-out*
