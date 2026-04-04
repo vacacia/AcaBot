@@ -39,6 +39,10 @@ runtime:
   computer:
     backend: "host"
 
+  render:
+    width: 960
+    device_scale_factor: 2.0
+
   long_term_memory:
     enabled: false
     # backup:

@@ -16,6 +16,9 @@ from .protocol import RenderRequest, RenderResult
 
 StartPlaywright = Callable[[], Awaitable[Any]]
 
+DEFAULT_RENDER_VIEWPORT_WIDTH = 960
+DEFAULT_RENDER_DEVICE_SCALE_FACTOR = 2.0
+
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="zh-CN">
   <head>
@@ -35,7 +38,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
       .render-shell {{
         box-sizing: border-box;
-        width: 960px;
+        width: 100%;
         padding: 40px;
       }}
 
@@ -77,11 +80,17 @@ class PlaywrightRenderBackend:
     """
 
     name = "playwright"
+    _default_viewport_width = DEFAULT_RENDER_VIEWPORT_WIDTH
+    _min_viewport_width = 320
+    _default_device_scale_factor = DEFAULT_RENDER_DEVICE_SCALE_FACTOR
+    _min_device_scale_factor = 1.0
 
     def __init__(
         self,
         *,
         start_playwright: StartPlaywright | None = None,
+        viewport_width: int = DEFAULT_RENDER_VIEWPORT_WIDTH,
+        device_scale_factor: float = DEFAULT_RENDER_DEVICE_SCALE_FACTOR,
     ) -> None:
         """初始化 backend."""
 
@@ -90,17 +99,39 @@ class PlaywrightRenderBackend:
         self._browser: Any | None = None
         self._browser_lock = asyncio.Lock()
         self._markdown = self._build_markdown_renderer()
+        self._viewport_width = self._default_viewport_width
+        self._device_scale_factor = self._default_device_scale_factor
+        self.update_render_defaults(
+            viewport_width=viewport_width,
+            device_scale_factor=device_scale_factor,
+        )
+
+    def update_render_defaults(
+        self,
+        *,
+        viewport_width: int,
+        device_scale_factor: float,
+    ) -> None:
+        """更新 render 默认截图参数."""
+
+        self._viewport_width = self._normalize_viewport_width(viewport_width)
+        self._device_scale_factor = self._normalize_device_scale_factor(
+            device_scale_factor
+        )
 
     async def render_markdown_to_image(self, request: RenderRequest) -> RenderResult:
         """把 markdown 渲染成 HTML, 再截图成 png."""
 
         document_html = self._build_document(request.source_markdown)
         request.artifacts.html_path.write_text(document_html, encoding="utf-8")
-        page = None
+        context = None
         try:
             browser = await self._ensure_browser()
-            page = await browser.new_page()
-            await page.set_viewport_size({"width": 960, "height": 540})
+            context = await browser.new_context(
+                viewport={"width": self._viewport_width, "height": 720},
+                device_scale_factor=self._device_scale_factor,
+            )
+            page = await context.new_page()
             await page.set_content(document_html, wait_until="load")
             await page.screenshot(
                 path=str(request.artifacts.image_path),
@@ -122,8 +153,8 @@ class PlaywrightRenderBackend:
                 metadata={"html_path": str(request.artifacts.html_path)},
             )
         finally:
-            if page is not None:
-                await page.close()
+            if context is not None:
+                await context.close()
 
     async def close(self) -> None:
         """关闭 browser 和 playwright."""
@@ -154,6 +185,22 @@ class PlaywrightRenderBackend:
 
         body = self._markdown.render(markdown_text)
         return HTML_TEMPLATE.format(body=body)
+
+    @classmethod
+    def _normalize_viewport_width(cls, viewport_width: Any) -> int:
+        """规范化 viewport 宽度配置."""
+
+        if viewport_width in (None, ""):
+            viewport_width = cls._default_viewport_width
+        return max(cls._min_viewport_width, int(viewport_width))
+
+    @classmethod
+    def _normalize_device_scale_factor(cls, device_scale_factor: Any) -> float:
+        """规范化 device scale factor 配置."""
+
+        if device_scale_factor in (None, ""):
+            device_scale_factor = cls._default_device_scale_factor
+        return max(cls._min_device_scale_factor, float(device_scale_factor))
 
     @staticmethod
     def _build_markdown_renderer() -> MarkdownIt:

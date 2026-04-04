@@ -46,6 +46,10 @@ from acabot.runtime import (
     build_runtime_components,
 )
 from acabot.runtime.render import PlaywrightRenderBackend, RenderService
+from acabot.runtime.render.playwright_backend import (
+    DEFAULT_RENDER_DEVICE_SCALE_FACTOR,
+    DEFAULT_RENDER_VIEWPORT_WIDTH,
+)
 from acabot.runtime.memory.long_term_memory.storage import LanceDbLongTermMemoryStore
 from acabot.runtime.contracts import PendingApproval
 from acabot.runtime.bootstrap.builders import build_payload_json_writer
@@ -411,6 +415,145 @@ def test_build_runtime_components_registers_playwright_backend_in_default_render
     assert components.render_service.backend_names() == ("playwright",)
     backend = components.render_service.get_backend("playwright")
     assert isinstance(backend, PlaywrightRenderBackend)
+
+
+def test_build_runtime_components_reads_render_defaults_from_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class SpyPlaywrightRenderBackend:
+        name = "playwright"
+
+        def __init__(
+            self,
+            *,
+            start_playwright=None,
+            viewport_width: int,
+            device_scale_factor: float,
+        ) -> None:
+            captured["start_playwright"] = start_playwright
+            captured["viewport_width"] = viewport_width
+            captured["device_scale_factor"] = device_scale_factor
+
+        async def render_markdown_to_image(self, request) -> object:
+            raise AssertionError(f"unexpected render request: {request}")
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "acabot.runtime.bootstrap.PlaywrightRenderBackend",
+        SpyPlaywrightRenderBackend,
+    )
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""
+agent:
+  system_prompt: You are Aca.
+runtime:
+  runtime_root: {tmp_path / 'runtime_data'}
+  render:
+    width: 1280
+    device_scale_factor: 2.5
+""".strip(),
+        encoding="utf-8",
+    )
+    config = Config.from_file(str(config_path))
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    backend = components.render_service.get_backend("playwright")
+
+    assert isinstance(backend, SpyPlaywrightRenderBackend)
+    assert captured == {
+        "start_playwright": None,
+        "viewport_width": 1280,
+        "device_scale_factor": 2.5,
+    }
+
+
+def test_build_runtime_components_invalid_render_config_falls_back_to_defaults(
+    tmp_path: Path,
+) -> None:
+    _write_minimal_session(tmp_path)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""
+agent:
+  system_prompt: You are Aca.
+runtime:
+  filesystem:
+    base_dir: {tmp_path}
+  runtime_root: {tmp_path / 'runtime_data'}
+  render:
+    width: nope
+    device_scale_factor: invalid
+""".strip(),
+        encoding="utf-8",
+    )
+    config = Config.from_file(str(config_path))
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    backend = components.render_service.get_backend("playwright")
+
+    assert isinstance(backend, PlaywrightRenderBackend)
+    assert backend._viewport_width == DEFAULT_RENDER_VIEWPORT_WIDTH
+    assert backend._device_scale_factor == DEFAULT_RENDER_DEVICE_SCALE_FACTOR
+
+
+@pytest.mark.parametrize(
+    ("width_value", "device_scale_factor_value", "expected_width", "expected_device_scale_factor"),
+    [
+        (".inf", "2.5", DEFAULT_RENDER_VIEWPORT_WIDTH, 2.5),
+        ("1280", ".inf", 1280, DEFAULT_RENDER_DEVICE_SCALE_FACTOR),
+        ("1280", ".nan", 1280, DEFAULT_RENDER_DEVICE_SCALE_FACTOR),
+    ],
+)
+def test_build_runtime_components_non_finite_render_config_falls_back_to_defaults(
+    tmp_path: Path,
+    width_value: str,
+    device_scale_factor_value: str,
+    expected_width: int,
+    expected_device_scale_factor: float,
+) -> None:
+    _write_minimal_session(tmp_path)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""
+agent:
+  system_prompt: You are Aca.
+runtime:
+  filesystem:
+    base_dir: {tmp_path}
+  runtime_root: {tmp_path / 'runtime_data'}
+  render:
+    width: {width_value}
+    device_scale_factor: {device_scale_factor_value}
+""".strip(),
+        encoding="utf-8",
+    )
+    config = Config.from_file(str(config_path))
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    backend = components.render_service.get_backend("playwright")
+
+    assert isinstance(backend, PlaywrightRenderBackend)
+    assert backend._viewport_width == expected_width
+    assert backend._device_scale_factor == expected_device_scale_factor
 
 
 def test_build_runtime_components_accepts_ask_backend_in_session_agent_catalog(

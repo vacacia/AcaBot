@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 
 from acabot.runtime.render.artifacts import render_artifacts
-from acabot.runtime.render.playwright_backend import PlaywrightRenderBackend
+from acabot.runtime.render.playwright_backend import (
+    DEFAULT_RENDER_DEVICE_SCALE_FACTOR,
+    DEFAULT_RENDER_VIEWPORT_WIDTH,
+    HTML_TEMPLATE,
+    PlaywrightRenderBackend,
+)
 from acabot.runtime.render.service import RenderService
 
 
@@ -42,10 +48,26 @@ class FakePage:
         self.closed += 1
 
 
+class FakeContext:
+    def __init__(self, options: dict[str, object]) -> None:
+        self.options = dict(options)
+        self.pages: list[FakePage] = []
+        self.closed = 0
+
+    async def new_page(self) -> FakePage:
+        page = FakePage()
+        self.pages.append(page)
+        return page
+
+    async def close(self) -> None:
+        self.closed += 1
+
+
 class FakeBrowser:
     def __init__(self) -> None:
         self.new_page_calls = 0
         self.pages: list[FakePage] = []
+        self.contexts: list[FakeContext] = []
         self.closed = 0
 
     async def new_page(self) -> FakePage:
@@ -53,6 +75,11 @@ class FakeBrowser:
         page = FakePage()
         self.pages.append(page)
         return page
+
+    async def new_context(self, **kwargs: object) -> FakeContext:
+        context = FakeContext(kwargs)
+        self.contexts.append(context)
+        return context
 
     async def close(self) -> None:
         self.closed += 1
@@ -131,11 +158,69 @@ async def test_playwright_backend_reuses_single_browser(
     assert isinstance(fake_playwright, FakePlaywright)
     assert state["starts"] == 1
     assert fake_playwright.chromium.launch_calls == 1
-    assert fake_browser.new_page_calls == 2
+    assert len(fake_browser.contexts) == 2
+    assert all(context.closed == 1 for context in fake_browser.contexts)
     assert first.status == "ok"
     assert second.status == "ok"
     assert fake_browser.closed == 1
     assert fake_playwright.stopped == 1
+
+
+@pytest.mark.asyncio
+async def test_playwright_backend_uses_centralized_render_defaults_when_not_configured(
+    tmp_path: Path,
+) -> None:
+    fake_browser = FakeBrowser()
+
+    async def start_playwright() -> FakePlaywright:
+        return FakePlaywright(fake_browser)
+
+    backend = PlaywrightRenderBackend(start_playwright=start_playwright)
+    service = RenderService(runtime_root=tmp_path / "runtime_data")
+    service.register_backend(backend.name, backend)
+
+    result = await service.render_markdown_to_image(
+        markdown_text="# Title",
+        conversation_id="qq:user:10001",
+        run_id="run:render-defaults",
+    )
+
+    context = fake_browser.contexts[0]
+    assert result.status == "ok"
+    assert context.options["viewport"] == {
+        "width": DEFAULT_RENDER_VIEWPORT_WIDTH,
+        "height": 720,
+    }
+    assert context.options["device_scale_factor"] == DEFAULT_RENDER_DEVICE_SCALE_FACTOR
+
+
+@pytest.mark.asyncio
+async def test_playwright_backend_uses_configured_viewport_and_device_scale_factor(
+    tmp_path: Path,
+) -> None:
+    fake_browser = FakeBrowser()
+
+    async def start_playwright() -> FakePlaywright:
+        return FakePlaywright(fake_browser)
+
+    backend = PlaywrightRenderBackend(
+        start_playwright=start_playwright,
+        viewport_width=1280,
+        device_scale_factor=2.0,
+    )
+    service = RenderService(runtime_root=tmp_path / "runtime_data")
+    service.register_backend(backend.name, backend)
+
+    result = await service.render_markdown_to_image(
+        markdown_text="# Title",
+        conversation_id="qq:user:10001",
+        run_id="run:render-config",
+    )
+
+    context = fake_browser.contexts[0]
+    assert result.status == "ok"
+    assert context.options["viewport"] == {"width": 1280, "height": 720}
+    assert context.options["device_scale_factor"] == 2.0
 
 
 @pytest.mark.asyncio
@@ -155,7 +240,8 @@ async def test_render_markdown_to_image_pipeline(tmp_path: Path) -> None:
         run_id="run:math",
     )
 
-    page = fake_browser.pages[0]
+    context = fake_browser.contexts[0]
+    page = context.pages[0]
     html = page.contents[0][0]
     assert result.status == "ok"
     assert result.html == html
@@ -165,6 +251,15 @@ async def test_render_markdown_to_image_pipeline(tmp_path: Path) -> None:
     assert 'display="block"' in html
     assert result.artifact_path is not None
     assert result.artifact_path.read_bytes() == b"fake-png"
+    assert context.closed == 1
+
+
+def test_playwright_html_template_keeps_render_shell_responsive() -> None:
+    assert re.search(
+        r"\.render-shell\s*\{[^}]*width:\s*100%;",
+        HTML_TEMPLATE,
+        re.DOTALL,
+    )
 
 
 def test_render_artifacts_stay_under_internal_runtime_paths(

@@ -3,6 +3,7 @@ r"""runtime.bootstrap 提供 runtime 默认组装入口."""
 from __future__ import annotations
 
 import logging
+import math
 
 from acabot.agent import BaseAgent
 from acabot.config import Config
@@ -45,7 +46,12 @@ from ..plugin_status import StatusStore
 from ..plugin_runtime_host import PluginRuntimeHost
 from ..plugin_reconciler import PluginReconciler
 from ..plugins import BackendBridgeToolPlugin
-from ..render import PlaywrightRenderBackend, RenderService
+from ..render import RenderService
+from ..render.playwright_backend import (
+    DEFAULT_RENDER_DEVICE_SCALE_FACTOR,
+    DEFAULT_RENDER_VIEWPORT_WIDTH,
+    PlaywrightRenderBackend,
+)
 from ..scheduler import RuntimeScheduler, SQLiteScheduledTaskStore
 from ..control.prompt_loader import PromptLoader, ReloadablePromptLoader
 from ..router import RuntimeRouter
@@ -106,6 +112,59 @@ def _resolve_shared_admin_actor_ids(
     }
 
 
+def _resolve_render_int(
+    *,
+    key: str,
+    value: object,
+    default: int,
+) -> int:
+    """在 bootstrap 期间安全解析 int 型 render 配置."""
+
+    if value in (None, ""):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        logger.warning(
+            "Invalid runtime.render.%s=%r, fallback to default %r",
+            key,
+            value,
+            default,
+        )
+        return default
+
+
+def _resolve_render_float(
+    *,
+    key: str,
+    value: object,
+    default: float,
+) -> float:
+    """在 bootstrap 期间安全解析 float 型 render 配置."""
+
+    if value in (None, ""):
+        return default
+    try:
+        resolved = float(value)
+    except (TypeError, ValueError, OverflowError):
+        logger.warning(
+            "Invalid runtime.render.%s=%r, fallback to default %r",
+            key,
+            value,
+            default,
+        )
+        return default
+    if not math.isfinite(resolved):
+        logger.warning(
+            "Invalid runtime.render.%s=%r, fallback to default %r",
+            key,
+            value,
+            default,
+        )
+        return default
+    return resolved
+
+
 def build_runtime_components(
     config: Config,
     *,
@@ -130,7 +189,7 @@ def build_runtime_components(
 ) -> RuntimeComponents:
     """根据配置和注入依赖组装一套最小 runtime 组件."""
 
-    runtime_conf = config.get("runtime", {})
+    runtime_conf = dict(config.get("runtime", {}) or {})
     default_computer_policy = build_default_computer_policy(config)
     bootstrap_defaults = build_bootstrap_defaults(
         config,
@@ -279,10 +338,27 @@ def build_runtime_components(
         resolution_service=runtime_message_resolution_service,
         projection_service=runtime_message_projection_service,
     )
+    render_conf = dict(runtime_conf.get("render", {}) or {})
+    viewport_width = _resolve_render_int(
+        key="width",
+        value=render_conf.get("width", DEFAULT_RENDER_VIEWPORT_WIDTH),
+        default=DEFAULT_RENDER_VIEWPORT_WIDTH,
+    )
+    device_scale_factor = _resolve_render_float(
+        key="device_scale_factor",
+        value=render_conf.get(
+            "device_scale_factor",
+            DEFAULT_RENDER_DEVICE_SCALE_FACTOR,
+        ),
+        default=DEFAULT_RENDER_DEVICE_SCALE_FACTOR,
+    )
     runtime_render_service = RenderService(
         runtime_root=resolve_runtime_path(config, ""),
     )
-    runtime_playwright_render_backend = PlaywrightRenderBackend()
+    runtime_playwright_render_backend = PlaywrightRenderBackend(
+        viewport_width=viewport_width,
+        device_scale_factor=device_scale_factor,
+    )
     runtime_render_service.register_backend(
         runtime_playwright_render_backend.name,
         runtime_playwright_render_backend,
