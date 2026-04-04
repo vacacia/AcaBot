@@ -283,6 +283,10 @@ class RuntimeHttpApiServer:
             return self._ok(self._await(self.control_plane.get_gateway_status()))
         if segments == ["gateway", "config"] and method == "PUT":
             return self._ok(self._await(self.control_plane.upsert_gateway_config(payload)))
+        if segments == ["render", "config"] and method == "GET":
+            return self._ok(self._await(self.control_plane.get_render_config()))
+        if segments == ["render", "config"] and method == "PUT":
+            return self._ok(self._await(self.control_plane.upsert_render_config(payload)))
         if segments == ["filesystem", "config"] and method == "GET":
             return self._ok(self._await(self.control_plane.get_filesystem_scan_config()))
         if segments == ["filesystem", "config"] and method == "PUT":

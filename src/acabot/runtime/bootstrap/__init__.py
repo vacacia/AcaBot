@@ -543,6 +543,7 @@ def build_runtime_components(
         skill_catalog=runtime_skill_catalog,
         subagent_catalog=runtime_subagent_catalog,
         plugin_reconciler=runtime_plugin_reconciler,
+        render_service=runtime_render_service,
         tool_broker=runtime_tool_broker,
         subagent_delegator=runtime_subagent_delegator,
         rebind_agent_loader=rebind_agent_loader,

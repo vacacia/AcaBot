@@ -24,6 +24,10 @@ from acabot.runtime import (
     RouteDecision,
     build_runtime_components,
 )
+from acabot.runtime.bootstrap import (
+    DEFAULT_RENDER_DEVICE_SCALE_FACTOR,
+    DEFAULT_RENDER_VIEWPORT_WIDTH,
+)
 from acabot.runtime.control.http_api import RuntimeHttpApiServer
 from acabot.runtime.control.log_buffer import InMemoryLogBuffer, LogEntry
 from acabot.types import ActionType, EventSource, MsgSegment, StandardEvent
@@ -1382,6 +1386,373 @@ runtime:
     assert saved_gateway["data"]["apply_status"] == "restart_required"
     assert saved_gateway["data"]["restart_required"] is True
     assert saved_gateway["data"]["message"] == "已保存，需要重启后生效"
+
+
+async def test_runtime_http_api_server_serves_and_updates_render_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0, base_dir=tmp_path)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+
+        initial = await asyncio.to_thread(request_json, base_url, "/api/render/config")
+        updated = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/render/config",
+            method="PUT",
+            payload={
+                "width": 1280,
+                "device_scale_factor": 2.5,
+            },
+        )
+        system_snapshot = await asyncio.to_thread(request_json, base_url, "/api/system/configuration")
+    finally:
+        await server.stop()
+
+    assert initial["ok"] is True
+    assert initial["data"]["width"] == DEFAULT_RENDER_VIEWPORT_WIDTH
+    assert initial["data"]["device_scale_factor"] == DEFAULT_RENDER_DEVICE_SCALE_FACTOR
+
+    assert updated["ok"] is True
+    assert updated["data"]["width"] == 1280
+    assert updated["data"]["device_scale_factor"] == 2.5
+    assert updated["data"]["apply_status"] == "applied"
+    assert updated["data"]["restart_required"] is False
+
+    assert system_snapshot["ok"] is True
+    assert system_snapshot["data"]["render"]["width"] == 1280
+    assert system_snapshot["data"]["render"]["device_scale_factor"] == 2.5
+    persisted = Config.from_file(str(config_path))
+    assert persisted.get("runtime", {}).get("render", {}) == {
+        "width": 1280,
+        "device_scale_factor": 2.5,
+    }
+
+
+async def test_runtime_http_api_server_render_config_falls_back_for_malformed_config_values(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_minimal_fs_session(tmp_path, session_id="qq:user:99999")
+    config_path.write_text(
+        f"""
+gateway:
+  host: "127.0.0.1"
+  port: 8080
+
+agent:
+
+runtime:
+  filesystem:
+    base_dir: "{tmp_path}"
+  render:
+    width: "not-a-number"
+    device_scale_factor: "still-not-a-number"
+  webui:
+    enabled: true
+    host: "127.0.0.1"
+    port: 0
+""".strip(),
+        encoding="utf-8",
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+
+        render_status, render_config = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/render/config",
+        )
+        system_status, system_snapshot = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/system/configuration",
+        )
+    finally:
+        await server.stop()
+
+    assert render_status == 200
+    assert render_config["ok"] is True
+    assert render_config["data"]["width"] == DEFAULT_RENDER_VIEWPORT_WIDTH
+    assert render_config["data"]["device_scale_factor"] == DEFAULT_RENDER_DEVICE_SCALE_FACTOR
+
+    assert system_status == 200
+    assert system_snapshot["ok"] is True
+    assert system_snapshot["data"]["render"] == {
+        "width": DEFAULT_RENDER_VIEWPORT_WIDTH,
+        "device_scale_factor": DEFAULT_RENDER_DEVICE_SCALE_FACTOR,
+    }
+
+
+async def test_runtime_http_api_server_render_config_put_falls_back_for_malformed_payload_values(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0, base_dir=tmp_path)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+
+        status, updated = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/render/config",
+            method="PUT",
+            payload={
+                "width": "not-a-number",
+                "device_scale_factor": "still-not-a-number",
+            },
+        )
+    finally:
+        await server.stop()
+
+    assert status == 200
+    assert updated["ok"] is True
+    assert updated["data"]["width"] == DEFAULT_RENDER_VIEWPORT_WIDTH
+    assert updated["data"]["device_scale_factor"] == DEFAULT_RENDER_DEVICE_SCALE_FACTOR
+    assert updated["data"]["apply_status"] == "applied"
+    assert updated["data"]["restart_required"] is False
+    persisted = Config.from_file(str(config_path))
+    assert persisted.get("runtime", {}).get("render", {}) == {
+        "width": DEFAULT_RENDER_VIEWPORT_WIDTH,
+        "device_scale_factor": DEFAULT_RENDER_DEVICE_SCALE_FACTOR,
+    }
+
+
+async def test_runtime_http_api_server_render_config_clamps_explicit_zero_config_values(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_minimal_fs_session(tmp_path, session_id="qq:user:99999")
+    config_path.write_text(
+        f"""
+gateway:
+  host: "127.0.0.1"
+  port: 8080
+
+agent:
+
+runtime:
+  filesystem:
+    base_dir: "{tmp_path}"
+  render:
+    width: 0
+    device_scale_factor: 0
+  webui:
+    enabled: true
+    host: "127.0.0.1"
+    port: 0
+""".strip(),
+        encoding="utf-8",
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+
+        render_status, render_config = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/render/config",
+        )
+        system_status, system_snapshot = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/system/configuration",
+        )
+    finally:
+        await server.stop()
+
+    assert render_status == 200
+    assert render_config["ok"] is True
+    assert render_config["data"] == {
+        "width": 320,
+        "device_scale_factor": 1.0,
+    }
+
+    assert system_status == 200
+    assert system_snapshot["ok"] is True
+    assert system_snapshot["data"]["render"] == {
+        "width": 320,
+        "device_scale_factor": 1.0,
+    }
+
+
+async def test_runtime_http_api_server_render_config_put_clamps_explicit_zero_payload_values(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_minimal_fs_session(tmp_path, session_id="qq:user:99999")
+    config_path.write_text(
+        f"""
+gateway:
+  host: "127.0.0.1"
+  port: 8080
+
+agent:
+
+runtime:
+  filesystem:
+    base_dir: "{tmp_path}"
+  render:
+    width: 1280
+    device_scale_factor: 2.5
+  webui:
+    enabled: true
+    host: "127.0.0.1"
+    port: 0
+""".strip(),
+        encoding="utf-8",
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+
+        status, updated = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/render/config",
+            method="PUT",
+            payload={
+                "width": 0,
+                "device_scale_factor": 0,
+            },
+        )
+    finally:
+        await server.stop()
+
+    assert status == 200
+    assert updated["ok"] is True
+    assert updated["data"]["width"] == 320
+    assert updated["data"]["device_scale_factor"] == 1.0
+    assert updated["data"]["apply_status"] == "applied"
+    assert updated["data"]["restart_required"] is False
+    persisted = Config.from_file(str(config_path))
+    assert persisted.get("runtime", {}).get("render", {}) == {
+        "width": 320,
+        "device_scale_factor": 1.0,
+    }
+
+
+async def test_render_config_put_hot_applies_to_existing_playwright_backend(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0, base_dir=tmp_path)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    backend = components.render_service.get_backend("playwright")
+    assert backend is not None
+    original_update_render_defaults = backend.update_render_defaults
+    hot_apply_calls: list[tuple[int, float]] = []
+
+    def _spy_update_render_defaults(*, viewport_width: int, device_scale_factor: float) -> None:
+        hot_apply_calls.append((viewport_width, device_scale_factor))
+        original_update_render_defaults(
+            viewport_width=viewport_width,
+            device_scale_factor=device_scale_factor,
+        )
+
+    monkeypatch.setattr(backend, "update_render_defaults", _spy_update_render_defaults)
+
+    result = await components.control_plane.upsert_render_config(
+        {"width": 1280, "device_scale_factor": 2.5}
+    )
+
+    assert result["width"] == 1280
+    assert result["device_scale_factor"] == 2.5
+    assert result["apply_status"] == "applied"
+    assert result["restart_required"] is False
+    assert hot_apply_calls == [(1280, 2.5)]
+
+
+async def test_render_config_put_reports_apply_failed_when_hot_apply_raises(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0, base_dir=tmp_path)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    backend = components.render_service.get_backend("playwright")
+    assert backend is not None
+
+    def _explode(*, viewport_width: int, device_scale_factor: float) -> None:
+        _ = (viewport_width, device_scale_factor)
+        raise RuntimeError("render hot apply exploded")
+
+    monkeypatch.setattr(backend, "update_render_defaults", _explode)
+
+    result = await components.control_plane.upsert_render_config(
+        {"width": 1280, "device_scale_factor": 2.5}
+    )
+
+    assert result["width"] == 1280
+    assert result["device_scale_factor"] == 2.5
+    assert result["apply_status"] == "apply_failed"
+    assert result["restart_required"] is True
+    assert result["message"] == "已保存，但热应用失败，需要重启"
+    assert "render hot apply exploded" in result["technical_detail"]
+    persisted = Config.from_file(str(config_path))
+    assert persisted.get("runtime", {}).get("render", {}) == {
+        "width": 1280,
+        "device_scale_factor": 2.5,
+    }
 
 
 async def test_runtime_http_api_server_serves_incremental_logs(tmp_path: Path) -> None:

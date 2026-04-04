@@ -12,6 +12,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import logging
+import math
 from pathlib import Path
 import re
 from tempfile import NamedTemporaryFile
@@ -34,6 +36,11 @@ from ..contracts import ResolvedAgent, SessionBundle
 from ..model.model_registry import FileSystemModelRegistryManager
 from ..model.model_targets import build_agent_model_targets
 from ..plugin_reconciler import PluginReconciler
+from ..render import RenderService
+from ..render.playwright_backend import (
+    DEFAULT_RENDER_DEVICE_SCALE_FACTOR,
+    DEFAULT_RENDER_VIEWPORT_WIDTH,
+)
 from ..router import RuntimeRouter
 from ..skills import FileSystemSkillPackageLoader, SkillCatalog
 from ..skills.loader import SkillDiscoveryRoot
@@ -49,6 +56,51 @@ from .session_runtime import SessionRuntime
 
 DEFAULT_SKILL_CATALOG_DIRS = ["./extensions/skills"]
 DEFAULT_SUBAGENT_CATALOG_DIRS = ["./extensions/subagents"]
+
+logger = logging.getLogger("acabot.runtime.control.config_control_plane")
+
+
+def _resolve_render_int(*, key: str, value: object, default: int) -> int:
+    """安全解析 int 型 render 配置值, 无效时回退到 default."""
+
+    if value in (None, ""):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        logger.warning(
+            "Invalid runtime.render.%s=%r, fallback to default %r",
+            key,
+            value,
+            default,
+        )
+        return default
+
+
+def _resolve_render_float(*, key: str, value: object, default: float) -> float:
+    """安全解析 float 型 render 配置值, 无效时回退到 default."""
+
+    if value in (None, ""):
+        return default
+    try:
+        resolved = float(value)
+    except (TypeError, ValueError, OverflowError):
+        logger.warning(
+            "Invalid runtime.render.%s=%r, fallback to default %r",
+            key,
+            value,
+            default,
+        )
+        return default
+    if not math.isfinite(resolved):
+        logger.warning(
+            "Invalid runtime.render.%s=%r, fallback to default %r",
+            key,
+            value,
+            default,
+        )
+        return default
+    return resolved
 
 
 def _resolve_filesystem_path(
@@ -197,6 +249,7 @@ class RuntimeConfigControlPlane:
         skill_catalog: SkillCatalog | None = None,
         subagent_catalog: SubagentCatalog | None = None,
         plugin_reconciler: PluginReconciler | None = None,
+        render_service: RenderService | None = None,
         tool_broker=None,
         subagent_delegator=None,
         rebind_agent_loader: Callable[[SessionBundleLoader | None], None] | None = None,
@@ -212,6 +265,7 @@ class RuntimeConfigControlPlane:
             skill_catalog: 可选 skill catalog.
             subagent_catalog: 可选 subagent catalog.
             plugin_reconciler: 可选 plugin reconciler.
+            render_service: 可选 render service，用于热应用 render 默认值.
             tool_broker: 可选 tool broker.
             subagent_delegator: 可选 subagent delegator.
         """
@@ -225,6 +279,7 @@ class RuntimeConfigControlPlane:
         self.skill_catalog = skill_catalog
         self.subagent_catalog = subagent_catalog
         self.plugin_reconciler = plugin_reconciler
+        self.render_service = render_service
         self.tool_broker = tool_broker
         self.subagent_delegator = subagent_delegator
         self.rebind_agent_loader = rebind_agent_loader
@@ -485,6 +540,105 @@ class RuntimeConfigControlPlane:
         reload_snapshot = await self.model_registry_manager.reload()
         if not reload_snapshot.ok:
             raise ValueError(reload_snapshot.error or "model registry reload failed")
+
+    def get_render_config(self) -> dict[str, Any]:
+        """读取 render 默认配置视图."""
+
+        runtime_conf = dict(self.config.get("runtime", {}) or {})
+        render_conf = dict(runtime_conf.get("render", {}) or {})
+        width_value = (
+            render_conf["width"]
+            if "width" in render_conf
+            else DEFAULT_RENDER_VIEWPORT_WIDTH
+        )
+        device_scale_factor_value = (
+            render_conf["device_scale_factor"]
+            if "device_scale_factor" in render_conf
+            else DEFAULT_RENDER_DEVICE_SCALE_FACTOR
+        )
+        return {
+            "width": max(
+                320,
+                _resolve_render_int(
+                    key="width",
+                    value=width_value,
+                    default=DEFAULT_RENDER_VIEWPORT_WIDTH,
+                ),
+            ),
+            "device_scale_factor": max(
+                1.0,
+                _resolve_render_float(
+                    key="device_scale_factor",
+                    value=device_scale_factor_value,
+                    default=DEFAULT_RENDER_DEVICE_SCALE_FACTOR,
+                ),
+            ),
+        }
+
+    async def upsert_render_config(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """写回 render 默认配置并尝试热应用到现有 backend."""
+
+        current = self.get_render_config()
+        width_value = payload["width"] if "width" in payload else current["width"]
+        device_scale_factor_value = (
+            payload["device_scale_factor"]
+            if "device_scale_factor" in payload
+            else current["device_scale_factor"]
+        )
+        next_conf = {
+            "width": max(
+                320,
+                _resolve_render_int(
+                    key="width",
+                    value=width_value,
+                    default=current["width"],
+                ),
+            ),
+            "device_scale_factor": max(
+                1.0,
+                _resolve_render_float(
+                    key="device_scale_factor",
+                    value=device_scale_factor_value,
+                    default=current["device_scale_factor"],
+                ),
+            ),
+        }
+        data = self.config.to_dict()
+        runtime_conf = dict(data.get("runtime", {}) or {})
+        runtime_conf["render"] = dict(next_conf)
+        data["runtime"] = runtime_conf
+        self.config.replace(data)
+        self.config.save()
+
+        backend = self.render_service.get_backend("playwright") if self.render_service is not None else None
+        update_render_defaults = getattr(backend, "update_render_defaults", None)
+        if not callable(update_render_defaults):
+            return self.with_apply_result(
+                self.get_render_config(),
+                apply_status="apply_failed",
+                restart_required=True,
+                message="已保存，但热应用失败，需要重启",
+                technical_detail="playwright render backend does not support hot apply",
+            )
+        try:
+            update_render_defaults(
+                viewport_width=next_conf["width"],
+                device_scale_factor=next_conf["device_scale_factor"],
+            )
+        except Exception as exc:
+            return self.with_apply_result(
+                self.get_render_config(),
+                apply_status="apply_failed",
+                restart_required=True,
+                message="已保存，但热应用失败，需要重启",
+                technical_detail=str(exc),
+            )
+        return self.with_apply_result(
+            self.get_render_config(),
+            apply_status="applied",
+            restart_required=False,
+            message="已保存并已生效",
+        )
 
     def get_gateway_config(self) -> dict[str, Any]:
         """读取 gateway 配置视图.

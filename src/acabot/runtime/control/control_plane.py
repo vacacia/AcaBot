@@ -274,6 +274,16 @@ class RuntimeControlPlane:
             raise RuntimeError("config control plane unavailable")
         return await self.config_control_plane.update_session_agent(session_id, payload)
 
+    async def get_render_config(self) -> dict[str, object]:
+        if self.config_control_plane is None:
+            return {}
+        return self.config_control_plane.get_render_config()
+
+    async def upsert_render_config(self, payload: dict[str, object]) -> dict[str, object]:
+        if self.config_control_plane is None:
+            raise RuntimeError("config control plane unavailable")
+        return await self.config_control_plane.upsert_render_config(payload)
+
     async def get_gateway_config(self) -> dict[str, object]:
         if self.config_control_plane is None:
             return {}
@@ -301,6 +311,7 @@ class RuntimeControlPlane:
             return {
                 "meta": {},
                 "gateway": {},
+                "render": {},
                 "filesystem": {},
                 "admins": await self.get_admins(),
                 "paths": {},
@@ -311,6 +322,7 @@ class RuntimeControlPlane:
                 "config_path": str(path_overview.get("config_path", "") or ""),
             },
             "gateway": self.config_control_plane.get_gateway_config(),
+            "render": self.config_control_plane.get_render_config(),
             "filesystem": self.config_control_plane.get_filesystem_scan_config(),
             "admins": await self.get_admins(),
             "paths": path_overview,
