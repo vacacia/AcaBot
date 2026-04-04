@@ -105,6 +105,7 @@ class OutboxItem:
     destination_conversation_id: str = ""
     append_to_origin_thread: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
+    world_view: "WorldView | None" = None
 
     def __post_init__(self) -> None:
         """补齐 origin / destination contract 的默认值."""

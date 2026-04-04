@@ -3,6 +3,8 @@ from pathlib import Path
 import pytest
 
 from acabot.runtime import (
+    ComputerPolicyDecision,
+    ComputerRuntimeConfig,
     ResolvedAgent,
     MessageStore,
     MessageRecord,
@@ -14,12 +16,14 @@ from acabot.runtime import (
     RunRecord,
     SequencedMessageRecord,
     ThreadState,
+    WorkspaceManager,
 )
 from acabot.runtime.ids import (
     build_event_source_from_conversation_id,
     build_thread_id_from_conversation_id,
     parse_conversation_id,
 )
+from acabot.runtime.computer.world import WorkWorldBuilder, WorldInputBundle
 from acabot.runtime.render.protocol import RenderResult
 from acabot.types import Action, ActionType, EventSource, MsgSegment, StandardEvent
 
@@ -37,13 +41,25 @@ class FakeGateway:
 
     async def send(self, action: Action) -> dict[str, object] | None:
         self.sent.append(action)
-        return {"message_id": f"msg-{len(self.sent)}", "timestamp": 123}
+        return {"status": "ok", "retcode": 0, "message_id": f"msg-{len(self.sent)}", "timestamp": 123}
 
     def on_event(self, handler) -> None:
         self.handler = handler
 
     async def call_api(self, action: str, params: dict[str, object]) -> dict[str, object]:
         return {"action": action, "params": params}
+
+
+class NestedMessageIdGateway(FakeGateway):
+    async def send(self, action: Action) -> dict[str, object] | None:
+        self.sent.append(action)
+        return {"status": "ok", "retcode": 0, "data": {"message_id": 42}, "timestamp": 123}
+
+
+class NegativeAckGateway(FakeGateway):
+    async def send(self, action: Action) -> dict[str, object] | None:
+        self.sent.append(action)
+        return {"status": "failed", "retcode": 100, "msg": "send failed"}
 
 
 class FakeMessageStore(MessageStore):
@@ -131,6 +147,37 @@ class FakeRenderService:
             }
         )
         return self.result
+
+
+def _workspace_world(tmp_path: Path, *, thread_id: str = "qq:user:10001"):
+    manager = WorkspaceManager(
+        ComputerRuntimeConfig(
+            root_dir=str(tmp_path / "computer"),
+            host_skills_catalog_root_path=str(tmp_path / "skills-catalog"),
+        )
+    )
+    world = WorkWorldBuilder(manager).build(
+        WorldInputBundle(
+            thread_id=thread_id,
+            agent_id="aca",
+            actor_kind="frontstage_agent",
+            self_scope_id="aca",
+            visible_skill_names=[],
+            computer_policy=ComputerPolicyDecision(
+                actor_kind="frontstage_agent",
+                backend="host",
+                allow_exec=True,
+                allow_sessions=True,
+                roots={
+                    "workspace": {"visible": True},
+                    "skills": {"visible": False},
+                    "self": {"visible": False},
+                },
+                visible_skills=[],
+            ),
+        )
+    )
+    return world, manager.workspace_dir_for_thread(thread_id)
 
 
 def _send_intent_context(
@@ -374,6 +421,32 @@ async def test_outbox_builds_at_segment_before_text() -> None:
     assert sent_action.payload["segments"][1] == {"type": "text", "data": {"text": "大家好"}}
 
 
+async def test_outbox_extracts_nested_message_id_from_gateway_ack() -> None:
+    gateway = NestedMessageIdGateway()
+    store = FakeMessageStore()
+    outbox = Outbox(gateway=gateway, store=store)
+    ctx = _send_intent_context(text="hello")
+
+    report = await outbox.dispatch(ctx)
+
+    assert report.has_failures is False
+    assert report.results[0].platform_message_id == "42"
+
+
+async def test_outbox_treats_negative_gateway_ack_as_failure() -> None:
+    gateway = NegativeAckGateway()
+    store = FakeMessageStore()
+    outbox = Outbox(gateway=gateway, store=store)
+    ctx = _send_intent_context(text="hello")
+
+    report = await outbox.dispatch(ctx)
+
+    assert report.has_failures is True
+    assert report.results[0].ok is False
+    assert report.results[0].error == "send failed"
+    assert store.saved == []
+
+
 async def test_outbox_materializes_images() -> None:
     gateway = FakeGateway()
     store = FakeMessageStore()
@@ -392,6 +465,31 @@ async def test_outbox_materializes_images() -> None:
         {"type": "image", "data": {"file": "/tmp/cat.png"}},
         {"type": "image", "data": {"file": "https://example.com/cat.jpg"}},
     ]
+
+
+async def test_outbox_publishes_workspace_image_refs_before_gateway_send(tmp_path: Path) -> None:
+    gateway = FakeGateway()
+    store = FakeMessageStore()
+    outbox = Outbox(gateway=gateway, store=store, runtime_root=tmp_path / "runtime_data")
+    world, workspace_root = _workspace_world(tmp_path)
+    source_file = workspace_root / "x_screenshot.png"
+    source_file.parent.mkdir(parents=True, exist_ok=True)
+    source_file.write_bytes(b"png-bytes")
+    ctx = _send_intent_context(
+        images=["/workspace/x_screenshot.png"],
+        thread_content="[图片]",
+    )
+    ctx.world_view = world
+
+    report = await outbox.dispatch(ctx)
+
+    assert report.has_failures is False
+    sent_action = gateway.sent[0]
+    assert sent_action.action_type == ActionType.SEND_SEGMENTS
+    published_ref = sent_action.payload["segments"][0]["data"]["file"]
+    assert published_ref != "/workspace/x_screenshot.png"
+    assert published_ref.startswith(str(tmp_path / "runtime_data" / "outbound"))
+    assert Path(published_ref).read_bytes() == b"png-bytes"
 
 
 async def test_outbox_render_falls_back_to_plain_text_segment_without_backend() -> None:

@@ -44,6 +44,8 @@ from ..model.model_registry import (
     ModelReloadSnapshot,
 )
 from ..contracts import ChannelEventRecord, MessageRecord, OutboxItem, PlannedAction, RunRecord
+from ..notification_send_context import prepare_notification_run_context
+from ..send_intent import normalize_send_intent_payload, normalize_target, optional_text
 from ..plugin_reconciler import PluginReconciler
 from ..plugin_runtime_host import PluginRuntimeHost
 from ..plugin_package import PackageCatalog
@@ -769,9 +771,16 @@ class RuntimeControlPlane:
         conversation_id = str(payload.get("conversation_id", "") or "").strip()
         if not conversation_id:
             raise ValueError("conversation_id is required")
-        text = str(payload.get("text", "") or "").strip()
-        if not text:
-            raise ValueError("text is required")
+        normalized_target = normalize_target(payload.get("target"))
+        if normalized_target is not None:
+            conversation_id = normalized_target
+        normalized = normalize_send_intent_payload(
+            text=payload.get("text"),
+            images=payload.get("images"),
+            render=payload.get("render"),
+            at_user=payload.get("at_user"),
+            target=conversation_id,
+        )
 
         outbox = getattr(self.app.pipeline, "outbox", None)
         if outbox is None:
@@ -783,6 +792,16 @@ class RuntimeControlPlane:
             actor_user_id=gateway_self_id,
         )
         thread_id = build_thread_id_from_conversation_id(conversation_id)
+        notification_ctx = None
+        if self.computer_runtime is not None:
+            notification_ctx = await prepare_notification_run_context(
+                computer_runtime=self.computer_runtime,
+                conversation_id=conversation_id,
+                gateway_self_id=gateway_self_id,
+            )
+            thread_id = notification_ctx.thread.thread_id
+        elif any(str(item).startswith("/workspace/") for item in normalized["images"]):
+            raise RuntimeError("computer runtime unavailable for workspace-backed notification send")
         run_id = f"notify:{uuid.uuid4().hex}"
         action_id = f"action:{uuid.uuid4().hex}"
         report = await outbox.send_items(
@@ -799,12 +818,8 @@ class RuntimeControlPlane:
                         action=Action(
                             action_type=ActionType.SEND_MESSAGE_INTENT,
                             target=target,
-                            payload={
-                                "text": text,
-                                "target": conversation_id,
-                            },
+                            payload=normalized,
                         ),
-                        thread_content=text,
                         metadata={
                             "message_action": "send",
                             "destination_conversation_id": conversation_id,
@@ -817,27 +832,59 @@ class RuntimeControlPlane:
                         "destination_conversation_id": conversation_id,
                         "notification_source": "control_plane",
                     },
+                    world_view=(notification_ctx.world_view if notification_ctx is not None else None),
                 )
             ]
         )
-        if report.has_failures:
-            first_error = report.results[0].error if report.results else None
-            raise RuntimeError(first_error or "notification delivery failed")
-
-        await self._append_sent_message_to_thread(
-            thread_id=thread_id,
-            conversation_id=conversation_id,
-            content=text,
-        )
-
         result = report.results[0]
+        raw_ack = dict(result.raw or {})
+        if report.has_failures:
+            return {
+                "run_id": run_id,
+                "action_id": action_id,
+                "conversation_id": conversation_id,
+                "thread_id": thread_id,
+                "platform_message_id": "",
+                "text": optional_text(normalized.get("text")),
+                "images": list(normalized.get("images", []) or []),
+                "render": optional_text(normalized.get("render")),
+                "thread_content": "",
+                "delivered": False,
+                "error": result.error or "notification delivery failed",
+                "ack": {
+                    "status": str(raw_ack.get("status", "") or ""),
+                    "retcode": raw_ack.get("retcode"),
+                    "message_id": str(raw_ack.get("message_id", "") or ""),
+                    "raw": raw_ack,
+                },
+            }
+
+        delivered_item = report.delivered_items[0]
+        thread_content = str(delivered_item.plan.thread_content or "").strip()
+        if thread_content:
+            await self._append_sent_message_to_thread(
+                thread_id=thread_id,
+                conversation_id=conversation_id,
+                content=thread_content,
+            )
+
         return {
             "run_id": run_id,
             "action_id": action_id,
             "conversation_id": conversation_id,
             "thread_id": thread_id,
             "platform_message_id": result.platform_message_id,
-            "text": text,
+            "text": optional_text(normalized.get("text")),
+            "images": list(normalized.get("images", []) or []),
+            "render": optional_text(normalized.get("render")),
+            "thread_content": thread_content,
+            "delivered": True,
+            "ack": {
+                "status": str(raw_ack.get("status", "") or ""),
+                "retcode": raw_ack.get("retcode"),
+                "message_id": str(raw_ack.get("message_id", "") or result.platform_message_id),
+                "raw": raw_ack,
+            },
         }
 
     async def _append_sent_message_to_thread(

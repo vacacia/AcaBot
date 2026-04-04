@@ -63,3 +63,25 @@ curl -X POST http://127.0.0.1:8765/api/notifications \
 - 群聊: `qq:group:<群号>`
 
 这条接口会复用 runtime 自己的正式出站链路, 发送成功后也会写入 `MessageStore`。
+
+## 本地文件发送 smoke 测试
+
+当你想验证“workspace 本地文件 -> Outbox -> NapCat”这条链路有没有真的闭环，而又不想每次手上 QQ 客户端手测时，可以直接跑：
+
+```bash
+cd /home/acacia/AcaBot
+PYTHONPATH=src uv run python scripts/smoke_test_local_file_send.py \
+  --conversation-id qq:user:10001 \
+  --image x_screenshot.png
+```
+
+说明：
+- 脚本会按目标 `conversation_id` 找到正式 workspace 根目录
+- 如果没传 `--source-file`，会自动生成一个最小 PNG fixture
+- 然后调用 `/api/notifications` 走正式发送链路
+- 最后输出 API ack 和 `acabot-napcat` 日志摘要，并给出 `PASS` / `FAIL` / `SKIP/ENV-FAIL`
+
+典型前置条件：
+- `acabot` 容器在运行
+- `acabot-napcat` 容器在运行
+- WebUI API 可达（默认 `http://127.0.0.1:8765`）

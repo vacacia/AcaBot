@@ -33,7 +33,7 @@ from acabot.runtime.control.http_api import RuntimeHttpApiServer
 from acabot.runtime.control.log_buffer import InMemoryLogBuffer, LogEntry
 from acabot.types import ActionType, EventSource, MsgSegment, StandardEvent
 
-from .test_outbox import FakeGateway
+from .test_outbox import FakeGateway, NegativeAckGateway
 
 
 @dataclass
@@ -2849,6 +2849,9 @@ async def test_runtime_http_api_server_can_post_notification_and_update_thread(t
         assert result["data"]["thread_id"] == "qq:user:1733064202"
         assert result["data"]["platform_message_id"] == "msg-1"
         assert result["data"]["text"] == "AcaBot 主动通知测试"
+        assert result["data"]["ack"]["status"] == "ok"
+        assert result["data"]["ack"]["retcode"] == 0
+        assert result["data"]["thread_content"] == "AcaBot 主动通知测试"
 
         assert len(gateway.sent) == 1
         sent_action = gateway.sent[0]
@@ -2870,6 +2873,105 @@ async def test_runtime_http_api_server_can_post_notification_and_update_thread(t
         assert len(messages) == 1
         assert messages[0].content_text == "AcaBot 主动通知测试"
         assert messages[0].platform_message_id == "msg-1"
+    finally:
+        await server.stop()
+
+
+async def test_runtime_http_api_server_can_post_notification_with_workspace_relative_image_only(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(
+        config_path,
+        webui_enabled=True,
+        port=0,
+        base_dir=tmp_path,
+    )
+    config = Config.from_file(str(config_path))
+    gateway = FakeGateway()
+    components = build_runtime_components(
+        config,
+        gateway=gateway,
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    workspace_root = components.computer_runtime.workspace_manager.workspace_dir_for_thread("qq:user:1733064202")
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    (workspace_root / "x_screenshot.png").write_bytes(b"png-bytes")
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        result = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/notifications",
+            method="POST",
+            payload={
+                "conversation_id": "qq:user:1733064202",
+                "images": ["x_screenshot.png"],
+            },
+        )
+        assert result["ok"] is True
+        assert result["data"]["images"] == ["/workspace/x_screenshot.png"]
+        assert result["data"]["text"] is None
+        assert result["data"]["ack"]["status"] == "ok"
+        assert result["data"]["thread_content"] == "[图片]"
+
+        assert len(gateway.sent) == 1
+        sent_action = gateway.sent[0]
+        assert sent_action.action_type == ActionType.SEND_SEGMENTS
+        image_file = sent_action.payload["segments"][0]["data"]["file"]
+        assert image_file != "/workspace/x_screenshot.png"
+        assert image_file.endswith("x_screenshot.png")
+
+        thread = await components.thread_manager.get_or_create(
+            thread_id="qq:user:1733064202",
+            channel_scope="qq:user:1733064202",
+        )
+        assert thread.working_messages[-1] == {
+            "role": "assistant",
+            "content": "[图片]",
+        }
+    finally:
+        await server.stop()
+
+
+async def test_runtime_http_api_server_returns_structured_notification_failure_ack(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(
+        config_path,
+        webui_enabled=True,
+        port=0,
+        base_dir=tmp_path,
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=NegativeAckGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        status, body = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/notifications",
+            method="POST",
+            payload={
+                "conversation_id": "qq:user:1733064202",
+                "text": "fail please",
+            },
+        )
+        assert status == 500
+        assert body["ok"] is False
+        assert body["error"] == "send failed"
+        assert body["data"]["delivered"] is False
+        assert body["data"]["ack"]["status"] == "failed"
+        assert body["data"]["ack"]["retcode"] == 100
     finally:
         await server.stop()
 
@@ -2904,7 +3006,7 @@ async def test_runtime_http_api_server_rejects_invalid_notification_payload(tmp_
         )
         assert status == 400
         assert missing_text["ok"] is False
-        assert missing_text["error"] == "text is required"
+        assert missing_text["error"] == "send requires at least one of text, images, or render"
 
         status, missing_conversation = await asyncio.to_thread(
             request_json_with_status,
@@ -2916,6 +3018,20 @@ async def test_runtime_http_api_server_rejects_invalid_notification_payload(tmp_
         assert status == 400
         assert missing_conversation["ok"] is False
         assert missing_conversation["error"] == "conversation_id is required"
+
+        status, invalid_path = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/notifications",
+            method="POST",
+            payload={
+                "conversation_id": "qq:user:1733064202",
+                "images": ["/tmp/out.png"],
+            },
+        )
+        assert status == 400
+        assert invalid_path["ok"] is False
+        assert "relative path" in invalid_path["error"]
     finally:
         await server.stop()
 

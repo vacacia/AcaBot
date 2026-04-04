@@ -508,6 +508,7 @@ def build_runtime_components(
         store=runtime_message_store,
         render_service=runtime_render_service,
         long_term_memory_ingestor=runtime_long_term_memory_ingestor,
+        runtime_root=resolve_runtime_path(config, ""),
     )
     pipeline = ThreadPipeline(
         agent_runtime=agent_runtime,

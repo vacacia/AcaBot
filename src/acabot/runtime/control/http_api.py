@@ -588,7 +588,10 @@ class RuntimeHttpApiServer:
         if segments == ["admins"] and method == "PUT":
             return self._ok(self._await(self.control_plane.put_admins(payload=payload)))
         if segments == ["notifications"] and method == "POST":
-            return self._ok(self._await(self.control_plane.post_notification(payload=payload)))
+            result = self._await(self.control_plane.post_notification(payload=payload))
+            if not bool(result.get("delivered", True)):
+                return 500, {"ok": False, "error": result.get("error", "notification delivery failed"), "data": result}
+            return self._ok(result)
 
         if segments == ["prompts"] and method == "GET":
             return self._ok(self._await(self.control_plane.list_prompts()))

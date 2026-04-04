@@ -10,22 +10,19 @@ tool surface 只表达意图, 不直接调 Gateway 或 Outbox.
 
 from __future__ import annotations
 
-import re
 import uuid
-from pathlib import PurePosixPath
 from typing import Any
 
 from acabot.agent import ToolSpec
 from acabot.types import Action, ActionType, EventSource
 
 from ..contracts import PlannedAction
+from ..send_intent import normalize_images, normalize_target, optional_text
 from ..tool_broker import ToolBroker, ToolExecutionContext, ToolResult
 
 
 BUILTIN_MESSAGE_TOOL_SOURCE = "builtin:message"
 
-_CANONICAL_CONVERSATION_RE = re.compile(r"^qq:(group|user):[A-Za-z0-9._@!-]+$")
-_REMOTE_PREFIXES = ("http://", "https://", "data:", "base64://")
 _REACTION_EMOJI_IDS = {
     "thumbs_up": 76,
     "+1": 76,
@@ -253,8 +250,7 @@ class BuiltinMessageToolSurface:
     def _optional_text(value: Any) -> str | None:
         """把可选文本字段规范成 `str | None`."""
 
-        text = str(value or "").strip()
-        return text or None
+        return optional_text(value)
 
     @staticmethod
     def _require_text(value: Any, *, field_name: str) -> str:
@@ -269,36 +265,7 @@ class BuiltinMessageToolSurface:
     def _normalize_images(cls, value: Any) -> list[str]:
         """把 images 输入规范成字符串列表."""
 
-        if value in (None, ""):
-            return []
-        if not isinstance(value, list):
-            raise ValueError("images must be a list of strings")
-        normalized: list[str] = []
-        for item in value:
-            text = str(item or "").strip()
-            if not text:
-                continue
-            normalized.append(cls._normalize_send_image_ref(text))
-        return normalized
-
-    @classmethod
-    def _normalize_send_image_ref(cls, file_ref: str) -> str:
-        """规范 action=send 的图片引用.
-
-        远程 URL / data URL 直接透传；QQ 本地文件发送只接受 `/workspace` 下的安全相对路径。
-        """
-
-        raw = str(file_ref or "").strip()
-        if raw.startswith(_REMOTE_PREFIXES):
-            return raw
-        path = PurePosixPath(raw)
-        if path.is_absolute():
-            raise ValueError("QQ local file sends require a relative path under /workspace")
-        parts = path.parts
-        if not parts or any(part in {"", ".", ".."} for part in parts):
-            raise ValueError("QQ local file sends require a safe relative path under /workspace")
-        normalized = PurePosixPath(*parts).as_posix()
-        return f"/workspace/{normalized}"
+        return normalize_images(value)
 
     @classmethod
     def _resolve_send_target(
@@ -308,13 +275,9 @@ class BuiltinMessageToolSurface:
     ) -> tuple[EventSource, str]:
         """解析 send 使用的目标 EventSource 和 canonical conversation_id."""
 
-        canonical_target = cls._optional_text(raw_target)
+        canonical_target = normalize_target(raw_target)
         if canonical_target is None:
             return current_target, cls._conversation_id_from_target(current_target)
-        if not _CANONICAL_CONVERSATION_RE.match(canonical_target):
-            raise ValueError(
-                "message target must be a canonical conversation_id like qq:group:123 or qq:user:456"
-            )
         _, scope_kind, scope_value = canonical_target.split(":", 2)
         if scope_kind == "group":
             return (

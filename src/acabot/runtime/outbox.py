@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import replace
 import logging
 from pathlib import Path
+import shutil
 from typing import Any
 
 from acabot.types import Action, ActionType
@@ -49,6 +50,7 @@ class Outbox:
         store: MessageStore,
         render_service: RenderService | None = None,
         long_term_memory_ingestor: LongTermMemoryIngestor | None = None,
+        runtime_root: Path | str | None = None,
     ) -> None:
         """初始化 Outbox.
 
@@ -61,8 +63,9 @@ class Outbox:
 
         self.gateway = gateway
         self.store = store
+        self.runtime_root = Path(runtime_root or (Path.cwd() / "runtime_data")).expanduser()
         self.render_service = render_service or RenderService(
-            runtime_root=Path.cwd() / "runtime_data",
+            runtime_root=self.runtime_root,
         )
         self.long_term_memory_ingestor = long_term_memory_ingestor
 
@@ -92,6 +95,7 @@ class Outbox:
         for item in items:
             try:
                 item = await self._materialize_item(item)
+                item = self._publish_workspace_file_refs(item)
                 item = self._ensure_thread_content(item)
                 logger.debug(
                     "Outbox send: run_id=%s action_id=%s action_type=%s thread=%s",
@@ -118,10 +122,29 @@ class Outbox:
                     report.failed_action_ids.append(item.plan.action_id)
                     continue
 
+                if not self._is_success_ack(raw):
+                    logger.warning(
+                        "Outbox send failed with negative ack: run_id=%s action_id=%s status=%s retcode=%s",
+                        item.run_id,
+                        item.plan.action_id,
+                        raw.get("status"),
+                        raw.get("retcode"),
+                    )
+                    report.results.append(
+                        DeliveryResult(
+                            action_id=item.plan.action_id,
+                            ok=False,
+                            error=str(raw.get("msg", "negative_ack") or "negative_ack"),
+                            raw=raw,
+                        )
+                    )
+                    report.failed_action_ids.append(item.plan.action_id)
+                    continue
+
                 result = DeliveryResult(
                     action_id=item.plan.action_id,
                     ok=True,
-                    platform_message_id=str(raw.get("message_id", "")),
+                    platform_message_id=self._extract_platform_message_id(raw),
                     raw=raw,
                 )
                 report.results.append(result)
@@ -178,6 +201,7 @@ class Outbox:
                     "origin_thread_id": ctx.thread.thread_id,
                     "destination_conversation_id": destination_conversation_id,
                 },
+                world_view=ctx.world_view,
             )
             for plan in ctx.actions
             for destination_conversation_id, destination_thread_id in [
@@ -280,6 +304,103 @@ class Outbox:
             metadata=plan_metadata,
         )
         return replace(item, plan=materialized_plan)
+
+    def _publish_workspace_file_refs(self, item: OutboxItem) -> OutboxItem:
+        """把 `/workspace/...` file refs 发布到 runtime shared 目录后再交给 gateway.
+
+        `/workspace` 是 AcaBot 内部 world path，不应该直接穿透到 NapCat 容器。
+        这里把它复制到 `runtime_data/outbound/<conversation>/<run>/...`，并把 segment
+        改写成真实可发送的本地路径。
+        """
+
+        action = item.plan.action
+        if action.action_type != ActionType.SEND_SEGMENTS:
+            return item
+
+        updated_segments: list[dict[str, Any]] = []
+        changed = False
+        for segment in action.payload.get("segments", []) or []:
+            seg_type = str(segment.get("type", "") or "")
+            if seg_type not in {"image", "file", "record", "video"}:
+                updated_segments.append(segment)
+                continue
+            data = dict(segment.get("data", {}) or {})
+            file_ref = data.get("file")
+            if isinstance(file_ref, str) and file_ref.startswith("/workspace/"):
+                data["file"] = self._publish_workspace_file_ref(file_ref=file_ref, item=item)
+                changed = True
+            updated = dict(segment)
+            updated["data"] = data
+            updated_segments.append(updated)
+
+        if not changed:
+            return item
+        return replace(
+            item,
+            plan=replace(
+                item.plan,
+                action=Action(
+                    action_type=action.action_type,
+                    target=action.target,
+                    payload={"segments": updated_segments},
+                    reply_to=action.reply_to,
+                ),
+            ),
+        )
+
+    def _publish_workspace_file_ref(self, *, file_ref: str, item: OutboxItem) -> str:
+        """发布单个 `/workspace/...` 文件到 shared runtime 目录."""
+
+        if item.world_view is None:
+            raise ValueError("workspace file refs require world_view during outbox dispatch")
+        resolved = item.world_view.resolve(file_ref)
+        source_path = Path(resolved.host_path)
+        if not source_path.exists() or not source_path.is_file():
+            raise FileNotFoundError(f"workspace file not found: {file_ref}")
+        relative_path = Path(resolved.relative_path)
+        publish_root = (
+            self.runtime_root
+            / "outbound"
+            / self._safe_path_segment(item.destination_conversation_id, field_name="conversation_id")
+            / self._safe_path_segment(item.run_id, field_name="run_id")
+        )
+        destination = (publish_root / relative_path).resolve()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, destination)
+        return str(destination)
+
+    @staticmethod
+    def _safe_path_segment(value: str, *, field_name: str) -> str:
+        """校验单个路径段，避免发布目录被路径穿越污染."""
+
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError(f"{field_name} cannot be empty")
+        if normalized in {".", ".."}:
+            raise ValueError(f"{field_name} cannot be '.' or '..'")
+        if "/" in normalized or "\\" in normalized:
+            raise ValueError(f"{field_name} cannot contain path separators")
+        return normalized
+
+    @staticmethod
+    def _is_success_ack(raw: dict[str, Any]) -> bool:
+        """Interpret gateway ack semantics conservatively.
+
+        If gateway returns explicit OneBot-style `status` / `retcode`, require success.
+        Otherwise preserve legacy behavior and treat any non-None ack as success.
+        """
+
+        status = str(raw.get("status", "") or "").strip().lower()
+        retcode = raw.get("retcode")
+        if status:
+            if status != "ok":
+                return False
+            try:
+                if retcode is not None and int(retcode) != 0:
+                    return False
+            except (TypeError, ValueError):
+                return False
+        return True
 
     @staticmethod
     def _ensure_thread_content(item: OutboxItem) -> OutboxItem:
@@ -461,6 +582,20 @@ class Outbox:
         if not isinstance(raw, dict):
             return {}
         return dict(raw)
+
+    @staticmethod
+    def _extract_platform_message_id(raw: dict[str, Any]) -> str:
+        """Extract platform message id from varied gateway ack shapes."""
+
+        direct = str(raw.get("message_id", "") or "").strip()
+        if direct:
+            return direct
+        data = raw.get("data")
+        if isinstance(data, dict):
+            nested = str(data.get("message_id", "") or "").strip()
+            if nested:
+                return nested
+        return ""
 
     @staticmethod
     def _extract_content_json(action: Action) -> dict[str, Any]:
