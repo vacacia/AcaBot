@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 import shutil
@@ -2975,6 +2976,18 @@ def test_webui_shell_is_vite_bundle_entry() -> None:
     assert "<div id=\"app\"></div>" in html
     assert "data-view=\"sessions\"" not in html
     assert "<script type=\"module\"" in html
+
+
+def test_webui_built_assets_include_render_settings_entrypoint() -> None:
+    html = Path("src/acabot/webui/index.html").read_text(encoding="utf-8")
+    script_match = re.search(r'src="(/assets/[^"]+\.js)"', html)
+
+    assert script_match is not None
+    built_js = Path("src/acabot/webui") / script_match.group(1).lstrip("/")
+    script_source = built_js.read_text(encoding="utf-8")
+
+    assert "/api/render/config" in script_source
+    assert "Render 默认配置" in script_source
 
 
 def test_webui_router_removes_legacy_preview_routes() -> None:
