@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue"
+import { useRoute } from "vue-router"
 
 import StickyNotePane from "../components/StickyNotePane.vue"
 import { apiGet, apiPost, apiPut, peekCachedGet } from "../lib/api"
@@ -18,8 +19,23 @@ type StickyNoteItem = {
   updated_at: number
 }
 
+type LongTermMemoryConfig = {
+  enabled: boolean
+  required_target_ids: string[]
+  missing_target_ids: string[]
+}
+
+type BindingSnapshot = {
+  binding: {
+    target_id: string
+    preset_ids: string[]
+  }
+  binding_state: string
+}
+
 const MEMORY_KIND_STORAGE_KEY = "acabot.memory.entity_kind"
 const MEMORY_ENTITY_STORAGE_KEY = "acabot.memory.entity_ref"
+const route = useRoute()
 
 function noteListPath(entityKind: StickyEntityKind): string {
   return `/api/memory/sticky-notes?entity_kind=${encodeURIComponent(entityKind)}`
@@ -81,6 +97,23 @@ const filteredNoteItems = computed(() => {
   return noteItems.value.filter((item) => item.entity_ref.toLowerCase().includes(keyword))
 })
 
+const isMemoryOverview = computed(() => route.path === "/config/memory")
+const pageTitle = computed(() => (isMemoryOverview.value ? "长期记忆与 Sticky Notes" : "Sticky Notes"))
+
+const ltmConfig = ref<LongTermMemoryConfig | null>(null)
+const ltmBindings = ref<BindingSnapshot[]>([])
+
+const ltmBindingState = computed(() => {
+  if (ltmConfig.value === null) return "unavailable"
+  if (!ltmConfig.value.enabled) return "disabled"
+  if ((ltmConfig.value.missing_target_ids || []).length > 0) return "needs setup"
+  const requiredIds = new Set(ltmConfig.value.required_target_ids || [])
+  const ready = ltmBindings.value.filter((item) => requiredIds.has(item.binding.target_id)).every((item) => item.binding_state === "resolved")
+  return ready ? "ready" : "needs setup"
+})
+
+const ltmTargets = computed(() => ltmConfig.value?.required_target_ids ?? [])
+
 function clearStatus(): void {
   statusText.value = ""
   if (statusTimer !== null) {
@@ -124,6 +157,10 @@ async function openKind(kind: StickyEntityKind, preserveCurrent = false): Promis
 }
 
 async function openFirstAvailableKind(preferredKind: StickyEntityKind): Promise<void> {
+  if (isMemoryOverview.value) {
+    await openKind("conversation", true)
+    return
+  }
   await openKind(preferredKind, true)
   if (noteItems.value.length > 0) {
     return
@@ -160,6 +197,10 @@ async function createNote(): Promise<void> {
   const entityRef = draftEntityRef.value.trim()
   if (!entityRef) {
     showStatus("先填写 entity_ref，再点击新建。")
+    return
+  }
+  if (isMemoryOverview.value && !entityRef.startsWith("qq:group:")) {
+    errorText.value = "当前记忆总览页只允许创建 conversation sticky note, 请输入 qq:group:<id>"
     return
   }
   errorText.value = ""
@@ -213,9 +254,27 @@ async function saveEditable(content: string): Promise<void> {
   }
 }
 
+async function loadLtmSummary(): Promise<void> {
+  if (!isMemoryOverview.value) {
+    return
+  }
+  try {
+    const [configPayload, bindingPayload] = await Promise.all([
+      apiGet<LongTermMemoryConfig>("/api/memory/long-term/config"),
+      apiGet<BindingSnapshot[]>("/api/models/bindings"),
+    ])
+    ltmConfig.value = configPayload
+    ltmBindings.value = bindingPayload
+  } catch {
+    ltmConfig.value = null
+    ltmBindings.value = []
+  }
+}
+
 onMounted(() => {
   void (async () => {
     try {
+      await loadLtmSummary()
       await openFirstAvailableKind(entityKind.value)
       if (storedEntityRef) {
         try {
@@ -239,10 +298,21 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="ds-page">
-    <h1>Sticky Notes</h1>
+    <h1>{{ pageTitle }}</h1>
 
     <div class="memory-layout">
       <aside class="ds-panel ds-panel-padding sidebar-column note-panel">
+        <div v-if="isMemoryOverview" class="ltm-summary-grid">
+          <article class="ds-surface ds-card-padding-sm ltm-meta-card">
+            <p class="summary-label">LTM</p>
+            <strong class="meta-value">{{ ltmConfig?.enabled ? "enabled" : "disabled" }}</strong>
+          </article>
+          <article class="ds-surface ds-card-padding-sm ltm-meta-card">
+            <p class="summary-label">Binding</p>
+            <strong class="meta-value">{{ ltmBindingState }}</strong>
+          </article>
+        </div>
+
         <div class="sidebar-header">
           <h2>Sticky Notes</h2>
           <button class="refresh-btn" type="button" @click="void openFirstAvailableKind(entityKind)" title="刷新">
@@ -252,7 +322,7 @@ onBeforeUnmount(() => {
           </button>
         </div>
 
-        <div class="action-row">
+        <div class="action-row note-search">
           <input class="ds-input action-input" v-model="noteSearch" type="text" placeholder="搜索..." />
         </div>
 
@@ -271,7 +341,7 @@ onBeforeUnmount(() => {
           </button>
         </div>
 
-        <div class="action-row create-bar">
+        <div class="action-row create-bar note-create new-note">
           <input class="ds-input action-input" v-model="draftEntityRef" type="text" placeholder="输入 ID，如 qq:group:42" @keydown.enter="void createNote()" />
           <button class="ds-primary-button action-btn" type="button" @click="void createNote()">新建</button>
         </div>
@@ -291,6 +361,13 @@ onBeforeUnmount(() => {
           @save-readonly="(value) => void saveReadonly(value)"
           @save-editable="(value) => void saveEditable(value)"
         />
+
+        <div v-if="isMemoryOverview" class="ltm-targets">
+          <h3>Long-Term Memory Targets</h3>
+          <div class="ds-chip-row">
+            <span v-for="target in ltmTargets" :key="target" class="ds-chip">{{ target }}</span>
+          </div>
+        </div>
       </section>
     </div>
   </section>
@@ -304,6 +381,29 @@ onBeforeUnmount(() => {
   margin-bottom: 12px;
 }
 
+.ltm-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.ltm-meta-card {
+  display: grid;
+  gap: 4px;
+}
+
+.meta-value {
+  font-size: 16px;
+  color: var(--heading-strong);
+}
+
+.summary-label {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .sidebar-header h2 {
   margin: 0;
   font-size: 16px;
@@ -313,6 +413,12 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.ltm-targets {
+  margin-top: 16px;
+  display: grid;
+  gap: 10px;
 }
 
 .action-input {

@@ -583,6 +583,8 @@ class RuntimeHttpApiServer:
             return self._ok(self._await(self.control_plane.get_admins()))
         if segments == ["admins"] and method == "PUT":
             return self._ok(self._await(self.control_plane.put_admins(payload=payload)))
+        if segments == ["notifications"] and method == "POST":
+            return self._ok(self._await(self.control_plane.post_notification(payload=payload)))
 
         if segments == ["prompts"] and method == "GET":
             return self._ok(self._await(self.control_plane.list_prompts()))

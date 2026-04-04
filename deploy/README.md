@@ -28,3 +28,38 @@ docker compose -f compose.yaml -f compose.dev.yaml up
 ```bash
 python -m acabot.main
 ```
+
+## 注入测试事件
+
+可以直接伪装成 NapCat 的反向 WS client, 往 `acabot` 容器的 `8080` 端口发一条 OneBot v11 事件:
+
+```bash
+python scripts/send_test_event.py --message-type private --user-id 10001 --text "测试一下"
+```
+
+默认会:
+- 连接 `ws://127.0.0.1:8080`
+- 带上当前 `deploy/napcat/config/onebot11_*.json` 里的 token
+- 发送一条私聊 message event
+- 等待 bot 回包, 把 `send_private_msg` 或 `send_group_msg` 打印出来
+
+这个工具适合测 bot 的收消息、路由、agent 执行和出站动作. 它不会真的把消息发到 QQ, 因为回包会先被这个测试 client 接住。
+
+## 主动发送通知
+
+如果 `acabot` 和 `acabot-napcat` 已经连上，可以直接调用本地 WebUI API 主动发一条 bot 消息：
+
+```bash
+curl -X POST http://127.0.0.1:8765/api/notifications \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "conversation_id": "qq:user:1733064202",
+    "text": "AcaBot 主动通知测试"
+  }'
+```
+
+`conversation_id` 目前使用 canonical 形式：
+- 私聊: `qq:user:<qq号>`
+- 群聊: `qq:group:<群号>`
+
+这条接口会复用 runtime 自己的正式出站链路, 发送成功后也会写入 `MessageStore`。

@@ -80,6 +80,24 @@ type PresetDraft = {
   model_params_text: string
 }
 
+type BindingSnapshot = {
+  binding: {
+    binding_id: string
+    target_id: string
+    preset_ids: string[]
+    timeout_sec?: number | null
+  }
+  binding_state: string
+  message: string
+}
+
+type EffectiveTargetPreview = {
+  request?: {
+    model?: string
+    preset_id?: string
+  }
+}
+
 const DEFAULT_TASK_KIND_OPTIONS: TaskKind[] = [
   "chat",
   "embedding",
@@ -120,10 +138,15 @@ const providerKindOptions = ref<ProviderKindOption[]>(parseProviderKinds(cachedC
 
 const presets = ref<PresetRecord[]>(peekCachedGet<PresetRecord[]>("/api/models/presets") ?? [])
 const providers = ref<ProviderRecord[]>(peekCachedGet<ProviderRecord[]>("/api/models/providers") ?? [])
+const bindings = ref<BindingSnapshot[]>(peekCachedGet<BindingSnapshot[]>("/api/models/bindings") ?? [])
 
 const selectedId = ref("")
+const selectedBindingId = ref("")
 const draft = ref<PresetDraft | null>(null)
+const bindingDraft = ref<BindingSnapshot["binding"] | null>(null)
 const showPresetEditor = ref(false)
+const showBindingEditor = ref(false)
+const bindingPreview = ref<EffectiveTargetPreview | null>(null)
 
 const loading = ref(true)
 const saveMessage = ref("")
@@ -224,7 +247,7 @@ function derivePresetId(providerId: string, model: string): string {
 function blankDraft(): PresetDraft {
   return {
     preset_id: "",
-    provider_id: "",
+    provider_id: providers.value[0]?.provider_id || "",
     model: "",
     task_kind: "chat",
     capabilities: [],
@@ -284,16 +307,18 @@ async function loadModels(preferredPresetId = ""): Promise<void> {
   loading.value = true
   errorMessage.value = ""
   try {
-    const [catalogPayload, providerList, presetList] = await Promise.all([
+    const [catalogPayload, providerList, presetList, bindingList] = await Promise.all([
       apiGet<CatalogPayload>("/api/ui/catalog"),
       apiGet<ProviderRecord[]>("/api/models/providers"),
       apiGet<PresetRecord[]>("/api/models/presets"),
+      apiGet<BindingSnapshot[]>("/api/models/bindings"),
     ])
     taskKindOptions.value = catalogPayload.options?.model_task_kinds ?? DEFAULT_TASK_KIND_OPTIONS
     capabilityOptions.value = catalogPayload.options?.model_capabilities ?? DEFAULT_CAPABILITY_OPTIONS
     providerKindOptions.value = parseProviderKinds(catalogPayload.options?.provider_kinds)
     providers.value = providerList
     presets.value = presetList
+    bindings.value = bindingList
 
     const nextPresetId = preferredPresetId || selectedId.value || presetList[0]?.preset_id || ""
     if (nextPresetId) {
@@ -314,12 +339,14 @@ async function selectPreset(presetId: string, existingList?: PresetRecord[]): Pr
   const found = source.find((item) => item.preset_id === presetId)
   if (found) {
     draft.value = toDraft(found)
+    await syncBindingSelection()
     const provider = providers.value.find((p) => p.provider_id === found.provider_id)
     if (found.model) queryLitellmInfo(found.model, provider?.kind || "")
     return
   }
   const payload = await apiGet<PresetRecord>(`/api/models/presets/${encodeURIComponent(presetId)}`)
   draft.value = toDraft(payload)
+  await syncBindingSelection()
   const provider = providers.value.find((p) => p.provider_id === payload.provider_id)
   if (payload.model) queryLitellmInfo(payload.model, provider?.kind || "")
 }
@@ -327,6 +354,10 @@ async function selectPreset(presetId: string, existingList?: PresetRecord[]): Pr
 function createPreset(): void {
   selectedId.value = ""
   draft.value = blankDraft()
+  bindingDraft.value = null
+  showBindingEditor.value = false
+  selectedBindingId.value = ""
+  bindingPreview.value = null
   saveMessage.value = ""
   errorMessage.value = ""
 }
@@ -458,6 +489,85 @@ const selectedPresetCapabilities = computed(() => {
   return draft.value?.capabilities ?? []
 })
 
+const relatedBindings = computed(() =>
+  bindings.value.filter((item) => (selectedId.value ? item.binding.preset_ids.includes(selectedId.value) : false)),
+)
+
+const selectedBindingSnapshot = computed(() => {
+  if (relatedBindings.value.length === 0) {
+    return null
+  }
+  return (
+    relatedBindings.value.find((item) => item.binding.binding_id === selectedBindingId.value)
+    ?? relatedBindings.value[0]
+    ?? null
+  )
+})
+
+async function syncBindingSelection(preferredBindingId = ""): Promise<void> {
+  const nextBinding =
+    relatedBindings.value.find((item) => item.binding.binding_id === preferredBindingId)
+    ?? relatedBindings.value.find((item) => item.binding.binding_id === selectedBindingId.value)
+    ?? relatedBindings.value[0]
+    ?? null
+  selectedBindingId.value = nextBinding?.binding.binding_id || ""
+  bindingDraft.value = nextBinding ? { ...nextBinding.binding, preset_ids: [...nextBinding.binding.preset_ids] } : null
+  if (!nextBinding) {
+    bindingPreview.value = null
+    return
+  }
+  try {
+    bindingPreview.value = await apiGet<EffectiveTargetPreview>(
+      `/api/models/targets/${encodeURIComponent(nextBinding.binding.target_id)}/effective`,
+    )
+  } catch {
+    bindingPreview.value = null
+  }
+}
+
+function openBindingEditor(): void {
+  if (!selectedBindingSnapshot.value) {
+    return
+  }
+  bindingDraft.value = {
+    ...selectedBindingSnapshot.value.binding,
+    preset_ids: [...selectedBindingSnapshot.value.binding.preset_ids],
+  }
+  showBindingEditor.value = true
+}
+
+function closeBindingEditor(): void {
+  showBindingEditor.value = false
+}
+
+async function saveBinding(): Promise<void> {
+  if (!bindingDraft.value) {
+    return
+  }
+  saveMessage.value = "保存中..."
+  errorMessage.value = ""
+  try {
+    const result = await apiPut<MutationResult>(
+      `/api/models/bindings/${encodeURIComponent(bindingDraft.value.binding_id)}`,
+      {
+        target_id: bindingDraft.value.target_id,
+        preset_ids: bindingDraft.value.preset_ids,
+        timeout_sec: bindingDraft.value.timeout_sec ?? null,
+      },
+    )
+    if (!result.ok || !result.applied) {
+      throw new Error(result.message || "保存 Binding 失败")
+    }
+    saveMessage.value = "已保存"
+    showBindingEditor.value = false
+    bindings.value = await apiGet<BindingSnapshot[]>("/api/models/bindings")
+    await syncBindingSelection(bindingDraft.value.binding_id)
+  } catch (error) {
+    saveMessage.value = ""
+    errorMessage.value = error instanceof Error ? error.message : "保存 Binding 失败"
+  }
+}
+
 onMounted(() => {
   void loadModels()
 })
@@ -475,6 +585,7 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="ds-page">
+    <h1>模型真源</h1>
     <div class="layout">
       <aside class="ds-panel ds-panel-padding sidebar-column">
         <div class="ds-section-head compact-head">
@@ -484,7 +595,7 @@ onBeforeUnmount(() => {
               <h2>模型预设</h2>
             </div>
           </div>
-          <button class="ds-secondary-button" type="button" @click="openNewPresetEditor">+ 新建</button>
+          <button class="ds-secondary-button" type="button" title="新建 Preset" @click="openNewPresetEditor">+</button>
         </div>
         <div class="ds-list">
           <button
@@ -553,12 +664,61 @@ onBeforeUnmount(() => {
             </div>
             <p v-else class="ds-empty inline-empty">这个 Preset 还没有声明附加能力。</p>
           </div>
+
+          <div v-if="selectedBindingSnapshot" class="binding-editor">
+            <div class="capability-preview-head">
+              <div>
+                <h3>Binding 预览</h3>
+              </div>
+              <button class="ds-secondary-button" type="button" @click="openBindingEditor()">打开 Binding 设置</button>
+            </div>
+            <div class="binding-meta-grid">
+              <article class="ds-surface ds-card-padding-sm binding-meta-card">
+                <p class="summary-label">State</p>
+                <strong class="meta-value">{{ selectedBindingSnapshot.binding_state }}</strong>
+              </article>
+              <article class="ds-surface ds-card-padding-sm binding-meta-card">
+                <p class="summary-label">Effective model</p>
+                <strong class="meta-value">{{ bindingPreview?.request?.model || draft.model || "—" }}</strong>
+              </article>
+              <article class="ds-surface ds-card-padding-sm binding-meta-card">
+                <p class="summary-label">Preset</p>
+                <strong class="meta-value">{{ bindingPreview?.request?.preset_id || selectedBindingSnapshot.binding.preset_ids[0] || "—" }}</strong>
+              </article>
+            </div>
+            <p class="binding-fallback-text">fallback: {{ selectedBindingSnapshot.binding.preset_ids.join(" -> ") }}</p>
+          </div>
         </div>
         <div v-else-if="draft" class="ds-empty">
           <p>点击「+ 新建」或「继续填写新 Preset」开始配置。</p>
         </div>
         <p v-else class="ds-empty">当前没有可展示的 Preset。</p>
       </article>
+
+      <aside class="ds-panel ds-panel-padding binding-sidebar">
+        <div class="ds-section-head compact-head">
+          <div class="ds-section-title">
+            <div>
+              <p class="ds-eyebrow">Bindings</p>
+              <h2>目标绑定</h2>
+            </div>
+          </div>
+        </div>
+        <div class="ds-list">
+          <button
+            v-for="item in relatedBindings"
+            :key="item.binding.binding_id"
+            class="list-item"
+            :class="{ active: item.binding.binding_id === selectedBindingId }"
+            type="button"
+            @click="void syncBindingSelection(item.binding.binding_id)"
+          >
+            <strong>{{ item.binding.target_id }}</strong>
+            <small>{{ item.binding.binding_id }}</small>
+            <span class="state-chip">{{ item.binding_state }}</span>
+          </button>
+        </div>
+      </aside>
     </div>
 
     <Teleport to="body">
@@ -584,7 +744,12 @@ onBeforeUnmount(() => {
               </label>
               <label v-else class="ds-field">
                 <span>Preset ID</span>
-                <input class="ds-input" :value="derivePresetId(draft.provider_id, draft.model) || '自动生成'" type="text" readonly disabled />
+                <input
+                  class="ds-input"
+                  v-model="draft.preset_id"
+                  type="text"
+                  :placeholder="derivePresetId(draft.provider_id, draft.model) || '留空时自动生成'"
+                />
               </label>
               <label class="ds-field">
                 <span>Provider</span>
@@ -675,13 +840,40 @@ onBeforeUnmount(() => {
         </article>
       </div>
     </Teleport>
+
+    <Teleport to="body">
+      <div v-if="showBindingEditor && bindingDraft" class="modal-backdrop" @click.self="closeBindingEditor()">
+        <article class="modal-shell">
+          <div class="modal-head">
+            <div>
+              <p class="ds-eyebrow">Binding Settings</p>
+              <h2>{{ bindingDraft.target_id }}</h2>
+            </div>
+            <button class="ds-ghost-button" type="button" @click="closeBindingEditor()">关闭</button>
+          </div>
+          <div class="side-sheet-body">
+            <label class="ds-field">
+              <span>Binding ID</span>
+              <input class="ds-input" :value="bindingDraft.binding_id" type="text" readonly />
+            </label>
+            <label class="ds-field">
+              <span>Target ID</span>
+              <input class="ds-input" :value="bindingDraft.target_id" type="text" readonly />
+            </label>
+          </div>
+          <div class="modal-actions">
+            <button class="ds-primary-button" type="button" @click="void saveBinding()">保存 Binding</button>
+          </div>
+        </article>
+      </div>
+    </Teleport>
   </section>
 </template>
 
 <style scoped>
 .layout {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: 320px minmax(0, 1fr) 320px;
   gap: 16px;
 }
 
@@ -738,6 +930,38 @@ onBeforeUnmount(() => {
 .summary-stack {
   display: grid;
   gap: 14px;
+}
+
+.binding-sidebar {
+  min-width: 0;
+}
+
+.binding-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.meta-value {
+  font-size: 16px;
+  color: var(--heading-strong);
+}
+
+.state-chip {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.binding-fallback-text {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .preset-summary-grid {

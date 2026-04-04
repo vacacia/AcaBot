@@ -26,24 +26,28 @@
 - `2026-04-03` ~ `2026-04-04` 完成 unified `message` tool、Outbox materialization、cross-session contract、render service、Playwright backend、bootstrap wiring
 - `2026-04-04` 补齐 `OutboundMessageProjection` / `source_intent` continuity 链，修复真实 `message.send` 不写回 destination thread working memory 的缺口
 - `2026-04-04` 文档同步：runtime mainline、data contracts、memory、gateway、milestone summary、phase verification 一起补齐
+- `2026-04-04` 按 `gsd-plan-milestone-gaps` 把 milestone audit gap 正式拆成 Phase 05 / 06 / 07，回写 roadmap / requirements / state
 
 ## 已知问题
-- webui 设计不完整，缺少很多配置页面
-- webui 没有单独的 tools 面板，当前工具可见性和来源不够直观
-- WebUI 仍然偏卡，日志和系统页交互还需要继续打磨
-- milestone 收尾文档还没做完：retrospective / milestone audit / archive paperwork 仍需收口
-- 真人验收还没做完：真实 QQ 客户端里的 quote + @、cross-session 送达体验、render 图片可读性还需要肉眼确认
+- webui 设计不完整，没有单独的 tools 面板，当前工具可见性和来源不够直观
+- WebUI 非常卡
+- milestone audit 已完成，gap closure phases 也已建好：Phase 05 / 06 负责补 GSD artifact 链，Phase 07 负责 render 可读性和 workspace / `runtime_data` 契约收口
+- 真人验收发现 render 图片可读性仍有问题；quote + @、cross-session 真实 QQ 验收也还没形成正式记录
 - 工具 desc 还可以继续打磨，减少模型误用和多余解释成本
+- bot 的工作区指引 prompt 不够硬，仍会尝试在 `tmp/` 下工作
+- bot 工作区与实际 `runtime_data` 的映射存在契约问题，需要单独修
+- 群聊“仅回复 @ 和引用”失效，实际会回复全部消息；这不是本次 requirement，但属于需要单独收口的高严重度 bug
 
 ## 下一步
-- 做 3 条真人验收：
-  - quote + @ 在真实 QQ 客户端里是否同条正确显示
-  - cross-session send 在真实目标会话里的体验是否正确
-  - render 图片在真实客户端里是否清晰可读
-- 把 milestone 纸面台账收口：
-  - `REQUIREMENTS.md` traceability
-  - `STATE.md` 进度与 phase 状态
-  - retrospective / milestone audit / archive
+- 先计划并执行 gap closure phases：
+  - `$gsd-plan-phase 05`
+  - `$gsd-plan-phase 06`
+  - `$gsd-plan-phase 07`
+- 对不属于本次 requirement、但又不能放着不管的问题单独插 phase：
+  - `$gsd-insert-phase 4 群聊回复策略 hotfix`
+- gap closure phases 做完后，重新执行：
+  - `$gsd-audit-milestone v1.0`
+  - 通过后再 `$gsd-complete-milestone v1.0`
 - WebUI 继续补：
   - 配置页面
   - tools 面板

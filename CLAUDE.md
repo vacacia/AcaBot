@@ -1,16 +1,30 @@
+## Communication Rule
+
+- main agent 每次启动子代理前, 必须先告诉用户:
+    - 这个子代理是GSD的哪个身份?具体要解决什么问题
+    - 禁止只报文件名、plan 编号、checker blocker 这种别人看不懂的话
+- main agent 每次采取任何行动前, 必须先对用户明确说出 3 件事
+    - `GSD要我做什么`
+    - `我现在在做什么`
+    - `是否在遵循流程`
+    - 这 3 句必须先说, 再行动
+    - 如果发现自己答不出, 或者答案里已经出现“我先自己补一下/先顶一下/先查一下再说”这种脱流程念头, 就不能继续执行, 必须先回到 GSD 当前步骤
+- **严格严格严格严格遵照 GSD 的指示, 禁止偏离任何指引, 禁止做 不该你做的事情**
+
+
 <!-- GSD:project-start source:PROJECT.md -->
 ## Project
 
 所有文档/代码注释/交流过程 全部使用 中文 + 英文标点符号
-阅读/data/workspace/agent/AcaBot/docs/00-ai-entry.md
-
-如果你是 main agent:
-- 遵照 GSD 的指示, **禁止做 不该你做的事情**
-- 如果你是 GPT, subagent 请全部使用 GPT-5.4
+- 如果你是 GPT && main agent, 
+    - executor research 的 subagent 请全部使用 GPT-5.4
+    - 其他 subagent 使用 GPT-5.4-mini
 - subagen 的作用是为了减少上下文污染, 所以不要自己代 subagent 工作
 - 积极使用 subagent 并行工作提升效率, 禁止自己主动写代码
 - subagent research 阶段禁止再派出 subagent 做重复工作, 除非是调查 *不相交的不同领域*
 - subagent research 阶段禁止中断, 禁止主动下场, **必须等待直到它完成**
+- 给 subagent 发 prompt 时, 要按照 GSD 要求给它提供上下文, 而不是自己手搓一份上下文
+- 出现 subagent 没按预期进行时, main agent 必须做一次追溯: "是不是我没按 GSD 流程给错了上下文"
 
 ---
 

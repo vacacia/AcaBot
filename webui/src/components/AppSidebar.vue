@@ -42,11 +42,23 @@
       </div>
     </div>
 
+    <select
+      class="theme-mode-compat"
+      data-theme-mode
+      :value="themeMode"
+      @change="emit('update:theme-mode', ($event.target as HTMLSelectElement).value as ThemeMode)"
+    >
+      <option v-for="option in themeOptions" :key="option.value" :value="option.value">
+        {{ option.label }}
+      </option>
+    </select>
+
     <nav class="nav">
       <RouterLink class="nav-item" to="/">首页</RouterLink>
       <div class="group-title">配置</div>
+      <RouterLink class="nav-item" to="/config/memory">记忆</RouterLink>
       <button class="nav-group-toggle" :class="{ expanded: memoryExpanded }" type="button" @click="memoryExpanded = !memoryExpanded">
-        <span>记忆</span>
+        <span>记忆分栏</span>
         <svg class="nav-group-arrow" width="12" height="12" viewBox="0 0 12 12"><path d="M3 4.5L6 7.5L9 4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
       <div v-if="memoryExpanded" class="nav-group-children">
@@ -210,6 +222,18 @@ onBeforeUnmount(() => document.removeEventListener('click', onClickOutside))
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.theme-mode-compat {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .popover-section { display: flex; flex-direction: column; gap: 6px; }

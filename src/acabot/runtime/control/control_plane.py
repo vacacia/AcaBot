@@ -18,7 +18,10 @@ from __future__ import annotations
 
 import os
 import time
+import uuid
 from dataclasses import asdict
+
+from acabot.types import Action, ActionType
 
 from ..app import RuntimeApp
 from ..computer import (
@@ -40,7 +43,7 @@ from ..model.model_registry import (
     ModelRegistryStatusSnapshot,
     ModelReloadSnapshot,
 )
-from ..contracts import ChannelEventRecord, MessageRecord, RunRecord
+from ..contracts import ChannelEventRecord, MessageRecord, OutboxItem, PlannedAction, RunRecord
 from ..plugin_reconciler import PluginReconciler
 from ..plugin_runtime_host import PluginRuntimeHost
 from ..plugin_package import PackageCatalog
@@ -58,6 +61,7 @@ from ..memory.sticky_note_entities import normalize_sticky_note_entity_kind
 from ..memory.sticky_notes import StickyNoteService
 from ..storage.threads import ThreadManager
 from ..tool_broker import ToolBroker
+from ..ids import build_event_source_from_conversation_id, build_thread_id_from_conversation_id
 from .model_ops import RuntimeModelControlOps
 from .snapshots import (
     ActiveRunSnapshot,
@@ -746,6 +750,105 @@ class RuntimeControlPlane:
             restart_required=False,
             message="已保存并已生效",
         )
+
+    async def post_notification(self, *, payload: dict[str, object]) -> dict[str, object]:
+        """主动发送一条 bot 消息到指定会话."""
+
+        conversation_id = str(payload.get("conversation_id", "") or "").strip()
+        if not conversation_id:
+            raise ValueError("conversation_id is required")
+        text = str(payload.get("text", "") or "").strip()
+        if not text:
+            raise ValueError("text is required")
+
+        outbox = getattr(self.app.pipeline, "outbox", None)
+        if outbox is None:
+            raise RuntimeError("outbox unavailable")
+
+        gateway_self_id = str(getattr(self.app.gateway, "_self_id", "") or "").strip()
+        target = build_event_source_from_conversation_id(
+            conversation_id,
+            actor_user_id=gateway_self_id,
+        )
+        thread_id = build_thread_id_from_conversation_id(conversation_id)
+        run_id = f"notify:{uuid.uuid4().hex}"
+        action_id = f"action:{uuid.uuid4().hex}"
+        report = await outbox.send_items(
+            [
+                OutboxItem(
+                    thread_id=thread_id,
+                    run_id=run_id,
+                    agent_id="system.notification",
+                    origin_thread_id=thread_id,
+                    destination_thread_id=thread_id,
+                    destination_conversation_id=conversation_id,
+                    plan=PlannedAction(
+                        action_id=action_id,
+                        action=Action(
+                            action_type=ActionType.SEND_MESSAGE_INTENT,
+                            target=target,
+                            payload={
+                                "text": text,
+                                "target": conversation_id,
+                            },
+                        ),
+                        thread_content=text,
+                        metadata={
+                            "message_action": "send",
+                            "destination_conversation_id": conversation_id,
+                            "notification_source": "control_plane",
+                            "suppresses_default_reply": True,
+                        },
+                    ),
+                    metadata={
+                        "channel_scope": conversation_id,
+                        "destination_conversation_id": conversation_id,
+                        "notification_source": "control_plane",
+                    },
+                )
+            ]
+        )
+        if report.has_failures:
+            first_error = report.results[0].error if report.results else None
+            raise RuntimeError(first_error or "notification delivery failed")
+
+        await self._append_sent_message_to_thread(
+            thread_id=thread_id,
+            conversation_id=conversation_id,
+            content=text,
+        )
+
+        result = report.results[0]
+        return {
+            "run_id": run_id,
+            "action_id": action_id,
+            "conversation_id": conversation_id,
+            "thread_id": thread_id,
+            "platform_message_id": result.platform_message_id,
+            "text": text,
+        }
+
+    async def _append_sent_message_to_thread(
+        self,
+        *,
+        thread_id: str,
+        conversation_id: str,
+        content: str,
+    ) -> None:
+        """把主动发送的 assistant 消息补进目标 thread working memory."""
+
+        if self.thread_manager is None:
+            return
+        now = int(time.time())
+        thread = await self.thread_manager.get_or_create(
+            thread_id=thread_id,
+            channel_scope=conversation_id,
+            last_event_at=now,
+        )
+        async with thread.lock:
+            thread.working_messages.append({"role": "assistant", "content": content})
+            thread.last_event_at = now
+        await self.thread_manager.save(thread)
 
     async def get_backend_status(self) -> BackendStatusSnapshot:
         """返回后台维护面的最小状态快照."""
