@@ -80,6 +80,7 @@ class UsageAgentRuntime(AgentRuntime):
                 )
             ],
             usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            cost_usd=0.01234,
             model_used="gpt-test",
         )
 
@@ -510,11 +511,13 @@ async def test_thread_pipeline_persists_token_usage_and_logs_it() -> None:
         "total_tokens": 15,
     }
     assert updated_run.metadata["model_used"] == "gpt-test"
+    assert updated_run.metadata["usage_cost_usd"] == 0.01234
 
     snapshot = buffer.list_entries(keyword="Run token usage", limit=10)
     assert len(snapshot["items"]) == 1
     assert snapshot["items"][0]["extra"]["run_id"] == run.run_id
     assert snapshot["items"][0]["extra"]["total_tokens"] == 15
+    assert snapshot["items"][0]["extra"]["cost_usd"] == 0.01234
     assert thread.working_messages[0]["role"] == "user"
     assert thread.working_messages[1]["content"] == "hello back"
 

@@ -49,6 +49,7 @@ class AgentResponse:
         attachments: tool 产出的富内容附件列表.
         error: 错误信息. None 表示正常, 有值表示出错.
         usage: token 用量, 如 {"prompt_tokens": 100, "completion_tokens": 50}.
+        cost_usd: LiteLLM 估算出的本次调用成本.
         tool_calls_made: 本次调用中执行过的 tool call 记录.
         model_used: 实际使用的模型名.
         raw: LLM 原始返回, 调试用.
@@ -58,6 +59,7 @@ class AgentResponse:
     attachments: list[Attachment] = field(default_factory=list)
     error: str | None = None
     usage: dict[str, int] = field(default_factory=dict)
+    cost_usd: float | None = None
     tool_calls_made: list[ToolCallRecord] = field(default_factory=list)
     model_used: str = ""
     raw: Any = None

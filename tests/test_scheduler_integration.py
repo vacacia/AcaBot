@@ -54,6 +54,20 @@ class FakeGateway:
         return {}
 
 
+class _FakeOutbox:
+    """只提供 render_service 属性的最小 Outbox."""
+
+    def __init__(self) -> None:
+        self.render_service = None
+
+
+class _FakePipeline:
+    """满足 RuntimeApp 当前构造约束的最小 pipeline."""
+
+    def __init__(self) -> None:
+        self.outbox = _FakeOutbox()
+
+
 class _FakeSchedulerPlugin(RuntimePlugin):
     """测试用插件, setup 时通过 ctx.scheduler 注册一个定时任务."""
 
@@ -172,7 +186,7 @@ async def test_app_start_starts_scheduler() -> None:
         thread_manager=thread_manager,
         run_manager=run_manager,
         channel_event_store=channel_event_store,
-        pipeline=None,  # type: ignore[arg-type]
+        pipeline=_FakePipeline(),  # type: ignore[arg-type]
         scheduler=scheduler,
     )
 
@@ -227,7 +241,7 @@ async def test_app_stop_order() -> None:
         thread_manager=thread_manager,
         run_manager=run_manager,
         channel_event_store=channel_event_store,
-        pipeline=None,  # type: ignore[arg-type]
+        pipeline=_FakePipeline(),  # type: ignore[arg-type]
         scheduler=scheduler,
         plugin_runtime_host=host,
     )

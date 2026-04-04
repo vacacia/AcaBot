@@ -22,7 +22,13 @@ try:
 except ImportError:
     _litellm_acompletion = None
 
+try:
+    from litellm import completion_cost as _litellm_completion_cost
+except ImportError:
+    _litellm_completion_cost = None
+
 acompletion = _litellm_acompletion
+completion_cost = _litellm_completion_cost
 
 logger = logging.getLogger("acabot.agent")
 slog = structlog.get_logger("acabot.agent")
@@ -91,6 +97,7 @@ class LitellmAgent(BaseAgent):
         )
         tools_param = self._build_tools_param(active_tools)
         total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        total_cost_usd: float | None = None
         tool_calls_made: list[ToolCallRecord] = []
         all_attachments = []
 
@@ -118,6 +125,9 @@ class LitellmAgent(BaseAgent):
                 usage = response.usage
                 for key in total_usage:
                     total_usage[key] += getattr(usage, key, 0)
+                call_cost = self._compute_cost_usd(response=response, model=use_model)
+                if call_cost is not None:
+                    total_cost_usd = round((total_cost_usd or 0.0) + call_cost, 8)
             except Exception as exc:
                 logger.error("LLM call failed: %s", exc)
                 return AgentResponse(error=str(exc), model_used=use_model)
@@ -151,6 +161,7 @@ class LitellmAgent(BaseAgent):
                 prompt_tokens=total_usage.get("prompt_tokens", 0),
                 completion_tokens=total_usage.get("completion_tokens", 0),
                 total_tokens=total_usage.get("total_tokens", 0),
+                cost_usd=total_cost_usd,
                 attachments=len(all_attachments),
                 tool_rounds=len(tool_calls_made),
                 text_preview=self._preview_text(msg.content),
@@ -159,6 +170,7 @@ class LitellmAgent(BaseAgent):
                 text=msg.content or "",
                 attachments=all_attachments,
                 usage=total_usage,
+                cost_usd=total_cost_usd,
                 tool_calls_made=tool_calls_made,
                 model_used=use_model,
                 raw=response,
@@ -212,12 +224,14 @@ class LitellmAgent(BaseAgent):
                 response = await response
             choice = response.choices[0]
             usage = response.usage
+            cost_usd = self._compute_cost_usd(response=response, model=use_model)
             slog.info(
                 "LLM complete finished",
                 model=use_model,
                 prompt_tokens=getattr(usage, "prompt_tokens", 0),
                 completion_tokens=getattr(usage, "completion_tokens", 0),
                 total_tokens=getattr(usage, "total_tokens", 0),
+                cost_usd=cost_usd,
                 text_preview=self._preview_text(choice.message.content),
             )
             return AgentResponse(
@@ -227,6 +241,7 @@ class LitellmAgent(BaseAgent):
                     "completion_tokens": getattr(usage, "completion_tokens", 0),
                     "total_tokens": getattr(usage, "total_tokens", 0),
                 },
+                cost_usd=cost_usd,
                 model_used=use_model,
                 raw=response,
             )
@@ -284,6 +299,23 @@ class LitellmAgent(BaseAgent):
         if value is None:
             return max(0, int(self.max_tool_rounds))
         return max(0, int(value))
+
+    @staticmethod
+    def _compute_cost_usd(*, response: Any, model: str) -> float | None:
+        """尽力计算一次 LiteLLM 调用的美元成本."""
+
+        if completion_cost is None:
+            return None
+        try:
+            value = completion_cost(completion_response=response, model=model)
+        except Exception:
+            return None
+        if value is None:
+            return None
+        try:
+            return round(float(value), 8)
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _sanitize_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

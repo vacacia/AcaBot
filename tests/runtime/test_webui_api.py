@@ -26,7 +26,7 @@ from acabot.runtime import (
 )
 from acabot.runtime.control.http_api import RuntimeHttpApiServer
 from acabot.runtime.control.log_buffer import InMemoryLogBuffer, LogEntry
-from acabot.types import EventSource, MsgSegment, StandardEvent
+from acabot.types import ActionType, EventSource, MsgSegment, StandardEvent
 
 from .test_outbox import FakeGateway
 
@@ -2404,6 +2404,113 @@ async def test_runtime_http_api_server_reports_unimplemented_or_unknown_shell_en
         await server.stop()
 
 
+async def test_runtime_http_api_server_can_post_notification_and_update_thread(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(
+        config_path,
+        webui_enabled=True,
+        port=0,
+        base_dir=tmp_path,
+    )
+    config = Config.from_file(str(config_path))
+    gateway = FakeGateway()
+    components = build_runtime_components(
+        config,
+        gateway=gateway,
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        result = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/notifications",
+            method="POST",
+            payload={
+                "conversation_id": "qq:user:1733064202",
+                "text": "AcaBot 主动通知测试",
+            },
+        )
+        assert result["ok"] is True
+        assert result["data"]["conversation_id"] == "qq:user:1733064202"
+        assert result["data"]["thread_id"] == "qq:user:1733064202"
+        assert result["data"]["platform_message_id"] == "msg-1"
+        assert result["data"]["text"] == "AcaBot 主动通知测试"
+
+        assert len(gateway.sent) == 1
+        sent_action = gateway.sent[0]
+        assert sent_action.action_type == ActionType.SEND_SEGMENTS
+        assert sent_action.target is not None
+        assert sent_action.target.message_type == "private"
+        assert sent_action.target.user_id == "1733064202"
+
+        thread = await components.thread_manager.get_or_create(
+            thread_id="qq:user:1733064202",
+            channel_scope="qq:user:1733064202",
+        )
+        assert thread.working_messages[-1] == {
+            "role": "assistant",
+            "content": "AcaBot 主动通知测试",
+        }
+
+        messages = await components.message_store.get_thread_messages("qq:user:1733064202")
+        assert len(messages) == 1
+        assert messages[0].content_text == "AcaBot 主动通知测试"
+        assert messages[0].platform_message_id == "msg-1"
+    finally:
+        await server.stop()
+
+
+async def test_runtime_http_api_server_rejects_invalid_notification_payload(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(
+        config_path,
+        webui_enabled=True,
+        port=0,
+        base_dir=tmp_path,
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+
+        status, missing_text = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/notifications",
+            method="POST",
+            payload={"conversation_id": "qq:user:1733064202"},
+        )
+        assert status == 400
+        assert missing_text["ok"] is False
+        assert missing_text["error"] == "text is required"
+
+        status, missing_conversation = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/notifications",
+            method="POST",
+            payload={"text": "hello"},
+        )
+        assert status == 400
+        assert missing_conversation["ok"] is False
+        assert missing_conversation["error"] == "conversation_id is required"
+    finally:
+        await server.stop()
+
+
 async def test_runtime_http_api_server_blocks_deleting_prompt_that_is_still_referenced(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     _write_config(
@@ -3207,6 +3314,55 @@ async def test_logs_page_exists_and_exposes_mode_toggle(tmp_path: Path) -> None:
 
         assert "日志" in result["title"]
         assert "紧凑" in result["bodyText"]
+    finally:
+        await server.stop()
+
+
+async def test_logs_page_renders_structured_extra_fields(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0)
+    config = Config.from_file(str(config_path))
+    log_buffer = InMemoryLogBuffer()
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+        log_buffer=log_buffer,
+    )
+    log_buffer.append(
+        LogEntry(
+            timestamp=1.0,
+            level="INFO",
+            logger="acabot.runtime.pipeline",
+            message="Run token usage",
+            extra={"tool_name": "echo", "duration_ms": 42, "run_id": "run:1"},
+        )
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        result = await asyncio.to_thread(
+            run_page_script,
+            url=f"{base_url}/logs",
+            width=1440,
+            height=1000,
+            wait_ms=1200,
+            script="""
+              const chips = Array.from(document.querySelectorAll('.extra-chip'));
+              return {
+                chipCount: chips.length,
+                titles: chips.map((item) => item.getAttribute('title') || ''),
+              };
+            """,
+        )
+
+        assert result["chipCount"] == 3
+        assert "tool_name=echo" in result["titles"]
+        assert "duration_ms=42" in result["titles"]
+        assert "run_id=run:1" in result["titles"]
     finally:
         await server.stop()
 

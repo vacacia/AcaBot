@@ -129,6 +129,8 @@ PromptLoader.load(...)  →  ToolBroker.build_tool_runtime(...)
 
 `message.action="send"` 的默认回复抑制也在这里落地，而不是在 Gateway 或 Outbox 猜：如果 tool 已经产出内容型 `SEND_MESSAGE_INTENT`，`ModelAgentRuntime` 就不再额外拼一条默认 `SEND_TEXT`。
 
+模型调用完成后, `AgentResponse` 现在同时带 `usage` 和 `cost_usd`。`ModelAgentRuntime` 会把这两个字段继续传给 pipeline, 供 run 收尾写入 metadata 和结构化日志。
+
 ## Outbox 阶段
 
 `src/acabot/runtime/outbox.py` 把 `PlannedAction` 真正发出去并记录送达的消息事实。原则：只有真正产生消息事实的动作才写入 MessageStore，状态动作和管理动作不伪装成 assistant message。
@@ -151,7 +153,7 @@ Outbox 同时会为每条已送达消息生成一份 `OutboundMessageProjection`
 
 run 结束后还有三件事：
 1. **更新 thread**：working messages、summary、时间戳回写
-2. **收尾 run**：状态从 running 变成 completed / failed / waiting_approval
+2. **收尾 run**：状态从 running 变成 completed / failed / waiting_approval, 同时把 `token_usage`、`model_used`、`usage_cost_usd` 写进 `RunRecord.metadata`, 并发出结构化 `Run token usage` 日志
 3. **长期记忆写回**：extraction 在 run 收尾之后做（不是模型调用前）
 
 ## 改主线时的入口速查

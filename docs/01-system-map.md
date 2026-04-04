@@ -46,7 +46,7 @@ types → gateway / agent → runtime → webui（通过 HTTP API）
 
 **`runtime/bootstrap/`** 是真正的装配中心。`build_runtime_components()` 接线所有核心组件：RuntimeRouter、SessionRuntime、ThreadManager、RunManager、ToolBroker、ComputerRuntime、MemoryBroker、ThreadPipeline、RuntimeControlPlane、RuntimeHttpApiServer、PluginManager、Outbox。bootstrap 还负责把 builtin tool 直接注册到 ToolBroker（`builtin:computer`、`builtin:message`、`builtin:skills`、`builtin:subagents`），这条线是主线不是补丁。
 
-**`RuntimeApp`** 是 runtime 总入口：启动 gateway 和 plugin、接住 gateway 上来的 event、做最小入口分流、调 router、创建/获取 thread 和 run、把 `RunContext` 交给 pipeline。
+**`RuntimeApp`** 是 runtime 总入口：启动 gateway 和 plugin、接住 gateway 上来的 event、做最小入口分流、调 router、创建/获取 thread 和 run、把 `RunContext` 交给 pipeline。run 结束后的 `token_usage`、`model_used`、`usage_cost_usd` 也沿这条主线写回 `RunRecord.metadata`。
 
 统一 `message` tool 的发送主线也在这里接通：模型先调用 `message` builtin tool，tool 产出高层 `SEND_MESSAGE_INTENT`，随后进入 Outbox materialization，再由 Gateway 发到平台。
 
@@ -75,6 +75,7 @@ types → gateway / agent → runtime → webui（通过 HTTP API）
 `runtime/pipeline.py`
 
 完整主线：plugin hook → computer 上下文和附件准备 → 消息输入材料 → 写入 thread working memory → context compaction → retrieval planning → 记忆注入 → 调模型 → 发送动作 → 收尾 run → 触发 memory extraction。
+其中收尾阶段会额外记录结构化 `Run token usage` 日志，并把 `usage_cost_usd` 和 token 统计一起沉到 run metadata。
 
 ### 5. ModelAgentRuntime 调模型
 

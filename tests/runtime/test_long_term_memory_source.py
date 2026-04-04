@@ -10,8 +10,10 @@ from acabot.runtime import (
     SharedMemoryRetrievalRequest,
 )
 from acabot.runtime.memory.long_term_memory.model_clients import LtmEmbeddingClient
+from acabot.runtime.memory.long_term_memory.model_clients import LtmExtractorClient
 from acabot.runtime.memory.long_term_memory.model_clients import LtmQueryPlannerClient
 from acabot.runtime.model.model_registry import FileSystemModelRegistryManager
+from acabot.runtime.memory.conversation_facts import ConversationFact
 from acabot.runtime.memory.long_term_memory.contracts import LtmSearchHit, MemoryEntry, MemoryProvenance
 from acabot.runtime.memory.long_term_memory.ranking import score_hit_channels
 from acabot.runtime.memory.long_term_memory.renderer import LtmRenderer
@@ -77,6 +79,38 @@ class RecordingPlannerAgent:
                         "location": "上海",
                         "time_range": ["2025-01-01", "2025-12-31"],
                     },
+                },
+                ensure_ascii=False,
+            )
+        )
+
+
+class RecordingExtractorAgent:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def complete(self, system_prompt, messages, model=None, request_options=None):
+        self.calls.append(
+            {
+                "system_prompt": system_prompt,
+                "messages": list(messages),
+                "model": model,
+                "request_options": dict(request_options or {}),
+            }
+        )
+        return AgentResponse(
+            text=json.dumps(
+                {
+                    "entries": [
+                        {
+                            "topic": "咖啡偏好",
+                            "lossless_restatement": "Alice 喜欢拿铁。",
+                            "keywords": ["拿铁", "latte"],
+                            "persons": ["Alice"],
+                            "entities": ["latte"],
+                            "evidence": ["f1"],
+                        }
+                    ]
                 },
                 ensure_ascii=False,
             )
@@ -331,6 +365,75 @@ async def test_embedding_client_emits_structured_log(tmp_path) -> None:
     item = snapshot["items"][0]
     assert item["extra"]["text_count"] == 2
     assert item["extra"]["vector_count"] == 2
+    assert item["extra"]["duration_ms"] is not None
+
+
+async def test_extractor_client_emits_structured_log(tmp_path) -> None:
+    buffer = _capture_logger("acabot.runtime.memory.long_term_memory.model_clients")
+    manager = FileSystemModelRegistryManager(
+        providers_dir=tmp_path / "models/providers",
+        presets_dir=tmp_path / "models/presets",
+        bindings_dir=tmp_path / "models/bindings",
+    )
+    await manager.upsert_provider(
+        ModelProvider(
+            provider_id="openai-main",
+            kind="openai_compatible",
+            config=OpenAICompatibleProviderConfig(
+                base_url="https://example.invalid/v1",
+                api_key_env="OPENAI_API_KEY",
+            ),
+        )
+    )
+    await manager.upsert_preset(
+        ModelPreset(
+            preset_id="ltm-extract-main",
+            provider_id="openai-main",
+            model="gpt-4.1-mini",
+            task_kind="chat",
+            capabilities=["structured_output"],
+            context_window=128000,
+        )
+    )
+    await manager.upsert_binding(
+        ModelBinding(
+            binding_id="binding:ltm-extract",
+            target_id="system:ltm_extract",
+            preset_ids=["ltm-extract-main"],
+        )
+    )
+    agent = RecordingExtractorAgent()
+    client = LtmExtractorClient(
+        agent=agent,
+        model_registry_manager=manager,
+    )
+
+    entries = await client.extract_window(
+        conversation_id="qq:group:42",
+        facts=[
+            ConversationFact(
+                thread_id="thread:1",
+                timestamp=123,
+                source_kind="channel_event",
+                source_id="evt-1",
+                role="user",
+                text="Alice 喜欢拿铁。",
+                payload={},
+                actor_id="qq:user:10001",
+                actor_display_name="Alice",
+                channel_scope="qq:group:42",
+                run_id="run:1",
+            )
+        ],
+        now_ts=456,
+    )
+
+    assert len(entries) == 1
+    snapshot = buffer.list_entries(keyword="LTM extraction completed", limit=10)
+    assert len(snapshot["items"]) == 1
+    item = snapshot["items"][0]
+    assert item["extra"]["conversation_id"] == "qq:group:42"
+    assert item["extra"]["entry_count"] == 1
     assert item["extra"]["duration_ms"] is not None
 
 

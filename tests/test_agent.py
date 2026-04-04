@@ -43,7 +43,10 @@ class TestLitellmAgent:
             {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
         )()
 
-        with patch("acabot.agent.agent.acompletion", return_value=mock_resp):
+        with (
+            patch("acabot.agent.agent.acompletion", return_value=mock_resp),
+            patch("acabot.agent.agent.completion_cost", return_value=0.00234),
+        ):
             resp = await agent.run(
                 system_prompt="test",
                 messages=[{"role": "user", "content": "hi"}],
@@ -116,7 +119,10 @@ class TestLitellmAgent:
             {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
         )()
 
-        with patch("acabot.agent.agent.acompletion", return_value=mock_resp):
+        with (
+            patch("acabot.agent.agent.acompletion", return_value=mock_resp),
+            patch("acabot.agent.agent.completion_cost", return_value=0.00234),
+        ):
             resp = await agent.run(
                 system_prompt="test",
                 messages=[{"role": "user", "content": "hi"}],
@@ -128,6 +134,8 @@ class TestLitellmAgent:
         assert len(snapshot["items"]) == 1
         assert snapshot["items"][0]["extra"]["model"] == "gpt-4o-mini"
         assert snapshot["items"][0]["extra"]["total_tokens"] == 15
+        assert snapshot["items"][0]["extra"]["cost_usd"] == 0.00234
+        assert resp.cost_usd == 0.00234
 
     async def test_complete_emits_structured_usage_log(self, agent):
         configure_structlog()
@@ -148,7 +156,10 @@ class TestLitellmAgent:
             {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
         )()
 
-        with patch("acabot.agent.agent.acompletion", return_value=mock_resp):
+        with (
+            patch("acabot.agent.agent.acompletion", return_value=mock_resp),
+            patch("acabot.agent.agent.completion_cost", return_value=0.00045),
+        ):
             resp = await agent.complete(
                 system_prompt="test",
                 messages=[{"role": "user", "content": "hi"}],
@@ -160,6 +171,8 @@ class TestLitellmAgent:
         assert len(snapshot["items"]) == 1
         assert snapshot["items"][0]["extra"]["model"] == "gpt-4o-mini"
         assert snapshot["items"][0]["extra"]["total_tokens"] == 3
+        assert snapshot["items"][0]["extra"]["cost_usd"] == 0.00045
+        assert resp.cost_usd == 0.00045
 
 
 class TestToolCalling:

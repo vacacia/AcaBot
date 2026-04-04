@@ -72,6 +72,7 @@ class AgentRuntimeResult:
     actions: list[PlannedAction] = field(default_factory=list)
     artifacts: list[dict[str, Any]] = field(default_factory=list)
     usage: dict[str, int] = field(default_factory=dict)
+    cost_usd: float | None = None
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     model_used: str = ""
     error: str | None = None

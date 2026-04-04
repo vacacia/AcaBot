@@ -486,6 +486,9 @@ class LanceDbLongTermMemoryStore:
         )
 
         for table_name, table, expected_columns in checks:
+            if not self._table_has_manifest(table_name):
+                errors.append(f"{table_name} manifest 缺失")
+                continue
             try:
                 arrow_table = table.to_arrow()
             except Exception as exc:
@@ -502,6 +505,12 @@ class LanceDbLongTermMemoryStore:
             warnings=warnings,
             errors=errors,
         )
+
+    def _table_has_manifest(self, table_name: str) -> bool:
+        """判断指定 Lance 表是否仍然有可读 manifest."""
+
+        versions_dir = self.root_dir / f"{table_name}.lance" / "_versions"
+        return versions_dir.is_dir() and any(versions_dir.glob("*.manifest"))
 
     def backup(self, target_dir: str | Path, *, max_backups: int = 5) -> Path:
         """创建 LanceDB 数据目录的一致性备份."""

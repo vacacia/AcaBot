@@ -387,8 +387,11 @@ class ThreadPipeline:
             token_usage = dict(response.usage)
             ctx.run.metadata["token_usage"] = token_usage
             model_used = str(getattr(response, "model_used", "") or ctx.metadata.get("model_used", "") or "")
+            cost_usd = getattr(response, "cost_usd", None)
             if model_used:
                 ctx.run.metadata.setdefault("model_used", model_used)
+            if cost_usd is not None:
+                ctx.run.metadata["usage_cost_usd"] = cost_usd
             slog.info(
                 "Run token usage",
                 run_id=ctx.run.run_id,
@@ -398,6 +401,7 @@ class ThreadPipeline:
                 prompt_tokens=int(token_usage.get("prompt_tokens", 0)),
                 completion_tokens=int(token_usage.get("completion_tokens", 0)),
                 total_tokens=int(token_usage.get("total_tokens", 0)),
+                cost_usd=cost_usd,
             )
 
         if response.status == "waiting_approval":
