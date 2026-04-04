@@ -23,6 +23,11 @@ type GatewayConfig = {
   token: string
 }
 
+type RenderConfig = {
+  width: number
+  device_scale_factor: number
+}
+
 type ResolvedCatalogDir = {
   host_root_path: string
   scope: string
@@ -63,6 +68,7 @@ type SystemConfigurationSnapshot = {
     config_path: string
   }
   gateway: GatewayConfig
+  render: RenderConfig
   filesystem: FilesystemConfig
   admins: AdminsConfig
   paths: PathOverview
@@ -70,6 +76,7 @@ type SystemConfigurationSnapshot = {
 
 type SystemDraft = {
   gateway: GatewayConfig
+  render: RenderConfig
   filesystem: FilesystemConfig
   admins: AdminsConfig
 }
@@ -84,7 +91,117 @@ type ReloadResult = {
   session_count: number
 }
 
-const cachedSnapshot = peekCachedGet<SystemConfigurationSnapshot>(SYSTEM_CONFIGURATION_PATH)
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string"
+}
+
+function isBoolean(value: unknown): value is boolean {
+  return typeof value === "boolean"
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string")
+}
+
+function isNullableStringArray(value: unknown): value is string[] | null {
+  return value === null || isStringArray(value)
+}
+
+function isResolvedCatalogDir(value: unknown): value is ResolvedCatalogDir {
+  if (!isRecord(value)) {
+    return false
+  }
+  return isString(value.host_root_path) && isString(value.scope)
+}
+
+function isResolvedCatalogDirArray(value: unknown): value is ResolvedCatalogDir[] {
+  return Array.isArray(value) && value.every((item) => isResolvedCatalogDir(item))
+}
+
+function isGatewayConfig(value: unknown): value is GatewayConfig {
+  if (!isRecord(value)) {
+    return false
+  }
+  return (
+    isString(value.host)
+    && Number.isFinite(value.port)
+    && Number.isFinite(value.timeout)
+    && isString(value.token)
+  )
+}
+
+function isRenderConfig(value: unknown): value is RenderConfig {
+  if (!isRecord(value)) {
+    return false
+  }
+  return Number.isFinite(value.width) && Number.isFinite(value.device_scale_factor)
+}
+
+function isFilesystemConfig(value: unknown): value is FilesystemConfig {
+  if (!isRecord(value)) {
+    return false
+  }
+  return (
+    (value.enabled === undefined || isBoolean(value.enabled))
+    && (value.base_dir === undefined || isString(value.base_dir))
+    && isStringArray(value.skill_catalog_dirs)
+    && isStringArray(value.subagent_catalog_dirs)
+    && isNullableStringArray(value.configured_skill_catalog_dirs)
+    && isNullableStringArray(value.configured_subagent_catalog_dirs)
+    && isStringArray(value.default_skill_catalog_dirs)
+    && isStringArray(value.default_subagent_catalog_dirs)
+    && isResolvedCatalogDirArray(value.resolved_skill_catalog_dirs)
+    && isResolvedCatalogDirArray(value.resolved_subagent_catalog_dirs)
+  )
+}
+
+function isAdminsConfig(value: unknown): value is AdminsConfig {
+  if (!isRecord(value)) {
+    return false
+  }
+  return isStringArray(value.admin_actor_ids)
+}
+
+function isPathOverview(value: unknown): value is PathOverview {
+  if (!isRecord(value)) {
+    return false
+  }
+  return (
+    isString(value.config_path)
+    && isString(value.filesystem_base_dir)
+    && isString(value.prompts_dir)
+    && isString(value.sessions_dir)
+    && isString(value.computer_root_dir)
+    && isString(value.sticky_notes_dir)
+    && isString(value.long_term_memory_storage_dir)
+    && isStringArray(value.resolved_skill_catalog_dirs)
+    && isStringArray(value.resolved_subagent_catalog_dirs)
+    && isString(value.backend_session_path)
+  )
+}
+
+function canBootstrapSystemConfigurationSnapshot(value: unknown): value is SystemConfigurationSnapshot {
+  if (!isRecord(value) || !isRecord(value.meta)) {
+    return false
+  }
+  return (
+    isString(value.meta.config_path)
+    && isGatewayConfig(value.gateway)
+    && isRenderConfig(value.render)
+    && isFilesystemConfig(value.filesystem)
+    && isAdminsConfig(value.admins)
+    && isPathOverview(value.paths)
+  )
+}
+
+const cachedSnapshot = peekCachedGet<SystemConfigurationSnapshot>(
+  SYSTEM_CONFIGURATION_PATH,
+  canBootstrapSystemConfigurationSnapshot,
+)
 const draft = ref<SystemDraft | null>(cachedSnapshot ? cloneSnapshot(cachedSnapshot) : null)
 const pathOverview = ref<PathOverview | null>(cachedSnapshot?.paths ?? null)
 const feedback = ref<FeedbackState | null>(null)
@@ -198,6 +315,9 @@ function cloneSnapshot(snapshot: SystemConfigurationSnapshot): SystemDraft {
     gateway: {
       ...snapshot.gateway,
     },
+    render: {
+      ...snapshot.render,
+    },
     filesystem: {
       ...snapshot.filesystem,
       skill_catalog_dirs: [...snapshot.filesystem.skill_catalog_dirs],
@@ -261,7 +381,10 @@ function setApplyFeedback(scopeLabel: string, payload: ApplyResult): void {
 }
 
 async function refreshSnapshot(): Promise<void> {
-  const snapshot = await apiGet<SystemConfigurationSnapshot>(SYSTEM_CONFIGURATION_PATH)
+  const snapshot = await apiGet<SystemConfigurationSnapshot>(
+    SYSTEM_CONFIGURATION_PATH,
+    canBootstrapSystemConfigurationSnapshot,
+  )
   applySnapshot(snapshot)
 }
 
@@ -322,6 +445,26 @@ async function saveGateway(): Promise<void> {
       "共享网关设置保存失败。请检查输入项，必要时展开技术详情查看具体原因。",
       normalizeErrorMessage(error),
     )
+  } finally {
+    activeAction.value = ""
+  }
+}
+
+async function saveRender(): Promise<void> {
+  if (!draft.value) {
+    return
+  }
+  activeAction.value = "render"
+  feedback.value = null
+  try {
+    const saved = await apiPut<RenderConfig & ApplyResult>("/api/render/config", {
+      width: draft.value.render.width,
+      device_scale_factor: draft.value.render.device_scale_factor,
+    })
+    setApplyFeedback("Render 默认配置", saved)
+    await refreshAfterMutation()
+  } catch (error) {
+    setFeedback("is-error", "Render 默认配置保存失败。", normalizeErrorMessage(error))
   } finally {
     activeAction.value = ""
   }
@@ -477,6 +620,40 @@ onMounted(() => {
             <span>访问 Token</span>
             <p class="ds-helper">如果你的 gateway 需要鉴权，就在这里维护共享 token。</p>
             <input v-model="draft.gateway.token" class="ds-input ds-mono" type="text" placeholder="留空表示不配置 token" />
+          </label>
+        </div>
+      </article>
+
+      <article class="ds-panel ds-panel-padding">
+        <div class="ds-section-head">
+          <div class="ds-section-title">
+            <div>
+              <h2>Render 默认配置</h2>
+            </div>
+          </div>
+          <div class="ds-actions">
+            <button class="ds-primary-button" type="button" :disabled="activeAction !== ''" @click="void saveRender()">
+              {{ activeAction === "render" ? "保存中..." : "保存并尝试生效" }}
+            </button>
+          </div>
+        </div>
+
+        <div class="ds-form-grid">
+          <label class="ds-field">
+            <span>Render 宽度</span>
+            <p class="ds-helper">控制渲染页面的基础 viewport 宽度，越大通常能容纳更多内容。</p>
+            <input v-model.number="draft.render.width" class="ds-input ds-mono" type="number" min="320" step="1" />
+          </label>
+          <label class="ds-field">
+            <span>Device scale factor</span>
+            <p class="ds-helper">控制截图像素密度。最终是否清晰以真实 QQ 客户端为准。</p>
+            <input
+              v-model.number="draft.render.device_scale_factor"
+              class="ds-input ds-mono"
+              type="number"
+              min="1"
+              step="0.1"
+            />
           </label>
         </div>
       </article>

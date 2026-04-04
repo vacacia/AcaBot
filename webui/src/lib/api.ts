@@ -9,18 +9,20 @@ type CacheEntry = {
   value: unknown
 }
 
+type CacheValidator<T> = (value: unknown) => value is T
+
 const PERSISTENT_STORAGE_PREFIX = "acabot.api.cache:"
 const getCache = new Map<string, CacheEntry>()
 const inflightGetRequests = new Map<string, Promise<unknown>>()
 const DEFAULT_GET_CACHE_TTL_MS = 15000
 
-export async function apiGet<T>(path: string): Promise<T> {
+export async function apiGet<T>(path: string, validate?: CacheValidator<T>): Promise<T> {
   const now = Date.now()
-  const cached = getCache.get(path)
+  const cached = getValidatedCacheEntry(path, getCache.get(path), validate)
   if (cached && cached.expiresAt > now) {
     return cached.value as T
   }
-  const persisted = getPersistedCache(path)
+  const persisted = getValidatedCacheEntry(path, getPersistedCache(path), validate)
   if (persisted && persisted.expiresAt > now) {
     getCache.set(path, persisted)
     return persisted.value as T
@@ -30,6 +32,10 @@ export async function apiGet<T>(path: string): Promise<T> {
     return (await inflight) as T
   }
   const request = apiRequest<T>(path, { method: "GET" }).then((value) => {
+    if (validate && !validate(value)) {
+      dropCacheEntry(path)
+      throw new Error(`Malformed API response for ${path}`)
+    }
     if (!path.startsWith("/api/system/logs")) {
       const entry = {
         value,
@@ -67,16 +73,31 @@ export async function apiDelete<T>(path: string): Promise<T> {
   return apiRequest<T>(path, { method: "DELETE" })
 }
 
-export function peekCachedGet<T>(path: string): T | null {
-  const cached = getCache.get(path)
+export function peekCachedGet<T>(path: string, validate?: CacheValidator<T>): T | null {
+  const cached = getValidatedCacheEntry(path, getCache.get(path), validate)
   if (cached) {
     return cached.value as T
   }
-  const persisted = getPersistedCache(path)
+  const persisted = getValidatedCacheEntry(path, getPersistedCache(path), validate)
   if (persisted) {
     getCache.set(path, persisted)
     return persisted.value as T
   }
+  return null
+}
+
+function getValidatedCacheEntry<T>(
+  path: string,
+  entry: CacheEntry | null | undefined,
+  validate?: CacheValidator<T>,
+): CacheEntry | null {
+  if (!entry) {
+    return null
+  }
+  if (!validate || validate(entry.value)) {
+    return entry
+  }
+  dropCacheEntry(path)
   return null
 }
 
@@ -137,6 +158,9 @@ function cachePrefixesForPath(path: string): string[] {
   if (path.startsWith("/api/gateway/config")) {
     return ["/api/gateway/config", "/api/system/configuration"]
   }
+  if (path.startsWith("/api/render/config")) {
+    return ["/api/render/config", "/api/system/configuration"]
+  }
   if (path.startsWith("/api/filesystem/config")) {
     return ["/api/filesystem/config", "/api/system/configuration"]
   }
@@ -153,6 +177,14 @@ function cachePrefixesForPath(path: string): string[] {
     return ["/api/sessions", "/api/ui/catalog"]
   }
   return [path]
+}
+
+function dropCacheEntry(path: string): void {
+  getCache.delete(path)
+  if (typeof localStorage === "undefined") {
+    return
+  }
+  localStorage.removeItem(`${PERSISTENT_STORAGE_PREFIX}${path}`)
 }
 
 function persistCache(path: string, entry: CacheEntry): void {

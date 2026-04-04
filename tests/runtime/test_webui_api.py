@@ -399,6 +399,7 @@ def run_page_script(
     height: int,
     script: str,
     wait_ms: int = 1500,
+    init_script: str = "",
 ) -> dict[str, Any]:
     """在真实页面里执行一段脚本, 并返回 JSON 结果.
 
@@ -408,6 +409,7 @@ def run_page_script(
         height: 浏览器窗口高度.
         script: 在页面里执行的 JS 表达式, 需要返回一个对象.
         wait_ms: 导航后等待页面稳定的毫秒数.
+        init_script: 在页面脚本执行前注入的 JS, 适合预置 localStorage 或 fetch hook.
 
     Returns:
         页面脚本返回的 JSON 对象.
@@ -510,6 +512,11 @@ def run_page_script(
 
             await send('Page.enable', {{}});
             await send('Runtime.enable', {{}});
+            if ({json.dumps(bool(init_script))}) {{
+              await send('Page.addScriptToEvaluateOnNewDocument', {{
+                source: {json.dumps(init_script)},
+              }});
+            }}
             await send('Page.navigate', {{ url: {json.dumps(url)} }});
             await wait({wait_ms});
 
@@ -546,6 +553,36 @@ def run_page_script(
     if not output:
         raise AssertionError("页面交互测试没有返回结果")
     return json.loads(output[-1])
+
+
+_webui_assets_built = False
+
+
+def ensure_webui_assets_built() -> None:
+    global _webui_assets_built
+    if _webui_assets_built:
+        return
+    if not shutil.which("npm"):
+        pytest.skip("npm 不可用，跳过 WebUI 页面 smoke test")
+    webui_dir = Path("webui")
+    if not (webui_dir / "node_modules").exists():
+        subprocess.run(
+            ["bash", "-lc", "npm ci"],
+            cwd=webui_dir,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=240,
+        )
+    subprocess.run(
+        ["bash", "-lc", "npm run build"],
+        cwd=webui_dir,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    _webui_assets_built = True
 
 
 def _session_event(
@@ -3055,7 +3092,258 @@ def test_webui_real_pages_system_view_becomes_shared_system_entrypoint() -> None
     assert '"/api/runtime/reload-config"' in api_source
 
 
+async def test_webui_real_pages_system_view_includes_render_bootstrap_guard_for_stale_cache(
+    tmp_path: Path,
+) -> None:
+    ensure_webui_assets_built()
+
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0, base_dir=tmp_path)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        stale_snapshot = {
+            "meta": {"config_path": str(config_path.resolve())},
+            "gateway": {
+                "host": "127.0.0.1",
+                "port": 8080,
+                "timeout": 10,
+                "token": "",
+            },
+            "filesystem": {
+                "enabled": True,
+                "base_dir": str(tmp_path.resolve()),
+                "skill_catalog_dirs": [],
+                "subagent_catalog_dirs": [],
+                "configured_skill_catalog_dirs": None,
+                "configured_subagent_catalog_dirs": None,
+                "default_skill_catalog_dirs": ["./extensions/skills"],
+                "default_subagent_catalog_dirs": ["./extensions/subagents"],
+                "resolved_skill_catalog_dirs": [],
+                "resolved_subagent_catalog_dirs": [],
+            },
+            "admins": {"admin_actor_ids": []},
+            "paths": {
+                "config_path": str(config_path.resolve()),
+                "filesystem_base_dir": str(tmp_path.resolve()),
+                "prompts_dir": str((tmp_path / "prompts").resolve()),
+                "sessions_dir": str((tmp_path / "sessions").resolve()),
+                "computer_root_dir": str((tmp_path / "runtime_data" / "workspaces").resolve()),
+                "sticky_notes_dir": str((tmp_path / "runtime_data" / "sticky_notes").resolve()),
+                "long_term_memory_storage_dir": str(
+                    (tmp_path / "runtime_data" / "long_term_memory" / "lancedb").resolve()
+                ),
+                "resolved_skill_catalog_dirs": [],
+                "resolved_subagent_catalog_dirs": [],
+                "backend_session_path": str((tmp_path / "runtime_data" / "backend" / "session.json").resolve()),
+            },
+        }
+        result = await asyncio.to_thread(
+            run_page_script,
+            url=f"{base_url}/system",
+            width=1440,
+            height=1200,
+            wait_ms=900,
+            init_script=f"""
+              localStorage.setItem(
+                'acabot.api.cache:/api/system/configuration',
+                JSON.stringify({{
+                  expiresAt: Date.now() + 60000,
+                  value: {json.dumps(stale_snapshot)},
+                }})
+              );
+              const originalFetch = window.fetch.bind(window);
+              window.fetch = (input, init) => {{
+                const rawUrl = typeof input === 'string' ? input : input.url;
+                const path = new URL(rawUrl, window.location.origin).pathname;
+                if (path === '/api/system/configuration') {{
+                  return new Promise(() => {{}});
+                }}
+                return originalFetch(input, init);
+              }};
+            """,
+            script="""
+              return {
+                bodyText: document.body.textContent || '',
+                isLoading: (document.body.textContent || '').includes('正在加载系统配置'),
+                hasRenderPanel: (document.body.textContent || '').includes('Render 默认配置'),
+              };
+            """,
+        )
+
+        assert result["isLoading"] is True
+        assert result["hasRenderPanel"] is False
+        assert "Render 默认配置" not in result["bodyText"]
+    finally:
+        await server.stop()
+
+
+async def test_webui_real_pages_system_view_includes_render_bootstrap_guard_when_stale_cache_missing_filesystem(
+    tmp_path: Path,
+) -> None:
+    ensure_webui_assets_built()
+
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0, base_dir=tmp_path)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        stale_snapshot = {
+            "meta": {"config_path": str(config_path.resolve())},
+            "gateway": {
+                "host": "127.0.0.1",
+                "port": 8080,
+                "timeout": 10,
+                "token": "",
+            },
+            "render": {
+                "width": DEFAULT_RENDER_VIEWPORT_WIDTH,
+                "device_scale_factor": DEFAULT_RENDER_DEVICE_SCALE_FACTOR,
+            },
+            "admins": {"admin_actor_ids": []},
+            "paths": {
+                "config_path": str(config_path.resolve()),
+                "filesystem_base_dir": str(tmp_path.resolve()),
+                "prompts_dir": str((tmp_path / "prompts").resolve()),
+                "sessions_dir": str((tmp_path / "sessions").resolve()),
+                "computer_root_dir": str((tmp_path / "runtime_data" / "workspaces").resolve()),
+                "sticky_notes_dir": str((tmp_path / "runtime_data" / "sticky_notes").resolve()),
+                "long_term_memory_storage_dir": str(
+                    (tmp_path / "runtime_data" / "long_term_memory" / "lancedb").resolve()
+                ),
+                "resolved_skill_catalog_dirs": [],
+                "resolved_subagent_catalog_dirs": [],
+                "backend_session_path": str((tmp_path / "runtime_data" / "backend" / "session.json").resolve()),
+            },
+        }
+        result = await asyncio.to_thread(
+            run_page_script,
+            url=f"{base_url}/system",
+            width=1440,
+            height=1200,
+            wait_ms=900,
+            init_script=f"""
+              window.__bootErrors = [];
+              window.addEventListener('error', (event) => {{
+                window.__bootErrors.push(event.message || 'unknown error');
+              }});
+              localStorage.setItem(
+                'acabot.api.cache:/api/system/configuration',
+                JSON.stringify({{
+                  expiresAt: Date.now() + 60000,
+                  value: {json.dumps(stale_snapshot)},
+                }})
+              );
+              const originalFetch = window.fetch.bind(window);
+              window.fetch = (input, init) => {{
+                const rawUrl = typeof input === 'string' ? input : input.url;
+                const path = new URL(rawUrl, window.location.origin).pathname;
+                if (path === '/api/system/configuration') {{
+                  return new Promise(() => {{}});
+                }}
+                return originalFetch(input, init);
+              }};
+            """,
+            script="""
+              return {
+                bodyText: document.body.textContent || '',
+                isLoading: (document.body.textContent || '').includes('正在加载系统配置'),
+                hasRenderPanel: (document.body.textContent || '').includes('Render 默认配置'),
+                bootErrors: Array.isArray(window.__bootErrors) ? window.__bootErrors : [],
+              };
+            """,
+        )
+
+        assert result["bootErrors"] == []
+        assert result["isLoading"] is True
+        assert result["hasRenderPanel"] is False
+        assert "Render 默认配置" not in result["bodyText"]
+    finally:
+        await server.stop()
+
+
+async def test_system_page_renders_malformed_system_snapshot_refresh_is_not_cached_when_paths_missing(
+    tmp_path: Path,
+) -> None:
+    ensure_webui_assets_built()
+
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0, base_dir=tmp_path)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        result = await asyncio.to_thread(
+            run_page_script,
+            url=f"{base_url}/system",
+            width=1440,
+            height=1200,
+            wait_ms=1200,
+            init_script="""
+              const originalFetch = window.fetch.bind(window);
+              window.fetch = async (input, init) => {
+                const rawUrl = typeof input === 'string' ? input : input.url;
+                const path = new URL(rawUrl, window.location.origin).pathname;
+                if (path === '/api/system/configuration') {
+                  const response = await originalFetch(input, init);
+                  const payload = await response.clone().json();
+                  delete payload.data.paths;
+                  return new Response(JSON.stringify(payload), {
+                    status: response.status,
+                    statusText: response.statusText,
+                    headers: { 'Content-Type': 'application/json' },
+                  });
+                }
+                return originalFetch(input, init);
+              };
+            """,
+            script="""
+              const bodyText = document.body.textContent || '';
+              return {
+                bodyText,
+                hasLoadFailure: bodyText.includes('系统页加载失败'),
+                hasRenderPanel: bodyText.includes('Render 默认配置'),
+                cachedSnapshot: localStorage.getItem('acabot.api.cache:/api/system/configuration'),
+              };
+            """,
+        )
+
+        assert result["hasLoadFailure"] is True
+        assert result["hasRenderPanel"] is False
+        assert result["cachedSnapshot"] is None
+    finally:
+        await server.stop()
+
+
 async def test_system_page_renders_when_filesystem_configured_dirs_are_null(tmp_path: Path) -> None:
+    ensure_webui_assets_built()
+
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         f"""
@@ -3104,12 +3392,19 @@ runtime:
             height=1200,
             wait_ms=2200,
             script="""
+              const renderPanel = Array.from(document.querySelectorAll('article')).find((item) =>
+                (item.textContent || '').includes('Render 默认配置')
+              );
+              const renderInputs = renderPanel ? Array.from(renderPanel.querySelectorAll('input')) : [];
               return {
                 title: document.querySelector('h1')?.textContent?.trim() || '',
                 bodyText: document.body.textContent || '',
                 hasLoadFailure: (document.body.textContent || '').includes('系统页加载失败'),
                 hasGatewayPanel: (document.body.textContent || '').includes('共享网关设置'),
+                hasRenderPanel: Boolean(renderPanel),
                 hasAdvancedSection: (document.body.textContent || '').includes('高级信息 / 路径总览'),
+                renderWidth: Number(renderInputs[0]?.value || NaN),
+                renderScale: Number(renderInputs[1]?.value || NaN),
               };
             """,
         )
@@ -3117,8 +3412,127 @@ runtime:
         assert result["title"] == "系统设置"
         assert result["hasLoadFailure"] is False
         assert result["hasGatewayPanel"] is True
+        assert result["hasRenderPanel"] is True
         assert result["hasAdvancedSection"] is True
+        assert result["renderWidth"] == DEFAULT_RENDER_VIEWPORT_WIDTH
+        assert result["renderScale"] == DEFAULT_RENDER_DEVICE_SCALE_FACTOR
         assert "not iterable" not in result["bodyText"]
+    finally:
+        await server.stop()
+
+
+async def test_system_page_renders_render_save_uses_render_config_and_refreshes_from_system_snapshot(
+    tmp_path: Path,
+) -> None:
+    ensure_webui_assets_built()
+
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0, base_dir=tmp_path)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        result = await asyncio.to_thread(
+            run_page_script,
+            url=f"{base_url}/system",
+            width=1440,
+            height=1200,
+            wait_ms=2200,
+            script="""
+              return (async () => {
+                const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+                const calls = [];
+                const originalFetch = window.fetch.bind(window);
+                let sawRenderSave = false;
+                window.fetch = async (input, init) => {
+                  const rawUrl = typeof input === 'string' ? input : input.url;
+                  const path = new URL(rawUrl, window.location.origin).pathname;
+                  const method = (init?.method || (typeof input === 'object' && input?.method) || 'GET').toUpperCase();
+                  const body = typeof init?.body === 'string' ? init.body : '';
+                  calls.push({ path, method, body });
+                  const response = await originalFetch(input, init);
+                  if (path === '/api/render/config' && method === 'PUT') {
+                    sawRenderSave = true;
+                  }
+                  if (sawRenderSave && path === '/api/system/configuration' && method === 'GET') {
+                    const payload = await response.clone().json();
+                    payload.data.render = {
+                      width: 1777,
+                      device_scale_factor: 3.3,
+                    };
+                    return new Response(JSON.stringify(payload), {
+                      status: response.status,
+                      statusText: response.statusText,
+                      headers: { 'Content-Type': 'application/json' },
+                    });
+                  }
+                  return response;
+                };
+
+                const renderPanel = Array.from(document.querySelectorAll('article')).find((item) =>
+                  (item.textContent || '').includes('Render 默认配置')
+                );
+                const saveButton = renderPanel?.querySelector('button');
+                const renderInputs = renderPanel ? Array.from(renderPanel.querySelectorAll('input')) : [];
+                const setInputValue = (input, value) => {
+                  input.focus();
+                  input.value = String(value);
+                  input.dispatchEvent(new Event('input', { bubbles: true }));
+                  input.dispatchEvent(new Event('change', { bubbles: true }));
+                };
+
+                if (!renderPanel || !saveButton || renderInputs.length < 2) {
+                  throw new Error('render panel not ready');
+                }
+
+                setInputValue(renderInputs[0], 1280);
+                setInputValue(renderInputs[1], 2.5);
+                saveButton.click();
+
+                for (let index = 0; index < 50; index += 1) {
+                  const bodyText = document.body.textContent || '';
+                  if (bodyText.includes('Render 默认配置：已保存并已生效')) {
+                    break;
+                  }
+                  await wait(100);
+                }
+                await wait(200);
+
+                const refreshedPanel = Array.from(document.querySelectorAll('article')).find((item) =>
+                  (item.textContent || '').includes('Render 默认配置')
+                );
+                const refreshedInputs = refreshedPanel ? Array.from(refreshedPanel.querySelectorAll('input')) : [];
+                return {
+                  calls,
+                  feedbackText: document.querySelector('.ds-status')?.textContent?.trim() || '',
+                  renderWidth: Number(refreshedInputs[0]?.value || NaN),
+                  renderScale: Number(refreshedInputs[1]?.value || NaN),
+                };
+              })();
+            """,
+        )
+
+        render_calls = [call for call in result["calls"] if call["path"] in {"/api/render/config", "/api/system/configuration"}]
+
+        assert any(call["path"] == "/api/render/config" and call["method"] == "PUT" for call in render_calls)
+        assert any(call["path"] == "/api/system/configuration" and call["method"] == "GET" for call in render_calls)
+        assert any(
+            call["path"] == "/api/render/config"
+            and call["method"] == "PUT"
+            and json.loads(call["body"]) == {"width": 1280, "device_scale_factor": 2.5}
+            for call in render_calls
+        )
+        assert result["feedbackText"] == "Render 默认配置：已保存并已生效"
+        assert result["renderWidth"] == 1777
+        assert result["renderScale"] == 3.3
     finally:
         await server.stop()
 
