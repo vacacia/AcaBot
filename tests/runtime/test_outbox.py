@@ -335,6 +335,26 @@ async def test_outbox_materializes_send_intent_text_and_reply_to_into_one_action
     ]
 
 
+async def test_outbox_derives_thread_content_from_materialized_segments() -> None:
+    gateway = FakeGateway()
+    store = FakeMessageStore()
+    outbox = Outbox(gateway=gateway, store=store)
+    ctx = _send_intent_context(
+        text="大家好",
+        at_user="20002",
+        images=["https://example.com/cat.jpg"],
+        target="qq:group:20002",
+    )
+
+    report = await outbox.dispatch(ctx)
+
+    assert report.has_failures is False
+    delivered_item = report.delivered_items[0]
+    assert delivered_item.plan.thread_content == "@20002 大家好 [图片]"
+    assert store.saved[0].metadata["thread_content"] == "@20002 大家好 [图片]"
+    assert store.saved[0].content_text == "@20002 大家好 [图片]"
+
+
 async def test_outbox_builds_at_segment_before_text() -> None:
     gateway = FakeGateway()
     store = FakeMessageStore()
@@ -415,7 +435,6 @@ async def test_outbox_calls_injected_render_service_in_materialization(
     ctx = _send_intent_context(
         text="说明文字",
         render="# Title",
-        thread_content="说明文字 [图片]",
     )
 
     report = await outbox.dispatch(ctx)
@@ -436,6 +455,59 @@ async def test_outbox_calls_injected_render_service_in_materialization(
         {"type": "text", "data": {"text": "说明文字"}},
         {"type": "image", "data": {"file": str(artifact_path)}},
     ]
+    assert report.delivered_items[0].plan.thread_content == "说明文字\n# Title"
+    assert store.saved[0].content_text == "说明文字 [图片]"
+    assert store.saved[0].metadata["thread_content"] == "说明文字\n# Title"
+    assert store.saved[0].metadata["source_intent"] == {
+        "text": "说明文字",
+        "images": [],
+        "render": "# Title",
+        "at_user": None,
+        "reply_to": None,
+        "target": "qq:user:10001",
+    }
+
+
+async def test_outbox_thread_projection_preserves_render_source_while_fact_text_keeps_image_placeholders(
+    tmp_path: Path,
+) -> None:
+    gateway = FakeGateway()
+    store = FakeMessageStore()
+    artifact_path = tmp_path / "runtime_data" / "render.png"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    render_service = FakeRenderService(
+        RenderResult.ok(
+            backend_name="playwright",
+            artifact_path=artifact_path,
+            html="<p>rendered</p>",
+        )
+    )
+    outbox = Outbox(
+        gateway=gateway,
+        store=store,
+        render_service=render_service,
+    )
+    ctx = _send_intent_context(
+        text="说明文字",
+        images=["https://example.com/cat.jpg"],
+        render="# Title\n\n$E=mc^2$",
+        at_user="20002",
+    )
+
+    report = await outbox.dispatch(ctx)
+
+    assert report.has_failures is False
+    assert report.delivered_items[0].plan.thread_content == "@20002 说明文字 [图片]\n# Title\n\n$E=mc^2$"
+    assert store.saved[0].content_text == "@20002 说明文字 [图片] [图片]"
+    assert store.saved[0].metadata["thread_content"] == "@20002 说明文字 [图片]\n# Title\n\n$E=mc^2$"
+    assert store.saved[0].metadata["source_intent"] == {
+        "text": "说明文字",
+        "images": ["https://example.com/cat.jpg"],
+        "render": "# Title\n\n$E=mc^2$",
+        "at_user": "20002",
+        "reply_to": None,
+        "target": "qq:user:10001",
+    }
 
 
 @pytest.mark.parametrize("status", ["unavailable", "error"])
@@ -459,7 +531,6 @@ async def test_outbox_render_falls_back_to_raw_text_when_injected_service_cannot
     )
     ctx = _send_intent_context(
         render="# Title\n\n$E=mc^2$",
-        thread_content="# Title\n\n$E=mc^2$",
     )
 
     report = await outbox.dispatch(ctx)
@@ -471,6 +542,7 @@ async def test_outbox_render_falls_back_to_raw_text_when_injected_service_cannot
     assert sent_action.payload["segments"] == [
         {"type": "text", "data": {"text": "# Title\n\n$E=mc^2$"}}
     ]
+    assert report.delivered_items[0].plan.thread_content == "# Title\n\n$E=mc^2$"
 
 
 async def test_outbox_persists_cross_session_delivery_to_destination() -> None:

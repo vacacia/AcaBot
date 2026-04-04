@@ -40,6 +40,7 @@ services:
     volumes:
       - ./napcat/config:/app/napcat/config
       - ./napcat/QQ:/app/.config/QQ
+      - ../runtime_data:/app/runtime_data:ro
     networks:
       - acabot_network
 

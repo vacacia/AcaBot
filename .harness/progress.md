@@ -5,6 +5,14 @@
 - [x] 文档清理完成: 删除 14 个冗余文档，合并记忆子系统文档，更新路径引用
 - [x] wiki/ 合并完成: 子系统文档合并到编号文档（computer→12、sticky-notes/LTM→05、skill/subagent→18），wiki/ 已删除
 - [x] 镜像完善: Dockerfile（Full）+ Dockerfile.lite，加装系统工具/字体/Node/Chromium/数据科学栈/媒体处理
+- [x] Reference Backend 删除完成: 旧 reference 子系统、旧插件和相关接线已经整体移除
+- [x] Plugin Reconciler 落地: plugin_id / package / spec / status / host / reconciler 新体系已接通，WebUI 插件管理页已重写
+- [x] Scheduler 落地: cron / interval / one-shot、持久化恢复、按 owner 清理都已接到 runtime
+- [x] LTM 数据安全落地: 写入串行化、备份、启动校验、优雅降级已补齐
+- [x] Logging & Observability 落地: 结构化日志、run context、WebUI 日志字段展示已补齐
+- [x] Unified message tool 落地: `message` 统一 surface、`SEND_MESSAGE_INTENT`、跨会话发送、reaction / recall、附件发送已接通
+- [x] Playwright render chain 落地: render service、artifact path、lazy browser、bootstrap 注入、shutdown 回收已接通
+- [x] cross-session continuity 收口: Outbox 现在会基于 delivery action + `source_intent` 自动生成 facts / working memory 摘要，真实 `message.send` 已能把内容写回 destination thread
 
 ## 最近变更
 - `2026-03-27` 完成 lancedb-first long-term memory runtime
@@ -13,33 +21,47 @@
 - `2026-04-02` 目录重构（deploy/、extensions/、runtime_config/、runtime_data/）
 - `2026-04-02` 文档大清理：删除冗余文档，合并 17-* 到 05，更新 09 路径，更新 HANDOFF
 - `2026-04-02` 镜像完善：Full（~2.5GB，Node/ffmpeg/pandoc/数据科学栈）+ Lite（~1GB，最小可用）双 Dockerfile
+- `2026-04-03` 删除 Reference Backend，开始 v1 runtime infrastructure milestone
+- `2026-04-03` 完成 Plugin Reconciler、Scheduler、LTM Data Safety、Logging & Observability 四大基础设施 phase
+- `2026-04-03` ~ `2026-04-04` 完成 unified `message` tool、Outbox materialization、cross-session contract、render service、Playwright backend、bootstrap wiring
+- `2026-04-04` 补齐 `OutboundMessageProjection` / `source_intent` continuity 链，修复真实 `message.send` 不写回 destination thread working memory 的缺口
+- `2026-04-04` 文档同步：runtime mainline、data contracts、memory、gateway、milestone summary、phase verification 一起补齐
 
 ## 已知问题
 - webui 设计不完整，缺少很多配置页面
-- bot 掌握工具太少
-- 日志过于简陋，重要信息显示不全面
-    - 工具调用的过程无展示
-    - LTM 记录过程
-- LTM 数据库安全性
-- Reference Backend 不再需要且设计不合理需要删除
+- webui 没有单独的 tools 面板，当前工具可见性和来源不够直观
+- WebUI 仍然偏卡，日志和系统页交互还需要继续打磨
+- milestone 收尾文档还没做完：retrospective / milestone audit / archive paperwork 仍需收口
+- 真人验收还没做完：真实 QQ 客户端里的 quote + @、cross-session 送达体验、render 图片可读性还需要肉眼确认
+- 工具 desc 还可以继续打磨，减少模型误用和多余解释成本
 
 ## 下一步
-- WebUI 配置页面补全
-- 工具扩展
-- 定时任务做成正式基础设施
-- **统一 message 工具**（**方案已定**）
-    - 使用此工具, 并填写了 text 参数, 那 LLM 要写 NO_REPLY 避免重复返回
-    - 不使用此工具, LLM 返回的文本会直接发送出去, 不会有任何多余动作(引用/@/react/...), 也是默认的交流方式, bot仅在需要表达其他行为时使用工具
-    - 一个工具统一 send / reply / react / recall / @ ...(待定)
-    - 核心参数：`action`（干什么）、`text`（内容）、`target`（发给谁，省略=当前会话）
-    - 可选参数：`reply_to`（引用）、`emoji`（reaction）、`media`（附件路径）、`render_as_image`（文转图）、`silent`（静默）
-    - 工具层只表达意图，映射到现有 Action 对象 → Outbox → Gateway，不重新抽象平台差异
-    - 解锁：主动文转图、跨会话发消息、emoji reaction、撤回、附件发送、回复引用控制
-- **Playwright + Chromium**（**方案已定：镜像依赖 + Outbox 渲染函数**）
-    - 不是 BrowserRuntime，不是 plugin，不是 builtin tool
-    - 镜像层面：Docker 镜像加装 `playwright` + Chromium（和 git、字体一样是环境依赖）
-    - bot 使用：通过 bash 工具 `import playwright` 自己写脚本，按需截图/抓取/自动化
-    - acabot 内部使用：Outbox 层一个 `render_markdown_to_image()` 工具函数，message 工具 `render_as_image=true` 时调用
-    - 参考调研：`tmp/astrbot-text2img.md`、`tmp/openclaw-message-tool.md`
+- 做 3 条真人验收：
+  - quote + @ 在真实 QQ 客户端里是否同条正确显示
+  - cross-session send 在真实目标会话里的体验是否正确
+  - render 图片在真实客户端里是否清晰可读
+- 把 milestone 纸面台账收口：
+  - `REQUIREMENTS.md` traceability
+  - `STATE.md` 进度与 phase 状态
+  - retrospective / milestone audit / archive
+- WebUI 继续补：
+  - 配置页面
+  - tools 面板
+  - 日志详情可读性
+  - 性能优化
+- 工具层继续扩：
+  - tool desc 打磨
+  - 更多高价值 builtin / plugin tools
+  - 未来再考虑 schedule 管理 UI 和更多主动能力
 
+---
 
+## 备忘 / 停车场
+
+- `_should_persist_action()` 为什么不是 session config 决定的
+- bot 调用工具但不发消息时，是否要在 system prompt 里更明确地告诉模型
+- 日志里工具调用详情的展开与染色
+- tools 面板与当前 tool 可见性展示
+- 容器里路径和 `runtime_data` 表达是否还需要更顺眼
+- scheduler 的 WebUI 管理页
+- subagent 相关体验和治理

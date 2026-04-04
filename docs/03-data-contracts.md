@@ -117,7 +117,14 @@ StandardEvent → EventFacts → SessionConfig/SurfaceResolution → 各 Decisio
 
 ### 动作和投递
 
-`PlannedAction`（待发送动作规划，含 `action_id`、`action`、`thread_content`、`commit_when`）→ `DeliveryResult`（单个动作投递结果，含 `ok`、`platform_message_id`、`error`）→ `OutboxItem`（Outbox 发送项）→ `DispatchReport`（一批动作的汇总结果，含 `results`、`delivered_items`、`failed_action_ids`、`has_failures`）。
+`PlannedAction`（待发送动作规划，含 `action_id`、`action`、`thread_content`、`commit_when`）→ `DeliveryResult`（单个动作投递结果，含 `ok`、`platform_message_id`、`error`）→ `OutboxItem`（Outbox 发送项）→ `OutboundMessageProjection`（同一条出站消息按 facts / working memory 生成的摘要）→ `DispatchReport`（一批动作的汇总结果，含 `results`、`delivered_items`、`failed_action_ids`、`has_failures`）。
+
+统一 `message` tool 的 `action="send"` 还额外带一层 `source_intent` 语义：
+- 高层 `SEND_MESSAGE_INTENT` 在 Outbox materialize 之前，会把 `text`、`images`、`render`、`at_user`、`reply_to`、`target` 保存在 `PlannedAction.metadata["source_intent"]`
+- 低层 delivery action 继续只保留真正发送所需的 `SEND_SEGMENTS` / `SEND_TEXT`
+- `OutboundMessageProjection.fact_text` 用于 `MessageRecord.content_text`，强调稳定、可搜索
+- `OutboundMessageProjection.thread_text` 用于 thread working memory continuity，render 成功时也保留原始 markdown / LaTeX 文本，不退化成纯图片占位符
+- 真实 `message.send` 不要求 tool 自己先产出 `thread_content`；只要 delivery action 能落地，Outbox 就会基于 `source_intent + delivery action` 自动补齐 continuity 文本
 
 `OutboxItem` 现在显式保留两套目标语义：
 - `origin_thread_id`：本轮 run 的来源 thread，也就是用户当前正在触发的 runtime thread。
@@ -154,6 +161,13 @@ StandardEvent → EventFacts → SessionConfig/SurfaceResolution → 各 Decisio
 ### MessageRecord
 
 系统真的发送成功了一条消息。关键字段：`message_uid`、`thread_id`、`actor_id`、`platform`、`role`、`content_text`、`content_json`、`timestamp`、`run_id`、`platform_message_id`。没有真正送达的动作不该写成 MessageRecord。
+
+对统一 `message.send` 来说，当前持久化约定是：
+- `content_text` 记录稳定 facts 摘要，图片继续记成 `[图片]`
+- `content_json` 记录最终 delivery payload
+- `metadata["thread_content"]` 记录 working memory continuity 文本
+- `metadata["source_intent"]` 保留 materialize 之前的高层发送语义
+- `content_text` 和 `metadata["thread_content"]` 可以不同步: 前者偏事实检索，后者偏连续性输入
 
 ---
 

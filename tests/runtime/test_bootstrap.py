@@ -413,6 +413,33 @@ def test_build_runtime_components_registers_playwright_backend_in_default_render
     assert isinstance(backend, PlaywrightRenderBackend)
 
 
+def test_build_runtime_components_accepts_ask_backend_in_session_agent_catalog(
+    tmp_path: Path,
+) -> None:
+    _write_minimal_session(tmp_path, visible_tools=["ask_backend"])
+    config = Config(
+        {
+            "agent": {"system_prompt": "You are Aca."},
+            "runtime": {
+                "filesystem": {"base_dir": str(tmp_path)},
+                "runtime_root": str(tmp_path / "runtime_data"),
+            },
+        }
+    )
+
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+
+    registered_names = {
+        str(item.get("name", "") or "")
+        for item in components.tool_broker.list_registered_tools()
+    }
+    assert "ask_backend" in registered_names
+
+
 def test_build_runtime_components_injects_same_render_service_into_outbox(
     tmp_path: Path,
 ) -> None:

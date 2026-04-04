@@ -305,6 +305,18 @@ def build_runtime_components(
         sticky_note_service=runtime_sticky_notes,
         subagent_delegator=runtime_subagent_delegator,
     )
+    # BackendBridgeToolPlugin 直接注册 tool, 不经过 Reconciler.
+    # 这里必须早于 session bundle 校验, 否则 agent.yaml 里的 ask_backend
+    # 会在 build 阶段被误判成未知工具引用。
+    _bridge_plugin = BackendBridgeToolPlugin()
+    _bridge_plugin._backend_bridge = runtime_tool_broker.backend_bridge
+    for _reg in _bridge_plugin.runtime_tools():
+        runtime_tool_broker.register_tool(
+            _reg.spec,
+            _reg.handler,
+            source="builtin:backend_bridge",
+            metadata={"plugin_name": "backend_bridge_tool"},
+        )
     runtime_session_bundle_loader = build_session_bundle_loader(
         config,
         prompt_refs=build_prompt_refs(
@@ -402,17 +414,6 @@ def build_runtime_components(
         host=runtime_plugin_host,
         context_factory=_plugin_context_factory,
     )
-
-    # BackendBridgeToolPlugin 直接注册 tool, 不经过 Reconciler
-    _bridge_plugin = BackendBridgeToolPlugin()
-    _bridge_plugin._backend_bridge = runtime_tool_broker.backend_bridge
-    for _reg in _bridge_plugin.runtime_tools():
-        runtime_tool_broker.register_tool(
-            _reg.spec,
-            _reg.handler,
-            source="builtin:backend_bridge",
-            metadata={"plugin_name": "backend_bridge_tool"},
-        )
     runtime_approval_resumer = approval_resumer or ToolApprovalResumer(
         thread_manager=runtime_thread_manager,
         agent_loader=runtime_agent_loader,

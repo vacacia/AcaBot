@@ -370,6 +370,34 @@ class TestNapCatTranslation:
         payload = gw.build_send_payload(action)
         assert payload["params"]["message"][0] == {"type": "reply", "data": {"id": "msg_99"}}
 
+    def test_build_send_segments_normalizes_local_file_path(self, gw, tmp_path):
+        # 本地文件路径会在 gateway 层转成 file:// URI, 让 NapCat 能识别.
+        image_path = tmp_path / "rendered.png"
+        image_path.write_bytes(b"fake-image")
+        target = EventSource(platform="qq", message_type="private", user_id="222", group_id=None)
+        action = Action(
+            action_type=ActionType.SEND_SEGMENTS,
+            target=target,
+            payload={"segments": [{"type": "image", "data": {"file": str(image_path)}}]},
+        )
+        payload = gw.build_send_payload(action)
+        assert payload["params"]["message"] == [
+            {"type": "image", "data": {"file": image_path.resolve().as_uri()}},
+        ]
+
+    def test_build_send_segments_keeps_remote_file_ref(self, gw):
+        # 已经是 URL / URI 的引用不重复改写.
+        target = EventSource(platform="qq", message_type="private", user_id="222", group_id=None)
+        action = Action(
+            action_type=ActionType.SEND_SEGMENTS,
+            target=target,
+            payload={"segments": [{"type": "image", "data": {"file": "https://example.com/cat.png"}}]},
+        )
+        payload = gw.build_send_payload(action)
+        assert payload["params"]["message"] == [
+            {"type": "image", "data": {"file": "https://example.com/cat.png"}},
+        ]
+
     def test_build_recall(self, gw):
         # 撤回消息 → delete_msg API
         target = EventSource(platform="qq", message_type="group", user_id="1", group_id="2")

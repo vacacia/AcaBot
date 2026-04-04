@@ -25,13 +25,14 @@ AcaBot 是一个 agentic chatbot runtime，通过 Gateway 接收 IM 平台事件
 
 ### Active
 
-- [ ] 插件管控重构（docs/29-plugin-control-plane.md 完整方案）
-- [ ] 统一 message 工具（方案待重新敲定）
-- [ ] Playwright + Chromium 集成（镜像依赖 + Outbox 渲染函数）
 - [x] 定时任务基础设施（统一 scheduler，插件 + bot 核心均可用）
 - [x] 日志内容优化（需调研后确定具体范围）
 - [x] LTM 数据库安全性（数据完整性保障）
-- [ ] 删除 Reference Backend（设计不合理，不再需要）
+- [x] 插件管控重构（docs/29-plugin-control-plane.md 完整方案）
+- [x] 统一 message 工具（统一 `message` surface + `SEND_MESSAGE_INTENT` + cross-session contract）
+- [x] Playwright + Chromium 集成（镜像依赖 + Outbox render service + runtime artifact path）
+- [x] 删除 Reference Backend（设计不合理，不再需要）
+- [ ] milestone 收尾（真人 QQ 验收、retrospective、milestone audit、archive）
 
 ### Out of Scope
 
@@ -52,14 +53,13 @@ AcaBot 是一个 agentic chatbot runtime，通过 Gateway 接收 IM 平台事件
 
 ### 当前状态
 
-- pipeline 核心稳定，但 plugin_manager.py (972行) 职责过重
-- 现有 3 个内建插件（OpsControl/NapCatTools/ReferenceTools）将在插件重构中删除
-- extensions/plugins/ 目录机制从未真正工作
-- bot 消息能力受限（只能纯文本回复，无法主动引用/reaction/附件/文转图/跨会话）
-- 日志系统过于简陋，工具调用和 LTM 过程不可见
-- 无定时任务基础设施，插件和 bot 核心都没有 scheduler
-- Reference Backend 设计不合理，需要彻底删除
-- LTM 数据库缺乏并发保护和数据完整性保障
+- pipeline 核心稳定，Reference Backend 已删除，旧 `plugin_manager.py` 已被 Reconciler 体系替换
+- 旧内建插件（OpsControl/NapCatTools/ReferenceTools）已删除，`extensions/plugins/` 目录已由新 plugin package / spec / status 体系接管
+- bot 已具备统一 `message` tool、引用 / @ / reaction / recall / 附件 / 文转图 / 跨会话发送能力
+- Outbox 已把 facts 摘要和 working memory continuity 收口到同一个 projection 逻辑，真实 `message.send` 也能更新 destination thread
+- render service / Playwright backend / runtime artifact path / shutdown cleanup 都已接通
+- scheduler、structured logging、LTM data safety 都已落地
+- 当前主要剩余工作不是主线代码，而是真人 QQ 验收和 milestone 归档文档收尾
 
 ### 已有方案文档
 
@@ -78,12 +78,13 @@ AcaBot 是一个 agentic chatbot runtime，通过 Gateway 接收 IM 平台事件
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| 插件体系用 Reconciler 模式（Package + Spec + Status） | 分离代码（Package）、意图（Spec）、观察（Status），WebUI 可管理 | — Pending |
-| 插件身份从 import path 改为 plugin_id | class 重构不会破坏配置和 UI | — Pending |
-| 旧插件直接删除不迁移 | 代码量小，新体系重写更干净 | — Pending |
-| Playwright 作为镜像依赖而非 plugin/runtime | bot 通过 bash 直接用，Outbox 层提供 render_markdown_to_image() | — Pending |
-| 统一 message 工具方案待重新敲定 | progress.md 中的草案需要进一步讨论 | — Pending |
-| 定时任务做成正式基础设施 | 插件和 bot 核心都需要，不能只是 ad-hoc asyncio.sleep | — Pending |
+| 插件体系用 Reconciler 模式（Package + Spec + Status） | 分离代码（Package）、意图（Spec）、观察（Status），WebUI 可管理 | — Landed |
+| 插件身份从 import path 改为 plugin_id | class 重构不会破坏配置和 UI | — Landed |
+| 旧插件直接删除不迁移 | 代码量小，新体系重写更干净 | — Landed |
+| Playwright 作为镜像依赖而非 plugin/runtime | bot 通过 bash 直接用，Outbox 层提供 render_markdown_to_image() | — Landed |
+| 统一 message 工具保持单一 surface，但只把 `send` 抬为高层 `SEND_MESSAGE_INTENT` | 对模型简单，对 runtime 内部仍保留合理分层 | — Landed |
+| facts / working memory continuity 统一由 Outbox projection 生成 | 避免 tool、pipeline、gateway 各自维护一套 rich send 摘要规则 | — Landed |
+| 定时任务做成正式基础设施 | 插件和 bot 核心都需要，不能只是 ad-hoc asyncio.sleep | — Landed |
 
 ## Evolution
 
@@ -103,4 +104,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-02 after initialization*
+*Last updated: 2026-04-04 after Phase 04 re-verification and doc sync*

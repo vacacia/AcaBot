@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import uuid
+from pathlib import Path
 from typing import Any, Callable, Awaitable
 
 try:
@@ -883,11 +884,50 @@ class NapCatGateway(BaseGateway):
         if action.action_type == ActionType.SEND_TEXT:
             segments.append({"type": "text", "data": {"text": action.payload["text"]}})
         else:
-            segments.extend(action.payload.get("segments", []))
+            segments.extend(self._normalize_outbound_segments(action.payload.get("segments", [])))
 
         if target.message_type == "group":
             return {"action": "send_group_msg", "params": {"group_id": target.group_id, "message": segments}, "echo": echo}
         return {"action": "send_private_msg", "params": {"user_id": target.user_id, "message": segments}, "echo": echo}
+
+    @staticmethod
+    def _normalize_outbound_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """把出站 segments 里的本地文件路径规范成 OneBot/NapCat 可识别的 URI.
+
+        当前主要处理 `image` / `file` / `record` / `video` 这类 file-like segment.
+        如果 `data.file` 已经是远程 URL、`file://`、`base64://` 或 `data:` URI, 直接透传；
+        如果只是裸本地路径, 统一转成绝对 `file://` URI.
+        """
+
+        normalized: list[dict[str, Any]] = []
+        for segment in segments:
+            seg_type = str(segment.get("type", "") or "")
+            if seg_type not in {"image", "file", "record", "video"}:
+                normalized.append(segment)
+                continue
+            data = dict(segment.get("data", {}) or {})
+            file_ref = data.get("file")
+            if isinstance(file_ref, str):
+                data["file"] = NapCatGateway._normalize_file_ref(file_ref)
+            updated = dict(segment)
+            updated["data"] = data
+            normalized.append(updated)
+        return normalized
+
+    @staticmethod
+    def _normalize_file_ref(file_ref: str) -> str:
+        """把 file-like segment 的 `file` 字段规整成 NapCat 可识别的引用.
+
+        `http://`、`https://`、`file://`、`base64://` 和 `data:` 视为已规范化输入；
+        其他字符串按本地路径处理, 转成绝对 `file://` URI.
+        """
+
+        raw = str(file_ref or "").strip()
+        if not raw:
+            return raw
+        if raw.startswith(("http://", "https://", "file://", "base64://", "data:")):
+            return raw
+        return Path(raw).expanduser().resolve(strict=False).as_uri()
 
     # endregion
 

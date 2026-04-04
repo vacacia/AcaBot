@@ -3,9 +3,17 @@
 
 所有文档/代码注释/交流过程 全部使用 中文 + 英文标点符号
 阅读/data/workspace/agent/AcaBot/docs/00-ai-entry.md
-如果你是 gpt, 子代理请全部使用 GPT-5.4, 不要使用 GPT-5.4-mini 及 GPT-5.4 之前的模型
+
+如果你是 main agent:
+- 遵照 GSD 的指示, **禁止做 不该你做的事情**
+- 如果你是 GPT, subagent 请全部使用 GPT-5.4
+- subagen 的作用是为了减少上下文污染, 所以不要自己代 subagent 工作
+- 积极使用 subagent 并行工作提升效率, 禁止自己主动写代码
+- subagent research 阶段禁止再派出 subagent 做重复工作, 除非是调查 *不相交的不同领域*
+- subagent research 阶段禁止中断, 禁止主动下场, **必须等待直到它完成**
 
 ---
+
 **AcaBot v2 — Runtime 基础设施强化**
 
 AcaBot 是一个 agentic chatbot runtime，通过 Gateway 接收 IM 平台事件，经过 session-config 路由引擎、LLM agent pipeline、工具调用，最终通过 Gateway 回复。当前核心 pipeline 已稳定运行，本轮工作聚焦于 runtime 基础设施的补全和重构——插件体系、消息工具、定时任务、日志、数据安全等，让 bot 从"能跑"进化到"好用、可扩展、可观测"。

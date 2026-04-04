@@ -80,6 +80,10 @@ NapCat 当前出站映射如下：
 
 render 不属于 gateway。`message.send` 里的 `render` 字段会在 Outbox materialization 阶段通过 render service 先变成 image segment；Gateway 只接已经编译好的 `SEND_SEGMENTS`，不关心 markdown、Playwright 或 render artifact 生命周期。
 
+出站 `image` / `file` / `record` / `video` 这类 file-like segment 时，NapCatGateway 会把裸本地路径规范成绝对 `file://` URI，再交给 NapCat。Docker 部署下如果要发送 runtime 内部生成的本地文件（例如 `runtime_data/render_artifacts/` 里的 render 图片），`acabot` 和 `napcat` 两个容器必须共享同一个宿主机目录，并挂到同一个容器内路径；默认 Compose 约定就是把宿主机 `runtime_data/` 同时挂到两个容器里的 `/app/runtime_data`。
+
+也就是说，Gateway 在这里负责的是协议翻译和 file ref 规范化，不负责 `source_intent`、`thread_text`、working memory continuity 这些 runtime 语义；这些都留在 Outbox 收口。
+
 ## call_api()
 
 不是所有平台能力都该抽成通用 ActionType。平台特有查询、一次性原生能力、只在某个平台上有意义的接口更适合 `call_api()`。当前典型例子：`get_msg`、`get_group_member_info`、`get_forward_msg`。要加"查平台原始数据"的功能时优先用 `call_api()`。

@@ -136,8 +136,16 @@ PromptLoader.load(...)  →  ToolBroker.build_tool_runtime(...)
 对统一 `message` tool 来说，`SEND_MESSAGE_INTENT` 不是最终要发的平台动作。Outbox 会在这里把它物化成一条低层 `SEND_SEGMENTS`：
 - 段顺序固定为 `at -> text -> images -> render-fallback-text`
 - `reply_to` 继续留在 `Action.reply_to`
+- materialize 前会先把高层 `source_intent` 保存在 `PlannedAction.metadata`，避免 render 成功后原始 markdown / LaTeX 语义丢失
 - `target` 解析出的 destination contract 会同时驱动消息事实落库、working memory 更新和 LTM dirty 标记
 - 当前没有 render backend 时，`render` 直接退化成普通 text segment，不中断发送链路
+
+Outbox 同时会为每条已送达消息生成一份 `OutboundMessageProjection`：
+- `fact_text` 写进 `MessageRecord.content_text`，作为稳定、可搜索的事实摘要
+- `thread_text` 写回 thread working memory，作为下一轮 run continuity 的输入
+- rich message 的 render 成功时，`thread_text` 优先使用 `source_intent.render` 原文，而不是只留下最终图片占位符
+- 具体投影逻辑集中在 `src/acabot/runtime/outbound_projection.py`，不是让 `message` tool、Pipeline、Gateway 各自维护一套摘要规则
+- 所以真实 `message.send` 就算上游没提前填 `thread_content`，最终送达后 Outbox 也会在同一个收口点把 continuity 文本补齐
 
 ## 收尾阶段
 

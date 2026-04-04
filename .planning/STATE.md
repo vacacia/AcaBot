@@ -4,12 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 04
 current_plan: 4
-status: Phase complete — ready for verification
-stopped_at: Completed 04-04-PLAN.md
-last_updated: "2026-04-03T18:33:20.485Z"
+status: Phase 04 verified — milestone archive pending
+stopped_at: Milestone v1.0 summary generated
+resume_file: .planning/reports/MILESTONE_SUMMARY-v1.0.md
+last_updated: "2026-04-04T06:39:58Z"
 progress:
   total_phases: 6
-  completed_phases: 1
+  completed_phases: 6
   total_plans: 4
   completed_plans: 4
 ---
@@ -17,7 +18,7 @@ progress:
 # Project State
 
 **Current Phase:** 04
-**Phase Status:** In Progress
+**Phase Status:** Verified — archive pending
 **Current Plan:** 4
 **Total Plans in Phase:** 04
 **Updated:** 2026-04-04
@@ -31,7 +32,7 @@ progress:
 | 3a | Scheduler | **Executed ✅** | SCHED-01..08 |
 | 3b | LTM Data Safety | **Executed ✅** | LTM-01..04 |
 | 3c | Logging & Observability | **Executed ✅** | LOG-01..06 |
-| 4 | Unified Message Tool + Playwright | In Progress | MSG-01..10, PW-01..03 |
+| 4 | Unified Message Tool + Playwright | **Verified ✅** | MSG-01..10, PW-01..03 |
 
 ## Active Plans
 
@@ -40,7 +41,7 @@ progress:
 | 04-01 | 1 | **Executed ✅** | MSG-04, MSG-05, MSG-07, MSG-10 |
 | 04-02 | 2 | **Executed ✅** | MSG-01, MSG-02, MSG-03, MSG-06, MSG-09 |
 | 04-03 | 3 | **Executed ✅** | MSG-08, PW-01, PW-02, PW-03 |
-| 04-04 | 4 | Ready | MSG-05, MSG-08, PW-01, PW-02, PW-03 |
+| 04-04 | 4 | **Executed ✅** | MSG-05, MSG-08, PW-01, PW-02, PW-03 |
 
 ## Verification Results
 
@@ -76,6 +77,9 @@ progress:
 - ✅ 总验证命令 `PYTHONPATH=src uv run pytest -q tests/runtime/test_outbox.py tests/runtime/test_model_agent_runtime.py tests/runtime/test_pipeline_runtime.py` 通过, 共 52 tests passed
 - ✅ `tests/runtime/test_render_service.py` 全绿, 锁定 unavailable fallback、lazy browser reuse、markdown+math HTML pipeline 和 internal runtime artifact path
 - ✅ 验证命令 `rg -n 'playwright|markdown-it-py|mdit-py-plugins|latex2mathml' pyproject.toml uv.lock Dockerfile Dockerfile.lite` 通过, 依赖图和镜像安装链一致
+- ✅ re-verify 已通过: `OutboundMessageProjection + source_intent + Outbox._ensure_thread_content()` 让真实 `message.send` 也能把 continuity 文本写回 destination thread
+- ✅ 追加验证命令 `PYTHONPATH=src uv run pytest -q tests/runtime/test_outbox.py -k 'thread_content or cross_session or render_fallback'` 通过, 共 3 tests passed
+- ✅ 追加验证命令 `PYTHONPATH=src uv run pytest -q tests/runtime/test_pipeline_runtime.py -k 'cross_session'` 通过, 共 2 tests passed
 
 ## Commits
 
@@ -134,8 +138,9 @@ progress:
 
 ## Session Info
 
-- **Last Session:** 2026-04-03T18:33:20.482Z
-- **Stopped At:** Completed 04-04-PLAN.md
+- **Last Session:** 2026-04-04T06:39:58Z
+- **Stopped At:** Milestone v1.0 summary generated
+- **Resume File:** .planning/reports/MILESTONE_SUMMARY-v1.0.md
 
 ## Blockers
 

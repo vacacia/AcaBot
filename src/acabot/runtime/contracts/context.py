@@ -221,6 +221,19 @@ class MessageProjection:
 
 
 @dataclass(slots=True)
+class OutboundMessageProjection:
+    """同一条出站消息按不同用途生成的摘要结果.
+
+    Attributes:
+        fact_text (str): 写入 `MessageRecord.content_text` 的稳定事实摘要.
+        thread_text (str): 写回 thread working memory 的连续性文本.
+    """
+
+    fact_text: str = ""
+    thread_text: str = ""
+
+
+@dataclass(slots=True)
 class RunContext:
     """ThreadPipeline 执行一次 run 时共享的上下文对象."""
 

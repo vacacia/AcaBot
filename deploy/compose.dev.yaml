@@ -1,5 +1,5 @@
 # 开发模式：挂载源码 + 前端 dev server
-# 用法：cd deploy && docker compose -f compose.yaml -f compose.dev.yaml up
+# cd deploy && docker compose -f compose.yaml -f compose.dev.yaml up -d --build
 services:
   acabot:
     volumes:

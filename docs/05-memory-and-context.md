@@ -24,11 +24,25 @@ AcaBot 区分五个层次的"类记忆"数据。前两层（thread working memor
 
 当前 thread 的短期上下文，存储在 `ThreadState.working_messages` 和 `ThreadState.working_summary` 中。服务于当前轮上下文压缩、retained history 准备和回复后的 thread 回写。
 
+对于 bot 自己的 rich send，working memory 不是直接照抄 delivery payload，而是使用 Outbox 生成的 continuity 摘要：
+- 普通文本和 mention 继续按稳定文本写回
+- 原始图片仍然记成 `[图片]`
+- render 成功时，working memory 保留原始 markdown / LaTeX 文本，保证下一轮 run 还能知道 bot 当时到底发了什么语义内容
+- cross-session send 一律写 destination thread，不因为 run 是从 source thread 触发就把 continuity 误写回来源会话
+
+上下文瘦身继续交给 compaction / retrieval 处理，不在这里提前截断 rich send 的 render 原文。
+
 代码：`src/acabot/runtime/contracts/records.py`、`src/acabot/runtime/storage/threads.py`
 
 ### Event / Message Facts
 
 客观事实记录层。`ChannelEventStore` 记录平台上真实发生过什么，`MessageStore` 记录系统真正发送并送达了什么。它们不直接参与 prompt 拼接，但为长期记忆的写入线提供原始数据源，也通过 `/api/runtime/threads/<thread_id>/events` 和 `/messages` 暴露给控制面。
+
+对统一 `message.send` 来说，`MessageStore` 当前会同时保留两种视角：
+- `content_text`：稳定 facts 摘要，偏短、偏检索友好
+- `metadata["thread_content"]`：working memory continuity 文本
+- `metadata["source_intent"]`：materialize 前的高层发送语义快照
+- 这两套摘要都由 Outbox 的同一个投影逻辑生成，避免 facts 和 working memory 再各自漂一套规则
 
 ### /self — 自我连续性
 

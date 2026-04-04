@@ -36,6 +36,7 @@ from acabot.runtime import (
     ToolPolicyDecision,
 )
 from acabot.runtime.ids import build_thread_id_from_conversation_id
+from acabot.runtime.builtin_tools.message import BuiltinMessageToolSurface
 from acabot.types import Action, ActionType, EventAttachment, EventSource, MsgSegment, StandardEvent
 from acabot.runtime.control.log_buffer import InMemoryLogBuffer, InMemoryLogHandler
 from acabot.runtime.control.log_setup import configure_structlog
@@ -357,6 +358,70 @@ async def test_thread_pipeline_updates_destination_thread_for_cross_session_deli
         "role": "assistant",
         "content": "cross-session hello",
     }
+
+
+async def test_thread_pipeline_updates_destination_thread_from_real_message_tool_output() -> None:
+    thread_manager = CountingThreadManager()
+    run_manager = InMemoryRunManager()
+    gateway = FakeGateway()
+    store = FakeMessageStore()
+    outbox = Outbox(gateway=gateway, store=store)
+    pipeline = ThreadPipeline(
+        agent_runtime=FakeAgentRuntime(),
+        outbox=outbox,
+        run_manager=run_manager,
+        thread_manager=thread_manager,
+    )
+    event = _event()
+    decision = _decision()
+    origin_thread = await thread_manager.get_or_create(
+        thread_id=decision.thread_id,
+        channel_scope=decision.channel_scope,
+        last_event_at=event.timestamp,
+    )
+    run = await run_manager.open(event=event, decision=decision)
+    ctx = RunContext(
+        run=run,
+        event=event,
+        decision=decision,
+        thread=origin_thread,
+        agent=_profile(),
+    )
+    ctx.agent.enabled_tools = ["message"]
+
+    broker = ToolBroker()
+    BuiltinMessageToolSurface().register(broker)
+    tool_result = await broker.execute(
+        tool_name="message",
+        arguments={
+            "text": "cross-session hello",
+            "target": "qq:group:20002",
+        },
+        ctx=broker._build_execution_context(ctx),
+    )
+
+    class ToolActionAgentRuntime(AgentRuntime):
+        async def execute(self, runtime_ctx: RunContext) -> AgentRuntimeResult:
+            _ = runtime_ctx
+            return AgentRuntimeResult(
+                status="completed",
+                text="",
+                actions=list(tool_result.user_actions),
+            )
+
+    pipeline.agent_runtime = ToolActionAgentRuntime()
+
+    await pipeline.execute(ctx)
+
+    destination_thread = await thread_manager.get("qq:group:20002")
+    assert destination_thread is not None
+    assert destination_thread.working_messages[-1] == {
+        "role": "assistant",
+        "content": "cross-session hello",
+    }
+    assert origin_thread.working_messages == [
+        {"role": "user", "content": "[acacia/10001] hello"}
+    ]
 
 
 async def test_thread_pipeline_runs_minimal_text_flow() -> None:

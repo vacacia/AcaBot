@@ -12,6 +12,7 @@ docker compose up -d --build
 - `config.yaml`（从 `config.example.yaml` 复制）
 - `.env`（从 `.env.example` 复制，填入 API key）
 - `runtime_config/`（从 `runtime_config.example/` 复制）
+- `runtime_data/`（运行时数据目录。Compose 会把它同时挂到 `acabot` 和 `napcat` 容器里的 `/app/runtime_data`，用于共享 render 图片等本地发送产物）
 
 ## 开发模式
 

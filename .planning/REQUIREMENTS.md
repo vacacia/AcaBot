@@ -7,52 +7,52 @@
 
 ### Reference Backend Removal
 
-- [ ] **REF-01**: Reference Backend 子系统完全删除，无残留导入
-- [ ] **REF-02**: BackendBridgeToolPlugin 与 Reference Backend 解耦，过渡期可用
-- [ ] **REF-03**: config.yaml 中 reference 相关配置项清理或标记废弃
+- [x] **REF-01**: Reference Backend 子系统完全删除，无残留导入
+- [x] **REF-02**: BackendBridgeToolPlugin 与 Reference Backend 解耦，过渡期可用
+- [x] **REF-03**: config.yaml 中 reference 相关配置项清理或标记废弃
 
 ### Plugin Management
 
-- [ ] **PLUG-01**: 插件身份从 import path 迁移到 plugin_id
-- [ ] **PLUG-02**: PluginPackage 从 extensions/plugins/ 扫描 plugin.yaml manifest
-- [ ] **PLUG-03**: PluginSpec（启用/禁用 + 配置覆盖）持久化到 runtime_config/plugins/
-- [ ] **PLUG-04**: PluginStatus（phase/error/tools/hooks）持久化到 runtime_data/plugins/
-- [ ] **PLUG-05**: PluginReconciler 实现 desired-state 收敛（reconcile_all + reconcile_one）
-- [ ] **PLUG-06**: PluginRuntimeHost 执行 load/unload/teardown/run_hooks
-- [ ] **PLUG-07**: 单插件异常不影响 runtime（错误隔离）
-- [ ] **PLUG-08**: 旧 plugin_manager.py（972 行）完全替换删除
-- [ ] **PLUG-09**: 旧插件（OpsControl/NapCatTools/ReferenceTools）删除
-- [ ] **PLUG-10**: REST API 5 个新端点替代旧 4 个端点
-- [ ] **PLUG-11**: WebUI 插件管理页（列表、状态徽章、enable/disable、schema 驱动配置表单）
-- [ ] **PLUG-12**: Bootstrap 集成（构造 catalog/spec_store/status_store/host/reconciler）
-- [ ] **PLUG-13**: Pipeline 集成（plugin_manager.run_hooks → host.run_hooks）
+- [x] **PLUG-01**: 插件身份从 import path 迁移到 plugin_id
+- [x] **PLUG-02**: PluginPackage 从 extensions/plugins/ 扫描 plugin.yaml manifest
+- [x] **PLUG-03**: PluginSpec（启用/禁用 + 配置覆盖）持久化到 runtime_config/plugins/
+- [x] **PLUG-04**: PluginStatus（phase/error/tools/hooks）持久化到 runtime_data/plugins/
+- [x] **PLUG-05**: PluginReconciler 实现 desired-state 收敛（reconcile_all + reconcile_one）
+- [x] **PLUG-06**: PluginRuntimeHost 执行 load/unload/teardown/run_hooks
+- [x] **PLUG-07**: 单插件异常不影响 runtime（错误隔离）
+- [x] **PLUG-08**: 旧 plugin_manager.py（972 行）完全替换删除
+- [x] **PLUG-09**: 旧插件（OpsControl/NapCatTools/ReferenceTools）删除
+- [x] **PLUG-10**: REST API 5 个新端点替代旧 4 个端点
+- [x] **PLUG-11**: WebUI 插件管理页（列表、状态徽章、enable/disable、schema 驱动配置表单）
+- [x] **PLUG-12**: Bootstrap 集成（构造 catalog/spec_store/status_store/host/reconciler）
+- [x] **PLUG-13**: Pipeline 集成（plugin_manager.run_hooks → host.run_hooks）
 
 ### Scheduler
 
-- [ ] **SCHED-01**: 支持 cron 表达式定时任务（使用 croniter 解析）
-- [ ] **SCHED-02**: 支持 interval（固定间隔）定时任务
-- [ ] **SCHED-03**: 支持 one-shot（一次性延迟）任务
-- [ ] **SCHED-04**: 任务持久化，runtime 重启后恢复
-- [ ] **SCHED-05**: 任务可取消（按 task_id）
-- [ ] **SCHED-06**: Graceful shutdown（cancel all + gather，scheduler 最先停）
-- [ ] **SCHED-07**: 插件生命周期绑定（unload 时 unregister_by_owner 自动取消）
-- [ ] **SCHED-08**: RuntimeApp 生命周期集成（start 后启动，stop 时最先关闭）
+- [x] **SCHED-01**: 支持 cron 表达式定时任务（使用 croniter 解析）
+- [x] **SCHED-02**: 支持 interval（固定间隔）定时任务
+- [x] **SCHED-03**: 支持 one-shot（一次性延迟）任务
+- [x] **SCHED-04**: 任务持久化，runtime 重启后恢复
+- [x] **SCHED-05**: 任务可取消（按 task_id）
+- [x] **SCHED-06**: Graceful shutdown（cancel all + gather，scheduler 最先停）
+- [x] **SCHED-07**: 插件生命周期绑定（unload 时 unregister_by_owner 自动取消）
+- [x] **SCHED-08**: RuntimeApp 生命周期集成（start 后启动，stop 时最先关闭）
 
 ### Logging / Observability
 
-- [ ] **LOG-01**: 工具调用日志包含结构化字段（tool_name, duration, result_summary）
-- [ ] **LOG-02**: LLM token 用量 per run 记录（input/output/total tokens, model, cost）
-- [ ] **LOG-03**: 错误日志自动关联 run context（run_id, thread_id, agent_id）
-- [ ] **LOG-04**: WebUI 日志查看器能展示结构化字段（不只是纯文本）
-- [ ] **LOG-05**: LTM extraction/query 过程日志可见
-- [ ] **LOG-06**: structlog 集成（wrapping stdlib logging，contextvars 传播 run context）
+- [x] **LOG-01**: 工具调用日志包含结构化字段（tool_name, duration, result_summary）
+- [x] **LOG-02**: LLM token 用量 per run 记录（input/output/total tokens, model, cost）
+- [x] **LOG-03**: 错误日志自动关联 run context（run_id, thread_id, agent_id）
+- [x] **LOG-04**: WebUI 日志查看器能展示结构化字段（不只是纯文本）
+- [x] **LOG-05**: LTM extraction/query 过程日志可见
+- [x] **LOG-06**: structlog 集成（wrapping stdlib logging，contextvars 传播 run context）
 
 ### LTM Data Safety
 
-- [ ] **LTM-01**: asyncio.Lock 写序列化（防止并发写损坏）
-- [ ] **LTM-02**: 定期备份能力（通过 scheduler 触发）
-- [ ] **LTM-03**: 启动时完整性检查（检测损坏表/缺失 manifest）
-- [ ] **LTM-04**: LTM 失败时优雅降级（不阻断 pipeline，记录错误继续）
+- [x] **LTM-01**: asyncio.Lock 写序列化（防止并发写损坏）
+- [x] **LTM-02**: 定期备份能力（通过 scheduler 触发）
+- [x] **LTM-03**: 启动时完整性检查（检测损坏表/缺失 manifest）
+- [x] **LTM-04**: LTM 失败时优雅降级（不阻断 pipeline，记录错误继续）
 
 ### Unified Message Tool
 
@@ -117,22 +117,22 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| REF-01 | 1 | Pending |
-| REF-02 | 1 | Pending |
-| REF-03 | 1 | Pending |
-| PLUG-01 | 2 | Pending |
-| PLUG-02 | 2 | Pending |
-| PLUG-03 | 2 | Pending |
-| PLUG-04 | 2 | Pending |
-| PLUG-05 | 2 | Pending |
-| PLUG-06 | 2 | Pending |
-| PLUG-07 | 2 | Pending |
-| PLUG-08 | 2 | Pending |
-| PLUG-09 | 2 | Pending |
-| PLUG-10 | 2 | Pending |
-| PLUG-11 | 2 | Pending |
-| PLUG-12 | 2 | Pending |
-| PLUG-13 | 2 | Pending |
+| REF-01 | 1 | Validated |
+| REF-02 | 1 | Validated |
+| REF-03 | 1 | Validated |
+| PLUG-01 | 2 | Validated |
+| PLUG-02 | 2 | Validated |
+| PLUG-03 | 2 | Validated |
+| PLUG-04 | 2 | Validated |
+| PLUG-05 | 2 | Validated |
+| PLUG-06 | 2 | Validated |
+| PLUG-07 | 2 | Validated |
+| PLUG-08 | 2 | Validated |
+| PLUG-09 | 2 | Validated |
+| PLUG-10 | 2 | Validated |
+| PLUG-11 | 2 | Validated |
+| PLUG-12 | 2 | Validated |
+| PLUG-13 | 2 | Validated |
 | SCHED-01 | 3a | Validated |
 | SCHED-02 | 3a | Validated |
 | SCHED-03 | 3a | Validated |
@@ -151,19 +151,19 @@
 | LTM-02 | 3b | Validated |
 | LTM-03 | 3b | Validated |
 | LTM-04 | 3b | Validated |
-| MSG-01 | 4 | Complete |
-| MSG-02 | 4 | Complete |
-| MSG-03 | 4 | Complete |
+| MSG-01 | 4 | Validated |
+| MSG-02 | 4 | Validated |
+| MSG-03 | 4 | Validated |
 | MSG-04 | 4 | Validated |
 | MSG-05 | 4 | Validated |
-| MSG-06 | 4 | Complete |
+| MSG-06 | 4 | Validated |
 | MSG-07 | 4 | Validated |
-| MSG-08 | 4 | Complete |
-| MSG-09 | 4 | Complete |
+| MSG-08 | 4 | Validated |
+| MSG-09 | 4 | Validated |
 | MSG-10 | 4 | Validated |
-| PW-01 | 4 | Complete |
-| PW-02 | 4 | Complete |
-| PW-03 | 4 | Complete |
+| PW-01 | 4 | Validated |
+| PW-02 | 4 | Validated |
+| PW-03 | 4 | Validated |
 
 **Coverage:**
 - v1 requirements: 47 total
@@ -172,4 +172,4 @@
 
 ---
 *Requirements defined: 2026-04-02*
-*Last updated: 2026-04-02 after roadmap creation — all 47 requirements mapped to phases*
+*Last updated: 2026-04-04 after Phase 04 re-verification — v1 requirements validated against current phase artifacts*
