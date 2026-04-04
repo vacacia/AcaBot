@@ -23,8 +23,9 @@ AcaBot 的配置分三层：主配置文件（`config.yaml`）、文件系统配
 | `runtime` | filesystem 模式、computer、session 读取路径、长期记忆开关、skill 目录等（影响最广） |
 | `plugins` | 插件加载和私有配置 |
 
-`runtime` 块中两个值得注意的子配置：
+`runtime` 块中三个值得注意的子配置：
 
+- **`runtime.render.width` / `runtime.render.device_scale_factor`**：render 默认截图参数。`width` 控制基础 viewport 宽度，`device_scale_factor` 控制像素密度；两者都属于全局默认值，由 bootstrap 注入 Playwright render backend，也可通过 WebUI 系统页和 `/api/render/config` 读写。它们影响 `message.send.render` 的 runtime 内部渲染流程，不会把 render artifact 移进 `/workspace`。
 - **`runtime.filesystem.skill_catalog_dirs`**：指定 skill 扫描根目录。相对路径视为 `project` 来源，`~` 或绝对路径视为 `user` 来源。默认扫描 `./.agents/skills` 和 `~/.agents/skills`，递归查找 `**/SKILL.md`。注入和执行时按 `project > user` 优先级选取。
 - **`runtime.long_term_memory.enabled`**：装配开关（不是模型配置开关）。打开后自动构造 `LanceDbLongTermMemoryStore`、`LtmWritePort`、`LtmMemorySource` 和 `LongTermMemoryIngestor`。实际可用还需要在 `models/bindings/` 中配好 `system:ltm_extract`、`system:ltm_query_plan`、`system:ltm_embed` 三个 target。该配置块还支持 `storage_dir`、`window_size`、`overlap_size`、`max_entries`、`extractor_version`。
 
@@ -54,6 +55,7 @@ runtime_data/
   soul/                  # /self 连续性文件（today.md、daily/）
   sticky_notes/          # 实体便签（user/、conversation/）
   workspaces/            # thread workspace
+  render_artifacts/      # runtime 内部 render 图片 / html artifact
   debug/                 # 调试产物（payload json 等）
   acabot.db              # SQLite 主库
   long_term_memory/      # LanceDB 数据
@@ -80,7 +82,7 @@ runtime_data/
 
 ## RuntimeConfigControlPlane
 
-`src/acabot/runtime/control/config_control_plane.py` 提供配置真源的读写能力，当前覆盖：profiles、prompts、gateway、runtime plugins，以及 session-config 驱动的 reload。
+`src/acabot/runtime/control/config_control_plane.py` 提供配置真源的读写能力，当前覆盖：profiles、prompts、gateway、render 默认值、runtime plugins，以及 session-config 驱动的 reload。
 
 ## 热刷新与重启
 
@@ -88,7 +90,7 @@ runtime_data/
 
 | 支持热刷新 | 需要重启 |
 |-----------|---------|
-| profiles、prompts、session config、部分 plugin 配置 | gateway 监听地址/token、进程级环境变量、Docker/NapCat 接线、基础设施初始化参数 |
+| profiles、prompts、session config、`runtime.render.width`、`runtime.render.device_scale_factor`、部分 plugin 配置 | gateway 监听地址/token、进程级环境变量、Docker/NapCat 接线、基础设施初始化参数 |
 
 ## 源码阅读顺序
 

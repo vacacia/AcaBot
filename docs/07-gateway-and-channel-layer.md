@@ -78,11 +78,11 @@ NapCat 当前出站映射如下：
 
 `REACTION` 的 payload 约定为 `{"message_id": ..., "emoji_id": ...}`。这是 NapCat-specific 的低层动作：gateway 只负责把它翻成 `set_msg_emoji_like`，不负责 emoji 名称解析。emoji alias / Unicode → `emoji_id` 的映射在统一 `message` builtin tool 里完成。
 
-render 不属于 gateway。`message.send` 里的 `render` 字段会在 Outbox materialization 阶段通过 render service 先变成 image segment；Gateway 只接已经编译好的 `SEND_SEGMENTS`，不关心 markdown、Playwright 或 render artifact 生命周期。
+render 不属于 gateway。`message.send` 里的 `render` 字段会在 Outbox materialization 阶段通过 render service 先变成 image segment；对模型来说它是“提交待渲染内容”，不是“手动挑一个本地文件发 QQ”。因此 render artifact 可以继续留在 runtime 内部 `runtime_data/render_artifacts/`，也不受 QQ 本地文件相对路径规则约束。Gateway 只接已经编译好的 `SEND_SEGMENTS`，不关心 markdown、Playwright 或 render artifact 生命周期。
 
-出站 `image` / `file` / `record` / `video` 这类 file-like segment 时，NapCatGateway 会把裸本地路径规范成绝对 `file://` URI，再交给 NapCat。Docker 部署下如果要发送 runtime 内部生成的本地文件（例如 `runtime_data/render_artifacts/` 里的 render 图片），`acabot` 和 `napcat` 两个容器必须共享同一个宿主机目录，并挂到同一个容器内路径；默认 Compose 约定就是把宿主机 `runtime_data/` 同时挂到两个容器里的 `/app/runtime_data`。
+出站 `image` / `file` / `record` / `video` 这类 file-like segment 时，NapCatGateway 会把裸本地路径规范成绝对 `file://` URI，再交给 NapCat。如果是模型主动发送 QQ 本地文件，`message` builtin tool 才负责收紧合同：文件先放进 `/workspace`，再用相对路径引用，工具内部会把它改写成可发送的 `/workspace/...` ref。Gateway 自己不承载这条 `/workspace` 语义校验，只负责接收最终 file ref 并做协议翻译。Docker 部署下如果要发送 runtime 内部生成的本地文件（例如 `runtime_data/render_artifacts/` 里的 render 图片），`acabot` 和 `napcat` 两个容器必须共享同一个宿主机目录，并挂到同一个容器内路径；默认 Compose 约定就是把宿主机 `runtime_data/` 同时挂到两个容器里的 `/app/runtime_data`。
 
-也就是说，Gateway 在这里负责的是协议翻译和 file ref 规范化，不负责 `source_intent`、`thread_text`、working memory continuity 这些 runtime 语义；这些都留在 Outbox 收口。
+也就是说，Gateway 在这里负责的是协议翻译和 file ref 规范化，不负责 `source_intent`、`thread_text`、working memory continuity 这些 runtime 语义；`/workspace` 是模型和 message tool 的合同，render artifact 则仍属于 runtime 内部发送产物，这些都留在 Outbox 收口。
 
 ## call_api()
 
