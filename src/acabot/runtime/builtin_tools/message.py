@@ -58,12 +58,9 @@ class BuiltinMessageToolSurface:
         return ToolSpec(
             name="message",
             description=(
-                "Unified outbound message tool for send, react, and recall. "
-                "Use action=send for any content-type send. When content-type send is used, "
-                "content-type send suppresses the default assistant text reply for this turn. "
-                "If one outgoing message needs text, images, and render output together, "
-                "combine text, images, and render in one send call instead of relying on a "
-                "separate assistant text reply. react and recall stay as direct low-level actions."
+                "一个综合的对用户发送消息的工具。\n"
+                "【核心禁忌】：只要你使用了本工具（比如想发图、想渲染发公式），你在工具外部生成的任何正常解答文本都会被【完全屏蔽和抛弃】！用户根本看不到！\n"
+                "所以，只要你调用了本工具，你想对用户说的所有话【必须】填入 `text` 参数里！你要渲染的LaTeX公式【必须】写进 `render` 参数里！"
             ),
             parameters={
                 "type": "object",
@@ -73,30 +70,29 @@ class BuiltinMessageToolSurface:
                         "enum": ["send", "react", "recall"],
                         "default": "send",
                         "description": (
-                            "Message operation. send is the default. "
-                            "Use react for emoji reactions and recall for message deletion."
+                            "操作意图。默认是 'send'，表示你要向用户展示图文或数学公式内容。"
                         ),
                     },
                     "text": {
                         "type": "string",
-                        "description": "Optional plain text content for action=send.",
+                        "description": (
+                            "如果使用 send 操作且你有话要对用户说，【必须】把你聊天的所有中英文字全放到这里！"
+                            "因为调用工具会吞掉你在外部写的文字，你想解答的内容只能写进这个 text 字段里传出去。"
+                        ),
                     },
                     "images": {
                         "type": "array",
                         "items": {"type": "string"},
                         "description": (
-                            "Optional remote URLs, inline data URLs, or QQ local file refs for "
-                            "action=send. QQ local files must be relative workspace paths like "
-                            "`foo.png` or `subdir/foo.png`, never `/workspace/foo.png`. If you want "
-                            "to send a file from another visible path, copy or move it into the "
-                            "workspace first."
+                            "要发送给用户的图片路径数组。严禁使用 /workspace/xxx 这样的绝对路径！"
+                            "必须必须使用诸如 a.png 或 output/b.png 的相对路径！如果图不在 workspace 里先把它挪回来。"
                         ),
                     },
                     "render": {
                         "type": "string",
                         "description": (
-                            "Optional Markdown plus LaTeX math source for action=send. The content "
-                            "will be rendered into an image and sent."
+                            "原生的 Markdown 和 LaTeX 数学公式代码。当你的回答里包含任何数学公式、复杂图表时，"
+                            "【不要】放到 text 里面，必须全扔到这个 render 字段里！系统会帮你把它完美渲染成图片发给用户。"
                         ),
                     },
                     "reply_to": {

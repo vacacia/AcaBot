@@ -1122,10 +1122,11 @@ class RuntimeControlPlane:
             ],
             "model_bindings": [
                 {
-                    "binding_id": item.binding_id,
-                    "target_id": item.target_id,
-                    "preset_ids": list(item.preset_ids),
-                    "timeout_sec": item.timeout_sec,
+                    "binding_id": item.binding.binding_id,
+                    "target_id": item.binding.target_id,
+                    "preset_ids": list(item.binding.preset_ids),
+                    "timeout_sec": item.binding.timeout_sec,
+                    "state": item.binding_state,
                 }
                 for item in bindings
             ],

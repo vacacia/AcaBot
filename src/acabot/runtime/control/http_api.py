@@ -135,6 +135,7 @@ class RuntimeHttpApiServer:
 
         class Handler(BaseHTTPRequestHandler):
             server_version = "AcaBotWebUI/0.1"
+            protocol_version = "HTTP/1.1"  # 启用持久连接，避免每次请求都重新建立 TCP 连接
 
             def address_string(self) -> str:
                 return str(self.client_address[0])

@@ -2,11 +2,24 @@
 
 ## What This Is
 
-AcaBot 是一个 agentic chatbot runtime，通过 Gateway 接收 IM 平台事件，经过 session-config 路由引擎、LLM agent pipeline、工具调用，最终通过 Gateway 回复。当前核心 pipeline 已稳定运行，本轮工作聚焦于 runtime 基础设施的补全和重构——插件体系、消息工具、定时任务、日志、数据安全等，让 bot 从"能跑"进化到"好用、可扩展、可观测"。
+AcaBot 是一个 agentic chatbot runtime，通过 Gateway 接收 IM 平台事件，经过 session-config 路由引擎、LLM agent pipeline、工具调用，最终通过 Gateway 回复。v1.0 完成了 runtime 基础设施的全面补全（插件 Reconciler、统一 message tool、scheduler、LTM safety、structured logging），v1.1 聚焦于生产可用性收尾——修复群聊响应 bug、让模型和插件真正用上 scheduler、优化 WebUI、完成 AstrBot 历史数据迁移。
 
 ## Core Value
 
-**让 AcaBot 的 runtime 基础设施从 MVP 水平提升到正式可用水平：插件可管理、消息能力完整、定时任务可用、运行状态可观测。**
+**让 AcaBot 从"基础设施就绪"进化到"生产环境真正好用"：群聊行为正确、定时任务对模型可见、WebUI 交互流畅、历史记忆可迁移。**
+
+## Current Milestone: v1.1 生产可用性收尾 + LTM 迁移
+
+**Goal:** 修复群聊响应 bug，把 scheduler 能力暴露给模型和插件，优化 WebUI 体验，完成 AstrBot 历史数据迁移到 LTM。
+
+**Target features:**
+- 修复群聊"仅回复 @ 和引用"失效问题 (P1)
+- 模型可用的定时任务 tool — 创建/查看/取消/绑定会话 (P2)
+- 插件侧定时任务使用方式 + 文档示例 (P2)
+- WebUI 定时任务管理页面 (P3)
+- WebUI 可用性优化 (P3)
+- AstrBot 聊天记录提取迁移入口 (P6)
+- AstrBot 历史导入 LTM 并验证检索效果 (P7)
 
 ## Requirements
 
@@ -25,14 +38,14 @@ AcaBot 是一个 agentic chatbot runtime，通过 Gateway 接收 IM 平台事件
 
 ### Active
 
-- [x] 定时任务基础设施（统一 scheduler，插件 + bot 核心均可用）
-- [x] 日志内容优化（需调研后确定具体范围）
-- [x] LTM 数据库安全性（数据完整性保障）
-- [x] 插件管控重构（docs/29-plugin-control-plane.md 完整方案）
-- [x] 统一 message 工具（统一 `message` surface + `SEND_MESSAGE_INTENT` + cross-session contract）
-- [x] Playwright + Chromium 集成（镜像依赖 + Outbox render service + runtime artifact path）
-- [x] 删除 Reference Backend（设计不合理，不再需要）
-- [ ] milestone 收尾（真人 QQ 验收、retrospective、milestone audit、archive）
+<!-- v1.1 scope -->
+- [ ] 修复群聊"仅回复 @ 和引用"失效问题
+- [ ] 模型可用的定时任务 tool/API（创建/查看/取消/绑定会话）
+- [ ] 插件侧定时任务使用方式 + 文档示例
+- [ ] WebUI 定时任务管理页面
+- [ ] WebUI 可用性优化
+- [ ] AstrBot 聊天记录提取迁移入口
+- [ ] AstrBot 历史导入 LTM 并验证检索效果
 
 ### Out of Scope
 
@@ -41,6 +54,9 @@ AcaBot 是一个 agentic chatbot runtime，通过 Gateway 接收 IM 平台事件
 - 移动端 App（WebUI 已有）
 - 商业化/计费功能
 - LLM provider 切换优化（litellm 已够用）
+- Plugin marketplace（单操作者 bot 不需要第三方分发）
+- Distributed scheduler（单进程 runtime，asyncio scheduler 足够）
+- OpenTelemetry（单操作者场景 overkill）
 
 ## Context
 
@@ -53,13 +69,11 @@ AcaBot 是一个 agentic chatbot runtime，通过 Gateway 接收 IM 平台事件
 
 ### 当前状态
 
-- pipeline 核心稳定，Reference Backend 已删除，旧 `plugin_manager.py` 已被 Reconciler 体系替换
-- 旧内建插件（OpsControl/NapCatTools/ReferenceTools）已删除，`extensions/plugins/` 目录已由新 plugin package / spec / status 体系接管
-- bot 已具备统一 `message` tool、引用 / @ / reaction / recall / 附件 / 文转图 / 跨会话发送能力
-- Outbox 已把 facts 摘要和 working memory continuity 收口到同一个 projection 逻辑，真实 `message.send` 也能更新 destination thread
-- render service / Playwright backend / runtime artifact path / shutdown cleanup 都已接通
-- scheduler、structured logging、LTM data safety 都已落地
-- 当前主要剩余工作不是主线代码，而是真人 QQ 验收和 milestone 归档文档收尾
+- v1.0 全部 47 个需求已验证完成：插件 Reconciler、统一 message tool、scheduler、LTM safety、structured logging 均已落地
+- scheduler 基础设施已就绪（cron/interval/one-shot + 持久化 + 生命周期绑定），但仅 runtime 内部可用，模型和插件尚未能直接使用
+- 群聊"仅回复 @ 和引用"在生产环境中失效，是当前最高优先级 bug
+- WebUI 交互体验有提升空间
+- AstrBot 历史聊天记录需要迁移到 AcaBot LTM
 
 ### 已有方案文档
 
@@ -104,4 +118,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-04 after Phase 04 re-verification and doc sync*
+*Last updated: 2026-04-05 after v1.1 milestone start*

@@ -21,7 +21,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+_PROMPT_DIR = Path(__file__).parent / "prompts"
 
 from ..contracts import MessageProjection, RetrievalPlan, RunContext
 from ..memory.memory_broker import FORMAL_TARGET_SLOTS, MemoryBlock
@@ -127,7 +130,7 @@ class ContextAssembler:
                 target_slot="system_prompt",
                 priority=self.SYSTEM_PROMPT_PRIORITY["workspace_reminder"],
                 role="system",
-                content="所有工作都在 /workspace 中完成。",
+                content=(_PROMPT_DIR / "workspace_reminder.md").read_text(encoding="utf-8").strip(),
             )
         ]
 
@@ -140,12 +143,7 @@ class ContextAssembler:
                 target_slot="system_prompt",
                 priority=self.SYSTEM_PROMPT_PRIORITY["tool_behavior_reminder"],
                 role="system",
-                content=(
-                    "工具选择约定：普通纯文本回复可以直接正常回答；但只要你需要把图片发给用户，"
-                    "想在一条消息里附带 @ 或引用，或想把回答内容用 Markdown / LaTeX 渲染后再发送，就选择 message 工具。"
-                    "在调用工具前，先用一句简短的话说明你接下来要做什么。如果工具调用失败、返回异常，或还没有完成任务，"
-                    "不要直接结束；先简短说明发生了什么，再检查原因并继续处理。"
-                ),
+                content=(_PROMPT_DIR / "tool_behavior_reminder.md").read_text(encoding="utf-8").strip(),
             )
         ]
 
