@@ -587,7 +587,8 @@ def test_message_tool_contract_describes_workspace_relative_local_file_rule() ->
     registration = next(item for item in broker.list_registered_tools() if item["name"] == "message")
     images_description = registration["parameters"]["properties"]["images"]["description"]
 
-    assert "relative paths under the workspace" in images_description
+    assert "relative workspace paths" in images_description
+    assert "never `/workspace/foo.png`" in images_description
     assert "copy or move it into the workspace first" in images_description
 
 

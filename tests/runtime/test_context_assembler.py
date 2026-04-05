@@ -131,7 +131,10 @@ def test_context_assembler_orders_system_prompt_and_message_slots() -> None:
 
     assembled = assembler.assemble(ctx, base_prompt="base", tool_runtime=ToolRuntime())
 
-    assert assembled.system_prompt == "base\n\n所有工作都在 /workspace 中完成。"
+    assert assembled.system_prompt == (
+        "base\n\n所有工作都在 /workspace 中完成。\n\n"
+        "工具选择约定：普通纯文本回复可以直接正常回答；但只要你需要把图片发给用户，想在一条消息里附带 @ 或引用，或想把回答内容用 Markdown / LaTeX 渲染后再发送，就选择 message 工具。在调用工具前，先用一句简短的话说明你接下来要做什么。如果工具调用失败、返回异常，或还没有完成任务，不要直接结束；先简短说明发生了什么，再检查原因并继续处理。"
+    )
     assert [item["content"] for item in assembled.messages] == ["self", "retrieved", "hello"]
 
 
@@ -204,14 +207,3 @@ def test_context_assembler_uses_memory_block_declared_target_slot() -> None:
     assert [item["content"] for item in assembled.messages] == ["sticky note", "hello"]
 
 
-def test_context_assembler_always_adds_workspace_system_reminder() -> None:
-    assembler = ContextAssembler()
-    ctx = _assembler_ctx(
-        retrieval_plan=RetrievalPlan(retained_history=[]),
-        message_projection=MessageProjection(history_text="hello", model_content="hello"),
-    )
-
-    assembled = assembler.assemble(ctx, base_prompt="base", tool_runtime=ToolRuntime())
-
-    assert "所有工作都在 /workspace 中完成" in assembled.system_prompt
-    assert "QQ 本地文件" not in assembled.system_prompt

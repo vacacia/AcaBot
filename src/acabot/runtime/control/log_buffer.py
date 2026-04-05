@@ -9,7 +9,7 @@ import threading
 import time
 from typing import Any
 
-from .log_setup import extract_extra_fields
+from .log_setup import extract_extra_fields, sanitize_log_record
 
 
 @dataclass(slots=True)
@@ -93,15 +93,18 @@ class InMemoryLogHandler(logging.Handler):
             message = record.getMessage()
         except Exception:
             message = str(record.msg)
-        extra = extract_extra_fields(record)
+        sanitized_message, sanitized_extra = sanitize_log_record(
+            message=message,
+            extra=extract_extra_fields(record),
+        )
         self.buffer.append(
             LogEntry(
                 timestamp=time.time(),
                 level=str(record.levelname or "INFO"),
                 logger=str(record.name or ""),
-                message=message,
+                message=sanitized_message,
                 kind=str(getattr(record, "log_kind", "") or "runtime"),
-                extra=extra,
+                extra=sanitized_extra,
             )
         )
 

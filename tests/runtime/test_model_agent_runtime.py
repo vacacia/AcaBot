@@ -258,7 +258,8 @@ async def test_model_agent_runtime_builds_completed_result() -> None:
 
     result = await runtime.execute(ctx)
 
-    assert ctx.system_prompt == "You are Aca."
+    assert ctx.system_prompt.startswith("You are Aca.")
+    assert "/workspace" in ctx.system_prompt
     assert agent.calls[0]["model"] == "test-model"
     assert result.status == "completed"
     assert result.actions[0].action.payload["text"] == "hello back"
@@ -394,9 +395,11 @@ async def test_model_agent_runtime_assembles_context_and_writes_payload_json(tmp
 
     payload_path = tmp_path / "run:1.json"
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
-    assert ctx.system_prompt == "You are Aca."
+    assert ctx.system_prompt.startswith("You are Aca.")
+    assert "/workspace" in ctx.system_prompt
     assert ctx.messages == [{"role": "user", "content": "[acacia/10001] hello"}]
-    assert payload["system_prompt"] == "You are Aca."
+    assert str(payload["system_prompt"]).startswith("You are Aca.")
+    assert "/workspace" in str(payload["system_prompt"])
     assert payload["messages"] == [{"role": "user", "content": "[acacia/10001] hello"}]
 
 

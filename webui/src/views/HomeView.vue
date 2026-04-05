@@ -155,6 +155,8 @@ onMounted(() => {
         :limit="80"
         :poll-interval-ms="1000"
         :show-controls="false"
+        :show-details="false"
+        :show-run-details="false"
         height="320px"
       />
     </section>

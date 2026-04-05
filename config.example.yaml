@@ -58,6 +58,8 @@ runtime:
     enabled: true
     host: "127.0.0.1"
     port: 8765
+    # 仅本地维护/回归用途；默认关闭，开启后允许 POST /api/runtime/events 注入 synthetic event
+    allow_synthetic_events: false
     cors_origins:
       - "http://127.0.0.1:5173"
       - "http://localhost:5173"

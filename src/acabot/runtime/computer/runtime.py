@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 import time
@@ -751,9 +752,14 @@ class ComputerRuntime:
             world_view.workspace_root_host_path if world_view is not None else self.workspace_manager.workspace_dir_for_thread(thread_id)
         )
         backend = self.backends[policy.backend]
+        translated_command = self._translate_shell_command_for_backend(
+            command=command,
+            backend_kind=backend.kind,
+            path_aliases=self._path_aliases_for_world_view(world_view),
+        )
         result = await backend.exec_once(
             host_path=workspace,
-            command=command,
+            command=translated_command,
             policy=policy,
             timeout=timeout,
         )
@@ -765,7 +771,10 @@ class ComputerRuntime:
             status="completed" if result.ok else "failed",
             payload={
                 "command": command,
+                "translated_command": translated_command,
                 "exit_code": result.exit_code,
+                "stdout_excerpt": result.stdout_excerpt,
+                "stderr_excerpt": result.stderr_excerpt,
                 "stdout_truncated": result.stdout_truncated,
                 "stderr_truncated": result.stderr_truncated,
                 "metadata": dict(result.metadata),
@@ -813,6 +822,7 @@ class ComputerRuntime:
             ),
             cwd_host_path=str(workspace),
             created_at=int(time.time()),
+            path_aliases=self._path_aliases_for_world_view(world_view),
         )
         await self.backends[policy.backend].open_session(session=session, policy=policy)
         self._sessions.setdefault(thread_id, {})[session.session_id] = session
@@ -841,13 +851,22 @@ class ComputerRuntime:
         """
 
         session = self._require_session(thread_id, session_id)
-        await self.backends[session.backend_kind].write_session(session, command)
+        translated_command = self._translate_shell_command_for_backend(
+            command=command,
+            backend_kind=session.backend_kind,
+            path_aliases=dict(session.path_aliases),
+        )
+        await self.backends[session.backend_kind].write_session(session, translated_command)
         await self._append_run_step(
             run_id=run_id,
             thread_id=thread_id,
             step_type="bash_write",
             status="completed",
-            payload={"session_id": session_id, "command": command},
+            payload={
+                "session_id": session_id,
+                "command": command,
+                "translated_command": translated_command,
+            },
         )
 
     async def read_session(self, *, thread_id: str, session_id: str, run_id: str = "") -> CommandExecutionResult:
@@ -1097,6 +1116,41 @@ class ComputerRuntime:
             else:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
+
+    @staticmethod
+    def _path_aliases_for_world_view(world_view) -> dict[str, str]:
+        if world_view is None:
+            return {}
+        aliases: dict[str, str] = {}
+        workspace_policy = world_view.root_policies.get("workspace")
+        if workspace_policy is not None and workspace_policy.visible:
+            aliases["/workspace"] = str(Path(world_view.workspace_root_host_path).resolve())
+        skills_policy = world_view.root_policies.get("skills")
+        if skills_policy is not None and skills_policy.visible:
+            aliases["/skills"] = str(Path(world_view.skills_root_host_path).resolve())
+        self_policy = world_view.root_policies.get("self")
+        if self_policy is not None and self_policy.visible:
+            aliases["/self"] = str(Path(world_view.self_root_host_path).resolve())
+        return aliases
+
+    @staticmethod
+    def _translate_shell_command_for_backend(
+        *,
+        command: str,
+        backend_kind: str,
+        path_aliases: dict[str, str],
+    ) -> str:
+        if backend_kind != "host" or not path_aliases:
+            return command
+        translated = str(command)
+        for visible_root, host_root in sorted(path_aliases.items(), key=lambda item: len(item[0]), reverse=True):
+            translated = translated.replace(f"{visible_root}/", f"{host_root.rstrip('/')}/")
+            translated = re.sub(
+                rf"(?<![A-Za-z0-9_./:-]){re.escape(visible_root)}(?![A-Za-z0-9_./-])",
+                host_root,
+                translated,
+            )
+        return translated
 
     @staticmethod
     def _ensure_workspace_shell_access(world_view) -> None:

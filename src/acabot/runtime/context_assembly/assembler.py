@@ -45,6 +45,7 @@ class ContextAssembler:
     SYSTEM_PROMPT_PRIORITY = {
         "base_prompt": 1000,
         "workspace_reminder": 950,
+        "tool_behavior_reminder": 925,
         "skill_reminder": 900,
         "subagent_reminder": 850,
     }
@@ -104,6 +105,7 @@ class ContextAssembler:
             )
         ]
         contributions.extend(self._build_workspace_reminder_contribution())
+        contributions.extend(self._build_tool_behavior_contribution())
         contributions.extend(self._build_tool_summary_contributions(tool_runtime))
         contributions.extend(self._build_memory_contributions(ctx.memory_blocks))
         contributions.extend(self._build_working_summary_contribution(ctx.retrieval_plan))
@@ -126,6 +128,24 @@ class ContextAssembler:
                 priority=self.SYSTEM_PROMPT_PRIORITY["workspace_reminder"],
                 role="system",
                 content="所有工作都在 /workspace 中完成。",
+            )
+        ]
+
+    def _build_tool_behavior_contribution(self) -> list[ContextContribution]:
+        """返回稳定注入的工具使用行为提醒。"""
+
+        return [
+            ContextContribution(
+                source_kind="tool_behavior_reminder",
+                target_slot="system_prompt",
+                priority=self.SYSTEM_PROMPT_PRIORITY["tool_behavior_reminder"],
+                role="system",
+                content=(
+                    "工具选择约定：普通纯文本回复可以直接正常回答；但只要你需要把图片发给用户，"
+                    "想在一条消息里附带 @ 或引用，或想把回答内容用 Markdown / LaTeX 渲染后再发送，就选择 message 工具。"
+                    "在调用工具前，先用一句简短的话说明你接下来要做什么。如果工具调用失败、返回异常，或还没有完成任务，"
+                    "不要直接结束；先简短说明发生了什么，再检查原因并继续处理。"
+                ),
             )
         ]
 

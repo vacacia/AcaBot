@@ -198,6 +198,41 @@ async def test_message_send_render_still_reaches_probe(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_message_send_combined_text_local_image_and_render_preserves_segment_order(tmp_path: Path) -> None:
+    artifact_path = tmp_path / "runtime_data" / "rendered-table.png"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_bytes(b"render-png")
+    render_service = FakeRenderService(
+        RenderResult.ok(
+            backend_name="playwright",
+            artifact_path=artifact_path,
+            html="<table><tr><td>Aca</td></tr></table>",
+        )
+    )
+    report, probe_result = await _run_message_send(
+        tmp_path,
+        tool_arguments={
+            "action": "send",
+            "text": "组合发送",
+            "images": ["x_screenshot.png"],
+            "render": "| Name | Score |\n| --- | ---: |\n| Aca | 42 |",
+        },
+        prepare_workspace=lambda root: (root / "x_screenshot.png").write_bytes(b"png-bytes"),
+        render_service=render_service,
+    )
+
+    assert report.has_failures is False
+    assert probe_result.local_file_read_ok is True
+    assert [segment["type"] for segment in probe_result.payload["params"]["message"]] == [
+        "text",
+        "image",
+        "image",
+    ]
+    assert len(probe_result.captured_file_refs) == 2
+    assert all(file_ref != "/workspace/x_screenshot.png" for file_ref in probe_result.captured_file_refs)
+
+
+@pytest.mark.asyncio
 async def test_message_send_invalid_local_path_fails_before_gateway(tmp_path: Path) -> None:
     gateway, probe = await _gateway_and_probe()
     try:

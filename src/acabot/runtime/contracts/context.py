@@ -176,6 +176,7 @@ class RunStep:
     thread_id: str = ""
     payload: dict[str, Any] = field(default_factory=dict)
     created_at: int = 0
+    step_seq: int = 0
 
 
 @dataclass(slots=True)

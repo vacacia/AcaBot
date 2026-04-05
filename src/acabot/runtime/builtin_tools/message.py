@@ -86,10 +86,10 @@ class BuiltinMessageToolSurface:
                         "items": {"type": "string"},
                         "description": (
                             "Optional remote URLs, inline data URLs, or QQ local file refs for "
-                            "action=send. QQ local files must be given as relative paths under the "
-                            "workspace. The tool rewrites those relative paths to internal "
-                            "/workspace/... refs before delivery. If you want to send a file from "
-                            "another visible path, copy or move it into the workspace first."
+                            "action=send. QQ local files must be relative workspace paths like "
+                            "`foo.png` or `subdir/foo.png`, never `/workspace/foo.png`. If you want "
+                            "to send a file from another visible path, copy or move it into the "
+                            "workspace first."
                         ),
                     },
                     "render": {

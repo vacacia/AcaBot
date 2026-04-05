@@ -13,6 +13,8 @@
 - [x] Unified message tool 落地: `message` 统一 surface、`SEND_MESSAGE_INTENT`、跨会话发送、reaction / recall、附件发送已接通
 - [x] Playwright render chain 落地: render service、artifact path、lazy browser、bootstrap 注入、shutdown 回收已接通
 - [x] cross-session continuity 收口: Outbox 现在会基于 delivery action + `source_intent` 自动生成 facts / working memory 摘要，真实 `message.send` 已能把内容写回 destination thread
+- [x] Phase 07 真链路已打通: synthetic inbound event 注入、host backend `/workspace` 映射、workspace 文件发布、真实 NapCat 图片发送、render/网页截图 QQ 可用性已验证
+- [x] system prompt 可维护性补齐: 已把工具调用行为提醒放入正式 system prompt 组装层，并补了独立文档说明 system prompt 的组成、位置和修改入口
 
 ## 最近变更
 - `2026-03-27` 完成 lancedb-first long-term memory runtime
@@ -27,15 +29,15 @@
 - `2026-04-04` 补齐 `OutboundMessageProjection` / `source_intent` continuity 链，修复真实 `message.send` 不写回 destination thread working memory 的缺口
 - `2026-04-04` 文档同步：runtime mainline、data contracts、memory、gateway、milestone summary、phase verification 一起补齐
 - `2026-04-04` 按 `gsd-plan-milestone-gaps` 把 milestone audit gap 正式拆成 Phase 05 / 06 / 07，回写 roadmap / requirements / state
+- `2026-04-05` 完成 Phase 07 关键收口：synthetic event 注入接口（默认关闭、仅 loopback）、message 工具行为提示、render 表格支持、/logs 抽屉式 run 详情与宽度回归修复
+- `2026-04-05` 真实链路验证通过：伪造 inbound event -> 真实 LLM -> 真实 NapCat，网页截图与 render 图片都已在 QQ 侧确认可用
 
 ## 已知问题
 - webui 设计不完整，没有单独的 tools 面板，当前工具可见性和来源不够直观
 - WebUI 非常卡
-- milestone audit 已完成，gap closure phases 也已建好：Phase 05 / 06 负责补 GSD artifact 链，Phase 07 负责 render 可读性和 workspace / `runtime_data` 契约收口
-- 真人验收发现 render 图片可读性仍有问题；quote + @、cross-session 真实 QQ 验收也还没形成正式记录
+- quote + @、cross-session 真实 QQ 验收未进行
 - 工具 desc 还可以继续打磨，减少模型误用和多余解释成本
-- bot 的工作区指引 prompt 不够硬，仍会尝试在 `tmp/` 下工作
-- bot 工作区与实际 `runtime_data` 的映射存在契约问题，需要单独修
+- system prompt / tool contract 现在已经补了最小必要的工具行为提醒，但后续仍可继续观察模型是否稳定遵守“先说明、失败后解释并继续处理”的约定
 - 群聊“仅回复 @ 和引用”失效，实际会回复全部消息；这不是本次 requirement，但属于需要单独收口的高严重度 bug
 
 ## 下一步

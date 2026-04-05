@@ -687,6 +687,57 @@ async def test_computer_runtime_bash_world_runs_command_in_execution_view(tmp_pa
     assert "hello from bash_world" in result.stdout_excerpt
 
 
+async def test_computer_runtime_bash_world_maps_workspace_root_for_host_backend(tmp_path: Path) -> None:
+    service, ctx = _ctx(tmp_path)
+    await service.prepare_run_context(ctx)
+    assert ctx.world_view is not None
+    policy = ctx.computer_policy_effective
+    assert policy is not None
+
+    result = await service.bash_world(
+        thread_id=ctx.thread.thread_id,
+        command="printf 'mapped' > /workspace/mapped.txt",
+        policy=policy,
+        world_view=ctx.world_view,
+    )
+
+    workspace_file = Path(ctx.world_view.workspace_root_host_path) / "mapped.txt"
+    assert result.ok is True
+    assert workspace_file.read_text(encoding="utf-8") == "mapped"
+
+
+async def test_computer_runtime_bash_session_maps_workspace_root_for_host_backend(tmp_path: Path) -> None:
+    service, ctx = _ctx(tmp_path)
+    await service.prepare_run_context(ctx)
+    assert ctx.world_view is not None
+    policy = ctx.computer_policy_effective
+    assert policy is not None
+
+    session = await service.open_session(
+        thread_id=ctx.thread.thread_id,
+        agent_id=ctx.agent.agent_id,
+        policy=policy,
+        world_view=ctx.world_view,
+    )
+    await service.write_session(
+        thread_id=ctx.thread.thread_id,
+        session_id=session.session_id,
+        command="printf 'session mapped' > /workspace/session_mapped.txt\n",
+    )
+    await service.write_session(
+        thread_id=ctx.thread.thread_id,
+        session_id=session.session_id,
+        command="exit\n",
+    )
+    await service.close_session(
+        thread_id=ctx.thread.thread_id,
+        session_id=session.session_id,
+    )
+
+    workspace_file = Path(ctx.world_view.workspace_root_host_path) / "session_mapped.txt"
+    assert workspace_file.read_text(encoding="utf-8") == "session mapped"
+
+
 async def test_computer_runtime_bash_world_passes_timeout_to_backend(tmp_path: Path) -> None:
     service, ctx = _ctx(tmp_path)
     await service.prepare_run_context(ctx)

@@ -21,6 +21,7 @@ from ..contracts import ApprovalRequired, DispatchReport, PendingApproval, Plann
 from ..model.model_agent_runtime import ToolRuntime, ToolRuntimeState
 from ..skills import SkillCatalog
 from ..subagents import SubagentCatalog
+from ..control.log_setup import sanitize_inspection_value
 from .contracts import (
     RegisteredTool,
     ToolAuditRecord,
@@ -622,6 +623,7 @@ class ToolBroker:
             source=registered.source,
             result=normalized,
             duration_ms=self._duration_ms(started_at),
+            arguments=arguments,
         )
         return normalized
 
@@ -787,6 +789,7 @@ class ToolBroker:
             source=registered.source,
             result=normalized,
             duration_ms=None,
+            arguments=dict(pending.tool_arguments),
         )
         return ToolReplayResult(
             ok=True,
@@ -1033,6 +1036,7 @@ class ToolBroker:
             tool_name=tool_name,
             reason=message,
             duration_ms=self._duration_ms(started_at),
+            arguments=arguments,
         )
         return result
 
@@ -1054,6 +1058,7 @@ class ToolBroker:
             tool_name=tool_name,
             error=message,
             duration_ms=self._duration_ms(started_at),
+            arguments=arguments,
         )
         return result
 
@@ -1120,6 +1125,17 @@ class ToolBroker:
             "actor_id": ctx.actor_id,
         }
 
+    @staticmethod
+    def _tool_result_snapshot(result: ToolResult) -> dict[str, Any]:
+        return {
+            "llm_content": sanitize_inspection_value(result.llm_content),
+            "raw": sanitize_inspection_value(result.raw),
+            "metadata": sanitize_inspection_value(dict(result.metadata)),
+            "attachment_count": len(result.attachments),
+            "artifact_count": len(result.artifacts),
+            "user_action_count": len(result.user_actions),
+        }
+
     def _log_tool_success(
         self,
         *,
@@ -1128,12 +1144,15 @@ class ToolBroker:
         source: str,
         result: ToolResult,
         duration_ms: float | None,
+        arguments: dict[str, Any],
     ) -> None:
         payload = {
             **self._tool_context_fields(ctx),
             "tool_name": tool_name,
             "source": source,
             "duration_ms": duration_ms,
+            "tool_arguments": sanitize_inspection_value(dict(arguments)),
+            "tool_result_snapshot": self._tool_result_snapshot(result),
             "result_summary": self._summarize_result(result),
             "attachment_count": len(result.attachments),
         }
@@ -1146,6 +1165,7 @@ class ToolBroker:
         tool_name: str,
         reason: str,
         duration_ms: float | None,
+        arguments: dict[str, Any],
     ) -> None:
         slog.warning(
             "Tool rejected",
@@ -1154,6 +1174,7 @@ class ToolBroker:
                 "tool_name": tool_name,
                 "reason": reason,
                 "duration_ms": duration_ms,
+                "tool_arguments": sanitize_inspection_value(dict(arguments)),
             },
         )
 
@@ -1164,6 +1185,7 @@ class ToolBroker:
         tool_name: str,
         error: str,
         duration_ms: float | None,
+        arguments: dict[str, Any],
     ) -> None:
         slog.error(
             "Tool execution failed",
@@ -1172,6 +1194,7 @@ class ToolBroker:
                 "tool_name": tool_name,
                 "error": error,
                 "duration_ms": duration_ms,
+                "tool_arguments": sanitize_inspection_value(dict(arguments)),
             },
         )
 

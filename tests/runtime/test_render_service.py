@@ -254,12 +254,25 @@ async def test_render_markdown_to_image_pipeline(tmp_path: Path) -> None:
     assert context.closed == 1
 
 
+def test_playwright_backend_supports_markdown_tables() -> None:
+    backend = PlaywrightRenderBackend()
+
+    html = backend._build_document("| Name | Score |\n| --- | ---: |\n| Aca | 42 |")
+
+    assert "<table>" in html
+    assert "<thead>" in html
+    assert "<tbody>" in html
+    assert "<th>Name</th>" in html
+    assert "<td>Aca</td>" in html
+
+
 def test_playwright_html_template_keeps_render_shell_responsive() -> None:
     assert re.search(
         r"\.render-shell\s*\{[^}]*width:\s*100%;",
         HTML_TEMPLATE,
         re.DOTALL,
     )
+    assert re.search(r"table\s*\{[^}]*border-collapse:\s*collapse;", HTML_TEMPLATE, re.DOTALL)
 
 
 def test_render_artifacts_stay_under_internal_runtime_paths(

@@ -21,7 +21,7 @@ import time
 import uuid
 from dataclasses import asdict
 
-from acabot.types import Action, ActionType
+from acabot.types import Action, ActionType, MsgSegment, StandardEvent
 
 from ..app import RuntimeApp
 from ..computer import (
@@ -78,6 +78,7 @@ from .snapshots import (
 from .ui_catalog import build_ui_options
 from .log_buffer import InMemoryLogBuffer
 from .workspace_ops import RuntimeWorkspaceControlOps
+from .log_setup import sanitize_inspection_value
 
 
 # region control plane
@@ -765,6 +766,87 @@ class RuntimeControlPlane:
             message="已保存并已生效",
         )
 
+    async def inject_synthetic_event(self, *, payload: dict[str, object]) -> dict[str, object]:
+        """向真实 runtime 注入一条 synthetic inbound event, 便于端到端回归测试."""
+
+        conversation_id = str(payload.get("conversation_id", "") or "").strip()
+        if not conversation_id:
+            raise ValueError("conversation_id is required")
+        conversation_id = normalize_target(conversation_id) or conversation_id
+        text = optional_text(payload.get("text"))
+        segments = self._normalize_synthetic_segments(payload.get("segments"), fallback_text=text)
+        if not segments:
+            raise ValueError("synthetic event requires text or segments")
+
+        sender_user_id = str(payload.get("sender_user_id", "") or "").strip()
+        scope_kind, scope_value = conversation_id.split(":", 2)[1:]
+        if not sender_user_id:
+            sender_user_id = scope_value if scope_kind == "user" else "synthetic-user"
+        source = build_event_source_from_conversation_id(
+            conversation_id,
+            actor_user_id=sender_user_id,
+        )
+        event = StandardEvent(
+            event_id=str(payload.get("event_id", "") or f"evt-synthetic-{uuid.uuid4().hex}"),
+            event_type="message",
+            platform="qq",
+            timestamp=int(payload.get("timestamp") or time.time()),
+            source=source,
+            segments=segments,
+            raw_message_id=str(payload.get("raw_message_id", "") or f"synthetic-msg-{uuid.uuid4().hex}"),
+            sender_nickname=str(payload.get("sender_nickname", "") or "synthetic"),
+            sender_role=(str(payload.get("sender_role")) if payload.get("sender_role") is not None else None),
+            targets_self=bool(payload.get("targets_self", True)),
+            metadata={
+                "synthetic": True,
+                "injected_via": "http_api",
+                **dict(payload.get("metadata", {}) or {}),
+            },
+            raw_event={
+                "synthetic": True,
+                "conversation_id": conversation_id,
+                **dict(payload.get("raw_event", {}) or {}),
+            },
+        )
+        await self.app.handle_event(event)
+        thread_id = build_thread_id_from_conversation_id(conversation_id)
+        related_run = None
+        for run in await self.run_manager.list_runs(limit=100):
+            if run.trigger_event_id == event.event_id:
+                related_run = self._sanitize_run_record(run)
+                break
+        return {
+            "event_id": event.event_id,
+            "conversation_id": conversation_id,
+            "thread_id": thread_id,
+            "text": event.text,
+            "segments": [{"type": segment.type, "data": dict(segment.data)} for segment in event.segments],
+            "targets_self": event.targets_self,
+            "synthetic": True,
+            "run": related_run,
+        }
+
+    @staticmethod
+    def _normalize_synthetic_segments(raw_segments: object, *, fallback_text: str | None) -> list[MsgSegment]:
+        if raw_segments in (None, ""):
+            if fallback_text is None:
+                return []
+            return [MsgSegment(type="text", data={"text": fallback_text})]
+        if not isinstance(raw_segments, list):
+            raise ValueError("segments must be a list")
+        normalized: list[MsgSegment] = []
+        for item in raw_segments:
+            if not isinstance(item, dict):
+                raise ValueError("segments items must be objects")
+            seg_type = str(item.get("type", "") or "").strip()
+            if not seg_type:
+                raise ValueError("segments items require type")
+            seg_data = item.get("data")
+            if not isinstance(seg_data, dict):
+                raise ValueError("segments items require object data")
+            normalized.append(MsgSegment(type=seg_type, data=dict(seg_data)))
+        return normalized
+
     async def post_notification(self, *, payload: dict[str, object]) -> dict[str, object]:
         """主动发送一条 bot 消息到指定会话."""
 
@@ -1042,8 +1124,40 @@ class RuntimeControlPlane:
             thread_id=thread_id,
         )
 
-    async def get_run(self, run_id: str) -> RunRecord | None:
-        return await self.run_manager.get(run_id)
+    @staticmethod
+    def _sanitize_run_record(run: RunRecord) -> dict[str, object]:
+        return {
+            "run_id": run.run_id,
+            "thread_id": run.thread_id,
+            "actor_id": run.actor_id,
+            "agent_id": run.agent_id,
+            "trigger_event_id": run.trigger_event_id,
+            "status": run.status,
+            "started_at": run.started_at,
+            "finished_at": run.finished_at,
+            "error": run.error,
+            "approval_context": sanitize_inspection_value(dict(run.approval_context)),
+            "metadata": sanitize_inspection_value(dict(run.metadata)),
+        }
+
+    @staticmethod
+    def _sanitize_run_step(step) -> dict[str, object]:
+        return {
+            "step_id": step.step_id,
+            "run_id": step.run_id,
+            "step_type": step.step_type,
+            "status": step.status,
+            "thread_id": step.thread_id,
+            "payload": sanitize_inspection_value(dict(step.payload)),
+            "created_at": step.created_at,
+            "step_seq": int(step.step_seq or 0),
+        }
+
+    async def get_run(self, run_id: str) -> dict[str, object] | None:
+        run = await self.run_manager.get(run_id)
+        if run is None:
+            return None
+        return self._sanitize_run_record(run)
 
     async def list_run_steps(
         self,
@@ -1051,12 +1165,15 @@ class RuntimeControlPlane:
         run_id: str,
         limit: int = 100,
         step_types: list[str] | None = None,
+        latest: bool = False,
     ):
-        return await self.run_manager.list_steps(
+        steps = await self.run_manager.list_steps(
             run_id,
             limit=limit,
             step_types=step_types,
+            latest=latest,
         )
+        return [self._sanitize_run_step(step) for step in steps]
 
     async def list_thread_events(
         self,

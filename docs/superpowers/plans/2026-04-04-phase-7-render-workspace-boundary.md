@@ -13,6 +13,7 @@
 ## File Structure
 
 ### Read first
+
 - `docs/superpowers/specs/2026-04-04-phase-7-render-workspace-boundary-design.md` — 本次已确认 spec，优先级最高
 - `.planning/phases/07-render-readability-workspace-boundary/07-CONTEXT.md` — phase scope 与决策真源
 - `docs/2026-04-04-outbound-file-publish-layer.md` — `/workspace` 文件发送与 runtime 发布边界背景
@@ -20,6 +21,7 @@
 > 注意：`.planning/phases/07-render-readability-workspace-boundary/07-01-PLAN.md` / `07-02-PLAN.md` 是更早的草案。若与已确认 spec 冲突，以 `docs/superpowers/specs/2026-04-04-phase-7-render-workspace-boundary-design.md` 为准。
 
 ### Files to modify
+
 - `src/acabot/runtime/render/playwright_backend.py` — render 宽度 / device scale factor 的最终消费点
 - `src/acabot/runtime/bootstrap/__init__.py` — 从 config 读取 render 默认值并注入 backend
 - `src/acabot/runtime/control/config_control_plane.py` — render 配置读写、保存、热应用
@@ -36,10 +38,12 @@
 - `docs/12-computer.md` — `/workspace` 模型语义与 render artifact 例外
 
 ### Files to create
+
 - `.planning/phases/07-render-readability-workspace-boundary/07-QQ-READABILITY-FIXTURE.md` — 8 类内容的固定验收素材
 - `.planning/phases/07-render-readability-workspace-boundary/07-QQ-READABILITY-ACCEPTANCE.md` — 真实 QQ 客户端验收记录
 
 ### Tests to modify
+
 - `tests/runtime/test_render_service.py` — render 参数注入与截图上下文行为
 - `tests/runtime/test_bootstrap.py` — fresh runtime start 是否从持久化 config 读回 render 默认值
 - `tests/runtime/test_webui_api.py` — render 配置 API、system page 视图、system page 渲染 smoke test
@@ -52,6 +56,7 @@
 ### Task 1: Render runtime 默认值收口到配置与 backend
 
 **Files:**
+
 - Modify: `tests/runtime/test_render_service.py`
 - Modify: `tests/runtime/test_bootstrap.py`
 - Modify: `src/acabot/runtime/render/playwright_backend.py`
@@ -141,11 +146,13 @@ class FakeContext:
 - [ ] **Step 2: 跑 render 定向测试，确认先失败**
 
 Run:
+
 ```bash
 uv run pytest tests/runtime/test_render_service.py tests/runtime/test_bootstrap.py -q -k "render or build_runtime_components_reads_render_defaults"
 ```
 
 Expected:
+
 - FAIL，报 `PlaywrightRenderBackend.__init__()` 不接受新参数，或 fake browser 没有 `new_context()`，或模板仍然硬编码 `960px`，或 bootstrap 还没有把持久化 config 注入 backend
 
 - [ ] **Step 3: 只实现最小 render backend 变更**
@@ -219,11 +226,13 @@ runtime_playwright_render_backend = PlaywrightRenderBackend(
 - [ ] **Step 6: 回跑 render 测试确认通过**
 
 Run:
+
 ```bash
 uv run pytest tests/runtime/test_render_service.py tests/runtime/test_bootstrap.py -q -k "render or build_runtime_components_reads_render_defaults"
 ```
 
 Expected:
+
 - PASS，新的 viewport / device scale factor 测试通过
 - PASS，fresh runtime start 会从持久化 config 读回 render 默认值
 - 旧 render pipeline 测试仍通过
@@ -240,6 +249,7 @@ git commit -m "feat(render): externalize render defaults"
 ### Task 2: 暴露 render 配置 API，并在保存后热应用到现有 backend
 
 **Files:**
+
 - Modify: `tests/runtime/test_webui_api.py`
 - Modify: `src/acabot/runtime/control/config_control_plane.py`
 - Modify: `src/acabot/runtime/control/control_plane.py`
@@ -313,11 +323,13 @@ async def test_render_config_put_reports_apply_failed_when_hot_apply_raises(
 - [ ] **Step 2: 跑 WebUI API 定向测试，确认新路由还不存在**
 
 Run:
+
 ```bash
 uv run pytest tests/runtime/test_webui_api.py -q -k "render_config"
 ```
 
 Expected:
+
 - FAIL，报 `/api/render/config` 404、snapshot 缺少 `render`，或 control plane 还没有 hot-apply / apply_failed 行为
 
 - [ ] **Step 3: 在 config control plane 中实现 render 配置读写与热应用**
@@ -397,11 +409,13 @@ if segments == ["render", "config"] and method == "PUT":
 - [ ] **Step 5: 回跑 API 定向测试确认通过**
 
 Run:
+
 ```bash
 uv run pytest tests/runtime/test_webui_api.py -q -k "render_config or system_configuration or hot_apply"
 ```
 
 Expected:
+
 - PASS，`/api/render/config` 可读可写
 - PASS，`system/configuration` 快照带 `render` 字段
 - PASS，PUT 后现有 playwright backend 默认值立即变化
@@ -419,6 +433,7 @@ git commit -m "feat(control-plane): add render config api"
 ### Task 3: 在 SystemView 中提供 render 默认值编辑入口
 
 **Files:**
+
 - Modify: `tests/runtime/test_webui_api.py`
 - Modify: `webui/src/views/SystemView.vue`
 - Modify: `webui/src/lib/api.ts`
@@ -441,11 +456,13 @@ def test_webui_real_pages_system_view_includes_render_settings_entrypoint() -> N
 - [ ] **Step 2: 跑前端相关测试，确认页面还没有这个入口**
 
 Run:
+
 ```bash
 uv run pytest tests/runtime/test_webui_api.py -q -k "system_view_includes_render or system_page_renders"
 ```
 
 Expected:
+
 - FAIL，SystemView 源码里还没有 render 配置 UI
 
 - [ ] **Step 3: 在 `SystemView.vue` 增加 render 表单与保存逻辑**
@@ -494,6 +511,7 @@ async function saveRender(): Promise<void> {
 ```
 
 在模板中新增一个 panel，至少包含：
+
 - Render 宽度输入框
 - Device scale factor 输入框
 - “保存并尝试生效”按钮
@@ -512,12 +530,14 @@ if (path.startsWith("/api/render/config")) {
 - [ ] **Step 5: 跑 WebUI 测试和 build**
 
 Run:
+
 ```bash
 uv run pytest tests/runtime/test_webui_api.py -q -k "system_view_includes_render or system_page_renders"
 cd webui && npm run build
 ```
 
 Expected:
+
 - PASS，系统页源码断言和页面 smoke test 通过
 - PASS，Vite build 成功
 
@@ -533,6 +553,7 @@ git commit -m "feat(webui): expose render defaults in system view"
 ### Task 4: 收口 `/workspace` system reminder 与 message 工具本地文件契约
 
 **Files:**
+
 - Modify: `tests/runtime/test_context_assembler.py`
 - Modify: `tests/runtime/test_builtin_tools.py`
 - Modify: `tests/runtime/test_outbox.py`
@@ -616,11 +637,13 @@ async def test_message_tool_rejects_parent_traversal_local_file_paths_for_qq_sen
 - [ ] **Step 3: 跑这两组定向测试，确认先失败**
 
 Run:
+
 ```bash
 uv run pytest tests/runtime/test_context_assembler.py tests/runtime/test_builtin_tools.py -q -k "workspace or message_tool"
 ```
 
 Expected:
+
 - FAIL，assembler 还没有稳定的 `/workspace` reminder
 - FAIL，message 工具还接受绝对路径或 `../` 越界路径
 
@@ -699,7 +722,6 @@ def _normalize_send_image_ref(cls, file_ref: str) -> str:
 这里不要使用 `lstrip("./")` 这类会吞掉前缀的写法，否则像 `./../secret.png` 这种越界路径会被错误洗成合法路径。
 
 3. `render` 字段说明里补一句：render 是 runtime 内部流程，不走本地路径选择。
-
 4. 在 `tests/runtime/test_outbox.py` 补一个显式锁边界测试，确保 render 仍然走 runtime 内部 artifact 路径，而不是被 message 工具本地文件规则改写到 `/workspace/...`：
 
 ```python
@@ -730,11 +752,13 @@ async def test_outbox_render_artifact_path_remains_runtime_internal(tmp_path: Pa
 - [ ] **Step 6: 回跑定向测试确认通过**
 
 Run:
+
 ```bash
 uv run pytest tests/runtime/test_context_assembler.py tests/runtime/test_builtin_tools.py tests/runtime/test_outbox.py -q -k "workspace or message_tool or render_artifact_path_remains_runtime_internal"
 ```
 
 Expected:
+
 - PASS，system prompt 只新增 `/workspace` 工作提醒，不提 QQ 细则
 - PASS，message 工具接受相对路径并重写到 `/workspace/...`
 - PASS，message 工具拒绝绝对本地路径和 `../` 越界路径
@@ -752,6 +776,7 @@ git commit -m "feat(message): enforce workspace local file contract"
 ### Task 5: 同步文档并落真实 QQ 验收 artifacts
 
 **Files:**
+
 - Modify: `docs/07-gateway-and-channel-layer.md`
 - Modify: `docs/08-webui-and-control-plane.md`
 - Modify: `docs/09-config-and-runtime-files.md`
@@ -787,10 +812,12 @@ for i in range(3):
 
 > 这是一段引用块，用来确认引用文字边界和底色是否仍然可读。
 
+
 | 列 1 | 列 2 | 列 3 |
-| --- | --- | --- |
-| A | B | C |
-| 1 | 2 | 3 |
+| ------ | ------ | ------ |
+| A    | B    | C    |
+| 1    | 2    | 3    |
+
 ```
 
 - [ ] **Step 2: 更新 4 份正式文档**
@@ -820,12 +847,14 @@ cd webui && npm run build
 ```
 
 Expected:
+
 - PASS，所有本期新增测试通过
 - PASS，WebUI build 成功
 
 - [ ] **Step 4: 用真实 QQ 客户端做人工验收**
 
 手工步骤：
+
 1. 在 WebUI 的系统页把 render 默认值调到待验收值
 2. 使用固定素材通过正式 `message.send.render` 链路发送到真实 QQ 会话
 3. 在真实 QQ 客户端逐项确认以下 8 类内容可读：
@@ -891,6 +920,7 @@ uv run pytest
 ```
 
 Expected:
+
 - PASS，全量 Python 测试通过
 
 - [ ] **Step 2: 跑前端 build**
@@ -900,16 +930,19 @@ cd webui && npm run build
 ```
 
 Expected:
+
 - PASS，构建成功
 
 - [ ] **Step 3: 检查最终文件面是否齐全**
 
 Run:
+
 ```bash
 rg -n "device_scale_factor|/api/render/config|所有工作都在 /workspace 中完成|relative path under /workspace|render_artifacts" src webui docs .planning/phases/07-render-readability-workspace-boundary
 ```
 
 Expected:
+
 - render 配置、API、system reminder、message 工具说明、render artifact 文档、QQ 验收 artifact 都能被 grep 到
 
 - [ ] **Step 4: 最终提交**
@@ -923,7 +956,7 @@ git commit -m "feat(07): close render readability and workspace boundary"
 
 ## Notes for the Implementer
 
-- 不要把 QQ 本地文件发送规则写进 system prompt；system prompt 只保留“所有工作都在 `/workspace` 中完成”。
-- `message.send.render` 是 runtime 内部流程，不要为了满足 QQ 本地文件规则把 render artifact 塞进 `/workspace`。
-- 对模型暴露的本地文件发送输入应是**相对路径**；runtime 内部可以把它重写成 `/workspace/...` world path，再交给后续出站链路。
-- 如果实现过程中发现旧草案要求直接改某个 prompt 文件，请停下并回到已确认 spec：这里优先用稳定的 assembler reminder，而不是修改某一个具体 prompt 文件。
+- [ ] 不要把 QQ 本地文件发送规则写进 system prompt；system prompt 只保留“所有工作都在 `/workspace` 中完成”。
+- [ ] `message.send.render` 是 runtime 内部流程，不要为了满足 QQ 本地文件规则把 render artifact 塞进 `/workspace`。
+- [ ] 对模型暴露的本地文件发送输入应是**相对路径**；runtime 内部可以把它重写成 `/workspace/...` world path，再交给后续出站链路。
+- [ ] 如果实现过程中发现旧草案要求直接改某个 prompt 文件，请停下并回到已确认 spec：这里优先用稳定的 assembler reminder，而不是修改某一个具体 prompt 文件。

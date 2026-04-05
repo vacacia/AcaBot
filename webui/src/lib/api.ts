@@ -52,6 +52,15 @@ export async function apiGet<T>(path: string, validate?: CacheValidator<T>): Pro
   return await request
 }
 
+export async function apiGetFresh<T>(path: string, validate?: CacheValidator<T>): Promise<T> {
+  dropCacheEntry(path)
+  const value = await apiRequest<T>(path, { method: "GET", cache: "no-store" })
+  if (validate && !validate(value)) {
+    throw new Error(`Malformed API response for ${path}`)
+  }
+  return value
+}
+
 export async function apiPut<T>(path: string, body: unknown): Promise<T> {
   invalidateApiCache(path)
   return apiRequest<T>(path, {

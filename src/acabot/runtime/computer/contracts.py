@@ -275,6 +275,7 @@ class CommandSession:
     cwd_visible: str
     cwd_host_path: str
     created_at: int
+    path_aliases: dict[str, str] = field(default_factory=dict)
     process: asyncio.subprocess.Process | None = field(default=None, repr=False)
     stdout_buffer: deque[str] = field(default_factory=deque, repr=False)
     stderr_buffer: deque[str] = field(default_factory=deque, repr=False)

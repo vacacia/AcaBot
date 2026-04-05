@@ -166,10 +166,13 @@ async def test_message_recall_returns_low_level_action() -> None:
 
 
 async def test_message_tool_schema_includes_send_guidance() -> None:
-    """schema 文案必须明确写出默认回复抑制和组合发送规则."""
+    """schema 文案必须明确写出默认回复抑制、组合发送和本地图片相对路径规则."""
 
     _, registration = _register_message_tool()
 
     description = str(registration["description"])
+    images_description = str(registration["parameters"]["properties"]["images"]["description"])
     assert "content-type send suppresses the default assistant text reply" in description
     assert "combine text, images, and render in one send call" in description
+    assert "relative workspace paths" in images_description
+    assert "never `/workspace/foo.png`" in images_description

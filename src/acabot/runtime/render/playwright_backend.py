@@ -62,6 +62,29 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         margin: 16px 0;
         overflow-x: auto;
       }}
+
+      table {{
+        width: 100%;
+        border-collapse: collapse;
+        margin: 18px 0;
+        font-size: 15px;
+      }}
+
+      thead {{
+        background: #f2ebdb;
+      }}
+
+      th,
+      td {{
+        border: 1px solid #d7cfbf;
+        padding: 10px 12px;
+        text-align: left;
+        vertical-align: top;
+      }}
+
+      tbody tr:nth-child(even) {{
+        background: #faf7ef;
+      }}
     </style>
   </head>
   <body>
@@ -207,6 +230,7 @@ class PlaywrightRenderBackend:
         """构造 markdown + math 渲染器."""
 
         renderer = MarkdownIt("commonmark", {"html": False})
+        renderer.enable("table")
         renderer.use(
             dollarmath_plugin,
             allow_labels=False,

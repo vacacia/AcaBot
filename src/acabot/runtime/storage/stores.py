@@ -226,6 +226,7 @@ class RunStore(ABC):
         *,
         limit: int | None = None,
         step_types: list[str] | None = None,
+        latest: bool = False,
     ) -> list[RunStep]:
         """按 run_id 查询步骤记录."""
 
@@ -238,6 +239,7 @@ class RunStore(ABC):
         *,
         limit: int | None = None,
         step_types: list[str] | None = None,
+        latest: bool = False,
     ) -> list[RunStep]:
         """按 thread_id 查询步骤记录."""
 

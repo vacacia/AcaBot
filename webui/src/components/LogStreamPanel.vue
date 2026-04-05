@@ -28,6 +28,8 @@ const props = withDefaults(
     height?: string
     dense?: boolean
     showControls?: boolean
+    showDetails?: boolean
+    showRunDetails?: boolean
   }>(),
   {
     title: "日志流",
@@ -37,8 +39,14 @@ const props = withDefaults(
     height: "420px",
     dense: false,
     showControls: true,
+    showDetails: false,
+    showRunDetails: false,
   },
 )
+
+const emit = defineEmits<{
+  viewRun: [runId: string]
+}>()
 
 const logs = ref<LogItem[]>([])
 const level = ref("")
@@ -50,6 +58,7 @@ const errorText = ref("")
 const nextSeq = ref(0)
 const resetHint = ref("")
 const logList = ref<HTMLElement | null>(null)
+const expandedSeqs = ref<number[]>([])
 
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 let disposed = false
@@ -143,6 +152,24 @@ function applyExtraFilter(key: string, value: unknown): void {
   if (previousKeyword === nextKeyword) {
     void applyFilters()
   }
+}
+
+function isExpanded(seq: number): boolean {
+  return expandedSeqs.value.includes(seq)
+}
+
+function toggleExpanded(seq: number): void {
+  expandedSeqs.value = isExpanded(seq)
+    ? expandedSeqs.value.filter((value) => value !== seq)
+    : [...expandedSeqs.value, seq]
+}
+
+function openRunDetails(runId: unknown): void {
+  const normalized = String(runId || "").trim()
+  if (!normalized) {
+    return
+  }
+  emit("viewRun", normalized)
 }
 
 function buildPath(afterSeq = 0): string {
@@ -317,12 +344,27 @@ onBeforeUnmount(() => {
         class="log-line"
         :class="[levelClass(item.level), kindClass(item.kind)]"
       >
-        <div class="log-meta">
-          <span class="seq-chip">#{{ item.seq }}</span>
-          <span class="time-chip">{{ new Date(item.timestamp * 1000).toLocaleTimeString("zh-CN", { hour12: false }) }}</span>
-          <span class="level-chip" :class="levelClass(item.level)">{{ item.level }}</span>
-          <span v-if="item.kind && item.kind !== 'runtime'" class="kind-chip" :class="kindClass(item.kind)">{{ item.kind }}</span>
-          <span class="logger-chip">{{ item.logger }}</span>
+        <div class="log-meta-row">
+          <div class="log-meta">
+            <span class="seq-chip">#{{ item.seq }}</span>
+            <span class="time-chip">{{ new Date(item.timestamp * 1000).toLocaleTimeString("zh-CN", { hour12: false }) }}</span>
+            <span class="level-chip" :class="levelClass(item.level)">{{ item.level }}</span>
+            <span v-if="item.kind && item.kind !== 'runtime'" class="kind-chip" :class="kindClass(item.kind)">{{ item.kind }}</span>
+            <span class="logger-chip">{{ item.logger }}</span>
+          </div>
+          <div v-if="showDetails || showRunDetails" class="log-actions">
+            <button v-if="showDetails" type="button" class="ds-inline-button" @click="toggleExpanded(item.seq)">
+              {{ isExpanded(item.seq) ? "收起详情" : "展开详情" }}
+            </button>
+            <button
+              v-if="showRunDetails && item.extra && item.extra.run_id"
+              type="button"
+              class="ds-inline-button"
+              @click="openRunDetails(item.extra.run_id)"
+            >
+              查看 Run 详情
+            </button>
+          </div>
         </div>
         <pre class="log-message">{{ item.message }}</pre>
         <div v-if="item.extra && Object.keys(item.extra).length > 0" class="log-extra">
@@ -339,6 +381,12 @@ onBeforeUnmount(() => {
             <span class="extra-key">{{ key }}</span>
             <span class="extra-value">{{ formatExtraValue(value) }}</span>
           </button>
+        </div>
+        <div v-if="showDetails && isExpanded(item.seq)" class="log-detail-block">
+          <div class="detail-section">
+            <p class="detail-title">完整 message</p>
+            <pre class="detail-json">{{ item.message }}</pre>
+          </div>
         </div>
       </article>
     </div>
@@ -440,6 +488,13 @@ button {
   border-left-width: 4px;
 }
 
+.log-meta-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
 .log-meta {
   display: flex;
   flex-wrap: wrap;
@@ -448,6 +503,12 @@ button {
   font-size: 11px;
   line-height: 1.3;
   align-items: center;
+}
+
+.log-actions {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .log-message {
@@ -471,6 +532,40 @@ button {
   flex-wrap: wrap;
   gap: 5px;
   margin-top: 6px;
+}
+
+.log-detail-block {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.detail-section {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.detail-title {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.detail-json {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.45;
+  font-family:
+    "SFMono-Regular",
+    "Menlo",
+    "Monaco",
+    "Consolas",
+    "Liberation Mono",
+    monospace;
 }
 
 .seq-chip,

@@ -23,6 +23,7 @@ from acabot.runtime import (
     ModelProvider,
     OpenAICompatibleProviderConfig,
     RouteDecision,
+    RunStep,
     build_runtime_components,
 )
 from acabot.runtime.bootstrap import (
@@ -616,6 +617,19 @@ def _session_event(
     )
 
 
+async def _open_test_run(components: Any) -> str:
+    run = await components.run_manager.open(
+        event=_session_event(message_type="private", user_id="10001"),
+        decision=RouteDecision(
+            thread_id="qq:user:10001",
+            actor_id="qq:user:10001",
+            agent_id="session:qq:user:10001:frontstage",
+            channel_scope="qq:user:10001",
+        ),
+    )
+    return run.run_id
+
+
 def _write_minimal_fs_session(
     base_dir: Path,
     *,
@@ -659,6 +673,7 @@ def _write_config(
     filesystem_enabled: bool = False,
     base_dir: Path | None = None,
     backend_admin_actor_ids: list[str] | None = None,
+    allow_synthetic_events: bool = False,
     write_session: bool = True,
 ) -> None:
     resolved_base_dir = base_dir or path.parent
@@ -671,6 +686,7 @@ def _write_config(
             "enabled": bool(webui_enabled),
             "host": "127.0.0.1",
             "port": port,
+            "allow_synthetic_events": bool(allow_synthetic_events),
         },
     }
     if backend_admin_actor_ids:
@@ -1835,6 +1851,83 @@ async def test_runtime_http_api_server_serves_incremental_logs(tmp_path: Path) -
         assert delta["data"]["reset_required"] is False
         assert delta["data"]["next_seq"] == 3
         assert [item["message"] for item in delta["data"]["items"]] == ["third"]
+    finally:
+        await server.stop()
+
+
+async def test_runtime_http_api_server_serves_latest_run_steps_with_sanitized_payloads(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0, base_dir=tmp_path)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+        log_buffer=InMemoryLogBuffer(),
+    )
+    run_id = await _open_test_run(components)
+    await components.run_manager.append_step(
+        RunStep(
+            step_id="step:1",
+            run_id=run_id,
+            thread_id="qq:user:10001",
+            step_type="workspace_prepare",
+            status="completed",
+            payload={"workspace_root": "/workspace", "token": "first-secret"},
+            created_at=1,
+        )
+    )
+    await components.run_manager.append_step(
+        RunStep(
+            step_id="step:2",
+            run_id=run_id,
+            thread_id="qq:user:10001",
+            step_type="exec",
+            status="failed",
+            payload={
+                "stdout_excerpt": "hello",
+                "stderr_excerpt": "boom",
+                "authorization": "Bearer secret",
+            },
+            created_at=1,
+        )
+    )
+    await components.run_manager.append_step(
+        RunStep(
+            step_id="step:3",
+            run_id=run_id,
+            thread_id="qq:user:10001",
+            step_type="approval_resume",
+            status="completed",
+            payload={"result": "ok"},
+            created_at=1,
+        )
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+
+        run_response = await asyncio.to_thread(request_json, base_url, f"/api/runtime/runs/{quote(run_id, safe=':')}")
+        assert run_response["ok"] is True
+        assert run_response["data"]["run_id"] == run_id
+        assert isinstance(run_response["data"]["metadata"], dict)
+        assert isinstance(run_response["data"]["approval_context"], dict)
+
+        steps_response = await asyncio.to_thread(
+            request_json,
+            base_url,
+            f"/api/runtime/runs/{quote(run_id, safe=':')}/steps?limit=2&latest=true",
+        )
+        assert steps_response["ok"] is True
+        steps = steps_response["data"]
+        assert [step["step_id"] for step in steps] == ["step:2", "step:3"]
+        assert [step["step_seq"] for step in steps] == [2, 3]
+        assert steps[0]["payload"]["authorization"] == "[REDACTED]"
+        assert steps[0]["payload"]["stdout_excerpt"] == "hello"
+        assert steps[0]["payload"]["stderr_excerpt"] == "boom"
     finally:
         await server.stop()
 
@@ -3036,6 +3129,189 @@ async def test_runtime_http_api_server_rejects_invalid_notification_payload(tmp_
         await server.stop()
 
 
+async def test_runtime_http_api_server_can_inject_synthetic_event_into_real_runtime_chain(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(
+        config_path,
+        webui_enabled=True,
+        port=0,
+        base_dir=tmp_path,
+        allow_synthetic_events=True,
+    )
+    config = Config.from_file(str(config_path))
+    gateway = FakeGateway()
+    components = build_runtime_components(
+        config,
+        gateway=gateway,
+        agent=FakeAgent(FakeAgentResponse(text="synthetic ok")),
+    )
+    await _seed_model_registry(components.control_plane)
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await components.app.start()
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        result = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/runtime/events",
+            method="POST",
+            payload={
+                "conversation_id": "qq:user:99999",
+                "text": "帮我测试 synthetic event",
+                "sender_nickname": "tester",
+            },
+        )
+
+        assert result["ok"] is True
+        assert result["data"]["synthetic"] is True
+        assert result["data"]["conversation_id"] == "qq:user:99999"
+        assert result["data"]["thread_id"] == "qq:user:99999"
+        assert result["data"]["text"] == "帮我测试 synthetic event"
+        assert result["data"]["segments"] == [{"type": "text", "data": {"text": "帮我测试 synthetic event"}}]
+        assert result["data"]["run"] is not None
+        assert result["data"]["run"]["trigger_event_id"] == result["data"]["event_id"]
+        assert result["data"]["run"]["status"] == "completed"
+
+        assert len(gateway.sent) == 1
+        thread = await components.thread_manager.get_or_create(
+            thread_id="qq:user:99999",
+            channel_scope="qq:user:99999",
+        )
+        assert thread.working_messages[-1] == {"role": "assistant", "content": "synthetic ok"}
+    finally:
+        await server.stop()
+        await components.app.stop()
+
+
+async def test_runtime_http_api_server_rejects_invalid_synthetic_event_payload(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(
+        config_path,
+        webui_enabled=True,
+        port=0,
+        base_dir=tmp_path,
+        allow_synthetic_events=True,
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+
+        status, missing_conversation = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/runtime/events",
+            method="POST",
+            payload={"text": "hello"},
+        )
+        assert status == 400
+        assert missing_conversation["error"] == "conversation_id is required"
+
+        status, missing_content = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/runtime/events",
+            method="POST",
+            payload={"conversation_id": "qq:user:1733064202"},
+        )
+        assert status == 400
+        assert missing_content["error"] == "synthetic event requires text or segments"
+
+        status, invalid_segments = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/runtime/events",
+            method="POST",
+            payload={
+                "conversation_id": "qq:user:1733064202",
+                "segments": [{"type": "text", "data": "not-an-object"}],
+            },
+        )
+        assert status == 400
+        assert invalid_segments["error"] == "segments items require object data"
+    finally:
+        await server.stop()
+
+
+async def test_runtime_http_api_server_blocks_synthetic_event_injection_when_disabled(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(
+        config_path,
+        webui_enabled=True,
+        port=0,
+        base_dir=tmp_path,
+        allow_synthetic_events=False,
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        status, payload = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/runtime/events",
+            method="POST",
+            payload={
+                "conversation_id": "qq:user:99999",
+                "text": "hello",
+            },
+        )
+        assert status == 403
+        assert payload["ok"] is False
+        assert payload["error"] == "synthetic events are disabled"
+    finally:
+        await server.stop()
+
+
+async def test_runtime_http_api_server_blocks_non_loopback_synthetic_event_injection(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(
+        config_path,
+        webui_enabled=True,
+        port=0,
+        base_dir=tmp_path,
+        allow_synthetic_events=True,
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    status, payload = server.handle_api_request(
+        method="POST",
+        path="/api/runtime/events",
+        query={},
+        payload={"conversation_id": "qq:user:99999", "text": "hello"},
+        remote_addr="10.0.0.8",
+    )
+
+    assert status == 403
+    assert payload["ok"] is False
+    assert payload["error"] == "synthetic events require loopback access"
+
+
 async def test_runtime_http_api_server_blocks_deleting_prompt_that_is_still_referenced(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     _write_config(
@@ -3104,6 +3380,8 @@ def test_webui_built_assets_include_render_settings_entrypoint() -> None:
 
     assert "/api/render/config" in script_source
     assert "Render 默认配置" in script_source
+    assert "查看 Run 详情" in script_source
+    assert "最近 200 条 Steps" in script_source
 
 
 def test_webui_router_removes_legacy_preview_routes() -> None:
@@ -3158,6 +3436,31 @@ def test_webui_imports_shared_design_system_stylesheet() -> None:
     assert ".ds-hero" in css
     assert ".ds-toolbar" in css
     assert ".ds-field" in css
+
+
+def test_webui_logs_view_wires_expandable_logs_and_run_details() -> None:
+    logs_view = Path("webui/src/views/LogsView.vue").read_text(encoding="utf-8")
+    log_stream_panel = Path("webui/src/components/LogStreamPanel.vue").read_text(encoding="utf-8")
+    run_detail_panel = Path("webui/src/components/RunDetailPanel.vue").read_text(encoding="utf-8")
+    api_source = Path("webui/src/lib/api.ts").read_text(encoding="utf-8")
+    home_view = Path("webui/src/views/HomeView.vue").read_text(encoding="utf-8")
+
+    assert "RunDetailPanel" in logs_view
+    assert '@view-run="openRunDetails"' in logs_view
+    assert ":show-details=\"true\"" in logs_view
+    assert ":show-run-details=\"true\"" in logs_view
+    assert "run-detail-backdrop" in logs_view
+    assert "run-detail-drawer" in logs_view
+    assert "position: fixed" in logs_view
+    assert "展开详情" in log_stream_panel
+    assert "查看 Run 详情" in log_stream_panel
+    assert "最近 200 条 Steps" in run_detail_panel
+    assert "activeRequestToken" in run_detail_panel
+    assert "requestToken !== activeRequestToken" in run_detail_panel
+    assert "apiGetFresh" in api_source
+    assert "latest=true" in run_detail_panel
+    assert ":show-details=\"false\"" in home_view
+    assert ":show-run-details=\"false\"" in home_view
 
 
 def test_webui_real_pages_migrate_to_shared_design_system() -> None:

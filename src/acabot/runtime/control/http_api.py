@@ -100,6 +100,7 @@ class RuntimeHttpApiServer:
         self.host = str(webui_conf.get("host", "127.0.0.1") or "127.0.0.1")
         self.port = int(webui_conf.get("port", 8765))
         self.request_timeout_sec = float(webui_conf.get("request_timeout_sec", 30.0))
+        self.allow_synthetic_events = bool(webui_conf.get("allow_synthetic_events", False))
         self.cors_origins = [
             str(item)
             for item in list(
@@ -174,6 +175,7 @@ class RuntimeHttpApiServer:
                         path=split.path,
                         query=query,
                         payload=payload,
+                        remote_addr=str(self.client_address[0] or ""),
                     )
                 except KeyError as exc:
                     status, result = 404, {"ok": False, "error": f"not found: {exc}"}
@@ -255,6 +257,7 @@ class RuntimeHttpApiServer:
         path: str,
         query: dict[str, list[str]],
         payload: dict[str, Any],
+        remote_addr: str = "",
     ) -> tuple[int, dict[str, Any]]:
         segments = [unquote(part) for part in path.split("/") if part][1:]
 
@@ -619,6 +622,12 @@ class RuntimeHttpApiServer:
 
         if segments == ["runtime", "reload-config"] and method == "POST":
             return self._ok(self._await(self.control_plane.reload_runtime_configuration()))
+        if segments == ["runtime", "events"] and method == "POST":
+            if not self.allow_synthetic_events:
+                return 403, {"ok": False, "error": "synthetic events are disabled"}
+            if remote_addr not in {"127.0.0.1", "::1", "::ffff:127.0.0.1"}:
+                return 403, {"ok": False, "error": "synthetic events require loopback access"}
+            return self._ok(self._await(self.control_plane.inject_synthetic_event(payload=payload)))
         if segments == ["runtime", "threads"] and method == "GET":
             return self._ok(self._await(self.control_plane.list_threads(limit=_query_int(query, "limit", 100))))
         if len(segments) >= 3 and segments[0] == "runtime" and segments[1] == "threads":
@@ -686,6 +695,7 @@ class RuntimeHttpApiServer:
                             run_id=run_id,
                             limit=_query_int(query, "limit", 100),
                             step_types=query.get("step_type"),
+                            latest=_query_value(query, "latest", "").lower() in {"1", "true", "yes", "on"},
                         )
                     )
                 )

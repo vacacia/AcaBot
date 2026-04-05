@@ -108,6 +108,7 @@ class RunManager(ABC):
         *,
         limit: int | None = None,
         step_types: list[str] | None = None,
+        latest: bool = False,
     ) -> list[RunStep]:
         """按 run_id 查询步骤记录."""
 
@@ -120,6 +121,7 @@ class RunManager(ABC):
         *,
         limit: int | None = None,
         step_types: list[str] | None = None,
+        latest: bool = False,
     ) -> list[RunStep]:
         """按 thread_id 查询步骤记录."""
 
@@ -169,6 +171,7 @@ class InMemoryRunManager(RunManager):
 
         self._runs: dict[str, RunRecord] = {}
         self._steps: dict[str, list[RunStep]] = {}
+        self._next_step_seq: dict[str, int] = {}
         self._cancel_requested: set[str] = set()
 
     async def open(
@@ -199,6 +202,7 @@ class InMemoryRunManager(RunManager):
         )
         self._runs[run.run_id] = run
         self._steps[run.run_id] = []
+        self._next_step_seq[run.run_id] = 1
         return run
 
     async def get(self, run_id: str) -> RunRecord | None:
@@ -290,6 +294,9 @@ class InMemoryRunManager(RunManager):
         """为某个 run 追加一条步骤记录."""
 
         self._require_run(step.run_id)
+        if int(step.step_seq or 0) <= 0:
+            step.step_seq = self._next_step_seq.setdefault(step.run_id, 1)
+        self._next_step_seq[step.run_id] = max(self._next_step_seq.get(step.run_id, 1), int(step.step_seq) + 1)
         self._steps.setdefault(step.run_id, []).append(step)
 
     async def list_active(self) -> list[RunRecord]:
@@ -322,13 +329,15 @@ class InMemoryRunManager(RunManager):
         *,
         limit: int | None = None,
         step_types: list[str] | None = None,
+        latest: bool = False,
     ) -> list[RunStep]:
         steps = list(self._steps.get(run_id, []))
         if step_types:
             allowed = set(step_types)
             steps = [step for step in steps if step.step_type in allowed]
+        steps.sort(key=lambda item: int(item.step_seq or 0))
         if limit is not None:
-            steps = steps[-int(limit):]
+            steps = steps[-int(limit):] if latest else steps[: int(limit)]
         return steps
 
     async def list_thread_steps(
@@ -337,6 +346,7 @@ class InMemoryRunManager(RunManager):
         *,
         limit: int | None = None,
         step_types: list[str] | None = None,
+        latest: bool = False,
     ) -> list[RunStep]:
         steps = [
             step
@@ -347,9 +357,9 @@ class InMemoryRunManager(RunManager):
         if step_types:
             allowed = set(step_types)
             steps = [step for step in steps if step.step_type in allowed]
-        steps.sort(key=lambda item: item.created_at)
+        steps.sort(key=lambda item: (int(item.created_at or 0), item.step_id))
         if limit is not None:
-            steps = steps[-int(limit):]
+            steps = steps[-int(limit):] if latest else steps[: int(limit)]
         return steps
 
     async def cancel(self, run_id: str) -> bool:
@@ -625,11 +635,13 @@ class StoreBackedRunManager(RunManager):
         *,
         limit: int | None = None,
         step_types: list[str] | None = None,
+        latest: bool = False,
     ) -> list[RunStep]:
         return await self.store.get_run_steps(
             run_id,
             limit=limit,
             step_types=step_types,
+            latest=latest,
         )
 
     async def list_thread_steps(
@@ -638,11 +650,13 @@ class StoreBackedRunManager(RunManager):
         *,
         limit: int | None = None,
         step_types: list[str] | None = None,
+        latest: bool = False,
     ) -> list[RunStep]:
         return await self.store.get_thread_steps(
             thread_id,
             limit=limit,
             step_types=step_types,
+            latest=latest,
         )
 
     async def cancel(self, run_id: str) -> bool:

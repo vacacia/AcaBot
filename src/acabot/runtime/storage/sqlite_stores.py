@@ -1057,6 +1057,14 @@ class SQLiteRunStore(_SQLiteStoreBase, RunStore):
         """
 
         async with self._lock:
+            step_seq = int(step.step_seq or 0)
+            if step_seq <= 0:
+                row = self._conn.execute(
+                    "SELECT COALESCE(MAX(step_seq), 0) AS max_seq FROM run_steps WHERE run_id = ?",
+                    (step.run_id,),
+                ).fetchone()
+                step_seq = int(row["max_seq"] or 0) + 1
+                step.step_seq = step_seq
             self._conn.execute(
                 """
                 INSERT INTO run_steps (
@@ -1066,8 +1074,9 @@ class SQLiteRunStore(_SQLiteStoreBase, RunStore):
                     step_type,
                     status,
                     payload_json,
-                    created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    created_at,
+                    step_seq
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     step.step_id,
@@ -1077,6 +1086,7 @@ class SQLiteRunStore(_SQLiteStoreBase, RunStore):
                     step.status,
                     self._encode_json(step.payload),
                     step.created_at,
+                    step_seq,
                 ),
             )
             self._conn.commit()
@@ -1087,6 +1097,7 @@ class SQLiteRunStore(_SQLiteStoreBase, RunStore):
         *,
         limit: int | None = None,
         step_types: list[str] | None = None,
+        latest: bool = False,
     ) -> list[RunStep]:
         where = ["run_id = ?"]
         params: list[object] = [run_id]
@@ -1094,13 +1105,19 @@ class SQLiteRunStore(_SQLiteStoreBase, RunStore):
             placeholders = ", ".join("?" for _ in step_types)
             where.append(f"step_type IN ({placeholders})")
             params.extend(step_types)
-        sql = (
-            "SELECT step_id, run_id, thread_id, step_type, status, payload_json, created_at "
-            f"FROM run_steps WHERE {' AND '.join(where)} ORDER BY created_at ASC"
-        )
-        if limit is not None:
-            sql += " LIMIT ?"
+        select_fields = "step_id, run_id, thread_id, step_type, status, payload_json, created_at, step_seq"
+        if latest and limit is not None:
+            sql = (
+                "SELECT * FROM ("
+                f"SELECT {select_fields} FROM run_steps WHERE {' AND '.join(where)} ORDER BY step_seq DESC LIMIT ?"
+                ") ORDER BY step_seq ASC"
+            )
             params.append(int(limit))
+        else:
+            sql = f"SELECT {select_fields} FROM run_steps WHERE {' AND '.join(where)} ORDER BY step_seq ASC"
+            if limit is not None:
+                sql += " LIMIT ?"
+                params.append(int(limit))
         async with self._lock:
             rows = self._conn.execute(sql, tuple(params)).fetchall()
         return [self._row_to_step(row) for row in rows]
@@ -1111,6 +1128,7 @@ class SQLiteRunStore(_SQLiteStoreBase, RunStore):
         *,
         limit: int | None = None,
         step_types: list[str] | None = None,
+        latest: bool = False,
     ) -> list[RunStep]:
         where = ["thread_id = ?"]
         params: list[object] = [thread_id]
@@ -1118,13 +1136,19 @@ class SQLiteRunStore(_SQLiteStoreBase, RunStore):
             placeholders = ", ".join("?" for _ in step_types)
             where.append(f"step_type IN ({placeholders})")
             params.extend(step_types)
-        sql = (
-            "SELECT step_id, run_id, thread_id, step_type, status, payload_json, created_at "
-            f"FROM run_steps WHERE {' AND '.join(where)} ORDER BY created_at ASC"
-        )
-        if limit is not None:
-            sql += " LIMIT ?"
+        select_fields = "step_id, run_id, thread_id, step_type, status, payload_json, created_at, step_seq"
+        if latest and limit is not None:
+            sql = (
+                "SELECT * FROM ("
+                f"SELECT {select_fields} FROM run_steps WHERE {' AND '.join(where)} ORDER BY created_at DESC, step_id DESC LIMIT ?"
+                ") ORDER BY created_at ASC, step_id ASC"
+            )
             params.append(int(limit))
+        else:
+            sql = f"SELECT {select_fields} FROM run_steps WHERE {' AND '.join(where)} ORDER BY created_at ASC, step_id ASC"
+            if limit is not None:
+                sql += " LIMIT ?"
+                params.append(int(limit))
         async with self._lock:
             rows = self._conn.execute(sql, tuple(params)).fetchall()
         return [self._row_to_step(row) for row in rows]
@@ -1158,16 +1182,29 @@ class SQLiteRunStore(_SQLiteStoreBase, RunStore):
                 step_type TEXT NOT NULL,
                 status TEXT NOT NULL,
                 payload_json TEXT NOT NULL,
-                created_at INTEGER NOT NULL
+                created_at INTEGER NOT NULL,
+                step_seq INTEGER NOT NULL DEFAULT 0
             )
             """
         )
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_runs_status_started_at ON runs(status, started_at)"
         )
+        columns = {
+            str(row[1])
+            for row in self._conn.execute("PRAGMA table_info(run_steps)").fetchall()
+        }
+        if "step_seq" not in columns:
+            self._conn.execute(
+                "ALTER TABLE run_steps ADD COLUMN step_seq INTEGER NOT NULL DEFAULT 0"
+            )
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_run_steps_thread_created_at ON run_steps(thread_id, created_at)"
         )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_run_steps_run_step_seq ON run_steps(run_id, step_seq)"
+        )
+        self._backfill_step_seq_if_needed()
         self._conn.commit()
 
     def _row_to_run(self, row: sqlite3.Row) -> RunRecord:
@@ -1196,6 +1233,28 @@ class SQLiteRunStore(_SQLiteStoreBase, RunStore):
             metadata=dict(self._decode_json(row["metadata_json"])),
         )
 
+    def _backfill_step_seq_if_needed(self) -> None:
+        rows = self._conn.execute(
+            "SELECT rowid, run_id FROM run_steps WHERE COALESCE(step_seq, 0) = 0 ORDER BY run_id ASC, created_at ASC, rowid ASC"
+        ).fetchall()
+        if not rows:
+            return
+        counters: dict[str, int] = {}
+        for row in rows:
+            run_id = str(row["run_id"])
+            next_seq = counters.get(run_id)
+            if next_seq is None:
+                existing = self._conn.execute(
+                    "SELECT COALESCE(MAX(step_seq), 0) AS max_seq FROM run_steps WHERE run_id = ?",
+                    (run_id,),
+                ).fetchone()
+                next_seq = int(existing["max_seq"] or 0) + 1
+            self._conn.execute(
+                "UPDATE run_steps SET step_seq = ? WHERE rowid = ?",
+                (next_seq, int(row["rowid"])),
+            )
+            counters[run_id] = next_seq + 1
+
     def _row_to_step(self, row: sqlite3.Row) -> RunStep:
         return RunStep(
             step_id=str(row["step_id"]),
@@ -1205,6 +1264,7 @@ class SQLiteRunStore(_SQLiteStoreBase, RunStore):
             status=str(row["status"]),
             payload=dict(self._decode_json(row["payload_json"])),
             created_at=int(row["created_at"]),
+            step_seq=int(row["step_seq"] or 0),
         )
 
 

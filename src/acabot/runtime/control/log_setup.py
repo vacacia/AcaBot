@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -104,6 +105,133 @@ def clear_run_context() -> None:
     structlog.contextvars.clear_contextvars()
 
 
+_REDACTED_VALUE = "[REDACTED]"
+_REDACT_KEYS = {
+    "token",
+    "api_key",
+    "authorization",
+    "cookie",
+    "password",
+    "secret",
+}
+_SAFE_VISIBLE_KEYS = {
+    "token_usage",
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+}
+_DEFAULT_STRING_LIMIT = 16 * 1024
+_DEFAULT_TOTAL_BUDGET = 32 * 1024
+_DEFAULT_MESSAGE_BUDGET = 15 * 1024
+_DEFAULT_EXTRA_BUDGET = 15 * 1024
+
+
+def _utf8_len(value: str) -> int:
+    return len(str(value or "").encode("utf-8"))
+
+
+def _truncate_text(value: str, limit: int) -> str:
+    text = str(value or "")
+    suffix = "…[truncated]"
+    suffix_bytes = suffix.encode("utf-8")
+    if limit <= 0:
+        return ""
+    if _utf8_len(text) <= limit:
+        return text
+    if limit <= len(suffix_bytes):
+        return suffix_bytes[:limit].decode("utf-8", errors="ignore") or "…"
+    keep_budget = limit - len(suffix_bytes)
+    low = 0
+    high = len(text)
+    while low < high:
+        mid = (low + high + 1) // 2
+        if _utf8_len(text[:mid]) <= keep_budget:
+            low = mid
+        else:
+            high = mid - 1
+    return f"{text[:low]}{suffix}"
+
+
+def _is_sensitive_key(key: str) -> bool:
+    lowered = str(key or "").strip().lower()
+    if lowered in _SAFE_VISIBLE_KEYS:
+        return False
+    return any(token in lowered for token in _REDACT_KEYS)
+
+
+def sanitize_inspection_value(
+    value: Any,
+    *,
+    string_limit: int = _DEFAULT_STRING_LIMIT,
+    total_budget: int = _DEFAULT_TOTAL_BUDGET,
+) -> Any:
+    """把任意对象转换成 JSON-safe 的安全快照."""
+
+    def _normalize(item: Any) -> Any:
+        if item is None or isinstance(item, (bool, int, float)):
+            return item
+        if isinstance(item, str):
+            return _truncate_text(item, string_limit)
+        if isinstance(item, dict):
+            return {
+                str(key): (_REDACTED_VALUE if _is_sensitive_key(str(key)) else _normalize(val))
+                for key, val in item.items()
+            }
+        if isinstance(item, (list, tuple, set)):
+            iterable = item if not isinstance(item, set) else sorted(item, key=lambda part: str(part))
+            return [_normalize(part) for part in iterable]
+        if isinstance(item, bytes):
+            return _truncate_text(item.decode("utf-8", errors="replace"), string_limit)
+        return _truncate_text(str(item), string_limit)
+
+    normalized = _normalize(value)
+    try:
+        serialized = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
+    except Exception:
+        serialized = json.dumps(_truncate_text(str(normalized), string_limit), ensure_ascii=False)
+        normalized = _truncate_text(str(normalized), string_limit)
+    if _utf8_len(serialized) <= total_budget:
+        return normalized
+    return {
+        "_truncated": True,
+        "preview": _truncate_text(serialized, total_budget),
+    }
+
+
+def sanitize_log_message(
+    message: str,
+    *,
+    total_budget: int = _DEFAULT_MESSAGE_BUDGET,
+) -> str:
+    return _truncate_text(str(message or ""), min(_DEFAULT_STRING_LIMIT, total_budget))
+
+
+def sanitize_log_extra(
+    extra: dict[str, Any],
+    *,
+    total_budget: int = _DEFAULT_EXTRA_BUDGET,
+) -> dict[str, Any]:
+    sanitized = sanitize_inspection_value(extra, total_budget=total_budget)
+    if isinstance(sanitized, dict):
+        return sanitized
+    return {"_truncated": True, "preview": sanitized}
+
+
+def sanitize_log_record(
+    *,
+    message: str,
+    extra: dict[str, Any],
+    total_budget: int = _DEFAULT_TOTAL_BUDGET,
+) -> tuple[str, dict[str, Any]]:
+    """Sanitize a log record under the combined `message + extra <= total_budget` contract."""
+
+    message_budget = min(_DEFAULT_MESSAGE_BUDGET, max(0, total_budget))
+    extra_budget = min(_DEFAULT_EXTRA_BUDGET, max(0, total_budget - message_budget))
+    sanitized_message = sanitize_log_message(message, total_budget=message_budget)
+    sanitized_extra = sanitize_log_extra(extra, total_budget=extra_budget)
+    return sanitized_message, sanitized_extra
+
+
 def extract_extra_fields(record: logging.LogRecord) -> dict[str, Any]:
     """从 LogRecord 中提取结构化字段."""
 
@@ -123,4 +251,8 @@ __all__ = [
     "clear_run_context",
     "configure_structlog",
     "extract_extra_fields",
+    "sanitize_inspection_value",
+    "sanitize_log_extra",
+    "sanitize_log_message",
+    "sanitize_log_record",
 ]
