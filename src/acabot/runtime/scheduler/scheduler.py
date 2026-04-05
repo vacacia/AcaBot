@@ -12,6 +12,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from inspect import isawaitable
 from typing import Any
 
 from croniter import croniter
@@ -102,6 +103,7 @@ class RuntimeScheduler:
         self._wake_event = asyncio.Event()
         self._worker_task: asyncio.Task[None] | None = None
         self._running_callbacks: set[asyncio.Task[None]] = set()
+        self._callback_resolver: Callable[[ScheduledTaskInfo], Awaitable[Callable[[], Awaitable[None]] | None] | Callable[[], Awaitable[None]] | None] | None = None
         self._started = False
         self._stopping = False
 
@@ -118,6 +120,7 @@ class RuntimeScheduler:
             return
 
         await self._recover_persisted_tasks()
+        await self._rebind_persisted_callbacks()
         self._worker_task = asyncio.create_task(self._worker_loop())
         self._started = True
         logger.info("Scheduler started")
@@ -145,6 +148,14 @@ class RuntimeScheduler:
         self._started = False
         self._stopping = False
         logger.info("Scheduler stopped")
+
+    def set_callback_resolver(
+        self,
+        resolver: Callable[[ScheduledTaskInfo], Awaitable[Callable[[], Awaitable[None]] | None] | Callable[[], Awaitable[None]] | None],
+    ) -> None:
+        """设置持久化任务恢复后的 callback 重建器."""
+
+        self._callback_resolver = resolver
 
     # endregion
 
@@ -296,6 +307,22 @@ class RuntimeScheduler:
         ]
 
     # endregion
+
+    async def _rebind_persisted_callbacks(self) -> None:
+        """为恢复出的持久化任务重建 callback."""
+
+        resolver = self._callback_resolver
+        if resolver is None:
+            return
+
+        for task in self.list_tasks():
+            record = self._tasks.get(task.task_id)
+            if record is None or record.callback is not None:
+                continue
+            callback = resolver(task)
+            if isawaitable(callback):
+                callback = await callback
+            record.callback = callback
 
     # region worker loop
 

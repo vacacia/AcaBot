@@ -61,7 +61,10 @@ Phase 14: WebUI Usability              [1 req]   ──┘
 4. 模型创建的任务在 runtime 重启后恢复执行（持久化验证）
 5. HTTP API 同步实现：GET/POST/DELETE /api/scheduler/tasks，供 Phase 13 WebUI 使用
 
-**Plans:** TBD
+**Plans:** 3/3 plans
+- [ ] 11-01-PLAN.md — Dispatcher + Tool Surface (Wave 1)
+- [ ] 11-02-PLAN.md — HTTP API routes (Wave 1)
+- [ ] 11-03-PLAN.md — Bootstrap wiring (Wave 2)
 **UI hint:** yes
 
 ---
@@ -123,7 +126,7 @@ Phase 14: WebUI Usability              [1 req]   ──┘
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 10. Group Chat Bug Fix | 1/1 | Complete    | 2026-04-05 |
-| 11. Scheduler Tool Surface | 0/? | Not started | - |
+| 11. Scheduler Tool Surface | 0/3 | Not started | - |
 | 12. Plugin Scheduler | 0/? | Not started | - |
 | 13. WebUI Scheduler Page | 0/? | Not started | - |
 | 14. WebUI Usability | 0/? | Not started | - |

@@ -50,7 +50,7 @@
 
 ### HTTP API
 - **D-10:** REST 路径：`GET/POST/DELETE /api/scheduler/tasks`
-- **D-11:** Owner 绑定：Header-based，`X-Session-ID` header 传递 owner session_id
+- **D-11:** Owner 绑定：`owner = conversation_id`（从 `ctx.target` 推导，即 `qq:group:<id>` 或 `qq:user:<id>`），代表 session/channel scope。HTTP API 用 `?owner=` query param（ThreadingHTTPServer 不暴露 headers）。注意：`thread_id` 是 runtime 内部执行线程标识，不参与 scheduler 权限模型。
 
 ### Callback 机制
 - **D-12:** 使用 `ScheduledMessageDispatcher` 中间层

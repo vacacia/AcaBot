@@ -257,10 +257,15 @@ from .scheduler import (
     IntervalSchedule,
     MisfirePolicy,
     OneShotSchedule,
+    PluginScheduler,
     RuntimeScheduler,
     ScheduleType,
+    ScheduledConversationWakeupDispatcher,
     ScheduledTaskInfo,
+    ScheduledTaskService,
     SQLiteScheduledTaskStore,
+    parse_schedule_payload,
+    serialize_schedule_payload,
 )
 from .soul import SoulSource
 from .storage.runs import InMemoryRunManager, RunManager, StoreBackedRunManager
@@ -568,8 +573,13 @@ __all__ = [
     "IntervalSchedule",
     "MisfirePolicy",
     "OneShotSchedule",
+    "PluginScheduler",
     "RuntimeScheduler",
     "ScheduleType",
+    "ScheduledConversationWakeupDispatcher",
     "ScheduledTaskInfo",
+    "ScheduledTaskService",
     "SQLiteScheduledTaskStore",
+    "parse_schedule_payload",
+    "serialize_schedule_payload",
 ]

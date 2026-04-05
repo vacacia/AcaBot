@@ -22,20 +22,6 @@
       "verification": "WebUI 出现 scheduler 页面；可查看任务列表并完成创建 / 启停 / 删除；操作后页面状态与后端实际任务一致。"
     },
     {
-      "id": "webui-001",
-      "description": "解决 WebUI 严重卡顿问题，使本地页面在常见视图切换和数据刷新时达到可用速度。",
-      "priority": 1,
-      "status": "failing",
-      "verification": "定位主要性能瓶颈并修复；首页、日志页、系统页等关键页面在本地访问时不再需要数秒才能刷新，交互延迟明显下降，并有 profiler / 指标或对比证据。"
-    },
-    {
-      "id": "group-001",
-      "description": "修复群聊“仅回复 @ 和引用”失效的问题：在群聊中不再回复全部消息，只对 @ 机器人或引用机器人的消息进行响应。",
-      "priority": 5,
-      "status": "failing",
-      "verification": "构造群聊消息样例：普通消息不触发回复，@ 机器人消息触发回复，引用机器人消息触发回复；真实群聊链路或集成测试验证通过。"
-    },
-    {
       "id": "ltm-migrate-001",
       "description": "实现从 AstrBot 数据库提取聊天记录的迁移入口：能读取 AstrBot 历史消息并转换为 AcaBot 可消费的中间格式。",
       "priority": 6,

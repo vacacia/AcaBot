@@ -52,7 +52,12 @@ from ..render.playwright_backend import (
     DEFAULT_RENDER_VIEWPORT_WIDTH,
     PlaywrightRenderBackend,
 )
-from ..scheduler import RuntimeScheduler, SQLiteScheduledTaskStore
+from ..scheduler import (
+    RuntimeScheduler,
+    SQLiteScheduledTaskStore,
+    ScheduledConversationWakeupDispatcher,
+    ScheduledTaskService,
+)
 from ..control.prompt_loader import PromptLoader, ReloadablePromptLoader
 from ..router import RuntimeRouter
 from ..subagents import SubagentDelegationBroker
@@ -374,12 +379,29 @@ def build_runtime_components(
     runtime_tool_broker.backend_bridge = runtime_backend_bridge
     runtime_context_assembler = ContextAssembler()
     runtime_payload_json_writer = build_payload_json_writer(config)
+
+    # control_plane_ref 用闭包延迟绑定, 供 scheduler synthetic wakeup 使用
+    _control_plane_ref: list[RuntimeControlPlane | None] = [None]
+
+    # --- 定时任务调度器 ---
+    from .config import get_persistence_sqlite_path
+    scheduler_sqlite_path = get_persistence_sqlite_path(config)
+    scheduler_store = SQLiteScheduledTaskStore(db_path=scheduler_sqlite_path) if scheduler_sqlite_path else None
+    runtime_scheduler = RuntimeScheduler(store=scheduler_store)
+    runtime_scheduled_task_service = ScheduledTaskService(
+        scheduler=runtime_scheduler,
+        conversation_wakeup_dispatcher=ScheduledConversationWakeupDispatcher(
+            lambda: _control_plane_ref[0]
+        ),
+    )
+
     register_core_builtin_tools(
         tool_broker=runtime_tool_broker,
         computer_runtime=runtime_computer_runtime,
         skill_catalog=runtime_skill_catalog,
         sticky_note_service=runtime_sticky_notes,
         subagent_delegator=runtime_subagent_delegator,
+        scheduled_task_service=runtime_scheduled_task_service,
     )
     # BackendBridgeToolPlugin 直接注册 tool, 不经过 Reconciler.
     # 这里必须早于 session bundle 校验, 否则 agent.yaml 里的 ask_backend
@@ -438,12 +460,6 @@ def build_runtime_components(
     ) -> None:
         runtime_agent_loader_state["session_bundle_loader"] = next_session_bundle_loader
 
-    # --- 定时任务调度器 ---
-    from .config import get_persistence_sqlite_path
-    scheduler_sqlite_path = get_persistence_sqlite_path(config)
-    scheduler_store = SQLiteScheduledTaskStore(db_path=scheduler_sqlite_path) if scheduler_sqlite_path else None
-    runtime_scheduler = RuntimeScheduler(store=scheduler_store)
-
     # --- 新插件体系 ---
     extensions_plugins_dir = config.base_dir() / "extensions" / "plugins"
     runtime_config_plugins_dir = resolve_filesystem_path(
@@ -463,9 +479,6 @@ def build_runtime_components(
         scheduler=runtime_scheduler,
     )
 
-    # control_plane_ref 用闭包延迟绑定
-    _control_plane_ref: list[RuntimeControlPlane | None] = [None]
-
     def _plugin_context_factory(plugin_id: str, plugin_config: dict) -> RuntimePluginContext:
         from pathlib import Path as _Path
         data_dir = runtime_data_plugins_dir / plugin_id / "data"
@@ -480,7 +493,7 @@ def build_runtime_components(
             computer_runtime=runtime_computer_runtime,
             skill_catalog=runtime_skill_catalog,
             control_plane=_control_plane_ref[0],
-            scheduler=runtime_scheduler,
+            scheduler=runtime_scheduled_task_service.build_plugin_scheduler(plugin_id=plugin_id),
         )
 
     runtime_plugin_reconciler = PluginReconciler(

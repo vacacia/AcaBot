@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from .codec import parse_schedule_payload, serialize_schedule_payload
 from .contracts import (
     CronSchedule,
     IntervalSchedule,
@@ -14,7 +15,9 @@ from .contracts import (
     ScheduleType,
     ScheduledTaskInfo,
 )
+from .conversation_wakeup import ScheduledConversationWakeupDispatcher
 from .scheduler import RuntimeScheduler
+from .service import PluginScheduler, ScheduledTaskService
 from .store import SQLiteScheduledTaskStore
 
 __all__ = [
@@ -22,8 +25,13 @@ __all__ = [
     "IntervalSchedule",
     "MisfirePolicy",
     "OneShotSchedule",
+    "PluginScheduler",
     "RuntimeScheduler",
     "SQLiteScheduledTaskStore",
     "ScheduleType",
+    "ScheduledConversationWakeupDispatcher",
     "ScheduledTaskInfo",
+    "ScheduledTaskService",
+    "parse_schedule_payload",
+    "serialize_schedule_payload",
 ]

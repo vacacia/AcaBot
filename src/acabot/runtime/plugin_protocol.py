@@ -33,7 +33,7 @@ from acabot.runtime.computer import ComputerRuntime
 
 if TYPE_CHECKING:
     from acabot.runtime.control.control_plane import RuntimeControlPlane
-    from acabot.runtime.scheduler import RuntimeScheduler
+    from acabot.runtime.scheduler import PluginScheduler
 
 logger = logging.getLogger("acabot.runtime.plugin")
 
@@ -131,6 +131,7 @@ class RuntimePluginContext:
         computer_runtime (ComputerRuntime | None): computer 基础设施入口.
         skill_catalog (SkillCatalog | None): 统一 skill catalog.
         control_plane (RuntimeControlPlane | None): 本地 control plane 入口.
+        scheduler (PluginScheduler | None): 插件可见的稳定 scheduler facade.
     """
 
     plugin_id: str
@@ -142,7 +143,7 @@ class RuntimePluginContext:
     computer_runtime: ComputerRuntime | None = None
     skill_catalog: SkillCatalog | None = None
     control_plane: RuntimeControlPlane | None = None
-    scheduler: RuntimeScheduler | None = None
+    scheduler: PluginScheduler | None = None
 
 
 class RuntimePlugin(ABC):

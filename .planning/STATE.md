@@ -14,7 +14,7 @@ progress:
 # Project State
 
 **Milestone:** v1.1 — 生产可用性收尾 + LTM 迁移
-**Status:** Ready to plan
+**Status:** Context gathered for Phase 11
 **Updated:** 2026-04-05
 
 ## Previous Milestone
@@ -61,7 +61,7 @@ Roadmap defined: 2026-04-05
 
 ## Session Continuity
 
-Next action: `/gsd:plan-phase 10` after user approves roadmap.
+Next action: `/gsd:plan-phase 11` to plan the scheduler tool surface.
 
 ---
 *Last updated: 2026-04-05 — Roadmap defined for v1.1*

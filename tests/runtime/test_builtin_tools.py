@@ -318,6 +318,7 @@ async def test_build_runtime_components_registers_core_tools_as_builtin_sources(
     assert sources["Skill"] == "builtin:skills"
     assert sources["sticky_note_read"] == "builtin:sticky_notes"
     assert sources["sticky_note_append"] == "builtin:sticky_notes"
+    assert sources["scheduler"] == "builtin:scheduler"
     assert sources["delegate_subagent"] == "builtin:subagents"
     assert sources["message"] == BUILTIN_MESSAGE_TOOL_SOURCE
     assert "sticky_note_put" not in sources

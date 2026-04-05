@@ -10,11 +10,13 @@
 from __future__ import annotations
 
 from ..computer import ComputerRuntime
+from ..scheduler.service import ScheduledTaskService
 from ..skills import SkillCatalog
 from ..subagents import SubagentDelegationBroker
 from ..tool_broker import ToolBroker
 from .computer import BUILTIN_COMPUTER_TOOL_SOURCE, BuiltinComputerToolSurface
 from .message import BUILTIN_MESSAGE_TOOL_SOURCE, BuiltinMessageToolSurface
+from .scheduler import BUILTIN_SCHEDULER_TOOL_SOURCE, BuiltinSchedulerToolSurface
 from .skills import BUILTIN_SKILL_TOOL_SOURCE, BuiltinSkillToolSurface
 from .sticky_notes import BUILTIN_STICKY_NOTE_TOOL_SOURCE, BuiltinStickyNoteToolSurface
 from .subagents import BUILTIN_SUBAGENT_TOOL_SOURCE, BuiltinSubagentToolSurface
@@ -41,6 +43,7 @@ def register_core_builtin_tools(
     skill_catalog: SkillCatalog | None,
     sticky_note_service,
     subagent_delegator: SubagentDelegationBroker | None,
+    scheduled_task_service: ScheduledTaskService | None = None,
 ) -> dict[str, list[str]]:
     """把 core builtin tool 注册到 ToolBroker.
 
@@ -50,6 +53,7 @@ def register_core_builtin_tools(
         skill_catalog: 统一 skill catalog.
         sticky_note_service: sticky note 服务层.
         subagent_delegator: subagent delegation 编排入口.
+        scheduled_task_service: 可选的 typed scheduler facade.
 
     Returns:
         dict[str, list[str]]: `source -> tool_names` 的注册结果.
@@ -70,13 +74,17 @@ def register_core_builtin_tools(
     subagent_surface = BuiltinSubagentToolSurface(
         delegator=subagent_delegator,
     )
-    return {
+    registrations = {
         BUILTIN_COMPUTER_TOOL_SOURCE: computer_surface.register(tool_broker),
         BUILTIN_SKILL_TOOL_SOURCE: skill_surface.register(tool_broker),
         BUILTIN_MESSAGE_TOOL_SOURCE: message_surface.register(tool_broker),
         BUILTIN_STICKY_NOTE_TOOL_SOURCE: sticky_note_surface.register(tool_broker),
         BUILTIN_SUBAGENT_TOOL_SOURCE: subagent_surface.register(tool_broker),
     }
+    if scheduled_task_service is not None:
+        scheduler_surface = BuiltinSchedulerToolSurface(service=scheduled_task_service)
+        registrations[BUILTIN_SCHEDULER_TOOL_SOURCE] = scheduler_surface.register(tool_broker)
+    return registrations
 
 
 # endregion
@@ -85,11 +93,13 @@ def register_core_builtin_tools(
 __all__ = [
     "BUILTIN_COMPUTER_TOOL_SOURCE",
     "BUILTIN_MESSAGE_TOOL_SOURCE",
+    "BUILTIN_SCHEDULER_TOOL_SOURCE",
     "BUILTIN_SKILL_TOOL_SOURCE",
     "BUILTIN_STICKY_NOTE_TOOL_SOURCE",
     "BUILTIN_SUBAGENT_TOOL_SOURCE",
     "BuiltinComputerToolSurface",
     "BuiltinMessageToolSurface",
+    "BuiltinSchedulerToolSurface",
     "BuiltinSkillToolSurface",
     "BuiltinStickyNoteToolSurface",
     "BuiltinSubagentToolSurface",

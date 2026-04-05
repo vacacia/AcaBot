@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import fields, is_dataclass
 import json
+import logging
 import mimetypes
 from pathlib import Path
 from threading import Thread
@@ -15,6 +16,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from acabot.config import Config
 
 from .control_plane import RuntimeControlPlane
+
+logger = logging.getLogger("acabot.runtime.http_api")
 
 
 def _to_jsonable(value: Any) -> Any:

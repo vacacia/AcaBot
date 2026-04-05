@@ -288,8 +288,7 @@ class PluginRuntimeHost:
 
         # 1.5 注销定时任务
         if self._scheduler is not None:
-            source_tag = self._plugin_tool_sources.get(plugin_id, f"plugin:{plugin_id}")
-            cancelled_tasks = await self._scheduler.unregister_by_owner(source_tag)
+            cancelled_tasks = await self._scheduler.unregister_by_owner(f"plugin:{plugin_id}")
             if cancelled_tasks:
                 logger.info(
                     "Plugin scheduled tasks cancelled: plugin=%s count=%d",

@@ -8,10 +8,11 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
-from acabot.runtime.scheduler import IntervalSchedule, RuntimeScheduler
+from acabot.runtime.scheduler import IntervalSchedule, PluginScheduler, RuntimeScheduler
 from acabot.runtime.plugin_protocol import (
     RuntimePlugin,
     RuntimePluginContext,
@@ -69,25 +70,13 @@ class _FakePipeline:
 
 
 class _FakeSchedulerPlugin(RuntimePlugin):
-    """测试用插件, setup 时通过 ctx.scheduler 注册一个定时任务."""
+    """测试用插件, setup 时只捕获 scheduler facade."""
 
     name = "fake_scheduler_test"
-
-    def __init__(self) -> None:
-        self._scheduler: RuntimeScheduler | None = None
+    captured_scheduler = None
 
     async def setup(self, runtime: RuntimePluginContext) -> None:
-        self._scheduler = runtime.scheduler
-        if self._scheduler is not None:
-            async def _noop() -> None:
-                pass
-
-            await self._scheduler.register(
-                task_id="fake_scheduler_test:heartbeat",
-                owner=f"plugin:{self.name}",
-                schedule=IntervalSchedule(seconds=3600),
-                callback=_noop,
-            )
+        type(self).captured_scheduler = runtime.scheduler
 
     async def teardown(self) -> None:
         pass
@@ -110,9 +99,19 @@ def _make_fake_package() -> PluginPackage:
 
 
 async def test_unload_plugin_cancels_scheduled_tasks() -> None:
-    """插件 unload 时, 其注册的定时任务被自动取消."""
+    """插件 unload 时, plugin owner 下的定时任务被自动取消."""
     scheduler = RuntimeScheduler()
     await scheduler.start()
+
+    async def _noop() -> None:
+        pass
+
+    await scheduler.register(
+        task_id="fake_scheduler_test:heartbeat",
+        owner="plugin:fake_scheduler_test",
+        schedule=IntervalSchedule(seconds=3600),
+        callback=_noop,
+    )
 
     broker = ToolBroker()
     host = PluginRuntimeHost(
@@ -127,21 +126,35 @@ async def test_unload_plugin_cancels_scheduled_tasks() -> None:
         data_dir=Path("."),
         gateway=FakeGateway(),  # type: ignore[arg-type]
         tool_broker=broker,
-        scheduler=scheduler,
     )
     await host.load_plugin(package, ctx)
 
-    # 验证任务已注册
-    tasks = scheduler.list_tasks()
-    assert len(tasks) == 1
-    assert tasks[0].task_id == "fake_scheduler_test:heartbeat"
-
-    # 卸载插件
+    assert len(scheduler.list_tasks()) == 1
     await host.unload_plugin("fake_scheduler_test")
-
-    # 验证任务已清理
     assert scheduler.list_tasks() == []
     await scheduler.stop()
+
+
+async def test_plugin_context_exposes_plugin_scheduler_facade() -> None:
+    broker = ToolBroker()
+    host = PluginRuntimeHost(tool_broker=broker)
+    package = _make_fake_package()
+    ctx = RuntimePluginContext(
+        plugin_id="fake_scheduler_test",
+        plugin_config={},
+        data_dir=Path("."),
+        gateway=FakeGateway(),  # type: ignore[arg-type]
+        tool_broker=broker,
+        scheduler=PluginScheduler(plugin_id="fake_scheduler_test", _service=MagicMock()),
+    )
+    await host.load_plugin(package, ctx)
+
+    assert isinstance(_FakeSchedulerPlugin.captured_scheduler, PluginScheduler)
+    with pytest.raises(NotImplementedError):
+        await _FakeSchedulerPlugin.captured_scheduler.create_handler_task(
+            handler_name="heartbeat",
+            schedule_payload={"kind": "interval", "spec": {"seconds": 60}},
+        )
 
 
 async def test_unload_plugin_without_scheduler_is_noop() -> None:

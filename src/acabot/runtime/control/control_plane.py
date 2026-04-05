@@ -784,6 +784,12 @@ class RuntimeControlPlane:
             conversation_id,
             actor_user_id=sender_user_id,
         )
+        raw_mentioned_user_ids = payload.get("mentioned_user_ids", [])
+        mentioned_user_ids = [
+            str(item).strip()
+            for item in list(raw_mentioned_user_ids or [])
+            if str(item).strip()
+        ]
         event = StandardEvent(
             event_id=str(payload.get("event_id", "") or f"evt-synthetic-{uuid.uuid4().hex}"),
             event_type="message",
@@ -794,6 +800,10 @@ class RuntimeControlPlane:
             raw_message_id=str(payload.get("raw_message_id", "") or f"synthetic-msg-{uuid.uuid4().hex}"),
             sender_nickname=str(payload.get("sender_nickname", "") or "synthetic"),
             sender_role=(str(payload.get("sender_role")) if payload.get("sender_role") is not None else None),
+            mentioned_user_ids=mentioned_user_ids,
+            mentions_self=bool(payload.get("mentions_self", False)),
+            mentioned_everyone=bool(payload.get("mentioned_everyone", False)),
+            reply_targets_self=bool(payload.get("reply_targets_self", False)),
             targets_self=bool(payload.get("targets_self", True)),
             metadata={
                 "synthetic": True,

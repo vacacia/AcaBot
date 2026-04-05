@@ -7,7 +7,9 @@ tmp
 .agent
 .worktrees/
 .playwright-mcp
-
+.gemini
+.opencode
+.pi
 docs/agent-first
 docs-branch
 

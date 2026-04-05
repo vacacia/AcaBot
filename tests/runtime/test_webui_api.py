@@ -24,6 +24,7 @@ from acabot.runtime import (
     OpenAICompatibleProviderConfig,
     RouteDecision,
     RunStep,
+    RuntimeModelRequest,
     build_runtime_components,
 )
 from acabot.runtime.bootstrap import (
@@ -3145,7 +3146,19 @@ async def test_runtime_http_api_server_can_inject_synthetic_event_into_real_runt
         gateway=gateway,
         agent=FakeAgent(FakeAgentResponse(text="synthetic ok")),
     )
-    await _seed_model_registry(components.control_plane)
+    runtime_model_request = RuntimeModelRequest(
+        provider_kind="openai_compatible",
+        model="openai/test-model",
+        supports_tools=True,
+        provider_id="provider",
+        preset_id="main",
+        provider_params={"base_url": "https://example.invalid/v1"},
+    )
+    components.app._resolve_model_requests = lambda decision, agent: (  # type: ignore[method-assign]
+        runtime_model_request,
+        None,
+        runtime_model_request,
+    )
     server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
 
     await components.app.start()
@@ -3181,6 +3194,107 @@ async def test_runtime_http_api_server_can_inject_synthetic_event_into_real_runt
             channel_scope="qq:user:99999",
         )
         assert thread.working_messages[-1] == {"role": "assistant", "content": "synthetic ok"}
+    finally:
+        await server.stop()
+        await components.app.stop()
+
+
+async def test_runtime_http_api_server_group_synthetic_event_can_mark_mentions_self(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(
+        config_path,
+        webui_enabled=True,
+        port=0,
+        base_dir=tmp_path,
+        allow_synthetic_events=True,
+        write_session=False,
+    )
+    group_dir = tmp_path / "sessions" / "qq" / "group" / "99999"
+    group_dir.mkdir(parents=True, exist_ok=True)
+    (group_dir / "session.yaml").write_text(
+        """
+session:
+  id: qq:group:99999
+  template: qq_group
+frontstage:
+  agent_id: aca
+surfaces:
+  message.mention:
+    admission:
+      default:
+        mode: respond
+  message.plain:
+    admission:
+      default:
+        mode: record_only
+""".strip(),
+        encoding="utf-8",
+    )
+    (group_dir / "agent.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "agent_id": "aca",
+                "prompt_ref": "prompt/default",
+                "visible_tools": [],
+                "visible_skills": [],
+                "visible_subagents": [],
+            },
+            sort_keys=False,
+            allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+    (prompts_dir / "default.md").write_text("hello", encoding="utf-8")
+
+    config = Config.from_file(str(config_path))
+    gateway = FakeGateway()
+    components = build_runtime_components(
+        config,
+        gateway=gateway,
+        agent=FakeAgent(FakeAgentResponse(text="group synthetic ok")),
+    )
+    runtime_model_request = RuntimeModelRequest(
+        provider_kind="openai_compatible",
+        model="openai/test-model",
+        supports_tools=True,
+        provider_id="provider",
+        preset_id="main",
+        provider_params={"base_url": "https://example.invalid/v1"},
+    )
+    components.app._resolve_model_requests = lambda decision, agent: (  # type: ignore[method-assign]
+        runtime_model_request,
+        None,
+        runtime_model_request,
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await components.app.start()
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        result = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/runtime/events",
+            method="POST",
+            payload={
+                "conversation_id": "qq:group:99999",
+                "sender_user_id": "1733064202",
+                "sender_nickname": "tester",
+                "text": "群里提醒一下",
+                "targets_self": True,
+                "mentions_self": True,
+            },
+        )
+
+        assert result["ok"] is True
+        assert result["data"]["run"] is not None
+        assert result["data"]["run"]["status"] == "completed"
+        assert len(gateway.sent) == 1
+        assert gateway.sent[0].payload["text"] == "group synthetic ok"
     finally:
         await server.stop()
         await components.app.stop()
