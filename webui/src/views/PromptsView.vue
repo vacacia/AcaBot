@@ -211,12 +211,48 @@ onMounted(() => {
   color: var(--text);
   text-align: left;
   cursor: pointer;
+  transition:
+    background 150ms cubic-bezier(0.25, 1, 0.5, 1),
+    border-color 150ms cubic-bezier(0.25, 1, 0.5, 1),
+    transform 150ms cubic-bezier(0.25, 1, 0.5, 1),
+    box-shadow 150ms cubic-bezier(0.25, 1, 0.5, 1);
+  opacity: 0;
+  transform: translateX(-8px);
+  animation: item-in 280ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+.list-item:nth-child(1) { animation-delay: 40ms; }
+.list-item:nth-child(2) { animation-delay: 80ms; }
+.list-item:nth-child(3) { animation-delay: 120ms; }
+.list-item:nth-child(4) { animation-delay: 160ms; }
+.list-item:nth-child(5) { animation-delay: 200ms; }
+.list-item:nth-child(6) { animation-delay: 240ms; }
+.list-item:nth-child(n+7) { animation-delay: 280ms; }
+
+@keyframes item-in {
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.list-item:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  transform: translateX(2px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
 .list-item.active {
   background: var(--accent-soft);
   color: var(--accent);
   font-weight: 700;
+  border-color: var(--accent);
+}
+
+.list-item.active:hover {
+  transform: translateX(2px);
+}
+
+.list-item:active {
+  transform: translateX(1px) scale(0.98);
 }
 
 .editor-body {
@@ -226,11 +262,56 @@ onMounted(() => {
 
 .ds-textarea {
   min-height: 320px;
+  transition: border-color 200ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.ds-textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+  outline: none;
+}
+
+.ds-input {
+  transition: border-color 200ms cubic-bezier(0.25, 1, 0.5, 1),
+    box-shadow 200ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.ds-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+  outline: none;
+}
+
+/* Editor column entrance */
+.editor-column {
+  opacity: 0;
+  transform: translateY(8px);
+  animation: editor-in 320ms cubic-bezier(0.25, 1, 0.5, 1) 80ms forwards;
+}
+
+@keyframes editor-in {
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @media (max-width: 960px) {
   .layout {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .list-item,
+  .editor-column {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+  .list-item:hover {
+    transform: none;
+  }
+  .ds-input:focus,
+  .ds-textarea:focus {
+    box-shadow: none;
   }
 }
 </style>

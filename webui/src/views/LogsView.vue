@@ -44,7 +44,7 @@ const limitOptions = [
       </div>
     </header>
 
-    <div class="logs-layout">
+    <div class="logs-layout logs-layout-entrance">
       <LogStreamPanel
         title="运行时日志"
         summary="支持过滤、自动刷新和自动跟随。紧凑模式更接近 tail，面板模式更适合运维查看。"
@@ -123,6 +123,36 @@ const limitOptions = [
     bottom: 12px;
     left: 12px;
     width: auto;
+  }
+}
+
+/* ── Entrance animation ── */
+.ds-hero {
+  opacity: 0;
+  transform: translateY(-10px);
+  animation: lv-hero-in 380ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+.logs-layout-entrance {
+  opacity: 0;
+  transform: translateY(10px);
+  animation: lv-layout-in 400ms cubic-bezier(0.25, 1, 0.5, 1) 120ms forwards;
+}
+
+@keyframes lv-hero-in {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes lv-layout-in {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-hero,
+  .logs-layout-entrance {
+    opacity: 1;
+    transform: none;
+    animation: none;
   }
 }
 </style>

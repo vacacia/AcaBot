@@ -862,6 +862,27 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  opacity: 0;
+  transform: translateY(12px);
+  animation: stat-in 360ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+.stat-card:nth-child(1) { animation-delay: 60ms; }
+.stat-card:nth-child(2) { animation-delay: 120ms; }
+.stat-card:nth-child(3) { animation-delay: 180ms; }
+.stat-card:nth-child(4) { animation-delay: 240ms; }
+
+@keyframes stat-in {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.stat-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  transition: border-color 200ms cubic-bezier(0.25, 1, 0.5, 1),
+    transform 200ms cubic-bezier(0.25, 1, 0.5, 1),
+    box-shadow 200ms cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 .stat-label {
@@ -876,6 +897,7 @@ onMounted(() => {
   font-size: 22px;
   font-weight: 800;
   color: var(--heading-strong);
+  transition: color 300ms cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 /* ─── Section card ─────────────────────────────────────── */
@@ -985,6 +1007,13 @@ onMounted(() => {
   border: 1px solid var(--panel-line-soft);
   background: var(--panel);
   transition: border-color 120ms;
+  opacity: 0;
+  transform: translateY(6px);
+  animation: entry-in 240ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+@keyframes entry-in {
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .entry-row.is-expanded {

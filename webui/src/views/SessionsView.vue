@@ -569,9 +569,9 @@ onMounted(() => { void loadSessions() })
         <h1>会话</h1>
         <span class="sv-count" v-if="sessions.length">{{ sessions.length }} 个</span>
       </div>
-      <button class="sv-btn sv-btn-accent" type="button" @click="resetCreateDraft(); showCreateModal = true">
+      <button class="sv-btn sv-btn-accent" type="button" :disabled="creating" @click="resetCreateDraft(); showCreateModal = true">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        新建
+        {{ creating ? "创建中..." : "新建" }}
       </button>
     </header>
 
@@ -585,10 +585,10 @@ onMounted(() => { void loadSessions() })
         <p v-if="loading && sessions.length === 0" class="sv-empty-hint">加载中...</p>
         <p v-else-if="sessions.length === 0" class="sv-empty-hint">暂无会话</p>
         <button
-          v-for="item in sessions"
+          v-for="(item, i) in sessions"
           :key="item.session_id"
           class="sv-session-item"
-          :class="{ 'is-active': item.session_id === selectedSessionId }"
+          :class="{ 'is-active': item.session_id === selectedSessionId, 'session-entrance': true, [`session-entrance-${i}`]: true }"
           type="button"
           @click="void selectSession(item.session_id)"
         >
@@ -707,12 +707,14 @@ onMounted(() => { void loadSessions() })
             </div>
 
             <div class="sv-actions">
-              <button class="sv-btn sv-btn-accent" type="button" @click="void saveSession()">保存</button>
+              <button class="sv-btn sv-btn-accent" type="button" :disabled="loading" @click="void saveSession()">
+                {{ loading ? "保存中..." : "保存" }}
+              </button>
             </div>
           </div>
 
           <!-- Agent Tab -->
-          <div v-else class="sv-form-area">
+          <div v-if="activeTab === 'agent'" class="sv-form-area">
             <!-- 回复模型 fallback 链 -->
             <div class="sv-section">
               <div class="sv-section-head">
@@ -795,7 +797,9 @@ onMounted(() => { void loadSessions() })
             </div>
 
             <div class="sv-actions">
-              <button class="sv-btn sv-btn-accent" type="button" @click="void saveAgent()">保存 Agent</button>
+              <button class="sv-btn sv-btn-accent" type="button" :disabled="loading" @click="void saveAgent()">
+                {{ loading ? "保存中..." : "保存 Agent" }}
+              </button>
             </div>
           </div>
         </template>
@@ -816,7 +820,8 @@ onMounted(() => { void loadSessions() })
 
     <!-- 新建弹窗 -->
     <Teleport to="body">
-      <div v-if="showCreateModal" class="sv-overlay" @click.self="showCreateModal = false">
+      <Transition name="sv-modal">
+      <div v-if="showCreateModal" class="sv-overlay" @click.self="showCreateModal = false" role="dialog" aria-modal="true">
         <div class="sv-modal">
           <div class="sv-modal-head">
             <h2>新建会话</h2>
@@ -844,11 +849,13 @@ onMounted(() => { void loadSessions() })
           </div>
         </div>
       </div>
+      </Transition>
     </Teleport>
 
     <!-- 能力弹窗 -->
     <Teleport to="body">
-      <div v-if="activeCapabilityModal" class="sv-overlay" @click.self="activeCapabilityModal = null">
+      <Transition name="sv-modal">
+      <div v-if="activeCapabilityModal" class="sv-overlay" @click.self="activeCapabilityModal = null" role="dialog" aria-modal="true">
         <div class="sv-modal sv-modal-lg">
           <div class="sv-modal-head">
             <h2>{{ capabilityModalTitle[activeCapabilityModal] }}</h2>
@@ -928,6 +935,7 @@ onMounted(() => { void loadSessions() })
           </div>
         </div>
       </div>
+      </Transition>
     </Teleport>
   </section>
 </template>
@@ -1306,6 +1314,7 @@ onMounted(() => { void loadSessions() })
 }
 
 .sv-btn:hover { transform: translateY(-1px); }
+.sv-btn:active:not(:disabled) { transform: translateY(1px); }
 .sv-btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
 
 .sv-btn-accent {
@@ -1677,5 +1686,134 @@ onMounted(() => { void loadSessions() })
   .sv-sidebar { max-height: 240px; }
   .sv-form-grid,
   .sv-cap-grid { grid-template-columns: 1fr; }
+}
+
+/* ── Session list stagger entrance ── */
+.session-entrance {
+  opacity: 0;
+  transform: translateX(-8px);
+  animation: sv-session-in 300ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+.session-entrance-0 { animation-delay: 0ms; }
+.session-entrance-1 { animation-delay: 50ms; }
+.session-entrance-2 { animation-delay: 100ms; }
+.session-entrance-3 { animation-delay: 150ms; }
+.session-entrance-4 { animation-delay: 200ms; }
+.session-entrance-5 { animation-delay: 250ms; }
+.session-entrance-6 { animation-delay: 300ms; }
+.session-entrance-7 { animation-delay: 350ms; }
+
+@keyframes sv-session-in {
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* ── Session item hover slide ── */
+.sv-session-item {
+  transition: all 140ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.sv-session-item:hover {
+  transform: translateX(3px);
+}
+
+/* ── Tab content transition ── */
+.sv-tab-content-enter-active {
+  animation: sv-tab-in 220ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.sv-tab-content-leave-active {
+  animation: sv-tab-out 140ms cubic-bezier(0.4, 0, 1, 1);
+}
+
+@keyframes sv-tab-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes sv-tab-out {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(-4px); }
+}
+
+/* ── Modal transition ── */
+.sv-modal-enter-active {
+  animation: sv-overlay-in 200ms ease forwards;
+}
+
+.sv-modal-leave-active {
+  animation: sv-overlay-out 160ms ease forwards;
+}
+
+.sv-modal-enter-active .sv-modal,
+.sv-modal-enter-active .sv-modal-lg {
+  animation: sv-modal-in 240ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+.sv-modal-leave-active .sv-modal,
+.sv-modal-leave-active .sv-modal-lg {
+  animation: sv-modal-out 180ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+@keyframes sv-overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes sv-overlay-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+@keyframes sv-modal-in {
+  from { opacity: 0; transform: scale(0.94) translateY(8px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes sv-modal-out {
+  from { opacity: 1; transform: scale(1) translateY(0); }
+  to   { opacity: 0; transform: scale(0.96) translateY(4px); }
+}
+
+/* ── Choice row hover ── */
+.sv-choice-row {
+  transition: background 120ms ease, transform 120ms ease;
+}
+
+.sv-choice-row:hover {
+  transform: translateX(2px);
+}
+
+.sv-choice-row.is-disabled {
+  transition: opacity 120ms ease;
+}
+
+/* ── Mode btn active ── */
+.sv-mode-btn {
+  transition: all 120ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .session-entrance {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+  .sv-session-item:hover {
+    transform: none;
+  }
+  .sv-tab-content-enter-active,
+  .sv-tab-content-leave-active,
+  .sv-modal-enter-active,
+  .sv-modal-leave-active,
+  .sv-modal-enter-active .sv-modal,
+  .sv-modal-leave-active .sv-modal,
+  .sv-modal-enter-active .sv-modal-lg,
+  .sv-modal-leave-active .sv-modal-lg {
+    animation: none;
+  }
+  .sv-choice-row:hover {
+    transform: none;
+  }
 }
 </style>

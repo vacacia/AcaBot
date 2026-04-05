@@ -9,6 +9,7 @@
     </div>
 
     <!-- Theme popover -->
+    <Transition name="popover">
     <div v-if="showThemePopover" class="theme-popover" ref="popoverRef">
       <div class="popover-section">
         <span class="popover-label">主题模式</span>
@@ -41,6 +42,7 @@
         </div>
       </div>
     </div>
+    </Transition>
 
     <select
       class="theme-mode-compat"
@@ -53,28 +55,27 @@
       </option>
     </select>
 
-    <nav class="nav">
-      <RouterLink class="nav-item" to="/">首页</RouterLink>
-      <div class="group-title">配置</div>
-      <RouterLink class="nav-item" to="/config/memory">记忆</RouterLink>
-      <button class="nav-group-toggle" :class="{ expanded: memoryExpanded }" type="button" @click="memoryExpanded = !memoryExpanded">
-        <span>记忆分栏</span>
+    <nav class="nav" role="navigation" aria-label="主导航">
+      <RouterLink class="nav-item nav-entrance nav-entrance-0" to="/">首页</RouterLink>
+      <div class="group-title nav-entrance nav-entrance-1">配置</div>
+      <button class="nav-group-toggle nav-entrance nav-entrance-2" :class="{ expanded: memoryExpanded }" type="button" @click="memoryExpanded = !memoryExpanded">
+        <span>记忆</span>
         <svg class="nav-group-arrow" width="12" height="12" viewBox="0 0 12 12"><path d="M3 4.5L6 7.5L9 4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
       <div v-if="memoryExpanded" class="nav-group-children">
-        <RouterLink class="nav-item nav-child" to="/config/memory/self">Self</RouterLink>
-        <RouterLink class="nav-item nav-child" to="/config/memory/sticky-notes">Sticky Notes</RouterLink>
-        <RouterLink class="nav-item nav-child" to="/config/memory/ltm">Long-Term Memory</RouterLink>
+        <RouterLink class="nav-item nav-child nav-entrance nav-entrance-3" to="/config/memory/self">Self</RouterLink>
+        <RouterLink class="nav-item nav-child nav-entrance nav-entrance-4" to="/config/memory/sticky-notes">Sticky Notes</RouterLink>
+        <RouterLink class="nav-item nav-child nav-entrance nav-entrance-5" to="/config/memory/ltm">Long-Term Memory</RouterLink>
       </div>
-      <RouterLink class="nav-item" to="/config/providers">模型供应商</RouterLink>
-      <RouterLink class="nav-item" to="/config/models">模型</RouterLink>
-      <RouterLink class="nav-item" to="/config/prompts">提示词</RouterLink>
-      <RouterLink class="nav-item" to="/config/plugins">插件</RouterLink>
-      <RouterLink class="nav-item" to="/config/skills">技能</RouterLink>
-      <RouterLink class="nav-item" to="/config/subagents">子代理</RouterLink>
-      <RouterLink class="nav-item" to="/sessions">会话</RouterLink>
-      <RouterLink class="nav-item" to="/system">系统</RouterLink>
-      <RouterLink class="nav-item" to="/logs">日志</RouterLink>
+      <RouterLink class="nav-item nav-entrance nav-entrance-6" to="/config/providers">模型供应商</RouterLink>
+      <RouterLink class="nav-item nav-entrance nav-entrance-8" to="/config/models">模型</RouterLink>
+      <RouterLink class="nav-item nav-entrance nav-entrance-9" to="/config/prompts">提示词</RouterLink>
+      <RouterLink class="nav-item nav-entrance nav-entrance-10" to="/config/plugins">插件</RouterLink>
+      <RouterLink class="nav-item nav-entrance nav-entrance-11" to="/config/skills">技能</RouterLink>
+      <RouterLink class="nav-item nav-entrance nav-entrance-12" to="/config/subagents">子代理</RouterLink>
+      <RouterLink class="nav-item nav-entrance nav-entrance-13" to="/sessions">会话</RouterLink>
+      <RouterLink class="nav-item nav-entrance nav-entrance-14" to="/system">系统</RouterLink>
+      <RouterLink class="nav-item nav-entrance nav-entrance-15" to="/logs">日志</RouterLink>
     </nav>
   </aside>
 </template>
@@ -410,6 +411,101 @@ onBeforeUnmount(() => document.removeEventListener('click', onClickOutside))
 @media (max-width: 860px) {
   .sidebar {
     padding: 16px 14px;
+  }
+}
+
+/* ── Popover transition ── */
+.popover-enter-active {
+  animation: popover-in 200ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.popover-leave-active {
+  animation: popover-out 140ms cubic-bezier(0.4, 0, 1, 1);
+}
+
+@keyframes popover-in {
+  from { opacity: 0; transform: scale(0.95) translateY(-6px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes popover-out {
+  from { opacity: 1; transform: scale(1) translateY(0); }
+  to   { opacity: 0; transform: scale(0.97) translateY(-4px); }
+}
+
+/* ── Nav stagger entrance ── */
+.nav-entrance {
+  opacity: 0;
+  transform: translateX(-6px);
+  animation: nav-item-in 280ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+.nav-entrance-0  { animation-delay: 20ms; }
+.nav-entrance-1  { animation-delay: 50ms; }
+.nav-entrance-2  { animation-delay: 80ms; }
+.nav-entrance-3  { animation-delay: 120ms; }
+.nav-entrance-4  { animation-delay: 135ms; }
+.nav-entrance-5  { animation-delay: 150ms; }
+.nav-entrance-6  { animation-delay: 160ms; }
+.nav-entrance-7  { animation-delay: 180ms; }
+.nav-entrance-8  { animation-delay: 200ms; }
+.nav-entrance-9  { animation-delay: 220ms; }
+.nav-entrance-10 { animation-delay: 240ms; }
+.nav-entrance-11 { animation-delay: 260ms; }
+.nav-entrance-12 { animation-delay: 280ms; }
+.nav-entrance-13 { animation-delay: 300ms; }
+.nav-entrance-14 { animation-delay: 320ms; }
+
+@keyframes nav-item-in {
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* ── Active nav item indicator ── */
+.nav-item.router-link-active {
+  position: relative;
+  overflow: hidden;
+}
+
+.nav-item.router-link-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%) scaleY(0);
+  width: 3px;
+  height: 60%;
+  background: var(--accent);
+  border-radius: 0 3px 3px 0;
+  animation: nav-active-indicator 200ms cubic-bezier(0.25, 1, 0.5, 1) 350ms forwards;
+}
+
+@keyframes nav-active-indicator {
+  to { transform: translateY(-50%) scaleY(1); }
+}
+
+/* ── Nav group children slide ── */
+.nav-group-children {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 14px;
+  overflow: hidden;
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .popover-enter-active,
+  .popover-leave-active {
+    animation: none;
+  }
+  .nav-entrance {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+  .nav-item.router-link-active::before {
+    animation: none;
+    transform: translateY(-50%) scaleY(1);
   }
 }
 </style>

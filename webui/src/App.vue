@@ -89,6 +89,70 @@ onBeforeUnmount(() => {
 
 <style>
 :root {
+  /* ── Semantic: log levels ── */
+  --log-debug-bg: rgba(124, 139, 161, 0.12);
+  --log-debug-border: #7c8ba1;
+  --log-debug-chip-bg: rgba(124, 139, 161, 0.16);
+  --log-debug-chip-text: #5a697d;
+
+  --log-info-bg: rgba(15, 108, 184, 0.14);
+  --log-info-border: #0f6cb8;
+  --log-info-chip-bg: rgba(15, 108, 184, 0.14);
+  --log-info-chip-text: #0b5d9d;
+
+  --log-warn-bg: rgba(217, 119, 6, 0.16);
+  --log-warn-border: #d97706;
+  --log-warn-chip-bg: rgba(217, 119, 6, 0.16);
+  --log-warn-chip-text: #9a5a05;
+
+  --log-error-bg: rgba(220, 38, 38, 0.18);
+  --log-error-border: #dc2626;
+  --log-error-chip-bg: rgba(220, 38, 38, 0.15);
+  --log-error-chip-text: #b42318;
+
+  --log-critical-bg: rgba(124, 58, 237, 0.2);
+  --log-critical-border: #7c3aed;
+  --log-critical-chip-bg: rgba(124, 58, 237, 0.16);
+  --log-critical-chip-text: #6d28d9;
+
+  /* ── Semantic: napcat kinds ── */
+  --log-napcat-msg-bg: rgba(24, 119, 104, 0.18);
+  --log-napcat-msg-border: rgba(24, 119, 104, 0.12);
+  --log-napcat-msg-chip-bg: rgba(24, 119, 104, 0.16);
+  --log-napcat-msg-chip-text: #0f766e;
+
+  --log-napcat-notice-bg: rgba(20, 184, 166, 0.18);
+  --log-napcat-notice-border: rgba(20, 184, 166, 0.12);
+  --log-napcat-notice-chip-bg: rgba(20, 184, 166, 0.16);
+  --log-napcat-notice-chip-text: #0f766e;
+
+  /* ── Semantic: extra chips ── */
+  --chip-context-bg: rgba(99, 102, 241, 0.12);
+  --chip-context-text: #4f46e5;
+  --chip-context-key: #3730a3;
+  --chip-tool-bg: rgba(16, 185, 129, 0.12);
+  --chip-tool-text: #047857;
+  --chip-tool-key: #065f46;
+  --chip-timing-bg: rgba(245, 158, 11, 0.12);
+  --chip-timing-text: #b45309;
+  --chip-timing-key: #92400e;
+  --chip-token-bg: rgba(59, 130, 246, 0.12);
+  --chip-token-text: #1d4ed8;
+  --chip-token-key: #1e40af;
+  --chip-errfield-bg: rgba(239, 68, 68, 0.12);
+  --chip-errfield-text: #b91c1c;
+  --chip-errfield-key: #991b1b;
+
+  /* ── Session binding states ── */
+  --binding-active-bg: rgba(16, 185, 129, 0.12);
+  --binding-active-text: #10b981;
+  --binding-inactive-bg: rgba(100, 116, 139, 0.12);
+  --binding-inactive-text: #64748b;
+  --binding-error-bg: rgba(239, 68, 68, 0.12);
+  --binding-error-text: #ef4444;
+  --binding-unknown-bg: rgba(245, 158, 11, 0.12);
+  --binding-unknown-text: #d97706;
+
   --font-sans:
     "Inter",
     "Noto Sans SC",
@@ -177,9 +241,9 @@ onBeforeUnmount(() => {
   --glass-edge-shadow: rgba(0, 0, 0, 0.3);
   --bg-top: #111318;
   --bg-bottom: #0d0f14;
-  --panel: #1a1d24;
-  --panel-strong: #15171e;
-  --panel-white: #1e2028;
+  --panel: #1b1d22;
+  --panel-strong: #16181f;
+  --panel-white: #1f2128;
   --panel-blue-soft: #1c2130;
   --panel-blue-soft-text: #c4d5eb;
   --line: #2a2d35;
@@ -204,6 +268,59 @@ onBeforeUnmount(() => {
   --main-ribbon-soft: transparent;
   --main-ribbon-accent: transparent;
   --main-ribbon-fill: transparent;
+
+  /* ── Dark-mode semantic: log levels (tinted toward panel surface) ── */
+  --log-debug-bg: color-mix(in srgb, #5a697d 18%, transparent);
+  --log-debug-border: #5a697d;
+  --log-debug-chip-bg: color-mix(in srgb, #5a697d 22%, transparent);
+  --log-debug-chip-text: #8899b0;
+
+  --log-info-bg: color-mix(in srgb, #3b82f6 16%, transparent);
+  --log-info-border: #3b82f6;
+  --log-info-chip-bg: color-mix(in srgb, #3b82f6 20%, transparent);
+  --log-info-chip-text: #60a5fa;
+
+  --log-warn-bg: color-mix(in srgb, #d97706 16%, transparent);
+  --log-warn-border: #d97706;
+  --log-warn-chip-bg: color-mix(in srgb, #d97706 20%, transparent);
+  --log-warn-chip-text: #fbbf24;
+
+  --log-error-bg: color-mix(in srgb, #ef4444 18%, transparent);
+  --log-error-border: #ef4444;
+  --log-error-chip-bg: color-mix(in srgb, #ef4444 20%, transparent);
+  --log-error-chip-text: #f87171;
+
+  --log-critical-bg: color-mix(in srgb, #8b5cf6 20%, transparent);
+  --log-critical-border: #8b5cf6;
+  --log-critical-chip-bg: color-mix(in srgb, #8b5cf6 22%, transparent);
+  --log-critical-chip-text: #a78bfa;
+
+  --log-napcat-msg-bg: color-mix(in srgb, #34d399 18%, transparent);
+  --log-napcat-msg-border: color-mix(in srgb, #34d399 12%, transparent);
+  --log-napcat-msg-chip-bg: color-mix(in srgb, #34d399 20%, transparent);
+  --log-napcat-msg-chip-text: #6ee7b7;
+
+  --log-napcat-notice-bg: color-mix(in srgb, #2dd4bf 18%, transparent);
+  --log-napcat-notice-border: color-mix(in srgb, #2dd4bf 12%, transparent);
+  --log-napcat-notice-chip-bg: color-mix(in srgb, #2dd4bf 20%, transparent);
+  --log-napcat-notice-chip-text: #5eead4;
+
+  /* ── Dark-mode semantic: extra chips ── */
+  --chip-context-bg: color-mix(in srgb, #6366f1 14%, transparent);
+  --chip-context-text: #818cf8;
+  --chip-context-key: #a5b4fc;
+  --chip-tool-bg: color-mix(in srgb, #10b981 14%, transparent);
+  --chip-tool-text: #34d399;
+  --chip-tool-key: #6ee7b7;
+  --chip-timing-bg: color-mix(in srgb, #f59e0b 14%, transparent);
+  --chip-timing-text: #fbbf24;
+  --chip-timing-key: #fcd34d;
+  --chip-token-bg: color-mix(in srgb, #3b82f6 14%, transparent);
+  --chip-token-text: #60a5fa;
+  --chip-token-key: #93c5fd;
+  --chip-errfield-bg: color-mix(in srgb, #ef4444 14%, transparent);
+  --chip-errfield-text: #f87171;
+  --chip-errfield-key: #fca5a5;
 }
 
 :root[data-accent-theme="rose"] {
@@ -337,6 +454,12 @@ textarea {
   padding: 18px;
   box-sizing: border-box;
   color: var(--text);
+  animation: shell-in 400ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+@keyframes shell-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 .main {
@@ -391,6 +514,24 @@ body.overlay-active .main::before {
 
   .main {
     padding: 0 0 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::before,
+  body::after,
+  .main::before,
+  body,
+  body::before,
+  body::after,
+  .main::before {
+    transition: none;
+    animation: none;
+  }
+  .shell {
+    animation: none;
+    opacity: 1;
+    transform: none;
   }
 }
 

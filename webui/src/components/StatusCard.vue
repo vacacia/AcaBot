@@ -4,11 +4,12 @@ defineProps<{
   value: string
   hint: string
   detail?: string
+  variant?: "default" | "active" | "connected" | "disconnected" | "ready" | "unavailable" | "warm"
 }>()
 </script>
 
 <template>
-  <article class="card">
+  <article class="card" :class="variant ? `card-${variant}` : undefined">
     <div class="title">{{ title }}</div>
     <div class="value">{{ value }}</div>
     <div class="hint">{{ hint }}</div>
@@ -76,5 +77,54 @@ defineProps<{
   font-size: 11px;
   line-height: 1.5;
   opacity: 0.8;
+}
+
+/* Semantic value colors */
+.card-active .value,
+.card-connected .value,
+.card-ready .value {
+  color: var(--success);
+}
+
+.card-disconnected .value,
+.card-unavailable .value {
+  color: var(--muted);
+  opacity: 0.7;
+}
+
+.card-warm .value {
+  color: var(--warning);
+}
+
+/* Accent left-border for active cards */
+.card-active,
+.card-connected,
+.card-ready {
+  border-left: 3px solid var(--success);
+}
+
+.card-warm {
+  border-left: 3px solid var(--warning);
+}
+
+/* Hover micro-interaction */
+.card {
+  transition:
+    transform 180ms cubic-bezier(0.25, 1, 0.5, 1),
+    box-shadow 180ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px var(--shadow-card), 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card {
+    transition: none;
+  }
+  .card:hover {
+    transform: none;
+  }
 }
 </style>

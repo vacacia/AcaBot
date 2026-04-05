@@ -130,11 +130,23 @@
   transform: translateY(-1px);
 }
 
+.ds-primary-button:active:not(:disabled),
+.ds-secondary-button:active:not(:disabled),
+.ds-ghost-button:active:not(:disabled),
+.ds-inline-button:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: 0 2px 6px var(--button-shadow-color);
+}
+
 .ds-primary-button {
   border: 0;
   background: linear-gradient(135deg, var(--button-primary-start) 0%, var(--button-primary-end) 100%);
   color: #fff;
   box-shadow: 0 16px 26px var(--button-shadow-color);
+}
+
+.ds-primary-button:active:not(:disabled) {
+  box-shadow: 0 4px 12px var(--button-shadow-color);
 }
 
 .ds-secondary-button,

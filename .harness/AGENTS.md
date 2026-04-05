@@ -79,10 +79,6 @@ AcaBot 是一个 Python 3.11 的 agent runtime,负责把网关事件收进运行
 │   ├── FP-003.md
 │   └── FP-004.md
 ├── skills/                       ← 自定义 Skills
-│   ├── database-migration/
-│   │   └── SKILL.md
-│   └── deployment/
-│       └── SKILL.md
 ├── scripts/                      ← 确定性工具
 │   ├── check-architecture.js
 │   ├── validate-env.sh

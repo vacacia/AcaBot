@@ -156,6 +156,15 @@ const litellmInfo = ref<{ model_info: any; supported_params: string[]; param_hin
 const litellmLoading = ref(false)
 let litellmDebounceTimer: ReturnType<typeof setTimeout> | null = null
 
+function bindingStateClass(state: string): string {
+  if (!state) return "state-chip is-unknown"
+  const s = state.toLowerCase()
+  if (s === "active" || s === "ready" || s === "bound") return "state-chip is-active"
+  if (s === "inactive" || s === "disabled" || s === "unbound") return "state-chip is-inactive"
+  if (s === "error" || s === "failed" || s === "unavailable") return "state-chip is-error"
+  return "state-chip is-unknown"
+}
+
 function queryLitellmInfo(model: string, providerKind: string): void {
   litellmInfo.value = null
   if (litellmDebounceTimer) clearTimeout(litellmDebounceTimer)
@@ -599,10 +608,10 @@ onBeforeUnmount(() => {
         </div>
         <div class="ds-list">
           <button
-            v-for="item in presets"
+            v-for="(item, i) in presets"
             :key="item.preset_id"
-            class="list-item"
-            :class="{ active: item.preset_id === selectedId }"
+            class="list-item mv-preset-entrance"
+            :class="{ active: item.preset_id === selectedId, [`mv-preset-${i}`]: true }"
             type="button"
             @click="void selectPreset(item.preset_id)"
           >
@@ -675,7 +684,7 @@ onBeforeUnmount(() => {
             <div class="binding-meta-grid">
               <article class="ds-surface ds-card-padding-sm binding-meta-card">
                 <p class="summary-label">State</p>
-                <strong class="meta-value">{{ selectedBindingSnapshot.binding_state }}</strong>
+                <strong class="meta-value" :class="bindingStateClass(selectedBindingSnapshot.binding_state)">{{ selectedBindingSnapshot.binding_state }}</strong>
               </article>
               <article class="ds-surface ds-card-padding-sm binding-meta-card">
                 <p class="summary-label">Effective model</p>
@@ -706,23 +715,24 @@ onBeforeUnmount(() => {
         </div>
         <div class="ds-list">
           <button
-            v-for="item in relatedBindings"
+            v-for="(item, i) in relatedBindings"
             :key="item.binding.binding_id"
-            class="list-item"
-            :class="{ active: item.binding.binding_id === selectedBindingId }"
+            class="list-item mv-binding-entrance"
+            :class="{ active: item.binding.binding_id === selectedBindingId, [`mv-binding-${i}`]: true }"
             type="button"
             @click="void syncBindingSelection(item.binding.binding_id)"
           >
             <strong>{{ item.binding.target_id }}</strong>
             <small>{{ item.binding.binding_id }}</small>
-            <span class="state-chip">{{ item.binding_state }}</span>
+            <span :class="bindingStateClass(item.binding_state)">{{ item.binding_state }}</span>
           </button>
         </div>
       </aside>
     </div>
 
     <Teleport to="body">
-      <div v-if="showPresetEditor && draft" class="modal-backdrop side-sheet-backdrop" @click.self="closePresetEditor()">
+      <Transition name="mv-sidesheet">
+      <div v-if="showPresetEditor && draft" class="modal-backdrop side-sheet-backdrop" @click.self="closePresetEditor()" role="dialog" aria-modal="true">
         <article class="modal-shell side-sheet-shell">
           <div class="modal-head">
             <div>
@@ -833,16 +843,27 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="modal-actions">
-            <button class="ds-secondary-button" type="button" :disabled="!selectedId" @click="void healthCheckPreset()">健康检查</button>
-            <button class="ds-secondary-button" type="button" :disabled="!selectedId" @click="void deletePreset()">删除</button>
-            <button class="ds-primary-button" type="button" :disabled="loading || !draft" @click="void savePreset()">保存</button>
+            <button class="ds-secondary-button" type="button" :disabled="loading" @click="void healthCheckPreset()">
+              {{ loading ? "检查中..." : "健康检查" }}
+            </button>
+            <button class="ds-secondary-button" type="button" :disabled="loading" @click="void deletePreset()">
+              {{ loading ? "删除中..." : "删除" }}
+            </button>
+            <button class="ds-primary-button" type="button" :disabled="loading || !draft" @click="void savePreset()">
+              <svg v-if="loading" class="mv-spin-icon" width="13" height="13" viewBox="0 0 14 14" fill="none">
+                <circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5" stroke-dasharray="22" stroke-dashoffset="8" stroke-linecap="round"/>
+              </svg>
+              {{ loading ? "保存中..." : "保存" }}
+            </button>
           </div>
         </article>
       </div>
+      </Transition>
     </Teleport>
 
     <Teleport to="body">
-      <div v-if="showBindingEditor && bindingDraft" class="modal-backdrop" @click.self="closeBindingEditor()">
+      <Transition name="mv-modal">
+      <div v-if="showBindingEditor && bindingDraft" class="modal-backdrop" @click.self="closeBindingEditor()" role="dialog" aria-modal="true">
         <article class="modal-shell">
           <div class="modal-head">
             <div>
@@ -866,6 +887,7 @@ onBeforeUnmount(() => {
           </div>
         </article>
       </div>
+      </Transition>
     </Teleport>
   </section>
 </template>
@@ -947,15 +969,40 @@ onBeforeUnmount(() => {
   color: var(--heading-strong);
 }
 
+.meta-value.is-active   { color: var(--binding-active-text); }
+.meta-value.is-inactive { color: var(--binding-inactive-text); }
+.meta-value.is-error    { color: var(--binding-error-text); }
+.meta-value.is-unknown  { color: var(--binding-unknown-text); }
+
 .state-chip {
   display: inline-flex;
   align-self: flex-start;
   padding: 4px 8px;
   border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
   font-size: 11px;
   font-weight: 700;
+  background: var(--binding-inactive-bg);
+  color: var(--binding-inactive-text);
+}
+
+.state-chip.is-active {
+  background: var(--binding-active-bg);
+  color: var(--binding-active-text);
+}
+
+.state-chip.is-inactive {
+  background: var(--binding-inactive-bg);
+  color: var(--binding-inactive-text);
+}
+
+.state-chip.is-error {
+  background: var(--binding-error-bg);
+  color: var(--binding-error-text);
+}
+
+.state-chip.is-unknown {
+  background: var(--binding-unknown-bg);
+  color: var(--binding-unknown-text);
 }
 
 .binding-fallback-text {
@@ -1199,6 +1246,183 @@ onBeforeUnmount(() => {
 
   .preset-fields-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ── Preset list stagger entrance ── */
+.mv-preset-entrance {
+  opacity: 0;
+  transform: translateX(-8px);
+  animation: mv-item-in 280ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+.mv-preset-0  { animation-delay: 20ms; }
+.mv-preset-1  { animation-delay: 60ms; }
+.mv-preset-2  { animation-delay: 100ms; }
+.mv-preset-3  { animation-delay: 140ms; }
+.mv-preset-4  { animation-delay: 180ms; }
+.mv-preset-5  { animation-delay: 220ms; }
+.mv-preset-6  { animation-delay: 260ms; }
+.mv-preset-7  { animation-delay: 300ms; }
+
+/* ── Binding list stagger entrance ── */
+.mv-binding-entrance {
+  opacity: 0;
+  transform: translateX(-6px);
+  animation: mv-item-in 240ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+.mv-binding-0 { animation-delay: 40ms; }
+.mv-binding-1 { animation-delay: 80ms; }
+.mv-binding-2 { animation-delay: 120ms; }
+.mv-binding-3 { animation-delay: 160ms; }
+
+@keyframes mv-item-in {
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* ── List item hover slide ── */
+.list-item {
+  transition: background 140ms ease, border-color 140ms ease, transform 140ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.list-item:hover {
+  transform: translateX(3px);
+}
+
+.list-item.active {
+  transform: translateX(2px);
+}
+
+/* ── Capability chip hover ── */
+.cap-chip {
+  transition: all 150ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.cap-chip:hover {
+  transform: scale(1.06);
+}
+
+.cap-chip:active {
+  transform: scale(0.97);
+}
+
+.cap-chip.is-active {
+  transition: all 150ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+/* ── Side-sheet slide in from right ── */
+.mv-sidesheet-enter-active {
+  animation: mv-sheet-in 320ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+.mv-sidesheet-leave-active {
+  animation: mv-sheet-out 220ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+@keyframes mv-sheet-in {
+  from { opacity: 0; transform: translateX(40px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes mv-sheet-out {
+  from { opacity: 1; transform: translateX(0); }
+  to   { opacity: 0; transform: translateX(30px); }
+}
+
+/* ── Binding modal fade + scale ── */
+.mv-modal-enter-active {
+  animation: mv-modal-in 240ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+.mv-modal-leave-active {
+  animation: mv-modal-out 180ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+.mv-modal-enter-active .modal-shell {
+  animation: mv-modal-shell-in 280ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+.mv-modal-leave-active .modal-shell {
+  animation: mv-modal-shell-out 200ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+@keyframes mv-modal-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes mv-modal-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+@keyframes mv-modal-shell-in {
+  from { opacity: 0; transform: scale(0.95) translateY(8px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes mv-modal-shell-out {
+  from { opacity: 1; transform: scale(1) translateY(0); }
+  to   { opacity: 0; transform: scale(0.97) translateY(4px); }
+}
+
+/* ── Summary cards stagger ── */
+.summary-card {
+  opacity: 0;
+  transform: translateY(8px);
+  animation: mv-card-in 300ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+@keyframes mv-card-in {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .mv-preset-entrance,
+  .mv-binding-entrance {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+  .list-item:hover {
+    transform: none;
+  }
+  .list-item.active {
+    transform: none;
+  }
+  .cap-chip:hover {
+    transform: none;
+  }
+  .mv-sidesheet-enter-active,
+  .mv-sidesheet-leave-active {
+    animation: none;
+  }
+  .mv-modal-enter-active,
+  .mv-modal-leave-active,
+  .mv-modal-enter-active .modal-shell,
+  .mv-modal-leave-active .modal-shell {
+    animation: none;
+  }
+  .summary-card {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+}
+
+/* ── Loading spinner ── */
+.mv-spin-icon {
+  flex-shrink: 0;
+  animation: spin 700ms linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mv-spin-icon {
+    animation: none;
   }
 }
 </style>

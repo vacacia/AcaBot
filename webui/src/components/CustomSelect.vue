@@ -163,11 +163,16 @@ onBeforeUnmount(() => document.removeEventListener("click", onClickOutside, true
   font-family: inherit;
   cursor: pointer;
   text-align: left;
-  transition: background 100ms ease;
+  transition: background 120ms ease, transform 80ms ease;
 }
 
 .cs-option:hover {
   background: var(--accent-soft);
+  transform: translateX(2px);
+}
+
+.cs-option:active {
+  transform: translateX(1px) scale(0.98);
 }
 
 .cs-option.is-selected {

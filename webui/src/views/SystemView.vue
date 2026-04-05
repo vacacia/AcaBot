@@ -915,6 +915,34 @@ onMounted(() => {
 .path-card {
   display: grid;
   gap: 10px;
+  opacity: 0;
+  transform: translateY(8px);
+  animation: sys-card-in 320ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+.summary-card:nth-child(1) { animation-delay: 40ms; }
+.summary-card:nth-child(2) { animation-delay: 80ms; }
+.maintenance-card:nth-child(1) { animation-delay: 120ms; }
+.maintenance-card:nth-child(2) { animation-delay: 160ms; }
+.path-card {
+  animation-delay: 200ms;
+}
+
+.ds-panel {
+  opacity: 0;
+  transform: translateY(8px);
+  animation: sys-card-in 320ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+.ds-panel:nth-of-type(1) { animation-delay: 80ms; }
+.ds-panel:nth-of-type(2) { animation-delay: 140ms; }
+.ds-panel:nth-of-type(3) { animation-delay: 200ms; }
+.ds-panel:nth-of-type(4) { animation-delay: 260ms; }
+.ds-panel:nth-of-type(5) { animation-delay: 320ms; }
+.ds-panel:nth-of-type(6) { animation-delay: 380ms; }
+
+@keyframes sys-card-in {
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .summary-label {
@@ -1008,6 +1036,17 @@ onMounted(() => {
 @media (max-width: 960px) {
   .advanced-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .summary-card,
+  .maintenance-card,
+  .path-card,
+  .ds-panel {
+    opacity: 1;
+    transform: none;
+    animation: none;
   }
 }
 

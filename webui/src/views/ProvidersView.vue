@@ -267,10 +267,10 @@ onMounted(() => {
         </div>
         <div class="ds-list">
           <button
-            v-for="item in providers"
+            v-for="(item, i) in providers"
             :key="item.provider_id"
-            class="list-item"
-            :class="{ active: item.provider_id === selectedId }"
+            class="list-item pv-entrance"
+            :class="{ active: item.provider_id === selectedId, [`pv-entrance-${i}`]: true }"
             type="button"
             @click="void selectProvider(item.provider_id)"
           >
@@ -280,7 +280,7 @@ onMounted(() => {
         </div>
       </aside>
 
-      <article class="ds-panel ds-panel-padding editor-column">
+      <article class="ds-panel ds-panel-padding editor-column pv-editor-entrance">
         <div class="ds-section-head compact-head">
           <div class="ds-section-title">
             <div>
@@ -288,8 +288,18 @@ onMounted(() => {
             </div>
           </div>
           <div class="ds-actions">
-            <button class="ds-secondary-button" type="button" :disabled="!selectedId" @click="void deleteProvider()">删除</button>
-            <button class="ds-primary-button" type="button" :disabled="loading || !draft" @click="void saveProvider()">保存</button>
+            <button class="ds-secondary-button" type="button" :disabled="loading" @click="void deleteProvider()">
+              <svg v-if="loading" class="pv-spin-icon" width="13" height="13" viewBox="0 0 14 14" fill="none">
+                <circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5" stroke-dasharray="22" stroke-dashoffset="8" stroke-linecap="round"/>
+              </svg>
+              {{ loading ? "处理中..." : "删除" }}
+            </button>
+            <button class="ds-primary-button" type="button" :disabled="loading || !draft" @click="void saveProvider()">
+              <svg v-if="loading" class="pv-spin-icon" width="13" height="13" viewBox="0 0 14 14" fill="none">
+                <circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5" stroke-dasharray="22" stroke-dashoffset="8" stroke-linecap="round"/>
+              </svg>
+              {{ loading ? "保存中..." : "保存" }}
+            </button>
           </div>
         </div>
 
@@ -533,6 +543,107 @@ onMounted(() => {
 
   .is-span-2 {
     grid-column: span 1;
+  }
+}
+
+/* ── List item stagger entrance ── */
+.pv-entrance {
+  opacity: 0;
+  transform: translateX(-8px);
+  animation: pv-item-in 280ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+.pv-entrance-0  { animation-delay: 20ms; }
+.pv-entrance-1  { animation-delay: 60ms; }
+.pv-entrance-2  { animation-delay: 100ms; }
+.pv-entrance-3  { animation-delay: 140ms; }
+.pv-entrance-4  { animation-delay: 180ms; }
+.pv-entrance-5  { animation-delay: 220ms; }
+.pv-entrance-6  { animation-delay: 260ms; }
+.pv-entrance-7  { animation-delay: 300ms; }
+
+@keyframes pv-item-in {
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* ── List item hover slide ── */
+.list-item {
+  transition: background 140ms ease, border-color 140ms ease, transform 140ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.list-item:hover {
+  transform: translateX(3px);
+}
+
+.list-item.active {
+  transform: translateX(2px);
+}
+
+/* ── Editor column entrance ── */
+.pv-editor-entrance {
+  opacity: 0;
+  transform: translateY(10px);
+  animation: pv-editor-in 340ms cubic-bezier(0.25, 1, 0.5, 1) 80ms forwards;
+}
+
+@keyframes pv-editor-in {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Advanced toggle arrow ── */
+.advanced-arrow {
+  transition: transform 220ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+/* ── Plus button press ── */
+.round-button {
+  transition: transform 120ms cubic-bezier(0.25, 1, 0.5, 1), box-shadow 120ms ease;
+}
+
+.round-button:hover {
+  transform: scale(1.06);
+}
+
+.round-button:active {
+  transform: scale(0.94);
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .pv-entrance {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+  .pv-editor-entrance {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+  .list-item:hover {
+    transform: none;
+  }
+  .list-item.active {
+    transform: none;
+  }
+  .round-button:hover,
+  .round-button:active {
+    transform: none;
+  }
+}
+
+/* ── Loading spinner ── */
+.pv-spin-icon {
+  flex-shrink: 0;
+  animation: spin 700ms linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pv-spin-icon {
+    animation: none;
   }
 }
 </style>

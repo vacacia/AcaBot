@@ -55,21 +55,25 @@ const cards = computed(() => [
     value: "在线",
     hint: runtimeDetail.value || "运行中",
     detail: "",
+    variant: "active",
   },
   {
     title: "Gateway",
     value: gateway.value.connected ? "Connected" : "Disconnected",
     hint: "NapCat 连接状态",
+    variant: gateway.value.connected ? "connected" : "disconnected",
   },
   {
     title: "Backend",
     value: backend.value.configured ? "Ready" : "Unavailable",
     hint: `活跃模式 ${backend.value.active_modes?.length ?? 0}`,
+    variant: backend.value.configured ? "ready" : "unavailable",
   },
   {
     title: "Runs",
     value: String(status.value.active_runs?.length ?? 0),
     hint: "当前活跃运行数",
+    variant: "warm",
   },
 ])
 
@@ -112,7 +116,12 @@ onMounted(() => {
       </div>
       <div class="ds-actions">
         <button class="ds-ghost-button" type="button">控制面说明</button>
-        <button class="ds-primary-button" type="button" @click="void load()">刷新</button>
+        <button class="ds-primary-button" type="button" :disabled="loading" @click="void load()">
+          <svg v-if="loading" class="spin-icon" width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5" stroke-dasharray="22" stroke-dashoffset="8" stroke-linecap="round"/>
+          </svg>
+          {{ loading ? "刷新中" : "刷新" }}
+        </button>
       </div>
     </header>
 
@@ -120,12 +129,13 @@ onMounted(() => {
 
     <div class="ds-card-grid-4">
       <StatusCard
-        v-for="card in cards"
+        v-for="(card, i) in cards"
         :key="card.title"
         :title="card.title"
         :value="card.value"
         :hint="card.hint"
         :detail="card.detail"
+        :class="`card-entrance card-entrance-${i} card-${card.variant}`"
       />
     </div>
 
@@ -204,5 +214,95 @@ onMounted(() => {
   .overview-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* ── Entrance animations ── */
+.ds-hero {
+  opacity: 0;
+  transform: translateY(-12px);
+  animation: hero-in 400ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+.card-entrance {
+  opacity: 0;
+  transform: translateY(16px);
+  animation: card-in 350ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+.card-entrance-0 { animation-delay: 80ms; }
+.card-entrance-1 { animation-delay: 160ms; }
+.card-entrance-2 { animation-delay: 240ms; }
+.card-entrance-3 { animation-delay: 320ms; }
+
+.overview-grid > :first-child {
+  opacity: 0;
+  transform: translateY(12px);
+  animation: card-in 380ms cubic-bezier(0.25, 1, 0.5, 1) 400ms forwards;
+}
+
+.overview-grid > :last-child {
+  opacity: 0;
+  transform: translateY(12px);
+  animation: card-in 380ms cubic-bezier(0.25, 1, 0.5, 1) 480ms forwards;
+}
+
+@keyframes hero-in {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes card-in {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .ds-hero,
+  .card-entrance,
+  .overview-grid > * {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+}
+
+/* ── Spin icon ── */
+.spin-icon {
+  flex-shrink: 0;
+  animation: spin 700ms linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin-icon {
+    animation: none;
+  }
+}
+
+/* ── Semantic card variants ── */
+.card-active .value {
+  color: var(--success);
+}
+
+.card-connected .value {
+  color: var(--success);
+}
+
+.card-disconnected .value {
+  color: var(--muted);
+}
+
+.card-ready .value {
+  color: var(--success);
+}
+
+.card-unavailable .value {
+  color: var(--muted);
+}
+
+.card-warm .value {
+  color: var(--warning);
 }
 </style>

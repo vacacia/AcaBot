@@ -277,6 +277,9 @@ onMounted(() => {
           :disabled="reconciling"
           @click="void reconcile()"
         >
+          <svg v-if="reconciling" class="pv-spin-icon" width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5" stroke-dasharray="22" stroke-dashoffset="8" stroke-linecap="round"/>
+          </svg>
           {{ reconciling ? "扫描中..." : "重新扫描" }}
         </button>
       </div>
@@ -288,9 +291,14 @@ onMounted(() => {
 
     <!-- 插件列表 -->
     <section v-if="!loading && plugins.length > 0" class="ds-list" :class="{ reconciling: reconciling }">
-      <div v-for="plugin in plugins" :key="plugin.plugin_id" class="ds-list-item">
+      <div
+        v-for="(plugin, idx) in plugins"
+        :key="plugin.plugin_id"
+        class="ds-list-item plugin-item"
+        :style="{ '--i': idx }"
+      >
         <!-- 头部行 -->
-        <div class="plugin-header" @click="toggleExpand(plugin.plugin_id)">
+        <div class="plugin-header" @click="toggleExpand(plugin.plugin_id)" :aria-expanded="expandedId === plugin.plugin_id">
           <div class="plugin-header-left">
             <strong class="plugin-name">{{ displayName(plugin) }}</strong>
             <span :class="phaseBadgeClass(currentPhase(plugin))">
@@ -298,6 +306,13 @@ onMounted(() => {
             </span>
           </div>
           <div class="plugin-header-right" @click.stop>
+            <svg
+              class="expand-chevron"
+              :class="{ 'is-open': expandedId === plugin.plugin_id }"
+              width="16" height="16" viewBox="0 0 16 16" fill="none"
+            >
+              <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
             <label
               class="toggle"
               :class="{ 'is-loading': togglingIds.has(plugin.plugin_id) }"
@@ -314,6 +329,7 @@ onMounted(() => {
         </div>
 
         <!-- 展开面板 -->
+        <Transition name="expand">
         <div v-if="expandedId === plugin.plugin_id" class="expand-panel">
           <!-- 基础信息 -->
           <div class="info-section">
@@ -442,6 +458,7 @@ onMounted(() => {
             </button>
           </div>
         </div>
+        </Transition>
       </div>
     </section>
 
@@ -453,7 +470,8 @@ onMounted(() => {
     </div>
 
     <!-- 错误详情 Modal -->
-    <div v-if="errorModal" class="modal-overlay" @click.self="errorModal = null">
+    <Transition name="modal">
+    <div v-if="errorModal" class="modal-overlay" @click.self="errorModal = null" role="dialog" aria-modal="true">
       <div class="modal-panel">
         <div class="modal-header">
           <h3>{{ errorModal.pluginId }} 加载错误</h3>
@@ -462,11 +480,23 @@ onMounted(() => {
         <pre class="ds-mono error-pre">{{ errorModal.error }}</pre>
       </div>
     </div>
+    </Transition>
   </section>
 </template>
 
 <style scoped>
 /* ── 插件列表行 ── */
+.plugin-item {
+  opacity: 0;
+  transform: translateY(10px);
+  animation: plugin-item-in 300ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+  animation-delay: calc(var(--i, 0) * 50ms);
+}
+
+@keyframes plugin-item-in {
+  to { opacity: 1; transform: translateY(0); }
+}
+
 .plugin-header {
   display: flex;
   align-items: center;
@@ -769,5 +799,111 @@ onMounted(() => {
   background: color-mix(in srgb, var(--danger) 6%, var(--panel-strong));
   border-radius: 14px;
   padding: 14px;
+}
+
+/* ── Expand chevron ── */
+.expand-chevron {
+  flex-shrink: 0;
+  color: var(--muted);
+  transition: transform 220ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.expand-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+/* ── Expand panel transition ── */
+.expand-enter-active {
+  animation: expand-in 260ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.expand-leave-active {
+  animation: expand-out 180ms cubic-bezier(0.4, 0, 1, 1);
+}
+
+@keyframes expand-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes expand-out {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(-4px); }
+}
+
+/* ── Modal transition ── */
+.modal-enter-active {
+  animation: modal-in 220ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.modal-leave-active {
+  animation: modal-out 160ms cubic-bezier(0.4, 0, 1, 1);
+}
+
+.modal-enter-active .modal-panel {
+  animation: modal-panel-in 280ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.modal-leave-active .modal-panel {
+  animation: modal-panel-out 200ms cubic-bezier(0.4, 0, 1, 1);
+}
+
+@keyframes modal-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes modal-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+@keyframes modal-panel-in {
+  from { opacity: 0; transform: scale(0.94) translateY(8px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes modal-panel-out {
+  from { opacity: 1; transform: scale(1) translateY(0); }
+  to   { opacity: 0; transform: scale(0.96) translateY(4px); }
+}
+
+/* ── Toggle focus ring ── */
+.toggle input:focus-visible + .slider {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .expand-enter-active,
+  .expand-leave-active,
+  .modal-enter-active,
+  .modal-leave-active,
+  .modal-enter-active .modal-panel,
+  .modal-leave-active .modal-panel {
+    animation: none;
+  }
+  .expand-chevron {
+    transition: none;
+  }
+}
+
+/* ── Loading spinner ── */
+.pv-spin-icon,
+.spin-icon {
+  flex-shrink: 0;
+  animation: spin 700ms linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pv-spin-icon,
+  .spin-icon {
+    animation: none;
+  }
 }
 </style>

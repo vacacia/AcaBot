@@ -41,6 +41,7 @@ const emit = defineEmits<{
 const rawOpen = ref(false)
 const rawJson = ref("")
 const rawError = ref("")
+const pulsingKey = ref("")
 
 /**
  * 参数定义解析：如果后端提供了 paramHints，只用后端的（后端已经做了模型级过滤）。
@@ -69,6 +70,8 @@ function update(key: string, value: unknown) {
 function onSlider(key: string, e: Event) {
   const v = parseFloat((e.target as HTMLInputElement).value)
   update(key, v)
+  pulsingKey.value = key
+  setTimeout(() => { pulsingKey.value = "" }, 200)
 }
 
 function onNumber(key: string, e: Event) {
@@ -163,7 +166,7 @@ watch(() => props.modelValue, (v) => {
               :value="getVal(key) ?? resolveHint(key)!.min"
               @input="onSlider(key, $event)"
             />
-            <span class="mpe-slider-val">{{ formatSliderVal(key) }}</span>
+            <span class="mpe-slider-val" :class="{ 'mpe-val-pulse': pulsingKey === key }">{{ formatSliderVal(key) }}</span>
           </div>
         </template>
 
@@ -362,6 +365,17 @@ watch(() => props.modelValue, (v) => {
   font-weight: 600;
   color: var(--text);
   font-variant-numeric: tabular-nums;
+  transition: color 100ms ease, transform 100ms ease;
+}
+
+.mpe-val-pulse {
+  animation: val-pulse 180ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+@keyframes val-pulse {
+  0%   { transform: scale(1); color: var(--text); }
+  50%  { transform: scale(1.15); color: var(--accent); }
+  100% { transform: scale(1); color: var(--text); }
 }
 
 /* ── Number / Text inputs ── */
@@ -475,6 +489,11 @@ watch(() => props.modelValue, (v) => {
 
 .mpe-toggle input:checked + .mpe-toggle-track .mpe-toggle-thumb {
   transform: translateX(16px);
+}
+
+.mpe-toggle input:focus-visible + .mpe-toggle-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* ── Raw JSON ── */

@@ -305,7 +305,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="panel ds-panel ds-panel-padding" :class="panelClass">
+  <section class="panel ds-panel ds-panel-padding panel-entrance" :class="panelClass">
     <div class="panel-header ds-section-head">
       <div>
         <h2>{{ title }}</h2>
@@ -654,118 +654,118 @@ button {
 }
 
 .log-line.is-debug {
-  border-left-color: #7c8ba1;
-  background: linear-gradient(90deg, rgba(124, 139, 161, 0.12), color-mix(in srgb, var(--panel-strong) 94%, transparent));
+  border-left-color: var(--log-debug-border);
+  background: linear-gradient(90deg, var(--log-debug-bg), color-mix(in srgb, var(--panel-strong) 94%, transparent));
 }
 
 .log-line.is-info {
-  border-left-color: #0f6cb8;
-  background: linear-gradient(90deg, rgba(15, 108, 184, 0.14), color-mix(in srgb, var(--panel-strong) 94%, transparent));
+  border-left-color: var(--log-info-border);
+  background: linear-gradient(90deg, var(--log-info-bg), color-mix(in srgb, var(--panel-strong) 94%, transparent));
 }
 
 .log-line.is-warning {
-  border-left-color: #d97706;
-  background: linear-gradient(90deg, rgba(217, 119, 6, 0.16), color-mix(in srgb, var(--panel-strong) 94%, transparent));
+  border-left-color: var(--log-warn-border);
+  background: linear-gradient(90deg, var(--log-warn-bg), color-mix(in srgb, var(--panel-strong) 94%, transparent));
 }
 
 .log-line.is-error {
-  border-left-color: #dc2626;
-  background: linear-gradient(90deg, rgba(220, 38, 38, 0.18), color-mix(in srgb, var(--panel-strong) 94%, transparent));
+  border-left-color: var(--log-error-border);
+  background: linear-gradient(90deg, var(--log-error-bg), color-mix(in srgb, var(--panel-strong) 94%, transparent));
 }
 
 .log-line.is-critical {
-  border-left-color: #7c3aed;
-  background: linear-gradient(90deg, rgba(124, 58, 237, 0.2), color-mix(in srgb, var(--panel-strong) 94%, transparent));
+  border-left-color: var(--log-critical-border);
+  background: linear-gradient(90deg, var(--log-critical-bg), color-mix(in srgb, var(--panel-strong) 94%, transparent));
 }
 
 .log-line.is-napcat-message {
-  box-shadow: inset 0 0 0 1px rgba(24, 119, 104, 0.12);
-  background: linear-gradient(90deg, rgba(24, 119, 104, 0.18), color-mix(in srgb, var(--panel-strong) 94%, transparent));
+  box-shadow: inset 0 0 0 1px var(--log-napcat-msg-border);
+  background: linear-gradient(90deg, var(--log-napcat-msg-bg), color-mix(in srgb, var(--panel-strong) 94%, transparent));
 }
 
 .log-line.is-napcat-notice {
-  box-shadow: inset 0 0 0 1px rgba(20, 184, 166, 0.12);
-  background: linear-gradient(90deg, rgba(20, 184, 166, 0.18), color-mix(in srgb, var(--panel-strong) 94%, transparent));
+  box-shadow: inset 0 0 0 1px var(--log-napcat-notice-border);
+  background: linear-gradient(90deg, var(--log-napcat-notice-bg), color-mix(in srgb, var(--panel-strong) 94%, transparent));
 }
 
 .level-chip.is-debug {
-  background: rgba(124, 139, 161, 0.16);
-  color: #5a697d;
+  background: var(--log-debug-chip-bg);
+  color: var(--log-debug-chip-text);
 }
 
 .level-chip.is-info {
-  background: rgba(15, 108, 184, 0.14);
-  color: #0b5d9d;
+  background: var(--log-info-chip-bg);
+  color: var(--log-info-chip-text);
 }
 
 .level-chip.is-warning {
-  background: rgba(217, 119, 6, 0.16);
-  color: #9a5a05;
+  background: var(--log-warn-chip-bg);
+  color: var(--log-warn-chip-text);
 }
 
 .level-chip.is-error {
-  background: rgba(220, 38, 38, 0.15);
-  color: #b42318;
+  background: var(--log-error-chip-bg);
+  color: var(--log-error-chip-text);
 }
 
 .level-chip.is-critical {
-  background: rgba(124, 58, 237, 0.16);
-  color: #6d28d9;
+  background: var(--log-critical-chip-bg);
+  color: var(--log-critical-chip-text);
 }
 
 .kind-chip.is-napcat-message {
-  background: rgba(24, 119, 104, 0.16);
-  color: #0f766e;
+  background: var(--log-napcat-msg-chip-bg);
+  color: var(--log-napcat-msg-chip-text);
 }
 
 .kind-chip.is-napcat-notice {
-  background: rgba(20, 184, 166, 0.16);
-  color: #0f766e;
+  background: var(--log-napcat-notice-chip-bg);
+  color: var(--log-napcat-notice-chip-text);
 }
 
 .extra-chip.is-context {
-  background: rgba(99, 102, 241, 0.12);
-  color: #4f46e5;
+  background: var(--chip-context-bg);
+  color: var(--chip-context-text);
 }
 
 .extra-chip.is-context .extra-key {
-  color: #3730a3;
+  color: var(--chip-context-key);
 }
 
 .extra-chip.is-tool {
-  background: rgba(16, 185, 129, 0.12);
-  color: #047857;
+  background: var(--chip-tool-bg);
+  color: var(--chip-tool-text);
 }
 
 .extra-chip.is-tool .extra-key {
-  color: #065f46;
+  color: var(--chip-tool-key);
 }
 
 .extra-chip.is-timing {
-  background: rgba(245, 158, 11, 0.12);
-  color: #b45309;
+  background: var(--chip-timing-bg);
+  color: var(--chip-timing-text);
 }
 
 .extra-chip.is-timing .extra-key {
-  color: #92400e;
+  color: var(--chip-timing-key);
 }
 
 .extra-chip.is-token {
-  background: rgba(59, 130, 246, 0.12);
-  color: #1d4ed8;
+  background: var(--chip-token-bg);
+  color: var(--chip-token-text);
 }
 
 .extra-chip.is-token .extra-key {
-  color: #1e40af;
+  color: var(--chip-token-key);
 }
 
 .extra-chip.is-error-field {
-  background: rgba(239, 68, 68, 0.12);
-  color: #b91c1c;
+  background: var(--chip-errfield-bg);
+  color: var(--chip-errfield-text);
 }
 
 .extra-chip.is-error-field .extra-key {
-  color: #991b1b;
+  color: var(--chip-errfield-key);
 }
 
 .panel.is-dense {
@@ -866,6 +866,23 @@ button {
   .extra-chip {
     width: 100%;
     justify-content: space-between;
+  }
+}
+
+/* ── Entrance animation ── */
+.panel-entrance {
+  animation: panel-entrance-in 360ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+@keyframes panel-entrance-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .panel-entrance {
+    animation: none;
   }
 }
 </style>
