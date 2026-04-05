@@ -27,11 +27,16 @@ const gateway = ref<GatewayStatus>(peekCachedGet<GatewayStatus>("/api/gateway/st
 const backend = ref<BackendStatus>(peekCachedGet<BackendStatus>("/api/backend/status") ?? {})
 const subagents = ref<SubagentItem[]>(peekCachedGet<SubagentItem[]>("/api/subagents") ?? [])
 const errorText = ref("")
-const loading = ref(
-  !peekCachedGet<RuntimeStatus>("/api/status")
-  || !peekCachedGet<GatewayStatus>("/api/gateway/status")
-  || !peekCachedGet<BackendStatus>("/api/backend/status")
-)
+
+// Helper to check if we have any data to show immediately
+const hasSomeData = computed(() => (
+  Object.keys(status.value).length > 0 ||
+  Object.keys(gateway.value).length > 0 ||
+  Object.keys(backend.value).length > 0
+))
+
+// Only show loading if we have absolutely nothing to show
+const loading = ref(!hasSomeData.value)
 
 const runtimeDetail = computed(() => {
   const parts: string[] = []
@@ -69,21 +74,25 @@ const cards = computed(() => [
 ])
 
 async function load(): Promise<void> {
-  loading.value = true
+  // If we don't have cached data, we must show loading state
+  if (!hasSomeData.value) {
+    loading.value = true
+  }
   errorText.value = ""
+
+  // Fetch all endpoints concurrently without blocking each other (SWR pattern)
+  const reqs = [
+    apiGet<RuntimeStatus>("/api/status").then(r => { status.value = r }),
+    apiGet<GatewayStatus>("/api/gateway/status").then(r => { gateway.value = r }),
+    apiGet<BackendStatus>("/api/backend/status").then(r => { backend.value = r }),
+    apiGet<SubagentItem[]>("/api/subagents").then(r => { subagents.value = r }),
+  ]
+
   try {
-    const [nextStatus, nextGateway, nextBackend, nextSubagents] = await Promise.all([
-      apiGet<RuntimeStatus>("/api/status"),
-      apiGet<GatewayStatus>("/api/gateway/status"),
-      apiGet<BackendStatus>("/api/backend/status"),
-      apiGet<SubagentItem[]>("/api/subagents"),
-    ])
-    status.value = nextStatus
-    gateway.value = nextGateway
-    backend.value = nextBackend
-    subagents.value = nextSubagents
+    // Wait for everything to finish, but they update individual refs as they come in
+    await Promise.allSettled(reqs)
   } catch (error) {
-    errorText.value = error instanceof Error ? error.message : "首页加载失败"
+    errorText.value = error instanceof Error ? error.message : "首页某些数据刷新失败"
   } finally {
     loading.value = false
   }
@@ -153,7 +162,7 @@ onMounted(() => {
       <LogStreamPanel
         title="日志预览"
         :limit="80"
-        :poll-interval-ms="1000"
+        :poll-interval-ms="2500"
         :show-controls="false"
         :show-details="false"
         :show-run-details="false"

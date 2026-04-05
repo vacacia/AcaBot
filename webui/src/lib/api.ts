@@ -14,7 +14,7 @@ type CacheValidator<T> = (value: unknown) => value is T
 const PERSISTENT_STORAGE_PREFIX = "acabot.api.cache:"
 const getCache = new Map<string, CacheEntry>()
 const inflightGetRequests = new Map<string, Promise<unknown>>()
-const DEFAULT_GET_CACHE_TTL_MS = 15000
+const DEFAULT_GET_CACHE_TTL_MS = 180000 // 3 minutes for better SWR experience
 
 export async function apiGet<T>(path: string, validate?: CacheValidator<T>): Promise<T> {
   const now = Date.now()
@@ -85,13 +85,16 @@ export async function apiDelete<T>(path: string): Promise<T> {
 export function peekCachedGet<T>(path: string, validate?: CacheValidator<T>): T | null {
   const cached = getValidatedCacheEntry(path, getCache.get(path), validate)
   if (cached) {
+    console.debug(`[CACHE] Memory HIT ${path}`)
     return cached.value as T
   }
   const persisted = getValidatedCacheEntry(path, getPersistedCache(path), validate)
   if (persisted) {
     getCache.set(path, persisted)
+    console.debug(`[CACHE] Persisted HIT ${path}`)
     return persisted.value as T
   }
+  console.debug(`[CACHE] MISS ${path}`)
   return null
 }
 
@@ -223,16 +226,25 @@ function getPersistedCache(path: string): CacheEntry | null {
 }
 
 async function apiRequest<T>(path: string, init: RequestInit): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init.headers ?? {}),
-    },
-  })
-  const payload = (await response.json()) as ApiResponse<T>
-  if (!response.ok || payload.ok !== true) {
-    throw new Error(payload.error || `HTTP ${response.status}`)
+  const start = performance.now()
+  try {
+    const response = await fetch(path, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(init.headers ?? {}),
+      },
+    })
+    const payload = (await response.json()) as ApiResponse<T>
+    const duration = (performance.now() - start).toFixed(1)
+    console.debug(`[API] ${init.method || "GET"} ${path} - ${duration}ms`)
+    if (!response.ok || payload.ok !== true) {
+      throw new Error(payload.error || `HTTP ${response.status}`)
+    }
+    return payload.data
+  } catch (error) {
+    const duration = (performance.now() - start).toFixed(1)
+    console.error(`[API] ${init.method || "GET"} ${path} FAILED after ${duration}ms:`, error)
+    throw error
   }
-  return payload.data
 }

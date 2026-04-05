@@ -268,7 +268,18 @@ function resetCreateDraft(): void {
 
 // region 数据操作
 async function loadSessions(preferredId = ""): Promise<void> {
-  loading.value = true
+  // Use SWR pattern: restore from cache first, then refresh
+  const cachedCatalog = peekCachedGet<UiCatalog>("/api/ui/catalog")
+  const cachedSessions = peekCachedGet<SessionSummary[]>("/api/sessions")
+  const cachedPresets = peekCachedGet<ModelPresetRecord[]>("/api/models/presets")
+
+  if (cachedCatalog) catalog.value = cachedCatalog
+  if (cachedSessions) sessions.value = cachedSessions
+  if (cachedPresets) modelPresets.value = cachedPresets
+
+  // If we have cached sessions, we don't need a full-screen loading state
+  loading.value = sessions.value.length === 0
+  
   errorMessage.value = ""
   try {
     const [catalogPayload, sessionList, presetList] = await Promise.all([
@@ -306,13 +317,43 @@ async function loadSessions(preferredId = ""): Promise<void> {
 }
 
 async function selectSession(sessionId: string): Promise<void> {
-  detailLoading.value = true
+  const sessionPath = `/api/sessions/${encodeURIComponent(sessionId)}`
+  
+  // SWR: Try to restore everything from cache first for instant feedback
+  const cachedDetail = peekCachedGet<SessionDetail>(sessionPath)
+  if (cachedDetail) {
+    const agentId = `session:${sessionId}`
+    selectedSessionId.value = sessionId
+    selectedDetail.value = cachedDetail
+    sessionDraft.value = normalizeSessionDraft(cachedDetail)
+    surfacesDraft.value = normalizeSurfacesDraft(cachedDetail)
+    agentDraft.value = normalizeAgentDraft(cachedDetail)
+    
+    // Peek binding IDs for instant sub-page switch
+    const replyIds = getCachedBindingPresetIds(agentId, "")
+    const imageIds = getCachedBindingPresetIds(agentId, ":image_caption")
+    if (replyIds) agentDraft.value.reply_model_preset_ids = replyIds
+    if (imageIds) agentDraft.value.image_caption_preset_ids = imageIds
+    
+    // We already have some detail to show, don't show the big spinner
+    detailLoading.value = false
+  }
+
+  // Only show the heavy blocking spinner if we have absolutely nothing in cache
+  if (!cachedDetail) {
+    detailLoading.value = true
+  }
+  
   errorMessage.value = ""
   saveMessage.value = ""
   try {
-    const payload = await apiGet<SessionDetail>(`/api/sessions/${encodeURIComponent(sessionId)}`)
-    const replyPresetIds = await loadBindingPresetIds(payload.agent.agent_id, "")
-    const imageCaptionPresetIds = await loadBindingPresetIds(payload.agent.agent_id, ":image_caption")
+    // Parallelize detailed data fetching
+    const [payload, replyPresetIds, imageCaptionPresetIds] = await Promise.all([
+      apiGet<SessionDetail>(sessionPath),
+      loadBindingPresetIdsForAgent(sessionId, ""),
+      loadBindingPresetIdsForAgent(sessionId, ":image_caption"),
+    ])
+
     selectedSessionId.value = sessionId
     selectedDetail.value = payload
     sessionDraft.value = normalizeSessionDraft(payload)
@@ -325,6 +366,16 @@ async function selectSession(sessionId: string): Promise<void> {
   } finally {
     detailLoading.value = false
   }
+}
+
+// Optimized helper that derives target IDs from session bundle indirectly or predicts them
+// Note: In SessionsView.vue, the binding ID depends on the internal agent_id.
+// Since we are parallelizing, we might need to know the agent_id beforehand or fetch it with session detail.
+// BUT, usually AcaBot's agent_id for a session is predictable: "session:<session_id>" -> "agent:session:<session_id>"
+// Let's check how loadBindingPresetIds originally worked.
+async function loadBindingPresetIdsForAgent(sessionId: string, suffix: string): Promise<string[]> {
+  const agentId = `session:${sessionId}` // This matches current AcaBot convention for session-owned agents
+  return await loadBindingPresetIds(agentId, suffix)
 }
 
 async function createSession(): Promise<void> {
@@ -443,6 +494,12 @@ function strippableModelName(model: string): string {
 function targetIdForAgent(agentId: string): string { return `agent:${agentId}` }
 function bindingIdForAgent(agentId: string, suffix: string): string { return `binding:${targetIdForAgent(agentId)}${suffix}` }
 
+function getCachedBindingPresetIds(agentId: string, suffix: string): string[] | null {
+  const bindingId = bindingIdForAgent(agentId, suffix)
+  const cached = peekCachedGet<ModelBindingSnapshot>(`/api/models/bindings/${encodeURIComponent(bindingId)}`)
+  return cached ? (cached.binding.preset_ids || []) : null
+}
+
 async function loadBindingPresetIds(agentId: string, suffix: string): Promise<string[]> {
   try {
     const snapshot = await apiGet<ModelBindingSnapshot>(`/api/models/bindings/${encodeURIComponent(bindingIdForAgent(agentId, suffix))}`)
@@ -525,7 +582,7 @@ onMounted(() => { void loadSessions() })
     <div class="sv-body">
       <!-- 左侧列表 -->
       <aside class="sv-sidebar">
-        <p v-if="loading" class="sv-empty-hint">加载中...</p>
+        <p v-if="loading && sessions.length === 0" class="sv-empty-hint">加载中...</p>
         <p v-else-if="sessions.length === 0" class="sv-empty-hint">暂无会话</p>
         <button
           v-for="item in sessions"
@@ -545,7 +602,7 @@ onMounted(() => { void loadSessions() })
 
       <!-- 右侧详情 -->
       <div class="sv-detail">
-        <template v-if="detailLoading">
+        <template v-if="detailLoading && !selectedDetail">
           <div class="sv-empty-hint">加载中...</div>
         </template>
 

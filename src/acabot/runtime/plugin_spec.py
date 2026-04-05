@@ -65,19 +65,20 @@ class SpecStore:
         """
 
         self._plugins_config_dir = plugins_config_dir
+        self._cache_specs: dict[str, PluginSpec] = {}
+        self._cache_expiry: float = 0.0
 
     def load_all(self) -> tuple[dict[str, PluginSpec], list[SpecParseError]]:
-        """加载所有 PluginSpec.
-
-        Returns:
-            (specs, errors) 元组.
-            specs 按 plugin_id 索引, errors 包含解析失败的项.
-        """
+        import time
+        now = time.time()
+        if self._cache_specs and now < self._cache_expiry:
+            return self._cache_specs, []
 
         specs: dict[str, PluginSpec] = {}
         errors: list[SpecParseError] = []
 
         if not self._plugins_config_dir.is_dir():
+            self._cache_specs = specs
             return specs, errors
 
         for child in sorted(self._plugins_config_dir.iterdir()):
@@ -94,6 +95,8 @@ class SpecStore:
             except Exception as exc:
                 errors.append(SpecParseError(plugin_id=plugin_id, error=str(exc)))
 
+        self._cache_specs = specs
+        self._cache_expiry = now + 5.0
         return specs, errors
 
     def load(self, plugin_id: str) -> PluginSpec | None:

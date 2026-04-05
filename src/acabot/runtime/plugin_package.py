@@ -69,14 +69,14 @@ class PackageCatalog:
 
         self._extensions_plugins_dir = extensions_plugins_dir
         self._packages: dict[str, PluginPackage] = {}
+        self._cache_expiry: float = 0.0
 
     def scan(self) -> tuple[dict[str, PluginPackage], list[PackageScanError]]:
-        """扫描目录, 解析所有 plugin.yaml.
-
-        Returns:
-            (packages, errors) 元组.
-            packages 按 plugin_id 索引, errors 包含解析失败的项.
-        """
+        import time
+        now = time.time()
+        # 5秒内如果已经扫过了, 直接给离线包
+        if self._packages and now < self._cache_expiry:
+             return self._packages, []
 
         packages: dict[str, PluginPackage] = {}
         errors: list[PackageScanError] = []
@@ -145,6 +145,7 @@ class PackageCatalog:
                 ))
 
         self._packages = packages
+        self._cache_expiry = now + 5.0
         return packages, errors
 
     def get(self, plugin_id: str) -> PluginPackage | None:

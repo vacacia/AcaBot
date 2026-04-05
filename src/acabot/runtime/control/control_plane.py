@@ -19,8 +19,6 @@ from __future__ import annotations
 import os
 import time
 import uuid
-from dataclasses import asdict
-
 from acabot.types import Action, ActionType, MsgSegment, StandardEvent
 
 from ..app import RuntimeApp
@@ -1001,9 +999,15 @@ class RuntimeControlPlane:
         if session_service is not None:
             load_binding = getattr(session_service, "load_binding", None)
             if callable(load_binding):
-                loaded = load_binding()
-                if loaded is not None:
-                    binding = asdict(loaded)
+                    from ..model.model_registry import ModelBinding
+                    loaded = load_binding()
+                    if isinstance(loaded, ModelBinding):
+                        binding = {
+                            "binding_id": loaded.binding_id,
+                            "target_id": loaded.target_id,
+                            "preset_ids": list(loaded.preset_ids),
+                            "timeout_sec": loaded.timeout_sec,
+                        }
             get_binding_path = getattr(session_service, "get_binding_path", None)
             if callable(get_binding_path):
                 session_path = str(get_binding_path() or "")
@@ -1074,8 +1078,30 @@ class RuntimeControlPlane:
                 for item in prompts
             ],
             "tools": await self.list_available_tools(),
-            "skills": [asdict(item) for item in skills],
-            "subagents": [asdict(item) for item in subagents],
+            "skills": [
+                {
+                    "skill_name": item.skill_name,
+                    "display_name": item.display_name,
+                    "description": item.description,
+                    "has_references": item.has_references,
+                    "has_scripts": item.has_scripts,
+                    "has_assets": item.has_assets,
+                }
+                for item in skills
+            ],
+            "subagents": [
+                {
+                    "subagent_id": item.subagent_id,
+                    "subagent_name": item.subagent_name,
+                    "description": item.description,
+                    "source": item.source,
+                    "host_subagent_file_path": item.host_subagent_file_path,
+                    "tools": list(item.tools),
+                    "model_target": item.model_target,
+                    "effective": item.effective,
+                }
+                for item in subagents
+            ],
             "model_providers": [
                 {
                     "provider_id": item.provider_id,
@@ -1094,7 +1120,15 @@ class RuntimeControlPlane:
                 }
                 for item in presets
             ],
-            "model_bindings": [asdict(item) for item in bindings],
+            "model_bindings": [
+                {
+                    "binding_id": item.binding_id,
+                    "target_id": item.target_id,
+                    "preset_ids": list(item.preset_ids),
+                    "timeout_sec": item.timeout_sec,
+                }
+                for item in bindings
+            ],
             "options": build_ui_options(
                 api_key_env_names=[key for key in os.environ if key.endswith("_API_KEY")]
             ),

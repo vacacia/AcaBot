@@ -1,0 +1,53 @@
+{
+  "features": [
+    {
+      "id": "scheduler-001",
+      "description": "为模型提供可用的定时任务能力：模型可以创建、查看、取消定时任务，并能把任务绑定到当前会话或指定线程。",
+      "priority": 2,
+      "status": "planned",
+      "verification": "提供稳定的 scheduler tool / API；用伪造事件或真实对话让模型创建 one-shot / interval / cron 任务，任务能按时触发并留下 run / log / delivery 证据。"
+    },
+    {
+      "id": "scheduler-002",
+      "description": "为插件提供正式的定时任务使用方式：明确插件如何注册、恢复、清理定时任务，并补齐示例与文档。",
+      "priority": 2,
+      "status": "planned",
+      "verification": "新增或完善插件侧 scheduler 使用示例；测试插件在 setup 时注册任务、在 runtime 重启后恢复、在 unload 后自动清理。"
+    },
+    {
+      "id": "scheduler-003",
+      "description": "在前端提供定时任务管理页面：展示任务列表、状态、下次触发时间、owner、schedule 类型，并支持创建、启停、删除。",
+      "priority": 3,
+      "status": "planned",
+      "verification": "WebUI 出现 scheduler 页面；可查看任务列表并完成创建 / 启停 / 删除；操作后页面状态与后端实际任务一致。"
+    },
+    {
+      "id": "webui-001",
+      "description": "解决 WebUI 严重卡顿问题，使本地页面在常见视图切换和数据刷新时达到可用速度。",
+      "priority": 1,
+      "status": "failing",
+      "verification": "定位主要性能瓶颈并修复；首页、日志页、系统页等关键页面在本地访问时不再需要数秒才能刷新，交互延迟明显下降，并有 profiler / 指标或对比证据。"
+    },
+    {
+      "id": "group-001",
+      "description": "修复群聊“仅回复 @ 和引用”失效的问题：在群聊中不再回复全部消息，只对 @ 机器人或引用机器人的消息进行响应。",
+      "priority": 5,
+      "status": "failing",
+      "verification": "构造群聊消息样例：普通消息不触发回复，@ 机器人消息触发回复，引用机器人消息触发回复；真实群聊链路或集成测试验证通过。"
+    },
+    {
+      "id": "ltm-migrate-001",
+      "description": "实现从 AstrBot 数据库提取聊天记录的迁移入口：能读取 AstrBot 历史消息并转换为 AcaBot 可消费的中间格式。",
+      "priority": 6,
+      "status": "planned",
+      "verification": "提供导出脚本或迁移命令；能从 AstrBot 数据库成功提取指定会话历史，并生成结构正确、可审查的中间数据。"
+    },
+    {
+      "id": "ltm-migrate-002",
+      "description": "把 AstrBot 历史聊天记录导入到 AcaBot 的 LTM 中，并验证导入后的检索效果。",
+      "priority": 7,
+      "status": "planned",
+      "verification": "完成从 AstrBot 历史到 LTM 的导入流程；抽查若干已知历史事实，能在 LTM 查询/召回中命中，并保留来源与时间等关键信息。"
+    }
+  ]
+}

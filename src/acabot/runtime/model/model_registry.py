@@ -747,6 +747,8 @@ class FileSystemModelRegistryManager:
         self.bindings_dir = Path(bindings_dir)
         self.target_catalog = target_catalog or MutableModelTargetCatalog()
         self.active_registry = ModelRegistry()
+        self._cache_registry: ModelRegistry | None = None
+        self._cache_expiry: float = 0.0
         self.last_error = ""
         self._reload_lock = asyncio.Lock()
 
@@ -774,8 +776,30 @@ class FileSystemModelRegistryManager:
         )
 
     async def reload(self) -> ModelReloadSnapshot:
+        import time
+        now = time.time()
+        # 抢锁之前先看缓存, 只要有一个人在 5s 内填了缓存, 后面几十个并发瞬间全部命中, 根本不用排队!
+        if self._cache_registry is not None and now < self._cache_expiry:
+            return ModelReloadSnapshot(
+                ok=True,
+                provider_count=len(self._cache_registry.providers),
+                preset_count=len(self._cache_registry.presets),
+                binding_count=len(self._cache_registry.bindings),
+            )
+
         async with self._reload_lock:
-            return self.reload_now()
+            # 拿到锁之后也要再检查一次, 防止由于排队造成的重复计算
+            now = time.time()
+            if self._cache_registry is not None and now < self._cache_expiry:
+                return ModelReloadSnapshot(
+                    ok=True,
+                    provider_count=len(self._cache_registry.providers),
+                    preset_count=len(self._cache_registry.presets),
+                    binding_count=len(self._cache_registry.bindings),
+                )
+                
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self.reload_now)
 
     def status(self) -> ModelRegistryStatusSnapshot:
         return ModelRegistryStatusSnapshot(
@@ -1176,6 +1200,11 @@ class FileSystemModelRegistryManager:
         return normalized
 
     def _load_registry_from_filesystem(self) -> ModelRegistry:
+        import time
+        now = time.time()
+        if self._cache_registry is not None and now < self._cache_expiry:
+            return self._cache_registry
+
         registry = ModelRegistry()
         registry.providers = {
             provider.provider_id: provider
@@ -1189,6 +1218,9 @@ class FileSystemModelRegistryManager:
             binding.binding_id: binding
             for binding in self._load_binding_files()
         }
+        
+        self._cache_registry = registry
+        self._cache_expiry = now + 5.0
         return registry
 
     def _load_provider_files(self) -> list[ModelProvider]:

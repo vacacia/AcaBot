@@ -136,6 +136,9 @@ class RuntimeHttpApiServer:
         class Handler(BaseHTTPRequestHandler):
             server_version = "AcaBotWebUI/0.1"
 
+            def address_string(self) -> str:
+                return str(self.client_address[0])
+
             def do_OPTIONS(self) -> None:
                 self._write_empty(204)
 
@@ -850,17 +853,32 @@ class RuntimeHttpApiServer:
         return 404, {"ok": False, "error": "unknown workspace endpoint"}
 
     def _ok(self, data: Any) -> tuple[int, dict[str, Any]]:
-        return 200, {"ok": True, "data": _to_jsonable(data)}
+        import time
+        start = time.perf_counter()
+        jsonable = _to_jsonable(data)
+        duration = time.perf_counter() - start
+        if duration > 0.1:
+            logger.info("JSON serialization took %.3fs", duration)
+        return 200, {"ok": True, "data": jsonable}
 
     def _get_ltm_store(self):
         """获取 LTM 存储实例, 如果未配置则返回 None."""
         return getattr(self.control_plane, "ltm_store", None)
 
     def _await(self, awaitable):
+        import time
         if self._loop is None:
             raise RuntimeError("http api server is not started")
+        
+        start = time.perf_counter()
         future = asyncio.run_coroutine_threadsafe(awaitable, self._loop)
-        return future.result(timeout=self.request_timeout_sec)
+        result = future.result(timeout=self.request_timeout_sec)
+        duration = time.perf_counter() - start
+        
+        if duration > 0.1:
+            logger.info("Async task execution took %.3fs", duration)
+            
+        return result
 
 
 def _get_litellm_model_info(model: str) -> dict[str, Any]:

@@ -30,6 +30,8 @@ class SessionBundleLoader:
         self.skill_names = None if skill_names is None else set(skill_names)
         self.subagent_names = None if subagent_names is None else set(subagent_names)
         self.model_target_ids = None if model_target_ids is None else set(model_target_ids)
+        self._cache_bundles: list[SessionBundle] | None = None
+        self._cache_expiry: float = 0.0
 
     def replace_catalog_refs(
         self,
@@ -47,6 +49,8 @@ class SessionBundleLoader:
         self.skill_names = set(skill_names)
         self.subagent_names = set(subagent_names)
         self.model_target_ids = None if model_target_ids is None else set(model_target_ids)
+        self._cache_bundles: list[SessionBundle] | None = None
+        self._cache_expiry: float = 0.0
 
     def replace_root(self, config_root: str | Path) -> None:
         """替换 session bundle 根目录."""
@@ -79,9 +83,16 @@ class SessionBundleLoader:
         return session_ids
 
     def list_bundles(self) -> list[SessionBundle]:
-        """返回当前可成功解析的全部 session bundles."""
-
-        return [self.load_by_session_id(session_id) for session_id in self.list_session_ids()]
+        """返回当前可成功解析的全部 session bundles (带 5s 缓存)."""
+        import time
+        now = time.time()
+        if self._cache_bundles is not None and now < self._cache_expiry:
+            return self._cache_bundles
+        
+        bundles = [self.load_by_session_id(session_id) for session_id in self.list_session_ids()]
+        self._cache_bundles = bundles
+        self._cache_expiry = now + 5.0
+        return bundles
 
     def load_by_session_id(self, session_id: str) -> SessionBundle:
         session_config_path = self.session_loader.path_for_session_id(session_id)

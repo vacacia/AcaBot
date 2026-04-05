@@ -25,6 +25,14 @@ import os
 import signal
 from collections.abc import Callable
 
+# --- 加入 LiteLLM 性能补丁: 彻底禁止联网拉取价格表和遥测, 解决 1.5s 的 IO 超时阻塞 ---
+import litellm
+import os
+litellm.telemetry = False
+litellm.suppress_debug_info = True
+os.environ["LITELLM_LOCAL_RESOURCES"] = "True" # 强制禁止 GitHub 资源拉取
+# -------------------------------------------------------------------------
+
 from .agent import BaseAgent
 from .config import Config
 from .runtime import RuntimeComponents, build_runtime_components

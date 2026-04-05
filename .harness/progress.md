@@ -41,21 +41,12 @@
 - 群聊“仅回复 @ 和引用”失效，实际会回复全部消息；这不是本次 requirement，但属于需要单独收口的高严重度 bug
 
 ## 下一步
-- 先计划并执行 gap closure phases：
-  - `$gsd-plan-phase 05`
-  - `$gsd-plan-phase 06`
-  - `$gsd-plan-phase 07`
-- 对不属于本次 requirement、但又不能放着不管的问题单独插 phase：
-  - `$gsd-insert-phase 4 群聊回复策略 hotfix`
-- gap closure phases 做完后，重新执行：
-  - `$gsd-audit-milestone v1.0`
-  - 通过后再 `$gsd-complete-milestone v1.0`
-- WebUI 继续补：
+- WebUI：
   - 配置页面
   - tools 面板
   - 日志详情可读性
   - 性能优化
-- 工具层继续扩：
+- 工具层：
   - tool desc 打磨
   - 更多高价值 builtin / plugin tools
   - 未来再考虑 schedule 管理 UI 和更多主动能力
