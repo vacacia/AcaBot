@@ -1,7 +1,7 @@
 # Requirements: AcaBot v1.1
 
 **Defined:** 2026-04-05
-**Core Value:** 让 AcaBot 从"基础设施就绪"进化到"生产环境真正好用"：群聊行为正确、定时任务对模型可见、WebUI 交互流畅、历史记忆可迁移。
+**Core Value:** 让 AcaBot 从"基础设施就绪"进化到"生产环境真正好用"：群聊行为正确、定时任务对模型可见、WebUI 交互流畅。
 
 ## v1 Requirements
 
@@ -23,13 +23,13 @@
 
 - [ ] **WEBUI-01**: WebUI 定时任务管理页面：展示任务列表、状态、下次触发时间、owner、schedule 类型
 - [ ] **WEBUI-02**: WebUI 支持创建/启停/删除定时任务，操作后页面状态与后端实际任务一致
+- [ ] **WEBUI-03**: 保存操作有明显视觉反馈（成功/失败提示）
 
 ### WebUI Usability
 
-- [ ] **WEBUI-03**: 保存操作有明显视觉反馈（成功/失败提示）
 - [ ] **WEBUI-04**: 切换动画流畅优雅
 
-### AstrBot Migration
+### AstrBot Migration (deferred to future milestone)
 
 - [ ] **ASTR-01**: 提供一次性 CLI 迁移工具，能从 AstrBot SQLite 数据库提取聊天记录，转换为 AcaBot 可消费的 ConversationDelta 中间格式
 - [ ] **ASTR-02**: AstrBot 历史消息能正确导入 AcaBot LTM（走 LtmWritePort.ingest_thread_delta() 管线），抽查历史事实能在 LTM 查询中命中
@@ -46,23 +46,23 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| GROUP-01 | — | Pending |
-| SCHED-01 | — | Pending |
-| SCHED-02 | — | Pending |
-| SCHED-03 | — | Pending |
-| PLUG-01 | — | Pending |
-| WEBUI-01 | — | Pending |
-| WEBUI-02 | — | Pending |
-| WEBUI-03 | — | Pending |
-| WEBUI-04 | — | Pending |
-| ASTR-01 | — | Pending |
-| ASTR-02 | — | Pending |
+| GROUP-01 | 10 | Pending |
+| SCHED-01 | 11 | Pending |
+| SCHED-02 | 11 | Pending |
+| SCHED-03 | 11 | Pending |
+| PLUG-01 | 12 | Pending |
+| WEBUI-01 | 13 | Pending |
+| WEBUI-02 | 13 | Pending |
+| WEBUI-03 | 13 | Pending |
+| WEBUI-04 | 14 | Pending |
+| ASTR-01 | — | Deferred |
+| ASTR-02 | — | Deferred |
 
 **Coverage:**
 - v1 requirements: 11 total
-- Mapped to phases: 0 — (roadmap creation fills this in)
-- Unmapped: 11 ⚠️ — (roadmap creation fills this in)
+- Mapped to phases: 9 (ASTR-01/02 deferred)
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-05*
-*Last updated: 2026-04-05 after initial requirements gathering*
+*Last updated: 2026-04-05 after roadmap adjustment*

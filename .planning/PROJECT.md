@@ -2,24 +2,22 @@
 
 ## What This Is
 
-AcaBot 是一个 agentic chatbot runtime，通过 Gateway 接收 IM 平台事件，经过 session-config 路由引擎、LLM agent pipeline、工具调用，最终通过 Gateway 回复。v1.0 完成了 runtime 基础设施的全面补全（插件 Reconciler、统一 message tool、scheduler、LTM safety、structured logging），v1.1 聚焦于生产可用性收尾——修复群聊响应 bug、让模型和插件真正用上 scheduler、优化 WebUI、完成 AstrBot 历史数据迁移。
+AcaBot 是一个 agentic chatbot runtime，通过 Gateway 接收 IM 平台事件，经过 session-config 路由引擎、LLM agent pipeline、工具调用，最终通过 Gateway 回复。v1.0 完成了 runtime 基础设施的全面补全（插件 Reconciler、统一 message tool、scheduler、LTM safety、structured logging），v1.1 聚焦于生产可用性收尾——修复群聊响应 bug、让模型和插件真正用上 scheduler、优化 WebUI 体验。
 
 ## Core Value
 
-**让 AcaBot 从"基础设施就绪"进化到"生产环境真正好用"：群聊行为正确、定时任务对模型可见、WebUI 交互流畅、历史记忆可迁移。**
+**让 AcaBot 从"基础设施就绪"进化到"生产环境真正好用"：群聊行为正确、定时任务对模型可见、WebUI 交互流畅。**
 
-## Current Milestone: v1.1 生产可用性收尾 + LTM 迁移
+## Current Milestone: v1.1 生产可用性收尾
 
-**Goal:** 修复群聊响应 bug，把 scheduler 能力暴露给模型和插件，优化 WebUI 体验，完成 AstrBot 历史数据迁移到 LTM。
+**Goal:** 修复群聊响应 bug，把 scheduler 能力暴露给模型和插件，优化 WebUI 体验。
 
 **Target features:**
-- 修复群聊"仅回复 @ 和引用"失效问题 (P1)
+- 修复群聊消息响应行为 (P1)
 - 模型可用的定时任务 tool — 创建/查看/取消/绑定会话 (P2)
 - 插件侧定时任务使用方式 + 文档示例 (P2)
 - WebUI 定时任务管理页面 (P3)
 - WebUI 可用性优化 (P3)
-- AstrBot 聊天记录提取迁移入口 (P6)
-- AstrBot 历史导入 LTM 并验证检索效果 (P7)
 
 ## Requirements
 
@@ -39,13 +37,11 @@ AcaBot 是一个 agentic chatbot runtime，通过 Gateway 接收 IM 平台事件
 ### Active
 
 <!-- v1.1 scope -->
-- [ ] 修复群聊"仅回复 @ 和引用"失效问题
+- [ ] 修复群聊消息响应行为
 - [ ] 模型可用的定时任务 tool/API（创建/查看/取消/绑定会话）
 - [ ] 插件侧定时任务使用方式 + 文档示例
 - [ ] WebUI 定时任务管理页面
 - [ ] WebUI 可用性优化
-- [ ] AstrBot 聊天记录提取迁移入口
-- [ ] AstrBot 历史导入 LTM 并验证检索效果
 
 ### Out of Scope
 
