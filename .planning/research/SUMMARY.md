@@ -1,173 +1,99 @@
-# Project Research Summary
+# Research Summary: AcaBot v1.1
 
-**Project:** AcaBot v2 Runtime Infrastructure Hardening
-**Domain:** Agentic chatbot runtime (plugin system, messaging, scheduling, observability, vector DB integrity)
-**Researched:** 2026-04-02
+**Milestone:** v1.1 生产可用性收尾 + LTM 迁移
+**Synthesized:** 2026-04-05
 **Confidence:** HIGH
+
+---
 
 ## Executive Summary
 
-AcaBot is a Python 3.11+ asyncio chatbot runtime with an LLM agent pipeline at its core. This milestone hardens six infrastructure dimensions: plugin management (replacing a 972-line monolith with a Kubernetes-style reconciler), unified message/action tooling (enabling the agent to reply, react, quote, and send cross-session), a lightweight asyncio task scheduler, structured logging, LanceDB data integrity, and removal of the defunct Reference Backend. The guiding principle across all areas is **minimize new dependencies** — the runtime already has a working pipeline, so stdlib and existing-dep solutions are strongly preferred over new frameworks.
+**Zero new dependencies.** All v1.1 features build on v1.0 infrastructure. No new Python packages, no new npm packages.
 
-The recommended approach centers on a desired-state reconciler pattern for plugins (Package/Spec/Status with a pure-function reconciler and dumb executor host), a single unified `message` LLM tool backed by platform-agnostic actions flowing through the existing Outbox, a custom asyncio scheduler (~150-200 lines) using `croniter` for cron parsing, `structlog` layered on top of existing stdlib logging, and application-level `asyncio.Lock` plus periodic backup for LanceDB safety. Only two new dependencies are needed: `structlog` and `croniter`.
-
-The primary risks are: plugin reconciler state desync (Status drifting from Spec without periodic re-sync), phantom tool registrations surviving plugin reload, LanceDB concurrent write corruption (no lock currently exists), and the message tool schema overwhelming the LLM if made too complex. All are addressable with specific design patterns identified in the research.
+---
 
 ## Key Findings
 
-### Recommended Stack
+### 1. Group Chat Bug (P1, failing)
 
-See [STACK.md](STACK.md) for full details.
+**Two independent root causes identified:**
 
-**New dependencies (only two):**
-- **`structlog` (>= 25.1.0):** Structured logging with `contextvars` integration for async-safe context binding — wraps existing stdlib `logging`, enabling incremental migration
-- **`croniter` (>= 3.0.0):** Cron expression parsing for the scheduler — pure Python, ~50KB, no transitive deps
+- **Session-config hypothesis** (Features research): `session_runtime._surface_candidates()` 对普通群消息返回 `["message.plain"]`，而 session config 中 `message.plain` 的 admission 默认是 `respond`，导致 bot 回复所有消息。修复：改变 `message.plain` 在 group scene 的 admission 默认值或添加 `when: { scene: group, targets_self: false }` 条件。
 
-**Existing dependencies leveraged (no additions):**
-- **Playwright + Chromium:** Text-to-image rendering via `render_markdown_to_image()` — already in Docker image
-- **LanceDB (pin to >= 0.28.0, < 1.0):** Bump floor for `merge_insert` improvements and `compact_files` API
-- **markdown-it-py + Jinja2:** Markdown-to-HTML for image rendering — already present
+- **NapCat gateway hypothesis** (Architecture research): `napcat.py:219-222` 计算 `reply_targets_self` 时依赖 `reply_reference.sender_user_id`，这个值来自 OneBot reply segment 的 `data["user_id"]` 或 `data["qq"]` 字段。如果 NapCat 版本变更导致字段为空或不正确，`reply_targets_self` 永远为 False。
 
-**Explicitly rejected:** APScheduler (threading-based or unstable v4), Celery/Huey/dramatiq (require message broker), loguru (replaces stdlib entirely, not async-safe), external plugin frameworks (Pluggy, stevedore — overkill for ~10-20 plugins).
+**需要生产环境 debug 日志确认具体是哪一条。**
 
-### Expected Features
+### 2. Scheduler Tool (P2)
 
-See [FEATURES.md](FEATURES.md) for full analysis with prioritization matrix and competitor comparison.
+**Existing infrastructure (v1.0):** `RuntimeScheduler` + `SQLiteScheduledTaskStore` + `ToolBroker` registration pattern — all complete.
 
-**Must have (table stakes — P1):**
-- Plugin identity (`plugin_id`), install/uninstall API, enable/disable toggle, error isolation, config persistence
-- Unified message tool (reply, quote, mention, media) + cross-session messaging
-- Scheduler with cron + one-shot + persistence + plugin-lifecycle-bound cleanup + graceful shutdown
-- Tool call logging with structured fields, LLM token usage per run, error logging with run context
-- LanceDB concurrent write protection, backup capability, graceful degradation on LTM failure
-- Delete Reference Backend (dead code removal)
+**What to build:** `BuiltinSchedulerToolSurface` (~120 lines)，工具名 `scheduler`，action 参数：`create | list | cancel`。
 
-**Should have (differentiators — P2):**
-- Plugin hot reload via reconciler unload/load cycle
-- Text-to-image rendering (Playwright)
-- Full run trace view in WebUI
-- Schedule-triggered agent runs (proactive bot behavior)
-- LanceDB auto-compaction
+**Critical design constraint:** Pitfall #1 — callback 不能捕获 `ToolExecutionContext`，需要 `ScheduledMessageDispatcher` 中间层在触发时重新构造 `RunContext`。
 
-**Defer (v2+):**
-- Plugin marketplace, dependency resolution, resource usage tracking
-- Conversation replay/debug
-- OpenTelemetry export
-- Forward/合并转发 messages
+**HTTP API endpoints:**
+- `GET /api/scheduler/tasks` — list tasks
+- `POST /api/scheduler/tasks` — create task
+- `DELETE /api/scheduler/tasks/{task_id}` — cancel
+- `PATCH /api/scheduler/tasks/{task_id}/enabled` — pause/resume (需要新增 `set_enabled()` 方法)
 
-### Architecture Approach
+### 3. Plugin Scheduler Usage (P2)
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for full component designs and integration diagrams.
+**Already exists:** `RuntimeScheduler.unregister_by_owner()` + Reconciler teardown path.
 
-The architecture replaces the monolithic `plugin_manager.py` with six focused modules following a Reconciler + Host pattern, adds a Scheduler service with explicit lifecycle positioning (stops first on shutdown), enhances logging by enriching the existing `LogEntry` with a `context: dict` field, and hardens LTM storage with write serialization — all wired through the existing `build_runtime_components()` DI point and `RuntimeApp` lifecycle.
+**What to add:** 注入 scheduler 引用到 plugin context + teardown hook wiring。约 20-30 行代码 + 文档示例。
 
-**Major components:**
-1. **Plugin Reconciler + Host** — Six modules (protocol, package, spec, status, reconciler, host) replace `plugin_manager.py`. Reconciler is the brain (desired vs. actual state), Host is the hands (load/unload/hooks). Three data sources on disk: Package (developer), Spec (operator), Status (reconciler output).
-2. **Unified Message Tool** — `builtin_tools/message.py` translates LLM intent to `Action` objects appended to `RunContext.planned_actions`, dispatched by Outbox. Never bypasses Outbox (preserves persistence, LTM notify, plugin hooks).
-3. **Scheduler** — Pure asyncio service (~150-200 lines) with task registry keyed by `task_id` and `owner`. Supports cron/interval/one-shot. Integrates with plugin unload via `unregister_by_owner()`.
-4. **Logging Enhancement** — No new module. `LogEntry` gains `context: dict`; structured fields emitted via `logging.info(..., extra={})` at six key sites (tool exec, LTM, agent, plugin lifecycle, outbox).
-5. **LTM Data Safety** — Internal to `storage.py`: `asyncio.Lock` for write serialization, validation before write, periodic backup via scheduler, startup integrity check.
-6. **Reference Backend Removal** — Two-phase: null-out (zero behavioral change) then delete dead code across 14+ files.
+### 4. WebUI Scheduler Page (P3)
 
-### Critical Pitfalls
+**Pattern:** `SessionsView.vue` / `PluginsView.vue` 模式。No new npm packages.
 
-See [PITFALLS.md](PITFALLS.md) for all 12 pitfalls with recovery strategies.
+**Backend:** 需要 `set_enabled(task_id, bool)` 方法（scheduler 目前只有 `cancel()` 硬删除）。
 
-1. **Plugin reconciler state desync** — Status drifts from Spec after transient failures if reconciler only reacts to Spec changes. *Avoid:* periodic re-sync timer (60s), rich Status with `last_error`/`retry_count`/`last_reconciled_at`.
-2. **Phantom tool registrations after reload** — Old plugin tools persist in ToolBroker as zombies. *Avoid:* `ToolBroker.unregister_by_owner(plugin_id)` called atomically before re-registration; track ownership.
-3. **LanceDB concurrent write corruption** — No write lock exists; concurrent rewrite operations lose data. *Avoid:* `asyncio.Lock` per table (10-line fix, must be done first before any other LTM work).
-4. **Message tool overwhelming the LLM** — Complex union-typed schema causes hallucinated params and wrong action selection. *Avoid:* 2-3 tools max with <5 params each; test with real LLM calls before shipping.
-5. **Scheduler task leaks on shutdown** — Orphaned tasks hold refs to torn-down subsystems. *Avoid:* tracked task set with `cancel()` + `gather()`, scheduler stops first in shutdown order.
+### 5. WebUI Usability (P3, failing)
 
-## Implications for Roadmap
+**Specific issues:** "保存要有明显反馈，切换动画优雅" — 需要在 WebUI 代码中定位具体 failing 点。
 
-Based on research, the build order and dependency analysis suggest the following phase structure:
+### 6. AstrBot Migration (P6/P7)
 
-### Phase 1: Reference Backend Removal
-**Rationale:** Pure deletion that reduces surface area and noise before the larger refactors. No dependencies on other phases. The plugin refactor deletes `ReferenceToolsPlugin` anyway, so removing the reference subsystem first avoids carrying dead code through subsequent changes.
-**Delivers:** Clean codebase with ~14 files simplified/removed, no runtime behavior change.
-**Addresses:** "Delete Reference Backend" (P1 feature), dead code cleanup.
-**Avoids:** Dangling imports pitfall (#11), BackendBridge breakage pitfall (#12) — must audit bridge plugin usage first.
+**AstrBot data format:**
+- `ConversationV2.content` — OpenAI-format message lists (JSON)
+- `PlatformMessageHistory.content` — message chains (SQLite)
+- Both stored in SQLite
 
-### Phase 2: Plugin Reconciler
-**Rationale:** Foundation for everything else. Scheduler wiring into `PluginRuntimeHost.unload_plugin()` needs the new Host. Message tool goes through cleaned-up ToolBroker path. This is the largest change — do while codebase is cleanest.
-**Delivers:** Six new modules replacing `plugin_manager.py`; declarative plugin management via API/WebUI; plugin identity, enable/disable, error isolation, config persistence.
-**Addresses:** All P1 plugin features.
-**Avoids:** State desync pitfall (#1), phantom registration pitfall (#2) — by designing Status schema and tool ownership tracking from the start.
+**Migration path:** 用 `aiosqlite` 读取 AstrBot SQLite → 转换为 `ConversationDelta` → 走现有 `LtmWritePort.ingest_thread_delta()` 管线（sliding window → embed → LanceDB upsert）。
 
-### Phase 3a/3b/3c: Scheduler, LTM Safety, Logging (parallelizable)
-**Rationale:** These three touch non-overlapping code and can be built concurrently. All depend on Phase 2 (scheduler needs Host for plugin lifecycle integration, logging needs plugin_id context, LTM safety is independent but benefits from scheduler for periodic backup/compaction).
-**Delivers:**
-- *3a — Scheduler:* Cron + interval + one-shot task registration, plugin-lifecycle-bound cleanup, graceful shutdown. Uses `croniter`.
-- *3b — LTM Safety:* `asyncio.Lock` write serialization, backup capability, startup integrity check, graceful degradation.
-- *3c — Logging:* Structured `LogEntry.context`, enriched emit sites, WebUI rendering of structured fields. Uses `structlog`.
-**Addresses:** Scheduler P1 features, LanceDB safety P1 features, observability P1 features.
-**Avoids:** Task leak pitfall (#5), timer drift pitfall (#6), write corruption pitfall (#7), backup inconsistency pitfall (#8), log spam pitfall (#9).
+**Key open questions:**
+- embedding model 必须与现有 LTM embedding model 一致
+- conversation_id 格式映射（AstrBot `qq:group:12345` vs AcaBot 格式）
+- group 消息是按 group 还是按 user 聚合？
 
-### Phase 4: Unified Message Tool
-**Rationale:** Most design-uncertain component (per project progress notes). Benefits from stable plugin system (tool registration), scheduler (cross-session notifications), and logging (tool call observability). Needs real LLM testing for schema validation.
-**Delivers:** Unified message tool (reply, quote, react, recall), cross-session messaging, text-to-image rendering via Playwright.
-**Addresses:** Message tool P1 features, text-to-image P2 feature.
-**Avoids:** LLM confusion pitfall (#3), platform abstraction leak pitfall (#4) — by defining GatewayProtocol extension first and testing with real LLM calls.
-
-### Phase Ordering Rationale
-
-- **Phase 1 before 2:** Reference removal eliminates noise from the plugin refactor; `ReferenceToolsPlugin` deletion is cleaner as a standalone step.
-- **Phase 2 before 3:** Scheduler needs `PluginRuntimeHost` for lifecycle-bound task cleanup. Logging needs `plugin_id` propagation from the new plugin system.
-- **Phase 3 parallelizable:** Scheduler (`scheduler.py`), LTM safety (`storage.py`), and logging (`log_buffer.py` + emit sites) touch entirely different modules.
-- **Phase 4 last:** Message tool is the most design-uncertain and benefits from all prior infrastructure. Cross-session messaging requires scheduler for notifications. Text-to-image requires stable Outbox integration.
-
-### Research Flags
-
-Phases likely needing deeper research during planning:
-- **Phase 2 (Plugin Reconciler):** Complex migration from 972-line monolith. Need detailed audit of current `plugin_manager.py` load ordering and implicit dependencies between plugins. `BackendBridgeToolPlugin` transition needs explicit verification.
-- **Phase 4 (Message Tool):** Schema design requires LLM testing validation. The "unified vs. split" tool decision (1 tool vs. 2-3 tools) must be resolved with empirical testing. GatewayProtocol extension design needs OneBot v11 API review for reaction/recall support.
-
-Phases with standard patterns (lighter planning):
-- **Phase 1 (Reference Removal):** Straightforward deletion with grep verification. Well-defined dependency map already documented.
-- **Phase 3a (Scheduler):** Standard asyncio pattern, ~150-200 lines. `croniter` API is simple.
-- **Phase 3b (LTM Safety):** Internal to one file (`storage.py`). `asyncio.Lock` is a known pattern.
-- **Phase 3c (Logging):** Additive changes to existing infrastructure. `structlog` has excellent stdlib integration docs.
-
-## Confidence Assessment
-
-| Area | Confidence | Notes |
-|------|------------|-------|
-| Stack | HIGH | All recommendations verified against current releases and existing codebase constraints. Only 2 new deps. |
-| Features | HIGH | Based on mature ecosystem analysis (NoneBot2, Koishi, LangSmith) and existing codebase review. Clear P1/P2/P3 prioritization. |
-| Architecture | HIGH | Full source analysis + accepted design doc (`docs/29-plugin-control-plane.md`). Integration points well-mapped. |
-| Pitfalls | HIGH | Grounded in codebase analysis and known failure patterns for asyncio/LanceDB/plugin systems. Recovery strategies defined. |
-
-**Overall confidence:** HIGH
-
-### Gaps to Address
-
-- **Message tool schema complexity vs. LLM usability:** Research recommends 2-3 tools with <5 params each, but the exact split (reply vs. send_message vs. react) needs empirical LLM testing during Phase 4 planning. No substitute for testing with actual model calls.
-- **Plugin load ordering during migration:** The current `plugin_manager.py` has implicit ordering dependencies. The new reconciler design assumes explicit dependency declaration, but the migration path for existing plugins needs per-plugin audit.
-- **LanceDB `run_in_executor` performance:** Research recommends running sync LanceDB calls in executor threads, but actual latency impact under AcaBot's workload is untested. Benchmark during Phase 3b.
-- **Scheduler persistence across restarts:** Research notes the need for persistent job store (SQLite) but the exact schema and migration strategy need design during Phase 3a planning.
-
-## Sources
-
-### Primary (HIGH confidence)
-- AcaBot codebase: `plugin_manager.py`, `storage.py`, `napcat.py`, `app.py`, `bootstrap/`, `control/`
-- `docs/29-plugin-control-plane.md` — accepted Plugin Reconciler design
-- `.planning/PROJECT.md`, `.planning/codebase/ARCHITECTURE.md`, `.planning/codebase/CONCERNS.md`
-- [LanceDB PyPI](https://pypi.org/project/lancedb/) — version 0.30.1 confirmed, concurrent access patterns
-- [Playwright Python PyPI](https://pypi.org/project/playwright/) — version 1.58.0 confirmed
-- [structlog docs](https://www.structlog.org/) — stdlib integration patterns
-- [croniter PyPI](https://pypi.org/project/croniter/) — cron parsing library
-
-### Secondary (MEDIUM confidence)
-- NoneBot2 (`nonebot.dev`) — plugin loading, `require()`, marketplace patterns
-- Koishi (`koishi.chat`) — `ctx.plugin()`, `ctx.cron()`, universal message elements
-- APScheduler docs — asyncio scheduler patterns (used as anti-reference: too heavy for this use case)
-- LangSmith docs — tracing and token tracking patterns
-
-### Tertiary (LOW confidence)
-- APScheduler 4.x stability assessment — still pre-release, API may stabilize differently than expected
-- LanceDB `>= 1.0` breaking changes — speculative, based on Lance format evolution patterns
+**推荐：** CLI 工具（一次性批量迁移）+ WebUI 入口（未来增量迁移）
 
 ---
-*Research completed: 2026-04-02*
-*Ready for roadmap: yes*
+
+## Watch Out For
+
+1. **Scheduler callback 生命周期** — 设计不好会导致消息发到错误会话或在错误时间发
+2. **Group chat bug 两个可能根因** — session-config 修复后仍需验证 NapCat 层是否也有问题
+3. **AstrBot conversation_id 映射** — 如果 group ID 字段名不匹配，历史消息会写入错误的 conversation
+
+---
+
+## Phase Order Recommendation
+
+**主线 A（独立，可最先执行）：**
+1. Phase 1: 群聊 bug 修复 (P1) — 独立于其他所有 feature
+
+**主线 B（scheduler 能力暴露）：**
+2. Phase 2: Scheduler tool surface (P2) — 模型可用定时任务
+3. Phase 3: Plugin scheduler docs (P2) — 插件侧使用方式
+4. Phase 4: WebUI scheduler page (P3) — HTTP API + Vue 组件
+
+**主线 C（独立，可与 B 并行）：**
+5. Phase 5: WebUI usability (P3) — 独立优化
+6. Phase 6: AstrBot extraction (P6) — 研究 + 工具
+7. Phase 7: LTM import + verification (P7) — 依赖 P6
+
+---
+*Research synthesized: 2026-04-05*

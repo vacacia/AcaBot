@@ -1,355 +1,319 @@
-# Stack Research
+# Technology Stack
 
-**Domain:** Chatbot runtime infrastructure hardening (plugin system, messaging, scheduler, logging, vector DB integrity, text-to-image)
-**Researched:** 2026-04-02
-**Confidence:** HIGH (all recommendations verified against current releases and existing codebase constraints)
+**Project:** AcaBot v1.1
+**Researched:** 2026-04-05
+**Focus:** Scheduler tool exposure, WebUI improvements, group chat bug fix, LTM migration
+
+---
 
 ## Executive Summary
 
-AcaBot is a Python 3.11+ asyncio chatbot runtime. This research covers six infrastructure dimensions needed for the current milestone. Key principle: **minimize new dependencies** — AcaBot already has a working pipeline, so prefer stdlib/existing-dep solutions over new frameworks.
+This milestone is **zero new Python dependencies** and **zero new npm packages**. All four feature areas (scheduler tool, WebUI scheduler page, group chat filter bug, AstrBot migration) build on existing infrastructure that was validated in v1.0. The core finding: everything needed is already in `pyproject.toml` or `package.json` -- the work is integration, not library acquisition.
 
-| Dimension | Recommendation | New Deps |
-|-----------|---------------|----------|
-| Plugin reconciler | Custom desired-state reconciler (no library) | None |
-| Unified message tool | Single `message` tool with action dispatch | None |
-| Task scheduler | Custom asyncio scheduler + `cronsim` | `cronsim` |
-| Structured logging | `structlog` >= 25.1.0 | `structlog` |
-| LanceDB integrity | Application-level lock + backup + compact | None (update `lancedb` pin) |
-| Playwright rendering | Async Playwright with singleton browser | None (already installed) |
+The only consideration is `croniter` vs `cronsim` (the previous STACK.md recommended migrating to `cronsim`). In practice, `croniter` is already deeply embedded in the scheduler (`scheduler.py` has 5 call sites) and the v1.0 scheduler infrastructure is tested and working. Migrating to `cronsim` now would be churn with no user-facing benefit. **Recommendation: keep `croniter` for v1.1, reassess if it breaks.**
 
 ---
 
-## 1. Plugin Reconciler Pattern
+## Feature 1: Model-Facing Scheduler Tool
 
-**Recommendation: Kubernetes-style desired-state reconciliation (as designed in docs/29)**
-**Confidence: HIGH**
+### Recommended Stack
 
-### What to Use
-
-The existing design in `docs/29-plugin-control-plane.md` is the right pattern. No external library needed.
-
-| Concept | Implementation | Rationale |
-|---------|---------------|-----------|
-| Desired state (Spec) | `PluginSpec` YAML in `runtime_config/plugins/` | Operator intent is declarative, survives restarts |
-| Observed state (Status) | `PluginStatus` JSON in `runtime_data/plugins/` | Reconciler output, WebUI reads this |
-| Package catalog | `PluginPackage` from `extensions/plugins/` | Code availability is a separate concern from intent |
-| Reconciler | `PluginReconciler` — pure function: `(packages, specs, host_state) -> actions` | Single convergence entry point eliminates the current 3-way split |
-| Executor (Host) | `PluginRuntimeHost` — load/unload/teardown/run_hooks | Dumb executor, no decision logic |
-
-### Why Desired-State over Imperative
-
-- **Crash recovery**: On restart, `reconcile_all()` compares spec vs host memory state and converges. No "did the last load succeed?" ambiguity.
-- **WebUI simplicity**: UI writes spec, triggers reconcile, reads status. Three clean operations instead of imperative "load this plugin now" with partial failure handling.
-- **Proven at scale**: Kubernetes controllers, Terraform, Ansible — all use this pattern for exactly these reasons.
-
-### What NOT to Use
-
-| Avoid | Why | Use Instead |
-|-------|-----|-------------|
-| Imperative load/unload commands | State becomes ambiguous after crashes, partial failures | Desired-state reconciliation |
-| File-watching (watchdog, inotify) | Complexity, platform differences, Docker volume edge cases | Manual trigger via API + reconcile on startup |
-| External orchestrators (Pluggy, stevedore, yapsy) | Over-engineered for ~10-20 plugins; AcaBot's plugin protocol is already well-defined | Custom reconciler (~200 lines) |
-
----
-
-## 2. Unified Message/Action Tooling
-
-**Recommendation: Extend existing `Action`/`ActionType` + `Outbox` with a unified `send_message` LLM tool**
-**Confidence: MEDIUM — design details pending, but architecture direction is clear**
-
-### What to Use
-
-| Component | Approach | Rationale |
-|-----------|----------|-----------|
-| LLM-facing tool | Single `send_message` tool with typed `action` parameter | LLM picks action type (text, reply, reaction, image, forward); one tool reduces schema complexity |
-| Message construction | `MessageSegment` dataclass (platform-agnostic) | Maps 1:1 to OneBot v11 segments today, extensible to other platforms later |
-| Text-to-image | `render_markdown_to_image()` in Outbox layer (uses Playwright) | LLM calls `send_message(action="image", markdown="...")`, Outbox renders and sends |
-| Cross-session messaging | `target` parameter on `send_message` with channel identifier | Gateway resolves channel; session config controls which targets are allowed |
-| Platform adapter | `GatewayProtocol.send_action(Action)` — existing pattern | Keep Gateway as thin protocol bridge; action types are platform-agnostic |
-
-### Architecture Principle
-
-The LLM should think in terms of **intent** (reply, react, send image), not platform primitives (CQ codes, segment arrays). The Outbox translates intent to platform-specific delivery.
-
-### What NOT to Use
-
-| Avoid | Why | Use Instead |
-|-------|-----|-------------|
-| Multiple send tools (send_text, send_image, send_reply, ...) | Bloats tool schema; LLMs handle fewer tools better | Single `send_message` with action discriminator |
-| Direct OneBot v11 segment construction in LLM tool | Couples LLM to platform; breaks when adding Telegram/Discord | Platform-agnostic MessageSegment + Gateway adapter |
-| Separate "rendering service" process | Over-engineered for single-container deployment | In-process Playwright call in Outbox |
-
----
-
-## 3. Task Scheduler Infrastructure
-
-**Recommendation: Custom lightweight asyncio scheduler built on `asyncio.TaskGroup` (Python 3.11+)**
-**Confidence: HIGH**
-
-### Why Not APScheduler or Celery
-
-| Alternative | Why NOT for AcaBot |
-|-------------|-------------------|
-| **APScheduler 4.x** | Still in alpha as of April 2026 (4.0.0a6). Docs explicitly warn: "do not use in production". No stable release timeline. |
-| **APScheduler 3.x** | Threading-based, not native asyncio. `AsyncIOScheduler` is a thin wrapper with sync internals. |
-| **Celery** | Requires external broker (Redis/RabbitMQ). Massive overkill for single-process bot. |
-| **Huey** | Similar to Celery-lite. Still needs Redis or SQLite backend. Unnecessary for in-process scheduling. |
-| **dramatiq** | Same category as Celery — distributed task queue, not in-process scheduler. |
+| Technology | Version | Purpose | Why |
+|------------|---------|---------|-----|
+| `RuntimeScheduler` | existing | Task execution engine | Already in `src/acabot/runtime/scheduler/scheduler.py` -- full cron/interval/one-shot support |
+| `ToolBroker` | existing | Tool registration/dispatch | `src/acabot/runtime/tool_broker/broker.py` -- unified tool registry |
+| `SQLiteScheduledTaskStore` | existing | Task persistence | `src/acabot/runtime/scheduler/store.py` -- SQLite-backed |
+| `croniter` | >= 2.0.0 (existing) | Cron expression parsing | Already in `pyproject.toml`, 5 call sites in scheduler |
 
 ### What to Build
 
-```
-src/acabot/runtime/scheduler.py  (~150-200 lines)
-```
+A new `BuiltinSchedulerToolSurface` in `src/acabot/runtime/builtin_tools/scheduler.py` (~120 lines), following the exact pattern of `BuiltinMessageToolSurface`:
 
-| Feature | Implementation |
-|---------|---------------|
-| Cron-like scheduling | Parse cron expressions with `cronsim` |
-| Interval scheduling | `asyncio.sleep()` in a loop with cancellation token |
-| One-shot delayed tasks | `asyncio.create_task()` with `asyncio.sleep(delay)` |
-| Task registry | `dict[task_id, ScheduledTask]` with owner tracking (plugin_id or "core") |
-| Graceful shutdown | `asyncio.TaskGroup` or manual task set with `cancel()` on `app.stop()` |
-| Plugin integration | `PluginRuntimeHost.unload_plugin()` cancels all tasks owned by that plugin_id |
+- Register as source `builtin:scheduler` with ToolBroker
+- Single tool named `scheduler` with action parameter: `create | list | cancel`
+- `create`: maps to `RuntimeScheduler.register()` with schedule_type + schedule_spec
+- `list`: maps to `RuntimeScheduler.list_tasks()`
+- `cancel`: maps to `RuntimeScheduler.cancel(task_id)`
+- Session binding: pass `conversation_id` as `owner` metadata so tasks auto-cleanup when session is pruned
 
-### Supporting Library
+### Key Integration Points
 
-| Library | Version | Purpose | Why |
-|---------|---------|---------|-----|
-| `cronsim` | >= 2.6 | Cron expression parsing & evaluation | Actively maintained (used by Home Assistant, Healthchecks.io). Pure Python, no dependencies. Timezone-aware via `zoneinfo`. Replaces `croniter` which was declared unmaintained in Dec 2024 due to EU CRA. |
+- `ToolBroker.register_tool()` -- same path as message/computer/skills/sticky_notes tools
+- `RuntimeScheduler.register()` -- already accepts `owner`, `metadata`, `persist` parameters
+- `ToolExecutionContext` -- provides `target` (EventSource) for deriving `conversation_id`
+- Control Plane HTTP API -- needs new endpoints under `/api/scheduler/*` for WebUI
 
-### What NOT to Use
+### New HTTP API Endpoints (for both LLM and WebUI)
 
-| Avoid | Why | Use Instead |
-|-------|-----|-------------|
-| `croniter` | **Unmaintained since Dec 2024.** Maintainer declared abandonment due to EU Cyber Resilience Act. PyPI package may be unpublished. | `cronsim` >= 2.6 |
-| `schedule` (PyPI) | Synchronous, polling-based, not asyncio-native | Custom asyncio scheduler |
-| `APScheduler 3.x` | Threading-based, awkward asyncio integration | Custom asyncio scheduler |
-| `APScheduler 4.x` | Still pre-release alpha, API unstable, no production use recommended | Wait for stable release; custom is simpler for our needs |
-| Raw `asyncio.sleep()` loops scattered in code | No centralized management, no cancellation on shutdown, no observability | Centralized scheduler with task registry |
+| Endpoint | Method | Maps To |
+|----------|--------|---------|
+| `/api/scheduler/tasks` | GET | `RuntimeScheduler.list_tasks()` |
+| `/api/scheduler/tasks` | POST | `RuntimeScheduler.register()` |
+| `/api/scheduler/tasks/{task_id}` | DELETE | `RuntimeScheduler.cancel(task_id)` |
+| `/api/scheduler/tasks/{task_id}` | GET | Single task detail |
 
----
+### What NOT to Do
 
-## 4. Structured Logging
-
-**Recommendation: `structlog` with stdlib `logging` integration**
-**Confidence: HIGH**
-
-### What to Use
-
-| Library | Version | Purpose | Rationale |
-|---------|---------|---------|-----------|
-| `structlog` | >= 25.1.0 (latest: **25.5.0**, Oct 2025) | Structured logging with context binding | De facto standard for Python structured logging. Works WITH stdlib logging (not replacing it). AcaBot already uses `logging.getLogger("acabot.*")` everywhere — structlog wraps this, not replaces it. |
-
-### Integration Pattern
-
-```python
-# Configure once at startup
-structlog.configure(
-    processors=[
-        structlog.contextvars.merge_contextvars,    # async-safe context
-        structlog.processors.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
-    ],
-    wrapper_class=structlog.stdlib.BoundLogger,
-    logger_factory=structlog.stdlib.LoggerFactory(),
-)
-```
-
-Key features for AcaBot:
-
-| Feature | Why It Matters |
-|---------|---------------|
-| `contextvars` integration | Bind `run_id`, `thread_id`, `plugin_id` once per request; all downstream logs include them automatically. Critical for async where threading.local doesn't work. |
-| Stdlib compatibility | Existing `logging.getLogger()` calls continue working. Migration is incremental. |
-| JSON + console output | Dev: colored console. Production: JSON for log aggregation. Switch via config. |
-| In-memory log buffer | AcaBot's WebUI log viewer can consume structured events directly. |
-
-### What NOT to Use
-
-| Avoid | Why | Use Instead |
-|-------|-----|-------------|
-| `loguru` | Replaces stdlib logging entirely. AcaBot has 50+ `logging.getLogger()` calls — migration is all-or-nothing. Loguru's `logger.bind()` is thread-local, not async-safe without manual `contextvars` patching. | `structlog` (wraps stdlib, async-native) |
-| Plain stdlib `logging` (current state) | No structured fields, no async context propagation, no JSON output. Tool calls and LTM operations are invisible. | `structlog` on top of stdlib |
-| `python-json-logger` | JSON formatting only — no context binding, no processor pipeline. | `structlog` (superset) |
+| Avoid | Why | Do Instead |
+|-------|-----|------------|
+| Expose raw `RuntimeScheduler` to LLM | LLM should not know about heap entries, misfire policy internals | Thin tool surface that translates LLM intent to scheduler calls |
+| Let LLM specify arbitrary callbacks | Security risk -- LLM could reference internal functions | Tool surface creates a fixed callback that sends a notification to the bound conversation |
+| Separate tools for cron/interval/oneshot | Bloats tool schema; LLM picks wrong one | Single `scheduler` tool with `schedule_type` discriminator |
 
 ---
 
-## 5. LanceDB Data Integrity Patterns
+## Feature 2: WebUI Scheduler Management Page
 
-**Recommendation: Application-level protection with asyncio.Lock + periodic backup**
-**Confidence: HIGH**
+### Recommended Stack
 
-### Current State
-
-AcaBot uses LanceDB >= 0.25.0 (latest: **0.30.1**, March 2026). The LTM storage module (`storage.py`) uses synchronous LanceDB API calls. The LTM ingestor runs as a background async task.
-
-### Data Integrity Strategy
-
-| Concern | Solution | Rationale |
-|---------|----------|-----------|
-| **Concurrent writes** | `asyncio.Lock` per LanceDB connection (already partially in place) | LanceDB's Lance format supports concurrent reads but single-writer. Since AcaBot is single-process, an asyncio Lock is sufficient. |
-| **Read consistency** | `read_consistency_interval=timedelta(0)` on connect | Forces strong consistency. Performance cost is negligible for AcaBot's scale (~1000s of entries, not millions). |
-| **Write atomicity** | Lance format uses manifest-based commits (append-only log of data fragments) | Built into the format — each write creates a new manifest version. If the process crashes mid-write, the last committed manifest is still valid. |
-| **Backup** | Periodic `shutil.copytree()` of the entire LanceDB directory to `runtime_data/backups/ltm/` | Simple, reliable. Schedule via the new scheduler infrastructure (e.g., daily). |
-| **Corruption recovery** | `lancedb.connect()` on backup directory; swap paths in config | If primary is corrupted, point to last known good backup. |
-| **Version pinning** | Pin `lancedb >= 0.28.0, < 1.0` in `pyproject.toml` | Lance format has had breaking changes between major versions. Pin to avoid surprise migrations. |
-
-### LanceDB-Specific Best Practices (2025/2026)
-
-| Practice | Detail |
-|----------|--------|
-| **Don't use `overwrite` mode for updates** | Use `merge_insert` (upsert) instead. Overwrite rewrites the entire table. |
-| **Rebuild indexes after large batch writes** | Call `table.create_index()` after ingesting a batch, not after every single write. |
-| **Use `add()` for appends, `update()` for mutations** | Don't delete-then-add; use Lance's native update path. |
-| **Monitor table fragment count** | Many small writes create many fragments. Periodic `table.compact_files()` merges them. Schedule via scheduler. |
-
-### What NOT to Use
-
-| Avoid | Why | Use Instead |
-|-------|-----|-------------|
-| External WAL (write-ahead log) on top of LanceDB | Lance format already has manifest-based versioning that provides crash safety | Rely on Lance's built-in mechanism |
-| Multi-process access to same LanceDB directory | Lance format is single-writer. Multiple processes = corruption risk | Single process with asyncio.Lock |
-| `lancedb >= 1.0` (when it ships) | Breaking API changes likely | Pin `< 1.0`, upgrade deliberately |
-
-### Recommended Version Update
-
-```toml
-# pyproject.toml
-lancedb = ">= 0.28.0, < 1.0"   # was >= 0.25.0; 0.28+ has merge_insert improvements
-pyarrow = ">= 18.0.0"           # keep as-is, compatible
-```
-
----
-
-## 6. Playwright Integration for Text-to-Image
-
-**Recommendation: Direct Playwright async API for HTML-to-PNG rendering**
-**Confidence: HIGH**
-
-### Current State
-
-Playwright + Chromium are already installed in both Full and Lite Docker images. The bot uses them for browser automation via the Computer subsystem. Current version: **1.58.0** (Jan 2026).
+| Technology | Version | Purpose | Why |
+|------------|---------|---------|-----|
+| Vue 3 | ^3.5.22 (existing) | UI framework | Already in `webui/package.json` |
+| Vue Router | ^4.5.1 (existing) | Routing | Already in `webui/package.json` |
+| Vite | ^7.1.7 (existing) | Build tool | Already in `webui/package.json` |
+| Control Plane HTTP API | existing | Data source | `src/acabot/runtime/control/http_api.py` -- pattern already established |
 
 ### What to Build
 
+1. **New view:** `webui/src/views/SchedulerView.vue` (~200 lines)
+   - Table listing all scheduled tasks (owner, schedule type, next fire time, enabled status)
+   - Create dialog (schedule type selector, cron/interval/oneshot input, optional name)
+   - Cancel button per row
+   - Auto-refresh via polling (same pattern as LogsView)
+
+2. **Sidebar entry:** Add "定时任务" link to `AppSidebar.vue` nav section (under "配置" group)
+
+3. **Backend endpoints:** Add scheduler routes to `http_api.py` (pattern: same as sessions/plugins routes)
+
+### Design Decisions
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Data fetching | Direct `fetch()` to `/api/scheduler/*` | Consistent with all existing views (no state management library) |
+| State management | Component-local `ref()` | No Pinia/Vuex -- no existing usage in codebase, adding one for one page is overkill |
+| Styling | Existing CSS variables from `App.vue` | Glass morphism theme already established; reuse `--panel`, `--accent`, etc. |
+| Form controls | Native HTML + custom styling | Consistent with existing components (CustomSelect, EditableListField pattern) |
+
+### What NOT to Add
+
+| Avoid | Why |
+|-------|-----|
+| Pinia / Vuex | No state management library in codebase; 14 views work fine without it |
+| UI component library (Element Plus, Vuetify) | All 14 existing views use custom CSS; adding a library creates visual inconsistency |
+| WebSocket for real-time updates | Polling every 5s is sufficient for a scheduler management page; SSE/WebSocket adds complexity for no real user benefit |
+| Chart library | Not needed for task listing |
+
+### WebUI Usability Improvements (Same Stack)
+
+The "WebUI usability optimization" item requires no new packages either. Improvements should focus on:
+
+- Responsive layout fixes (already partially in `App.vue` with media queries)
+- Better error states and loading indicators (pure CSS + Vue)
+- Sidebar collapsible on mobile (CSS + toggle)
+- Form validation feedback (existing pattern)
+
+---
+
+## Feature 3: Group Chat "Reply Only to @ and Quote" Bug Fix
+
+### Recommended Stack
+
+| Technology | Version | Purpose | Why |
+|------------|---------|---------|-----|
+| `NapCatGateway._translate_message()` | existing | Message translation | Already extracts `mentions_self`, `reply_targets_self`, `targets_self` |
+| `SessionRuntime.build_facts()` | existing | Event fact derivation | Already maps `targets_self` into `EventFacts` |
+| `SessionRuntime.resolve_admission()` | existing | Admission decision | Already resolves admission mode per surface |
+| `MatchSpec.matches()` | existing | Condition evaluation | Already checks `targets_self`, `mentions_self`, `reply_targets_self` |
+
+### Root Cause Analysis
+
+The bug is in the interaction between `targets_self` computation and session-config admission logic.
+
+**Current flow:**
+
+1. `NapCatGateway._translate_message()` computes `targets_self`:
+   ```python
+   targets_self = (
+       raw.get("message_type") == "private"
+       or mentioned_everyone
+       or mentions_self
+       or reply_targets_self
+   )
+   ```
+
+2. `SessionRuntime._surface_candidates()` uses these facts to pick a surface:
+   ```python
+   if facts.mentions_self:
+       return ["message.mention", "message.plain"]
+   if facts.reply_targets_self:
+       return ["message.reply_to_bot", "message.plain"]
+   ```
+
+3. Session YAML's admission domain then decides respond vs silent_drop
+
+**Bug hypothesis (requires confirmation in Phase 1):**
+
+The `message_filter` configuration (`all`, `mention_only`, `reply_only`, `mention_or_reply`) exists in `session_templates.py` as options, but the actual admission logic in `session_runtime.py` does not directly consume a `message_filter` field. Instead it relies on the surface candidate chain. If a group message is neither @mention nor reply_to_bot, it falls to `message.plain` surface, which may have admission mode `respond` -- causing the bot to reply to all messages.
+
+**Fix approach:** Ensure the admission domain in group session configs properly uses `targets_self` / `mentions_self` / `reply_targets_self` as match conditions, so non-targeting messages get `silent_drop`.
+
+### Zero Dependencies Needed
+
+This is a pure logic bug in existing code. No new libraries.
+
+### What NOT to Do
+
+| Avoid | Why |
+|-------|-----|
+| Add filtering at Gateway level | Gateway should translate, not filter -- that's session-config's job |
+| Add a separate "group filter" component | The surface+admission pattern already handles this correctly when configured right |
+| Hardcode group behavior | Session configs should control this per-group |
+
+---
+
+## Feature 4: AstrBot Database Migration to LTM
+
+### Recommended Stack
+
+| Technology | Version | Purpose | Why |
+|------------|---------|---------|-----|
+| `aiosqlite` | >= 0.20.0 (existing) | Read AstrBot SQLite database | Already in `pyproject.toml`; AstrBot uses SQLite with `sqlmodel`/`aiosqlite` |
+| `LanceDbLongTermMemoryStore` | existing | Write target | `src/acabot/runtime/memory/long_term_memory/storage.py` -- `upsert_entries()` accepts batch writes |
+| `LtmWritePort` | existing | Extraction pipeline | `src/acabot/runtime/memory/long_term_memory/write_port.py` -- handles extraction + embedding + storage |
+| `MemoryEntry` | existing | Target data format | `src/acabot/runtime/memory/long_term_memory/contracts.py` |
+
+### AstrBot Database Structure (Source)
+
+AstrBot uses SQLAlchemy+SQLModel with SQLite (`sqlite+aiosqlite:///<path>`). Key tables:
+
+| Table | Contents | Migration Relevance |
+|-------|----------|-------------------|
+| `conversations` (ConversationV2) | `conversation_id`, `platform_id`, `user_id`, `content` (JSON list of OpenAI-format messages), `title`, `persona_id` | **Primary source** -- contains full chat history |
+| `platform_message_history` (PlatformMessageHistory) | `platform_id`, `user_id`, `sender_id`, `sender_name`, `content` (JSON message chain) | **Secondary source** -- raw platform messages (QQ group/private) |
+| `platform_sessions` (PlatformSession) | `session_id`, `platform_id`, `creator`, `is_group` | Maps sessions to users/groups |
+| `personas` (Persona) | `persona_id`, `system_prompt`, `begin_dialogs` | Not needed -- AcaBot has its own soul/self system |
+
+### Migration Strategy
+
+**Phase A: Extract from AstrBot SQLite**
+- Read `conversations` table via `aiosqlite` (no need for SQLModel dependency)
+- Parse `content` JSON field (list of `{"role": "user"|"assistant", "content": "..."}` dicts)
+- Map `platform_id` + `user_id` to AcaBot `conversation_id` format (`qq:group:<id>` or `qq:user:<id>`)
+
+**Phase B: Transform to AcaBot format**
+- Group message pairs into conversation windows (same sliding window logic as `LtmWritePort`)
+- Run through the existing LLM-based extraction pipeline (`LtmWindowExtractor.extract_window()`)
+- This generates `MemoryEntry` objects with proper `topic`, `lossless_restatement`, `keywords`, `persons`, `entities`
+
+**Phase C: Load into LTM**
+- Use `LanceDbLongTermMemoryStore.upsert_entries()` for batch writes
+- Generate embeddings via `LtmEntryEmbeddingClient.embed_entries()`
+
+### Key Integration Points
+
 ```
-src/acabot/runtime/outbox_renderer.py  (~80-100 lines)
+AstrBot SQLite ──aiosqlite──> raw message dicts
+    └──> ConversationDelta (group into windows)
+        └──> LtmWritePort.ingest_thread_delta() (existing method!)
+            └──> extract_window() → embed_entries() → upsert_entries()
 ```
 
-| Component | Implementation |
-|-----------|---------------|
-| `render_markdown_to_image(markdown: str, width: int = 800) -> bytes` | Async function returning PNG bytes |
-| Browser lifecycle | Singleton browser instance, launched on first call, reused across renders |
-| HTML template | Jinja2 template with CSS (Noto CJK fonts, code highlighting, proper margins) |
-| Markdown conversion | `markdown-it-py` (already in Dockerfile) converts MD to HTML |
-| Screenshot | `page.screenshot(full_page=True, type="png")` |
-| Cleanup | Browser closed on `app.stop()` |
+The `LtmWritePort.ingest_thread_delta()` method already handles the full extraction pipeline. The migration script just needs to:
+1. Read AstrBot SQLite
+2. Convert to `ConversationDelta` objects
+3. Call `ingest_thread_delta()` for each conversation
 
-### Integration with Outbox
+### What to Build
+
+A one-time migration script at `scripts/migrate_astrbot_to_ltm.py` (~150 lines):
 
 ```python
-# In Outbox.dispatch(), when action is SEND_IMAGE_FROM_MARKDOWN:
-png_bytes = await self.renderer.render_markdown_to_image(markdown_text)
-# Convert to base64, send as OneBot image segment
+# 1. Open AstrBot SQLite (read-only)
+# 2. Read conversations + platform_message_history
+# 3. Group messages by conversation_id into ConversationDelta
+# 4. For each delta, call ltm_write_port.ingest_thread_delta()
+# 5. Report progress and stats
 ```
 
-### Performance Considerations
+Plus a Control Plane HTTP API endpoint to trigger and monitor migration:
+- `POST /api/migration/astrbot` -- start migration
+- `GET /api/migration/astrbot/status` -- poll progress
 
-| Concern | Solution |
-|---------|----------|
-| Cold start (~2-3s for browser launch) | Launch browser eagerly on `app.start()`, not on first render |
-| Per-render latency (~200-500ms) | Acceptable for chat; reuse browser context, create new page per render |
-| Memory | Single Chromium instance: ~100-200MB. Already budgeted in Docker image. |
-| Concurrent renders | `asyncio.Semaphore(3)` to limit parallel page renders |
+### What NOT to Do
 
-### What NOT to Use
-
-| Avoid | Why | Use Instead |
-|-------|-----|-------------|
-| `imgkit` / `wkhtmltoimage` | Requires separate wkhtmltopdf binary; worse CSS support than Chromium; project unmaintained | Playwright (already installed) |
-| `weasyprint` for image output | Renders to PDF, not PNG directly. Extra conversion step. Doesn't support modern CSS well. | Playwright |
-| `selenium` | Heavier, slower, requires separate WebDriver. Playwright is faster and already in the image. | Playwright |
-| `markdown2image` PyPI package | Thin wrapper around Playwright; adds a dependency for ~10 lines of code | Direct Playwright API |
-| Spawning new browser per render | ~2-3s cold start each time | Singleton browser with page-per-render |
+| Avoid | Why | Do Instead |
+|-------|-----|------------|
+| Import AstrBot's SQLModel/SQLAlchemy models | Pulls in AstrBot's entire dependency tree | Raw SQL via `aiosqlite` -- only need SELECT on 2-3 tables |
+| Migrate personas/system prompts | AcaBot has its own soul/self system; AstrBot personas don't map cleanly | Only migrate conversation content |
+| Try to preserve message IDs | AcaBot uses a different ID scheme; references would break | Generate new AcaBot-compatible IDs |
+| Skip the extraction pipeline and write raw | Raw messages are too verbose for LTM; extraction produces the compressed `lossless_restatement` format | Always go through `LtmWritePort` extraction |
 
 ---
 
-## Supporting Libraries Summary
+## Alternatives Considered
 
-### New Dependencies to Add
-
-| Library | Version | Purpose | Size Impact |
-|---------|---------|---------|-------------|
-| `structlog` | >= 25.1.0 | Structured logging with async context | ~200KB, pure Python |
-| `cronsim` | >= 2.6 | Cron expression parsing for scheduler | ~30KB, pure Python, no deps |
-
-### Existing Dependencies to Update
-
-| Library | Current | Recommended | Why |
-|---------|---------|-------------|-----|
-| `lancedb` | >= 0.25.0 | >= 0.28.0, < 1.0 | merge_insert improvements, compact_files API |
-
-### Dependencies Already Present (no changes needed)
-
-| Library | Used For |
-|---------|----------|
-| `playwright` (1.58.0) | Text-to-image rendering (already in Docker image) |
-| `markdown-it-py` (>= 3.0) | Markdown to HTML (already in Docker image) |
-| `Jinja2` (>= 3.1) | HTML templates (already in Docker image) |
-
----
-
-## Build In-House (Not External Libraries)
-
-| Component | ~LOC | Why Not a Library |
-|-----------|------|-------------------|
-| Plugin Reconciler | ~200-300 | Domain-specific desired-state logic; no generic library fits |
-| AsyncScheduler | ~150-200 | APScheduler 4 unstable, 3.x sync-first; custom asyncio scheduler is trivial with `cronsim` |
-| Unified message tool | ~150 | Tool definition is AcaBot-specific; no generic library |
-| PlaywrightRenderer | ~80-100 | Thin wrapper around Playwright async API |
-| LanceDB integrity layer | ~100 | Wrapper adding lock + backup + validation around existing storage.py |
+| Category | Recommended | Alternative | Why Not |
+|----------|-------------|-------------|---------|
+| Cron parsing | Keep `croniter` | Migrate to `cronsim` | `croniter` works fine in production; migration is pure churn for v1.1 |
+| WebUI state management | Component-local refs | Pinia | No existing usage; 14 views work without it |
+| WebUI components | Custom CSS | Element Plus / Naive UI | Visual inconsistency with existing glass morphism design |
+| AstrBot DB access | Raw `aiosqlite` | Import AstrBot's `SQLModel` | Pulls in entire AstrBot dependency tree |
+| Migration trigger | HTTP API endpoint | CLI script only | WebUI integration lets operator trigger and monitor from browser |
+| Real-time scheduler updates | Polling (5s interval) | WebSocket / SSE | Overkill for a task list that changes every minutes/hours |
 
 ---
 
 ## Installation
 
 ```bash
-# New core dependencies (add to pyproject.toml [dependencies])
-uv pip install "structlog>=25.1.0" "cronsim>=2.6"
+# No new packages needed!
+# All dependencies are already in pyproject.toml and package.json
 
-# Update existing (in pyproject.toml)
-# lancedb >= 0.28.0, < 1.0  (was >= 0.25.0)
-
-# No new Dockerfile changes needed — Playwright, markdown-it-py, Jinja2 already present
+# Verify existing deps are current:
+pip install "croniter>=2.0.0"   # already in pyproject.toml
+pip install "aiosqlite>=0.20.0" # already in pyproject.toml
 ```
 
 ---
 
-## Version Compatibility
+## Confidence Assessment
 
-| Package | Compatible With | Notes |
-|---------|-----------------|-------|
-| `structlog >= 25.1` | Python 3.8+ | Uses `contextvars` (stdlib since 3.7). Supports Python 3.14. |
-| `cronsim >= 2.6` | Python 3.8+ | Pure Python, no C extensions. Timezone via `zoneinfo`. |
-| `lancedb 0.28-0.30` | `pyarrow >= 18.0` | Already satisfied by current `pyarrow` pin |
-| `playwright 1.58` | Chromium 131+ | Docker image bundles matching Chromium |
+| Feature Area | Confidence | Reason |
+|-------------|------------|--------|
+| Scheduler tool surface | HIGH | Exact same pattern as existing `BuiltinMessageToolSurface`; `RuntimeScheduler` API is clean and complete |
+| WebUI scheduler page | HIGH | Same view pattern as 14 existing views; HTTP API pattern established |
+| Group chat bug fix | MEDIUM | Root cause identified (admission domain configuration), but exact fix location depends on session YAML inspection during implementation |
+| AstrBot migration | HIGH | `LtmWritePort.ingest_thread_delta()` already implements the full extraction pipeline; migration script is a thin adapter |
+
+---
+
+## Summary: What Changed from v1.0 Stack
+
+| v1.0 Recommendation | v1.1 Status |
+|---------------------|-------------|
+| Add `cronsim` | **Not needed** -- kept `croniter` (already integrated, working) |
+| Add `structlog` | **Already done** in v1.0 |
+| Custom asyncio scheduler | **Already done** in v1.0 |
+| LanceDB integrity layer | **Already done** in v1.0 |
+| Playwright renderer | **Already done** in v1.0 |
+| **New for v1.1** | **Zero new dependencies** |
 
 ---
 
 ## Sources
 
-- [structlog PyPI](https://pypi.org/project/structlog/) — v25.5.0 confirmed latest (Oct 2025)
-- [structlog docs](https://www.structlog.org/) — stdlib integration, contextvars, AsyncBoundLogger
-- [cronsim PyPI](https://pypi.org/project/cronsim/) — v2.6 confirmed, used by Home Assistant & Healthchecks.io
-- [croniter unmaintained notice](https://github.com/pallets-eco/croniter) — abandoned Dec 2024, EU CRA
-- [APScheduler version history](https://apscheduler.readthedocs.io/en/master/versionhistory.html) — 4.0.0a6 still alpha, no stable release
-- [LanceDB PyPI](https://pypi.org/project/lancedb/) — v0.30.1 confirmed (March 2026)
-- [LanceDB tables guide](https://github.com/lancedb/lancedb/blob/main/docs/src/guides/tables.md) — concurrent access, merge_insert, compact_files
-- [Playwright Python PyPI](https://pypi.org/project/playwright/) — v1.58.0 confirmed (Jan 2026)
-- [Playwright Python docs](https://playwright.dev/python/docs/screenshots) — screenshot API reference
-- `docs/29-plugin-control-plane.md` — existing plugin reconciler design (internal)
+- `src/acabot/runtime/scheduler/scheduler.py` -- RuntimeScheduler implementation (verified 2026-04-05)
+- `src/acabot/runtime/tool_broker/broker.py` -- ToolBroker registration pattern (verified 2026-04-05)
+- `src/acabot/runtime/builtin_tools/message.py` -- Reference tool surface implementation (verified 2026-04-05)
+- `src/acabot/runtime/control/http_api.py` -- HTTP API routing pattern (verified 2026-04-05)
+- `src/acabot/runtime/memory/long_term_memory/write_port.py` -- LTM ingestion pipeline (verified 2026-04-05)
+- `src/acabot/runtime/memory/long_term_memory/storage.py` -- LanceDB store API (verified 2026-04-05)
+- `src/acabot/gateway/napcat.py` -- OneBot v11 message translation (verified 2026-04-05)
+- `src/acabot/runtime/control/session_runtime.py` -- Admission logic (verified 2026-04-05)
+- `ref/AstrBot/astrbot/core/db/__init__.py` -- AstrBot database schema (verified 2026-04-05)
+- `ref/AstrBot/astrbot/core/db/po.py` -- AstrBot data models (verified 2026-04-05)
+- `webui/package.json` -- Frontend dependencies (verified 2026-04-05)
 
 ---
-*Stack research for: AcaBot runtime infrastructure hardening*
-*Researched: 2026-04-02*
+*Stack research for: AcaBot v1.1 production readiness + LTM migration*
+*Researched: 2026-04-05*

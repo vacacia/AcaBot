@@ -1,8 +1,14 @@
 # Feature Research
 
-**Domain:** Agentic chatbot runtime infrastructure (plugin management, messaging, scheduling, observability, data safety, knowledge backends)
-**Researched:** 2026-04-02
-**Confidence:** HIGH (based on mature ecosystem analysis: NoneBot2, Koishi, LangChain/LangSmith, APScheduler, LanceDB docs, plus AcaBot codebase review)
+**Domain:** AcaBot v1.1 -- Production usability: group chat fix, scheduler tool exposure, WebUI improvements, AstrBot history migration
+**Researched:** 2026-04-05
+**Confidence:** HIGH (based on v1.0 codebase audit, OneBot v11 spec, AstrBot reference codebase, scheduler/storage contracts review)
+
+---
+
+## Scope Note
+
+This file covers ONLY the v1.1 milestone features. The v1.0 feature landscape (plugin Reconciler, unified message tool, scheduler infra, LTM safety, structured logging, Control Plane API, WebUI) is documented in the previous version of this file and is now **validated/landed**. All features below assume v1.0 infrastructure exists.
 
 ---
 
@@ -10,113 +16,127 @@
 
 ### Table Stakes (Users Expect These)
 
-#### 1. Plugin Management
+#### 1. Group Chat Response Filtering (Bug Fix)
 
 | Feature | Why Expected | Complexity | Notes |
 |---------|--------------|------------|-------|
-| Plugin install/uninstall via API | Every extensible platform (NoneBot2, Koishi, Home Assistant) has this | MEDIUM | AcaBot has `extensions/plugins/` but it never worked. Reconciler plan in docs/29 is the right fix. |
-| Plugin enable/disable toggle | Non-destructive way to turn off misbehaving plugins; preserve config | LOW | Spec-level `enabled` flag, no code unload needed |
-| Plugin config via WebUI | Operators won't edit YAML for plugin settings | MEDIUM | Needs schema declaration per plugin (JSON Schema or typed dataclass) |
-| Plugin lifecycle hooks (setup/teardown) | Standard in every plugin system | LOW | Already exists as `RuntimePlugin.setup()/teardown()` ABC |
-| Stable plugin identity (plugin_id) | Config/UI references must survive code refactors | LOW | Currently uses import path — fragile. Switch to declared `plugin_id` string. |
-| Plugin error isolation | One bad plugin must not crash the runtime | MEDIUM | Try/except around hook calls + status reporting. Partially exists. |
-| Persistent plugin state across restarts | Plugins need data dirs that survive restarts | LOW | Provide `plugin_data_dir` per plugin (already have runtime_data/) |
+| Bot only replies when @'d or quoted in group | Standard QQ bot behavior; noise without it makes bot unusable in groups | LOW (fix) | The bug is in session-config's `message.plain` surface matching ambient group messages with default `mode: respond`. The admission domain must default to `silent_drop` for `message.plain` in group scenes. |
+| Correct `targets_self` propagation | All downstream decisions (admission, routing) depend on this flag | LOW | Already works at gateway level (NapCat sets `targets_self` correctly for mentions/replies). The gap is in session-config surface resolution: `message.plain` surface should not map to `respond` mode. |
 
-#### 2. Message/Action Tools
+**Root Cause Analysis (from codebase):**
 
-| Feature | Why Expected | Complexity | Notes |
-|---------|--------------|------------|-------|
-| Text reply | Fundamental — already works | LOW | Existing |
-| Quote/reply-to specific message | Standard in all IM bots | LOW | OneBot v11 `reply` segment; need message_id tracking |
-| Image sending (URL or file) | All mature IM bots support media | LOW | OneBot v11 `image` segment; needs tool exposure |
-| @mention in reply | Expected for group contexts | LOW | OneBot v11 `at` segment |
-| Message recall/delete | Clean up bot mistakes | LOW | OneBot v11 `delete_msg` API |
-| Silent/record-only mode | Bot listens without replying in some contexts | LOW | Already in RouteDecision (admission: record_only/silent_drop) |
+The surface candidate chain in `session_runtime._surface_candidates()` returns `["message.plain"]` for group messages that are neither @ nor replies. If the session config's `message.plain` surface has `admission.default.mode: respond` (or no admission config at all, which defaults to `respond`), the bot responds to every ambient group message. The fix is one of:
 
-#### 3. Scheduler/Cron
+1. (Recommended) Change session config default so `message.plain` admission = `silent_drop` or `record_only` for group scenes.
+2. Add a `when: { scene: group, targets_self: false }` case in the admission domain that sets `mode: silent_drop`.
+
+No code changes to gateway, event types, or router needed. This is a session-config-level fix.
+
+#### 2. Model-Facing Scheduler Tool
 
 | Feature | Why Expected | Complexity | Notes |
 |---------|--------------|------------|-------|
-| Periodic/cron tasks | Every bot framework offers this (NoneBot2 `nonebot-plugin-apscheduler`, Koishi `ctx.cron()`) | MEDIUM | APScheduler 3.x asyncio integration is the standard Python approach |
-| One-shot delayed tasks | "Remind me in 30 min" is basic bot functionality | LOW | `scheduler.add_job(trigger='date')` |
-| Task persistence across restarts | Scheduled reminders must survive restarts | MEDIUM | APScheduler `SQLAlchemyJobStore` or custom SQLite store |
-| Task cancellation | Cancel scheduled tasks by ID | LOW | Standard scheduler API |
-| Graceful shutdown (drain running tasks) | No orphaned coroutines on bot restart | MEDIUM | `scheduler.shutdown(wait=True)` + timeout |
+| Create scheduled task (cron/interval/one-shot) | "Remind me every Monday" -- basic LLM agent capability | MEDIUM | Requires a new builtin tool surface (`BuiltinSchedulerToolSurface`) registered in `register_core_builtin_tools`. The tool translates LLM parameters into `RuntimeScheduler.register()` calls. |
+| List/view own tasks | Agent needs to see what it scheduled | LOW | `RuntimeScheduler.list_tasks()` already exists; filter by owner or metadata. |
+| Cancel task by ID | "Cancel my reminder" -- basic management | LOW | `RuntimeScheduler.cancel()` already exists; expose through tool. |
+| Bind task to session (conversation) | Scheduled message should target the originating conversation | MEDIUM | Requires `destination_conversation_id` in task metadata + callback that sends message via Outbox when task fires. Uses existing `post_notification` pattern from Control Plane. |
+| Task fires and sends message to bound session | The whole point of scheduling -- proactive messaging | MEDIUM | Callback needs access to Outbox/pipeline to send. The `post_notification` method in `RuntimeControlPlane` is the reference implementation. |
 
-#### 4. Observability/Logging
+**What already exists (from codebase audit):**
+- `RuntimeScheduler`: full cron/interval/one-shot engine with heap-based dispatch, persistence, misfire handling, graceful shutdown -- **complete**
+- `SQLiteScheduledTaskStore`: SQLite persistence layer -- **complete**
+- `contracts.py`: `CronSchedule`, `IntervalSchedule`, `OneShotSchedule`, `ScheduledTaskInfo`, `ScheduledTaskRow` -- **complete**
+- `register()` / `cancel()` / `list_tasks()` / `unregister_by_owner()` APIs -- **complete**
+- `ToolBroker` registration pattern: `register_tool(spec, handler, source=...)` -- **well established**
 
-| Feature | Why Expected | Complexity | Notes |
-|---------|--------------|------------|-------|
-| Tool call logging (name, args, result summary, duration) | Operators need to debug agent behavior | MEDIUM | ToolBroker has `ToolAudit`; needs structured emission and surfacing |
-| LLM token usage per run (input/output/total) | Cost monitoring is table stakes for LLM apps | LOW | litellm returns usage in response. Capture and aggregate. |
-| Error logging with context (run_id, thread_id, plugin_id) | Structured debugging | LOW | Add structured fields to existing `logging.getLogger("acabot.*")` |
-| Request/run latency metrics | Performance monitoring | LOW | Timestamp at pipeline entry/exit. Run state machine already exists. |
-| Log viewing in WebUI | Operators won't SSH to read log files | MEDIUM | In-memory log buffer exists. Needs filtering/search. |
+**What needs to be built:**
+- `BuiltinSchedulerToolSurface` class (following pattern of `BuiltinMessageToolSurface`, `BuiltinComputerToolSurface`)
+- Tool schema definition (JSON schema for LLM: action type, schedule params, message content)
+- Callback factory: generates async callbacks that dispatch messages via Outbox
+- Integration into `register_core_builtin_tools()` in `builtin_tools/__init__.py`
+- Agent prompt hint: "You can schedule tasks using the Schedule tool"
 
-#### 5. Vector DB Data Safety (LanceDB)
-
-| Feature | Why Expected | Complexity | Notes |
-|---------|--------------|------------|-------|
-| Atomic/crash-safe writes | Data must not corrupt on crash | LOW | Lance format uses append-only manifests; inherently safe for completed writes. Verify incomplete-write handling. |
-| Concurrent access protection | Background ingestor + query reads must not corrupt | MEDIUM | LanceDB Python not thread-safe by default; need asyncio Lock or single-writer pattern |
-| Backup/snapshot capability | Operators expect to restore from data loss | LOW | Lance files are just directories; `cp -r`/`rsync` works. Add automated backup. |
-| Data integrity validation on startup | Detect corruption before it causes silent failures | LOW | Row count checks, manifest validation |
-
-#### 6. Reference/Knowledge Backend (RAG general)
+#### 3. Plugin-Side Scheduler Usage
 
 | Feature | Why Expected | Complexity | Notes |
 |---------|--------------|------------|-------|
-| Semantic search over stored knowledge | Core RAG pattern; table stakes for knowledge-augmented LLM | HIGH | Already have LTM with LanceDB — this IS the infrastructure |
-| Source attribution | Users need to know where information came from | LOW | Return source metadata with retrieval results |
+| Plugin accesses scheduler via context | Plugins need periodic tasks too (e.g., RSS checker, stats reporter) | LOW | Inject `RuntimeScheduler` reference into `PluginRuntimeHost` context. Plugin code calls `self.context.scheduler.register(...)` |
+| Plugin tasks auto-cancelled on plugin unload | Prevent orphan timers from unloaded plugins | LOW | `RuntimeScheduler.unregister_by_owner()` already exists. Hook into Reconciler teardown to call with `owner=f"plugin:{plugin_id}"`. |
+| Documentation + example | Developers need to know how to use it | LOW | Example plugin that registers a cron task and cleans up. |
+
+#### 4. WebUI Scheduler Management Page
+
+| Feature | Why Expected | Complexity | Notes |
+|---------|--------------|------------|-------|
+| List all scheduled tasks | Operators need visibility into what's scheduled | LOW | GET endpoint wrapping `scheduler.list_tasks()`. Already have `ControlPlane` + `HttpApi` pattern. |
+| View task detail (schedule, next fire, owner) | Debugging failed/skipped tasks | LOW | Return `ScheduledTaskInfo` snapshot. |
+| Cancel task from WebUI | Operator override without CLI | LOW | DELETE endpoint wrapping `scheduler.cancel()`. |
+| Enable/disable task | Pause without losing config | MEDIUM | Requires `enable()`/`disable()` methods on scheduler (currently only `cancel()` exists; need soft-disable that keeps task in store but skips firing). |
+
+#### 5. WebUI Usability Optimization
+
+| Feature | Why Expected | Complexity | Notes |
+|---------|--------------|------------|-------|
+| Faster page loads (SWR caching already added) | Slow API calls = bad UX | LOW (tuning) | SWR caching was added in recent commit `cc54e17`. May need further tuning of stale/revalidation thresholds. |
+| Responsive layout improvements | WebUI should work on different screen sizes | LOW-MEDIUM | CSS/layout tweaks in Vue frontend. |
+| Error state display | When API calls fail, user needs feedback | LOW | Toast/notification on API error. |
+| Navigation polish | Current nav may be confusing for new users | LOW | Label clarity, icon improvements. |
+
+#### 6. AstrBot Chat History Extraction
+
+| Feature | Why Expected | Complexity | Notes |
+|---------|--------------|------------|-------|
+| Read AstrBot SQLite database | Migration source is AstrBot's `data/*/data.db` | LOW | AstrBot uses SQLModel/SQLite. Tables: `ConversationV2` (LLM conversations with `content: list[dict]` in OpenAI message format), `PlatformMessageHistory` (raw platform messages). Both have `platform_id`, `user_id`, timestamps. |
+| Map AstrBot user/group IDs to AcaBot conversation IDs | Need to translate `platform_id:user_id` to `qq:user:XXX` / `qq:group:XXX` | LOW | AstrBot's `platform_id` is typically `aiocqhttp` with `user_id` mapping to QQ numbers. The `ConversationV2.content` field contains OpenAI-format message lists. |
+| Batch extraction script/endpoint | Operators won't manually migrate | MEDIUM | One-time migration script. Not a runtime feature. Could be a CLI command or a WebUI button that reads the AstrBot DB path. |
+
+**AstrBot data model (from codebase audit):**
+
+```
+ConversationV2:
+  - conversation_id: uuid
+  - platform_id: str (e.g., "aiocqhttp")
+  - user_id: str (QQ number or group_id)
+  - content: JSON list of {role, content} dicts (OpenAI format)
+  - created_at, updated_at: datetime
+
+PlatformMessageHistory:
+  - platform_id: str
+  - user_id: str
+  - sender_id: str (optional)
+  - sender_name: str (optional)
+  - content: dict (message chain)
+  - created_at: datetime
+
+PlatformSession:
+  - session_id: uuid
+  - platform_id: str
+  - creator: str
+  - is_group: int (0=private, 1=group)
+```
+
+Key challenge: AstrBot's `PlatformMessageHistory.content` is a message chain (AstrBot format), not raw text. Need to extract plain text for LTM ingestion. The `ConversationV2.content` is cleaner (OpenAI-format messages with role/content).
+
+#### 7. Import AstrBot History to AcaBot LTM
+
+| Feature | Why Expected | Complexity | Notes |
+|---------|--------------|------------|-------|
+| Convert extracted messages to LTM MemoryEntry format | Bridge between AstrBot schema and AcaBot's `MemoryEntry` | MEDIUM | `MemoryEntry` requires: `entry_id`, `conversation_id`, `topic`, `lossless_restatement`, `keywords`, `persons`, `entities`, `provenance`. AstrBot messages lack structured extraction -- need to synthesize these fields. |
+| Batch embedding generation | Each MemoryEntry needs a vector for semantic search | MEDIUM | Use LTM's existing `LtmEntryEmbeddingClient` protocol. Batch embed all entries. |
+| Write to LanceDB store | Persist imported entries | LOW | Use existing `LongTermMemoryWriteStore.upsert_entries()` with vectors. |
+| Verify retrieval quality | Imported data must be findable via search | MEDIUM | Use existing `GET /api/memory/long-term/search-test` endpoint to verify. Spot-check that imported AstrBot conversations surface in relevant queries. |
+| Deduplication / idempotency | Re-running migration should not create duplicates | LOW | Use deterministic `entry_id` generation based on source (e.g., `astrbot:{conversation_id}:{message_index}`). |
 
 ---
 
 ### Differentiators (Competitive Advantage)
 
-#### 1. Plugin Management
-
 | Feature | Value Proposition | Complexity | Notes |
 |---------|-------------------|------------|-------|
-| Hot reload without restart | Change plugin code without downtime; critical for single-instance bots | HIGH | Python module reload is fragile (stale refs, class identity). Reconciler "unload old + load new" is safer than true HMR. NoneBot2 has basic support; Koishi has full HMR. |
-| Reconciler pattern (Package/Spec/Status) | Declarative desired-state model (like K8s) makes WebUI management robust; self-healing | HIGH | docs/29 design. Architecturally rare for chatbot runtimes — most use imperative load/unload. |
-| Plugin health/status dashboard | Real-time view of state, error counts, last activity | LOW | Natural output of Reconciler Status model |
-| Plugin resource usage tracking | See which plugins consume most tokens/time | MEDIUM | Requires per-plugin attribution in observability layer |
-
-#### 2. Message/Action Tools
-
-| Feature | Value Proposition | Complexity | Notes |
-|---------|-------------------|------------|-------|
-| Unified `message` tool (single tool, multiple actions) | LLM picks from reply/react/quote/media in one tool; reduces tool explosion | MEDIUM | Key design: one `message` tool with action param vs. separate tools per action |
-| Cross-session messaging | Bot proactively messages different groups/users (e.g., notify admin, post to channel) | MEDIUM | Gateway supports target addressing; needs tool exposure. Required for scheduler notifications. |
-| Text-to-image rendering (Playwright) | Rich formatted output bypassing platform text limits; rare in QQ bots | MEDIUM | Playwright + Chromium planned; `render_markdown_to_image()` in Outbox |
-| Reaction/emoji response | Lightweight acknowledgment without full reply | LOW | NapCat `set_msg_emoji_like` extension API |
-| Contextual action awareness | Agent knows what actions are available in current context (group vs DM) | LOW | Filter available actions by session context |
-
-#### 3. Scheduler/Cron
-
-| Feature | Value Proposition | Complexity | Notes |
-|---------|-------------------|------------|-------|
-| Plugin-lifecycle-bound scheduling | Auto-cancel all jobs when plugin unloads; prevents orphan timers | MEDIUM | Tag jobs with `plugin_id`, bulk cancel on teardown. Unique to runtime-aware schedulers. |
-| Schedule-triggered agent runs | Cron triggers full agent pipeline (not just a callback); bot "wakes up" with full capability | MEDIUM | Powerful: proactive agent behavior on schedule. Needs isolated session context. |
-| Natural language schedule creation | "Every weekday at 9am" via LLM | LOW | LLM parses to cron expression; just needs tool exposure |
-
-#### 4. Observability/Logging
-
-| Feature | Value Proposition | Complexity | Notes |
-|---------|-------------------|------------|-------|
-| Full run trace (pipeline spans) | See entire pipeline: compaction → retrieval → agent → outbox with timing | HIGH | OpenTelemetry-style spans. Lightweight custom tracing better than full OTel for single bot. |
-| Memory operation tracing | See LTM/sticky/soul retrieval, what was injected into prompt | MEDIUM | Unique to memory-augmented agents; LangSmith doesn't trace memory architecture |
-| Token budget visualization | See context window allocation (system prompt, memory, history, tools) | LOW | ContextAssembler already has this data; just needs emission |
-| Per-session cost tracking | "How much does this chat cost me?" | LOW | Aggregate token usage by thread_id |
-| Plugin execution time tracking | Identify slow plugins degrading response time | LOW | Wrap hook calls with timing. Surface in plugin status. |
-
-#### 5. Vector DB Data Safety
-
-| Feature | Value Proposition | Complexity | Notes |
-|---------|-------------------|------------|-------|
-| Versioned data with rollback | Undo bad mass-ingestion or embedding model change | MEDIUM | Lance format supports versioning natively. Expose `checkout(version)` in admin API. |
-| Graceful degradation on corruption | Bot continues working (without LTM) if vector DB is damaged | MEDIUM | MemoryBroker catches LanceDB exceptions, returns empty results. Don't crash pipeline. |
-| Automatic compaction | Lance fragments degrade read performance over time | LOW | Periodic `compact_files()` call. Tie to scheduler. |
+| LLM creates cron expressions via tool | Natural language scheduling -- "remind the group every Friday at 3pm" | LOW (tool exposure) | LLM parses intent to cron/interval params. Unique vs NoneBot2 which requires manual cron setup. |
+| Scheduled agent runs with full tool access | Cron fires a full agent pipeline, not just a static message | HIGH | Beyond simple "send text at time X" -- the bot can reason, use tools, and generate dynamic content on schedule. |
+| Cross-framework LTM migration | Import history from other bot frameworks into semantic memory | MEDIUM | Rare capability. Most bots treat history as ephemeral. AcaBot preserves knowledge across framework switches. |
+| Plugin-scheduler integration with lifecycle binding | Plugins register periodic tasks that auto-clean | LOW | Unique to AcaBot's reconciler-aware architecture. |
 
 ---
 
@@ -124,206 +144,221 @@
 
 | Feature | Why Requested | Why Problematic | Alternative |
 |---------|---------------|-----------------|-------------|
-| Plugin marketplace/registry | "Like npm for bot plugins" | Massive scope: hosting, review, trust model. Single-operator bot doesn't need ecosystem. | Git/pip install + WebUI management |
-| Plugin sandboxing/permissions | "Plugins shouldn't access filesystem" | Python has no real sandboxing; false security sense. Single-operator bot = trusted plugins. | Trust at install time. Error isolation (not security isolation). |
-| Plugin-to-plugin direct messaging bus | "Plugin composition" | Creates coupling, debugging nightmares, ordering issues | Shared services via ToolBroker + hook points |
-| Auto-update plugins from remote | "Convenience" | Uncontrolled code changes to running bot | Manual update via WebUI with diff preview |
-| Full rich-text editor in agent tool | "Beautiful formatting" | LLMs generate markdown, not platform rich text. Translation is fragile. | Markdown input + text-to-image for complex formatting |
-| Voice/TTS message sending | "Multimodal" | Audio synthesis dependency, large binary handling. Out of scope for text-first bot. | Defer to v2+ if voice use cases emerge |
-| Interactive message components (buttons/forms) | "Rich interactions" | Platform-dependent, breaks agent's text reasoning model | Text-based interaction; sticky notes for state |
-| Distributed scheduler (multi-node) | "Scale out" | Single-instance Docker. Distributed scheduling (Redlock/etcd) adds zero value. | Single-process APScheduler with SQLite store |
-| Sub-second scheduling precision | "Real-time" | asyncio not real-time. Sub-second cron is meaningless for chat bots. | 1-minute minimum granularity. Use event hooks for real-time. |
-| Real-time log streaming (WebSocket) | "Live tail in browser" | Complex for rarely-used feature; SSE/polling is 95% as good | Polling-based log viewer (2-5s refresh) |
-| Full OpenTelemetry integration | "Export to Datadog/Jaeger" | Infra overhead for single-operator deployment | Structured JSON logging; optional OTLP export as future add |
-| Full prompt/response logging by default | "See everything" | Privacy risk, massive storage, PII in logs | Opt-in debug mode per session. Default to metadata-only. |
-| Full RAG document upload pipeline | "Knowledge base management" | Massive scope (PDF parsing, chunking strategies). AcaBot knowledge comes from conversations + workspace files. | LTM for conversation knowledge. Computer subsystem reads files. Delegate to external RAG service if needed. |
-| Knowledge base CRUD UI | "Manage reference documents" | Document management UI is a product in itself (Dify, FastGPT) | Operator manages files via workspace. Bot reads with computer tools. |
-| Reference Backend (existing) | "Structured knowledge base" | Design fundamentally flawed per PROJECT.md; redundant with LTM | Delete. LTM + sticky notes + soul source cover all needs. Future structured KB = plugin registering as `MemorySource`. |
-| Replication to remote vector DB | "High availability" | Single-instance bot. LanceDB embedded = no network latency, no infra. | File-level backup to remote storage |
-| Migration to Milvus/Weaviate/Pinecone | "Production-grade" | Adds network dependency, ops burden, cost. LanceDB embedded is perfect fit. | Stay embedded. LanceDB is sufficient. |
+| Distributed scheduler | "What if I run multiple instances?" | AcaBot is single-instance Docker. Distributed scheduling adds complexity for zero benefit. | Single-process `RuntimeScheduler` with SQLite persistence. |
+| Schedule recurrence rules (RRULE) | "Every 2nd Tuesday of odd months" | RRULE is extremely complex; cron covers 99% of use cases | Cron expressions + one-shot for edge cases. LLM can compose complex schedules from multiple cron entries. |
+| Real-time scheduler UI (WebSocket push) | "See tasks fire in real-time" | Overkill for single-operator bot. Polling every 5-10 seconds is fine. | Polling-based refresh on scheduler page. |
+| Full AstrBot feature parity | "Bot must work exactly like AstrBot" | AcaBot has different architecture; 1:1 parity impossible and undesirable | Migrate data, not behavior. AcaBot's agent model is fundamentally different. |
+| Import AstrBot persona/config | "Keep my AstrBot settings" | Persona systems are incompatible (AstraBot persona = prompt string; AcaBot = soul files + session agents) | Manual reconfiguration. Import only chat data, not persona config. |
+| Import all AstrBot plugin data | "Keep plugin state" | Plugin ecosystems are incompatible | Start fresh. AcaBot plugins are different architecture. |
 
 ---
 
 ## Feature Dependencies
 
 ```
-[Plugin Identity (plugin_id)]
-    └── enables ──> [Plugin Config via WebUI]
-    └── enables ──> [Plugin Reconciler (Spec/Status)]
-                        └── enables ──> [Plugin Hot Reload]
-                        └── enables ──> [Plugin Health Dashboard]
-    └── enables ──> [Plugin-Lifecycle-Bound Scheduling]
+[Group Chat Fix (P1)]
+    └── requires ──> Session config update (no code dependency)
+    └── independent ──> No dependency on any other v1.1 feature
 
-[Unified Message Tool]
-    └── requires ──> [Message ID Tracking]
-    └── requires ──> [Gateway Action Type Expansion]
-    └── enables ──> [Cross-Session Messaging]
-                        └── enables ──> [Cron-Triggered Notifications]
-    └── enables ──> [Text-to-Image] ── requires ──> [Playwright Integration]
+[Scheduler Tool Surface (P2)]
+    └── requires ──> RuntimeScheduler (already built)
+    └── requires ──> ToolBroker registration pattern (already built)
+    └── requires ──> Outbox/message dispatch (for callback firing)
+    └── enables ──> Plugin-Side Scheduler Usage
+    └── enables ──> WebUI Scheduler Page
 
-[Scheduler Infrastructure]
-    └── requires ──> [Persistent Job Store (SQLite)]
-    └── enhances ──> [LanceDB Auto-Compaction]
-    └── enhances ──> [LanceDB Periodic Backup]
-    └── requires ──> [Plugin Identity] (for lifecycle-bound scheduling)
+[Plugin-Side Scheduler (P2)]
+    └── requires ──> Scheduler Tool Surface (tool registration pattern)
+    └── requires ──> PluginRuntimeHost scheduler injection
+    └── requires ──> Reconciler teardown hook (already built)
+    └── independent ──> Does NOT require WebUI scheduler page
 
-[Observability]
-    └── requires ──> [Trace ID Propagation]
-    └── requires ──> [litellm Callback Integration]
-    └── enhances ──> [Plugin Management] (health/resource tracking)
+[WebUI Scheduler Page (P3)]
+    └── requires ──> HTTP API endpoints (control_plane + http_api additions)
+    └── requires ──> RuntimeScheduler.list_tasks() (already built)
+    └── requires ──> Soft enable/disable (new method on scheduler)
+    └── enhanced-by ──> Scheduler Tool Surface (shows model-created tasks)
 
-[LanceDB Data Safety]
-    └── requires ──> [Concurrent Write Protection (asyncio Lock)]
-    └── enhanced-by ──> [Scheduler] (periodic backups, compaction)
-    └── enables ──> [Graceful Degradation]
+[WebUI Usability (P3)]
+    └── independent ──> No dependency on other features
+    └── enhanced-by ──> SWR caching (already added)
 
-[Delete Reference Backend] ── independent (no dependencies)
+[AstrBot History Extraction (P6)]
+    └── requires ──> Read access to AstrBot SQLite DB file
+    └── requires ──> AstrBot schema knowledge (from reference codebase)
+    └── independent ──> Does NOT require scheduler or WebUI features
+
+[Import to LTM (P7)]
+    └── requires ──> AstrBot History Extraction (must extract first)
+    └── requires ──> LTM write port (already built)
+    └── requires ──> Embedding client (already built)
+    └── requires ──> Deterministic entry_id generation
 ```
 
 ### Dependency Notes
 
-- **Cross-session messaging requires unified message tool:** Can't target arbitrary sessions without generalized message dispatch.
-- **Plugin-lifecycle-bound scheduling requires both scheduler + plugin_id:** Need to tag jobs with plugin identity to auto-cancel on unload.
-- **Cron notifications require scheduler + cross-session messaging:** Primary use case for scheduled tasks is "send message to chat X at time Y."
-- **LanceDB compaction requires scheduler:** Periodic maintenance is a natural scheduler consumer.
-- **Text-to-image requires Playwright:** Already planned as Docker image dependency.
-- **LanceDB concurrent protection is prerequisite:** Must be in place before any other LTM improvements.
-- **Delete Reference Backend is independent:** No dependencies on other features; can be done anytime.
+- **Group chat fix is fully independent:** It's a session-config-level change. Can ship as a hotfix before any other v1.1 work.
+- **Scheduler tool surface is the keystone for P2-P3:** Both plugin-side usage and WebUI page depend on the tool being registered. Build tool surface first.
+- **Plugin-side scheduler is additive after tool surface:** Once the tool surface exists and the scheduler is injected into plugin context, plugin authors can use it immediately. The Reconciler teardown hook already calls `unregister_by_owner()`.
+- **WebUI scheduler page needs soft-disable:** Current scheduler only has `cancel()` (hard delete). The WebUI needs `enable()`/`disable()` to pause tasks without losing them.
+- **AstrBot migration is a two-phase process:** Phase 1 (P6) extracts data from AstrBot DB. Phase 2 (P7) converts and imports to LTM. They should be separate phases because extraction may reveal data quality issues that affect import strategy.
+- **LTM import reuses existing infrastructure:** `LtmWritePort`, `LongTermMemoryWriteStore`, and the embedding client all exist. The import is primarily a data transformation problem, not an infrastructure problem.
 
 ---
 
 ## MVP Definition
 
-### Launch With (v1)
+### Phase 1: Fix (P1)
 
-**Plugin System:**
-- [ ] Plugin identity (`plugin_id`) — foundation for all plugin features
-- [ ] Plugin install/uninstall via API + WebUI — core management
-- [ ] Plugin enable/disable toggle — non-destructive control
-- [ ] Plugin error isolation — one bad plugin can't crash runtime
-- [ ] Plugin config persistence — config survives restarts
+Minimum to unblock production usage.
 
-**Message Tool:**
-- [ ] Unified `message` tool (reply, quote, mention, media) — complete agent communication
-- [ ] Cross-session messaging — required for scheduler notifications
+- [ ] Fix group chat "reply only to @ and quote" -- update session config admission defaults so `message.plain` surface in group scenes defaults to `silent_drop` or `record_only`
 
-**Scheduler:**
-- [ ] Cron + one-shot task registration — basic scheduling
-- [ ] Persistence across restarts — tasks must survive restarts
-- [ ] Plugin-lifecycle-bound scheduling — auto-cleanup on unload
-- [ ] Graceful shutdown — no orphaned tasks
+### Phase 2: Scheduler Exposure (P2)
 
-**Observability:**
-- [ ] Tool call logging with structured fields — minimum debuggability
-- [ ] LLM token usage per run — cost visibility
-- [ ] Error logging with run context — structured debugging
+Make scheduler usable by model and plugins.
 
-**Data Safety:**
-- [ ] LanceDB concurrent write protection — prevent corruption
-- [ ] Backup script/command — recovery capability
-- [ ] Graceful degradation on LTM failure — don't crash if vector DB is broken
+- [ ] `BuiltinSchedulerToolSurface` -- create/view/cancel/bind-to-session tool for LLM
+- [ ] Tool schema definition (JSON schema for `schedule_task`, `list_tasks`, `cancel_task`)
+- [ ] Callback factory (scheduler fires -> sends message to bound conversation via Outbox)
+- [ ] Register tool in `register_core_builtin_tools()`
+- [ ] Plugin context injection (`context.scheduler` reference)
+- [ ] Plugin auto-cleanup on Reconciler teardown
+- [ ] Documentation + example plugin
 
-**Cleanup:**
-- [ ] Delete Reference Backend — remove dead code
+### Phase 3: WebUI Polish (P3)
 
-### Add After Validation (v1.x)
+Operator-facing improvements.
 
-- [ ] Plugin config UI in WebUI — once schema declaration pattern is established
-- [ ] Plugin hot reload — once Reconciler is stable; fragile if too early
-- [ ] Text-to-image rendering — once Playwright integrated + message tool stable
-- [ ] Full run trace view in WebUI — once structured logging emits trace data
-- [ ] Per-session cost tracking — once token logging captures counts
-- [ ] Schedule-triggered agent runs — once scheduler + pipeline integration proven
-- [ ] LanceDB versioned rollback — once concurrent protection is in place
-- [ ] Token budget visualization — once LLM call logging is solid
+- [ ] Scheduler management page (list, detail, cancel, enable/disable)
+- [ ] HTTP API endpoints for scheduler CRUD
+- [ ] Soft enable/disable on `RuntimeScheduler`
+- [ ] WebUI usability pass (layout, error states, navigation)
 
-### Future Consideration (v2+)
+### Phase 4: LTM Migration (P6-P7)
 
-- [ ] Conversation replay/debug — HIGH complexity; needs storage + UI
-- [ ] Plugin resource usage tracking — needs mature observability first
-- [ ] Plugin dependency resolution — only when plugins start composing
-- [ ] Plugin marketplace — only when community of plugin authors exists
-- [ ] Forward/合并转发 messages — complex OneBot construction; niche
-- [ ] OpenTelemetry export — only if operator needs external observability
+Historical data continuity.
+
+- [ ] AstrBot DB extraction script/endpoint
+- [ ] Conversation-to-MemoryEntry transformer
+- [ ] Batch embedding + write to LanceDB
+- [ ] Deterministic entry_id for idempotency
+- [ ] Search quality verification
 
 ---
 
 ## Feature Prioritization Matrix
 
-| Feature | User Value | Impl Cost | Priority |
-|---------|------------|-----------|----------|
-| Plugin identity (plugin_id) | HIGH | LOW | P1 |
-| Plugin install/uninstall API | HIGH | MEDIUM | P1 |
-| Plugin enable/disable | HIGH | LOW | P1 |
-| Plugin error isolation | HIGH | MEDIUM | P1 |
-| Plugin config persistence | HIGH | LOW | P1 |
-| Unified message tool (reply/quote/image/mention/recall) | HIGH | MEDIUM | P1 |
-| Cross-session messaging | HIGH | MEDIUM | P1 |
-| Scheduler (cron + one-shot + persistence) | HIGH | MEDIUM | P1 |
-| Plugin-lifecycle-bound scheduling | MEDIUM | MEDIUM | P1 |
-| Tool call + LLM call logging | HIGH | MEDIUM | P1 |
-| LanceDB concurrent write protection | HIGH | LOW | P1 |
-| LanceDB backup capability | MEDIUM | LOW | P1 |
-| Graceful degradation on LTM failure | MEDIUM | MEDIUM | P1 |
-| Delete Reference Backend | MEDIUM | LOW | P1 |
-| Plugin config UI (WebUI) | MEDIUM | MEDIUM | P2 |
-| Plugin hot reload | MEDIUM | HIGH | P2 |
-| Text-to-image rendering | MEDIUM | MEDIUM | P2 |
-| Reaction/emoji response | LOW | LOW | P2 |
-| Per-run trace view | MEDIUM | HIGH | P2 |
-| Token budget visualization | LOW | LOW | P2 |
-| Per-session cost tracking | LOW | LOW | P2 |
-| Schedule-triggered agent runs | MEDIUM | MEDIUM | P2 |
-| LanceDB compaction | LOW | LOW | P2 |
-| LanceDB versioned rollback | LOW | MEDIUM | P3 |
-| Conversation replay/debug | MEDIUM | HIGH | P3 |
-| Plugin dependency resolution | LOW | MEDIUM | P3 |
-| Plugin marketplace | LOW | HIGH | P3 |
+| Feature | User Value | Impl Cost | Priority | Depends On |
+|---------|------------|-----------|----------|------------|
+| Group chat @/reply filter fix | HIGH | LOW | P1 | None |
+| Scheduler tool: create task | HIGH | MEDIUM | P2 | Scheduler infra (done) |
+| Scheduler tool: list tasks | MEDIUM | LOW | P2 | Scheduler infra (done) |
+| Scheduler tool: cancel task | MEDIUM | LOW | P2 | Scheduler infra (done) |
+| Scheduler tool: bind to session | HIGH | MEDIUM | P2 | Outbox (done) |
+| Plugin scheduler context | MEDIUM | LOW | P2 | Scheduler tool surface |
+| Plugin auto-cleanup | MEDIUM | LOW | P2 | Reconciler (done) |
+| Plugin docs + example | LOW | LOW | P2 | Plugin scheduler context |
+| WebUI: scheduler list page | MEDIUM | LOW | P3 | HTTP API endpoints |
+| WebUI: scheduler cancel button | MEDIUM | LOW | P3 | HTTP API endpoints |
+| WebUI: scheduler enable/disable | MEDIUM | MEDIUM | P3 | Soft-disable method |
+| WebUI: usability pass | MEDIUM | LOW-MEDIUM | P3 | None |
+| AstrBot DB extraction | MEDIUM | MEDIUM | P6 | AstrBot DB access |
+| AstrBot -> LTM conversion | HIGH | MEDIUM | P7 | Extraction + LTM write port |
+| LTM import verification | HIGH | MEDIUM | P7 | Import complete |
+| Deduplication / idempotency | MEDIUM | LOW | P7 | Deterministic entry_id |
 
 **Priority key:**
-- P1: Must have for this milestone
-- P2: Should have, add when possible
-- P3: Nice to have, future milestone
+- P1: Must fix immediately -- blocks production usage
+- P2: Core feature exposure -- scheduler tool + plugin integration
+- P3: Operator experience -- WebUI improvements
+- P6-P7: Data migration -- separate phase, lower urgency
 
 ---
 
-## Competitor Feature Analysis
+## Detailed Feature Specifications
 
-| Feature | NoneBot2 | Koishi | AcaBot (planned) |
-|---------|----------|--------|-------------------|
-| Plugin install | `nb plugin install` CLI + marketplace | `yarn add` + marketplace UI | API + WebUI + Reconciler |
-| Plugin hot reload | Module reimport (fragile) | Full HMR with dependency tracking | Reconciler unload/load cycle (deferred) |
-| Plugin config | `.env` + pydantic models | YAML + schema-driven UI | Plugin-declared schema + WebUI form |
-| Plugin dependencies | `require("plugin_name")` | `ctx.inject()` | Declared manifest, topological load (deferred) |
-| Scheduler | `nonebot-plugin-apscheduler` (community) | `ctx.cron()` built-in | Built-in APScheduler-based infra |
-| Message capabilities | Rich segment model (CQ codes) | Universal message elements | Unified `message` tool for LLM agent |
-| Cross-session send | `bot.send()` to arbitrary target | `ctx.broadcast()` | `message` tool with `target_session` param |
-| Observability | Basic logging, community plugins | Console + database logger | Structured logging + WebUI + tool traces |
-| LLM integration | Community plugins (varied) | Community plugins | Core pipeline: litellm + ToolBroker + Memory |
+### Scheduler Tool Schema (P2)
 
-| Feature | LangChain/LangSmith | AcaBot (planned) |
-|---------|---------------------|-------------------|
-| Tool call tracing | LangSmith full trace tree | Structured tool audit + WebUI |
-| Token tracking | LangSmith cost dashboard | litellm callbacks + per-run aggregation |
-| Memory observability | Shows retriever calls | Memory op tracing (LTM/sticky/soul — unique) |
-| RAG/Knowledge | Retrievers + vector stores | LTM (LanceDB) + sticky notes + soul; no separate "reference" |
+The tool should follow the existing builtin tool surface pattern. Proposed tool name: `Schedule`.
 
-### Key Insight
+**Actions:**
 
-NoneBot2 and Koishi are mature **chat frameworks** but not LLM-native. Their plugin systems are well-developed but agent capabilities are bolted on. AcaBot's advantage is that the LLM agent pipeline IS the core architecture — tools, memory, and scheduling are designed around agent needs, not retrofitted. The plugin system should learn from NoneBot2/Koishi's lifecycle management while keeping AcaBot's LLM-first design.
+| Action | Parameters | Returns |
+|--------|-----------|---------|
+| `create` | `action`, `schedule_type` (cron/interval/one_shot), `schedule_spec` (cron_expr/seconds/fire_at), `message` (text to send when task fires), `persist` (bool, default true) | `task_id`, `next_fire_at` |
+| `list` | None (or optional `owner` filter) | Array of `{task_id, schedule, next_fire_at, enabled, metadata}` |
+| `cancel` | `task_id` | `{cancelled: true/false}` |
+
+**Callback behavior:**
+When a task fires, the callback constructs a send intent using the stored `message` and `destination_conversation_id` from task metadata, then dispatches through the Outbox (same pattern as `RuntimeControlPlane.post_notification`).
+
+**Key design decision:** Task ownership. Model-created tasks should use `owner = "tool:schedule:{run_id}"` so they can be traced back. Session-bound tasks carry `conversation_id` in metadata.
+
+### WebUI Scheduler Page API (P3)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/scheduler/tasks` | List all scheduled tasks |
+| GET | `/api/scheduler/tasks/:task_id` | Get task detail |
+| DELETE | `/api/scheduler/tasks/:task_id` | Cancel task |
+| PUT | `/api/scheduler/tasks/:task_id/toggle` | Enable/disable task |
+
+### AstrBot Migration Data Flow (P6-P7)
+
+```
+AstrBot SQLite DB                    AcaBot LTM (LanceDB)
+     |                                       |
+     v                                       |
+[Extraction Script]                           |
+  - Read ConversationV2 rows                 |
+  - Read PlatformMessageHistory rows          |
+  - Map platform_id -> "qq"                  |
+  - Map user_id -> conversation_id           |
+     |                                       |
+     v                                       |
+[Transformer]                                 |
+  - Group messages into windows              |
+  - Generate entry_id (deterministic)        |
+  - Synthesize topic/lossless_restatement    |
+    (use message text directly)              |
+  - Extract persons from sender_name         |
+  - Extract keywords from text               |
+  - Set conversation_id = "astrbot:{orig}"   |
+     |                                       |
+     v                                       v
+[Batch Embed + Write] ─────────────────> [LanceDB tables]
+  - Embed entries                           - memory_entries
+  - upsert_entries(vectors=...)             - vectors
+```
+
+**Transformer strategy for `lossless_restatement`:**
+AstrBot messages are in OpenAI format (`{role, content}`). For each message pair (user + assistant), create one `MemoryEntry` with:
+- `topic`: First 50 chars of user message
+- `lossless_restatement`: Concatenated user+assistant messages (cleaned)
+- `keywords`: Extracted from message text (simple word frequency, or LLM extraction)
+- `persons`: Sender names from `PlatformMessageHistory.sender_name`
+- `conversation_id`: Deterministic from AstrBot `conversation_id`
+- `entry_id`: `astrbot:{conversation_id}:{message_index}`
 
 ---
 
 ## Sources
 
-- NoneBot2 plugin system: `nonebot.dev` — plugin loading, `require()`, marketplace
-- Koishi framework: `koishi.chat` — `ctx.plugin()`, `ctx.cron()`, universal message elements
-- APScheduler: `apscheduler.readthedocs.io` — asyncio scheduler, job stores, triggers
-- LangSmith: `docs.smith.langchain.com` — tracing, token tracking
-- LanceDB: `lancedb.github.io/lancedb/` — Lance format, versioning, compaction, concurrent access
-- AcaBot: `docs/29-plugin-control-plane.md` — Reconciler architecture plan
-- AcaBot: `.planning/PROJECT.md`, `.planning/codebase/ARCHITECTURE.md`
+- AcaBot codebase: `src/acabot/runtime/scheduler/` -- scheduler contracts, engine, store (fully audited)
+- AcaBot codebase: `src/acabot/runtime/builtin_tools/` -- existing tool surface patterns (message, computer, skills, sticky_notes, subagents)
+- AcaBot codebase: `src/acabot/runtime/control/control_plane.py` -- `post_notification` as reference for scheduled message dispatch
+- AcaBot codebase: `src/acabot/runtime/control/session_runtime.py` -- surface candidate chain and admission resolution (group chat bug source)
+- AcaBot codebase: `src/acabot/runtime/contracts/session_config.py` -- `EventFacts`, `MatchSpec`, `AdmissionDecision` (group chat fix target)
+- AcaBot codebase: `src/acabot/types/event.py` -- `StandardEvent`, `targets_self` propagation (verified correct at gateway level)
+- AcaBot codebase: `src/acabot/gateway/napcat.py` -- `_translate_message` sets `targets_self` correctly for mentions/replies
+- AcaBot codebase: `src/acabot/runtime/memory/long_term_memory/contracts.py` -- `MemoryEntry` schema for migration target
+- AcaBot codebase: `src/acabot/runtime/memory/long_term_memory/write_port.py` -- LTM write pipeline for import
+- AstrBot reference: `ref/AstrBot/astrbot/core/db/po.py` -- `ConversationV2`, `PlatformMessageHistory`, `PlatformSession` data models
+- AstrBot reference: `ref/AstrBot/astrbot/core/platform_message_history_mgr.py` -- message history CRUD
+- AstrBot reference: `ref/AstrBot/astrbot/builtin_stars/astrbot/long_term_memory.py` -- AstrBot's own LTM (session-based, simpler than AcaBot)
+- AcaBot config: `docs/29-plugin-control-plane.md` -- Reconciler teardown hooks for plugin scheduler cleanup
 
 ---
-*Feature research for: AcaBot v2 runtime infrastructure*
-*Researched: 2026-04-02*
+*Feature research for: AcaBot v1.1 production usability + LTM migration*
+*Researched: 2026-04-05*
