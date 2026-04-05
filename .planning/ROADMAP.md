@@ -20,7 +20,7 @@ Phase 14: WebUI Usability              [1 req]   ──┘
 
 ## Phases
 
-- [ ] **Phase 10: Group Chat Bug Fix** - 修复群聊"仅回复 @ 和引用"失效问题
+- [x] **Phase 10: Group Chat Bug Fix** - 修复群聊"仅回复 @ 和引用"失效问题 (completed 2026-04-05)
 - [ ] **Phase 11: Scheduler Tool Surface** - 模型通过 builtin tool 使用 scheduler（创建/查看/取消）
 - [ ] **Phase 12: Plugin Scheduler** - 插件通过 plugin context 使用 scheduler（注册/恢复/清理）+ 文档示例
 - [ ] **Phase 13: WebUI Scheduler Page** - 定时任务管理页面（列表/状态/时间/owner）+ 创建/启停/删除
@@ -43,7 +43,7 @@ Phase 14: WebUI Usability              [1 req]   ──┘
 3. 在 group scene 配置 `record_only` 为 admission 时，bot 不回复但消息仍进入 pipeline 处理
 4. 修复后 bot 在 group 中不再回复所有消息（生产环境验证或测试场景验证）
 
-**Plans:** TBD
+**Plans:** 1/1 plans complete
 
 ---
 
@@ -122,7 +122,7 @@ Phase 14: WebUI Usability              [1 req]   ──┘
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 10. Group Chat Bug Fix | 0/? | Not started | - |
+| 10. Group Chat Bug Fix | 1/1 | Complete   | 2026-04-05 |
 | 11. Scheduler Tool Surface | 0/? | Not started | - |
 | 12. Plugin Scheduler | 0/? | Not started | - |
 | 13. WebUI Scheduler Page | 0/? | Not started | - |
@@ -134,7 +134,7 @@ Phase 14: WebUI Usability              [1 req]   ──┘
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| GROUP-01 | 10 | Pending |
+| GROUP-01 | 10 | Planned |
 | SCHED-01 | 11 | Pending |
 | SCHED-02 | 11 | Pending |
 | SCHED-03 | 11 | Pending |

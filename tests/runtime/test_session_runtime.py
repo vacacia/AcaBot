@@ -507,3 +507,112 @@ visible_subagents:
         assert "retrieval_tags" in str(exc)
     else:
         raise AssertionError("scalar retrieval_tags should fail")
+
+
+def _group_plain_event(*, sender_role: str = "member") -> StandardEvent:
+    """构造一条群聊里普通文本消息事件（无 @，无回复机器人）."""
+    return StandardEvent(
+        event_id="evt-plain",
+        event_type="message",
+        platform="qq",
+        timestamp=456,
+        source=EventSource(platform="qq", message_type="group", user_id="10002", group_id="999"),
+        segments=[MsgSegment(type="text", data={"text": "hello everyone"})],
+        raw_message_id="msg-plain",
+        sender_nickname="alice",
+        sender_role=sender_role,
+        mentions_self=False,
+        targets_self=False,
+    )
+
+
+def test_surface_naming_resolves_admission_correctly(tmp_path: Path) -> None:
+    """验证正确 surface 命名（message.plain / message.mention）时 admission 逻辑正确.
+
+    当 surface 键使用正确命名时，resolve_surface() 能正确匹配候选链，
+    resolve_admission() 返回对应的 mode。
+    """
+    # 写入 session config，使用正确的 surface 键名
+    bundle_dir = tmp_path / "sessions/qq/group/999"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "session.yaml").write_text(
+        """
+session:
+  id: qq:group:999
+  template: qq_group
+  title: Test Group
+frontstage:
+  agent_id: aca.qq.group.default
+selectors:
+  sender_is_admin:
+    sender_roles: [admin]
+surfaces:
+  message.plain:
+    admission:
+      default:
+        mode: silent_drop
+  message.mention:
+    admission:
+      default:
+        mode: respond
+  message.reply_to_bot:
+    admission:
+      default:
+        mode: respond
+""".strip(),
+        encoding="utf-8",
+    )
+    (bundle_dir / "agent.yaml").write_text(
+        """
+agent_id: aca.qq.group.default
+prompt_ref: prompt/aca/default
+visible_tools:
+  - read
+visible_skills: []
+visible_subagents: []
+""".strip(),
+        encoding="utf-8",
+    )
+
+    runtime = SessionRuntime(SessionConfigLoader(config_root=tmp_path / "sessions"))
+
+    # 场景 1: 普通消息（mentions_self=False, reply_targets_self=False）
+    # 候选链: ["message.plain"] → 期望 admission.mode == "silent_drop"
+    plain_facts = runtime.build_facts(_group_plain_event(sender_role="member"))
+    plain_session = runtime.load_session(plain_facts)
+    plain_surface = runtime.resolve_surface(plain_facts, plain_session)
+    plain_admission = runtime.resolve_admission(plain_facts, plain_session, plain_surface)
+
+    assert plain_surface.surface_id == "message.plain", (
+        f"plain message should resolve to message.plain, got {plain_surface.surface_id}"
+    )
+    assert plain_admission.mode == "silent_drop", (
+        f"plain message with silent_drop config should return silent_drop, got {plain_admission.mode}"
+    )
+
+    # 场景 2: @ 消息（mentions_self=True）
+    # 候选链: ["message.mention", "message.plain"] → 期望 admission.mode == "respond"
+    mention_event = StandardEvent(
+        event_id="evt-mention",
+        event_type="message",
+        platform="qq",
+        timestamp=789,
+        source=EventSource(platform="qq", message_type="group", user_id="10003", group_id="999"),
+        segments=[MsgSegment(type="text", data={"text": "hello @bot"})],
+        raw_message_id="msg-mention",
+        sender_nickname="bob",
+        sender_role="member",
+        mentions_self=True,
+        targets_self=True,
+    )
+    mention_facts = runtime.build_facts(mention_event)
+    mention_session = runtime.load_session(mention_facts)
+    mention_surface = runtime.resolve_surface(mention_facts, mention_session)
+    mention_admission = runtime.resolve_admission(mention_facts, mention_session, mention_surface)
+
+    assert mention_surface.surface_id == "message.mention", (
+        f"mention message should resolve to message.mention, got {mention_surface.surface_id}"
+    )
+    assert mention_admission.mode == "respond", (
+        f"mention message with respond config should return respond, got {mention_admission.mode}"
+    )

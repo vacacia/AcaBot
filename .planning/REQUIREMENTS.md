@@ -7,7 +7,7 @@
 
 ### Group Chat Response Filtering
 
-- [ ] **GROUP-01**: 修复群聊消息响应行为 — 按照 session 配置的消息响应矩阵（admission domain）对不同消息类型做不同响应（respond / silent_drop / record_only），而非全部回复或全部忽略
+- [x] **GROUP-01**: 修复群聊消息响应行为 — 按照 session 配置的消息响应矩阵（admission domain）对不同消息类型做不同响应（respond / silent_drop / record_only），而非全部回复或全部忽略
 
 ### Scheduler Tool (LLM-facing)
 
@@ -46,7 +46,7 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| GROUP-01 | 10 | Pending |
+| GROUP-01 | 10 | Complete |
 | SCHED-01 | 11 | Pending |
 | SCHED-02 | 11 | Pending |
 | SCHED-03 | 11 | Pending |
