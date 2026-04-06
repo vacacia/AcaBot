@@ -147,6 +147,9 @@ class RuntimeHttpApiServer:
             def do_OPTIONS(self) -> None:
                 self._write_empty(204)
 
+            def do_HEAD(self) -> None:
+                self._dispatch("HEAD")
+
             def do_GET(self) -> None:
                 self._dispatch("GET")
 
@@ -164,8 +167,9 @@ class RuntimeHttpApiServer:
 
             def _dispatch(self, method: str) -> None:
                 split = urlsplit(self.path)
+                route_method = "GET" if method == "HEAD" else method
                 if split.path.startswith("/api/"):
-                    self._dispatch_api(method, split)
+                    self._dispatch_api(route_method, split)
                     return
                 self._dispatch_static(split.path)
 
@@ -222,7 +226,8 @@ class RuntimeHttpApiServer:
                 self.send_header("Content-Type", content_type or "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
-                self.wfile.write(body)
+                if self.command != "HEAD":
+                    self.wfile.write(body)
 
             def _write_empty(self, status: int) -> None:
                 self.send_response(status)
@@ -237,7 +242,8 @@ class RuntimeHttpApiServer:
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
-                self.wfile.write(body)
+                if self.command != "HEAD":
+                    self.wfile.write(body)
 
             def _write_cors_headers(self) -> None:
                 origin = str(self.headers.get("Origin", "") or "")
@@ -245,7 +251,7 @@ class RuntimeHttpApiServer:
                     self.send_header("Access-Control-Allow-Origin", origin)
                 elif server.cors_origins:
                     self.send_header("Access-Control-Allow-Origin", server.cors_origins[0])
-                self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+                self.send_header("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, DELETE, OPTIONS")
                 self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
         self._httpd = ThreadingHTTPServer((self.host, self.port), Handler)
