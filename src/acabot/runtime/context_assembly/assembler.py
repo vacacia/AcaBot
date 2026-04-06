@@ -48,6 +48,7 @@ class ContextAssembler:
     SYSTEM_PROMPT_PRIORITY = {
         "base_prompt": 1000,
         "workspace_reminder": 950,
+        "admin_host_maintenance_reminder": 940,
         "tool_behavior_reminder": 925,
         "skill_reminder": 900,
         "subagent_reminder": 850,
@@ -108,6 +109,7 @@ class ContextAssembler:
             )
         ]
         contributions.extend(self._build_workspace_reminder_contribution())
+        contributions.extend(self._build_admin_host_maintenance_contribution(tool_runtime))
         contributions.extend(self._build_tool_behavior_contribution())
         contributions.extend(self._build_tool_summary_contributions(tool_runtime))
         contributions.extend(self._build_memory_contributions(ctx.memory_blocks))
@@ -131,6 +133,32 @@ class ContextAssembler:
                 priority=self.SYSTEM_PROMPT_PRIORITY["workspace_reminder"],
                 role="system",
                 content=(_PROMPT_DIR / "workspace_reminder.md").read_text(encoding="utf-8").strip(),
+            )
+        ]
+
+    def _build_admin_host_maintenance_contribution(self, tool_runtime: ToolRuntime) -> list[ContextContribution]:
+        """为前台 admin+host run 注入真实 skill 维护提醒。"""
+
+        payload = dict(tool_runtime.metadata.get("admin_host_maintenance", {}) or {})
+        if not payload:
+            return []
+        return [
+            ContextContribution(
+                source_kind="admin_host_maintenance_reminder",
+                target_slot="system_prompt",
+                priority=self.SYSTEM_PROMPT_PRIORITY["admin_host_maintenance_reminder"],
+                role="system",
+                content=(
+                    (_PROMPT_DIR / "admin_host_maintenance_reminder.md")
+                    .read_text(encoding="utf-8")
+                    .strip()
+                    .format(
+                        project_skill_root_path=str(payload.get("project_skill_root_path", "") or ""),
+                        session_dir_path=str(payload.get("session_dir_path", "") or ""),
+                        session_config_path=str(payload.get("session_config_path", "") or ""),
+                        agent_config_path=str(payload.get("agent_config_path", "") or ""),
+                    )
+                ),
             )
         ]
 

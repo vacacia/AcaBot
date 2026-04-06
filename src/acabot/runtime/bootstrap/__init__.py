@@ -24,6 +24,7 @@ from ..context_assembly import ContextAssembler
 from ..contracts import ResolvedAgent
 from ..control.config_control_plane import RuntimeConfigControlPlane
 from ..control.control_plane import RuntimeControlPlane
+from ..control.extension_refresh import ExtensionRefreshService
 from ..gateway_protocol import GatewayProtocol
 from ..inbound.image_context import ImageContextService
 from ..inbound.message_preparation import MessagePreparationService
@@ -369,10 +370,16 @@ def build_runtime_components(
         runtime_playwright_render_backend,
         is_default=True,
     )
+    _extension_refresh_ref: list[ExtensionRefreshService | None] = [None]
     runtime_tool_broker = tool_broker or ToolBroker(
         skill_catalog=runtime_skill_catalog,
         subagent_catalog=runtime_subagent_catalog,
         backend_bridge=runtime_backend_bridge,
+        admin_host_maintenance_paths_resolver=lambda session_id: (
+            _extension_refresh_ref[0].describe_skill_refresh_paths(session_id=session_id)
+            if _extension_refresh_ref[0] is not None
+            else None
+        ),
     )
     runtime_tool_broker.skill_catalog = runtime_skill_catalog
     runtime_tool_broker.subagent_catalog = runtime_subagent_catalog
@@ -561,6 +568,10 @@ def build_runtime_components(
         tool_broker=runtime_tool_broker,
         subagent_delegator=runtime_subagent_delegator,
         rebind_agent_loader=rebind_agent_loader,
+    )
+    _extension_refresh_ref[0] = ExtensionRefreshService(
+        config_control_plane=config_control_plane,
+        skill_catalog=runtime_skill_catalog,
     )
     app = RuntimeApp(
         gateway=gateway,

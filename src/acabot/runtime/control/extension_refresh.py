@@ -9,8 +9,10 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from ..skills import SkillCatalog
-from .config_control_plane import DEFAULT_SKILL_CATALOG_DIRS
 from .session_loader import SessionConfigLoader
+
+DEFAULT_SKILL_CATALOG_DIRS = ["./extensions/skills"]
+
 
 if TYPE_CHECKING:
     from .config_control_plane import RuntimeConfigControlPlane

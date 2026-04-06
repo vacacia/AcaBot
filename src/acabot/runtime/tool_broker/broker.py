@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 import logging
 import time
@@ -18,6 +19,7 @@ from acabot.types import Action, ActionType
 from ..backend.bridge import BackendBridge
 from ..backend.contracts import BackendRequest, BackendSourceRef
 from ..contracts import ApprovalRequired, DispatchReport, PendingApproval, PlannedAction, ResolvedAgent, RunContext
+from ..control.extension_refresh import SkillRefreshPaths
 from ..model.model_agent_runtime import ToolRuntime, ToolRuntimeState
 from ..skills import SkillCatalog
 from ..subagents import SubagentCatalog
@@ -48,6 +50,7 @@ class ToolBroker:
         skill_catalog: SkillCatalog | None = None,
         subagent_catalog: SubagentCatalog | None = None,
         backend_bridge: BackendBridge | None = None,
+        admin_host_maintenance_paths_resolver: Callable[[str], SkillRefreshPaths | dict[str, Any] | None] | None = None,
     ) -> None:
         """初始化 ToolBroker.
 
@@ -57,6 +60,7 @@ class ToolBroker:
             skill_catalog: 可选的 skill catalog.
             subagent_catalog: 可选的 subagent catalog.
             backend_bridge: 可选的后台桥接入口, 用于暴露 frontstage backend bridge tool.
+            admin_host_maintenance_paths_resolver: 可选的 admin-host 维护路径解析器.
         """
 
         self._tools: dict[str, RegisteredTool] = {}
@@ -65,6 +69,7 @@ class ToolBroker:
         self.skill_catalog = skill_catalog
         self.subagent_catalog = subagent_catalog
         self.backend_bridge = backend_bridge
+        self.admin_host_maintenance_paths_resolver = admin_host_maintenance_paths_resolver
 
     def register_tool(
         self,
@@ -482,6 +487,9 @@ class ToolBroker:
             "visible_skill_summaries": self._visible_skill_summaries_for_run(ctx),
             "visible_subagent_summaries": self._visible_subagent_summaries_for_run(ctx),
         }
+        admin_host_maintenance = self._admin_host_maintenance_metadata(ctx)
+        if admin_host_maintenance is not None:
+            metadata["admin_host_maintenance"] = admin_host_maintenance
         if not visible_tools:
             return ToolRuntime(state=state, metadata=metadata)
 
@@ -502,6 +510,40 @@ class ToolBroker:
             state=state,
             metadata=metadata,
         )
+
+    def _admin_host_maintenance_metadata(self, ctx: RunContext) -> dict[str, Any] | None:
+        """为前台 admin+host run 解析真实 skill 维护提示所需的路径信息。"""
+
+        if self.admin_host_maintenance_paths_resolver is None:
+            return None
+        if ctx.event_facts is None or not ctx.event_facts.is_bot_admin:
+            return None
+        if str(ctx.decision.metadata.get("run_kind", "") or "") == "subagent":
+            return None
+        backend_kind = str(ctx.computer_backend_kind or "").strip()
+        if not backend_kind and ctx.workspace_state is not None:
+            backend_kind = str(ctx.workspace_state.backend_kind or "").strip()
+        if backend_kind != "host":
+            return None
+        try:
+            resolved = self.admin_host_maintenance_paths_resolver(ctx.decision.channel_scope)
+        except Exception:
+            logger.exception(
+                "Failed to resolve admin host maintenance paths for %s",
+                ctx.decision.channel_scope,
+            )
+            return None
+        if resolved is None:
+            return None
+        if isinstance(resolved, SkillRefreshPaths):
+            return {
+                "session_id": resolved.session_id,
+                "project_skill_root_path": resolved.project_skill_root_path,
+                "session_dir_path": resolved.session_dir_path,
+                "session_config_path": resolved.session_config_path,
+                "agent_config_path": resolved.agent_config_path,
+            }
+        return dict(resolved)
 
     async def confirm_pending_approval(
         self,

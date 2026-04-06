@@ -1,6 +1,7 @@
 """ContextAssembler 测试."""
 
 from acabot.runtime import (
+    EventFacts,
     ResolvedAgent,
     MemoryBlock,
     MemoryAssemblySpec,
@@ -14,6 +15,8 @@ from acabot.runtime import (
 )
 from acabot.runtime.context_assembly import ContextAssembler
 from acabot.runtime.context_assembly.contracts import AssembledContext, ContextContribution
+from acabot.runtime.control.extension_refresh import SkillRefreshPaths
+from acabot.runtime.tool_broker import ToolBroker
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
 
@@ -22,6 +25,9 @@ def _assembler_ctx(
     retrieval_plan: RetrievalPlan | None = None,
     message_projection: MessageProjection | None = None,
     memory_blocks: list[MemoryBlock] | None = None,
+    event_facts: EventFacts | None = None,
+    computer_backend_kind: str = "",
+    run_kind: str = "user",
 ) -> RunContext:
     """构造 ContextAssembler 测试使用的最小上下文.
 
@@ -66,6 +72,7 @@ def _assembler_ctx(
             actor_id="qq:user:10001",
             agent_id="aca",
             channel_scope="qq:user:10001",
+            metadata={"run_kind": run_kind},
         ),
         thread=ThreadState(
             thread_id="qq:user:10001",
@@ -76,9 +83,11 @@ def _assembler_ctx(
             name="Aca",
             prompt_ref="prompt/default",
         ),
+        event_facts=event_facts,
         retrieval_plan=retrieval_plan,
         message_projection=message_projection,
         memory_blocks=list(memory_blocks or []),
+        computer_backend_kind=computer_backend_kind,
     )
 
 
@@ -176,6 +185,63 @@ def test_context_assembler_includes_skill_and_subagent_summaries_in_system_promp
 
     assert "memory_append" in assembled.system_prompt
     assert "worker" in assembled.system_prompt
+
+
+def test_context_assembler_includes_admin_host_maintenance_reminder_for_frontstage_admin_host_runs() -> None:
+    """前台 admin+host run 应该收到真实 skill 根目录维护提醒。"""
+
+    assembler = ContextAssembler()
+    broker = ToolBroker(
+        admin_host_maintenance_paths_resolver=lambda session_id: SkillRefreshPaths(
+            session_id=session_id,
+            project_skill_root_path="/host/extensions/skills",
+            session_dir_path="/host/sessions/qq/group/123",
+            session_config_path="/host/sessions/qq/group/123/session.yaml",
+            agent_config_path="/host/sessions/qq/group/123/agent.yaml",
+        )
+    )
+    ctx = _assembler_ctx(
+        retrieval_plan=RetrievalPlan(retained_history=[]),
+        message_projection=MessageProjection(history_text="hello", model_content="hello"),
+        event_facts=EventFacts(actor_id="qq:user:10001", is_bot_admin=True),
+        computer_backend_kind="host",
+        run_kind="user",
+    )
+
+    tool_runtime = broker.build_tool_runtime(ctx)
+    assembled = assembler.assemble(ctx, base_prompt="base", tool_runtime=tool_runtime)
+
+    assert "/host/extensions/skills" in assembled.system_prompt
+    assert "/host/sessions/qq/group/123/agent.yaml" in assembled.system_prompt
+    assert "mirrored runtime view" in assembled.system_prompt
+
+
+def test_context_assembler_skips_admin_host_maintenance_reminder_for_non_frontstage_runs() -> None:
+    """subagent 等非前台 run 即使是 host 也不应该拿到维护提醒。"""
+
+    assembler = ContextAssembler()
+    broker = ToolBroker(
+        admin_host_maintenance_paths_resolver=lambda session_id: SkillRefreshPaths(
+            session_id=session_id,
+            project_skill_root_path="/host/extensions/skills",
+            session_dir_path="/host/sessions/qq/group/123",
+            session_config_path="/host/sessions/qq/group/123/session.yaml",
+            agent_config_path="/host/sessions/qq/group/123/agent.yaml",
+        )
+    )
+    ctx = _assembler_ctx(
+        retrieval_plan=RetrievalPlan(retained_history=[]),
+        message_projection=MessageProjection(history_text="hello", model_content="hello"),
+        event_facts=EventFacts(actor_id="qq:user:10001", is_bot_admin=True),
+        computer_backend_kind="host",
+        run_kind="subagent",
+    )
+
+    tool_runtime = broker.build_tool_runtime(ctx)
+    assembled = assembler.assemble(ctx, base_prompt="base", tool_runtime=tool_runtime)
+
+    assert "/host/extensions/skills" not in assembled.system_prompt
+    assert "mirrored runtime view" not in assembled.system_prompt
 
 
 def test_context_assembler_uses_memory_block_declared_target_slot() -> None:
