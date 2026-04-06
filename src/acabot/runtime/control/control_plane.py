@@ -62,6 +62,7 @@ from ..memory.sticky_notes import StickyNoteService
 from ..storage.threads import ThreadManager
 from ..tool_broker import ToolBroker
 from ..ids import build_event_source_from_conversation_id, build_thread_id_from_conversation_id
+from ..scheduler.service import ScheduledTaskService, ScheduledTaskUnavailableError
 from .model_ops import RuntimeModelControlOps
 from .snapshots import (
     ActiveRunSnapshot,
@@ -115,6 +116,7 @@ class RuntimeControlPlane:
         config_control_plane: RuntimeConfigControlPlane | None = None,
         log_buffer: InMemoryLogBuffer | None = None,
         ltm_store: object | None = None,
+        scheduled_task_service: ScheduledTaskService | None = None,
     ) -> None:
         """初始化 RuntimeControlPlane.
 
@@ -162,6 +164,7 @@ class RuntimeControlPlane:
         self.config_control_plane = config_control_plane
         self.log_buffer = log_buffer
         self.ltm_store = ltm_store
+        self.scheduled_task_service = scheduled_task_service
         self.model_ops = RuntimeModelControlOps(
             model_registry_manager=model_registry_manager,
         )
@@ -251,6 +254,75 @@ class RuntimeControlPlane:
         if self.config_control_plane is None:
             raise RuntimeError("config control plane unavailable")
         return await self.config_control_plane.create_session(payload)
+
+    def _require_scheduled_task_service(self) -> ScheduledTaskService:
+        service = self.scheduled_task_service
+        if service is None:
+            raise ScheduledTaskUnavailableError("scheduler service unavailable")
+        return service
+
+    async def list_conversation_wakeup_schedules(
+        self,
+        *,
+        conversation_id: str = "",
+        enabled: bool | None = None,
+        limit: int = 200,
+    ) -> dict[str, object]:
+        service = self._require_scheduled_task_service()
+        tasks = service.list_conversation_wakeup_tasks(
+            conversation_id=conversation_id or None,
+            enabled=enabled,
+            limit=max(1, min(limit, 500)),
+        )
+        return {"items": [service.serialize_task(task) for task in tasks]}
+
+    async def create_conversation_wakeup_schedule(self, payload: dict[str, object]) -> dict[str, object]:
+        service = self._require_scheduled_task_service()
+        conversation_id = str(payload.get("conversation_id", "") or "").strip()
+        note = str(payload.get("note", "") or "")
+        if not conversation_id:
+            raise ValueError("conversation_id is required")
+        if len(note) > 500:
+            raise ValueError("note must be at most 500 characters")
+        schedule_payload = payload.get("schedule")
+        if not isinstance(schedule_payload, dict):
+            raise ValueError("schedule is required")
+        schedule_kind = str(schedule_payload.get("kind", "") or "").strip()
+        schedule_spec = schedule_payload.get("spec")
+        if schedule_kind == "one_shot" and isinstance(schedule_spec, dict):
+            fire_at = schedule_spec.get("fire_at")
+            try:
+                resolved_fire_at = float(fire_at)
+            except (TypeError, ValueError):
+                resolved_fire_at = None
+            if resolved_fire_at is not None and resolved_fire_at <= time.time():
+                raise ValueError("one_shot fire_at must be in the future")
+        task = await service.create_conversation_wakeup_task(
+            owner=conversation_id,
+            conversation_id=conversation_id,
+            schedule_payload=schedule_payload,
+            note=note,
+            created_by="webui",
+            source="webui:schedules",
+        )
+        return service.serialize_task(task)
+
+    async def enable_conversation_wakeup_schedule(self, task_id: str) -> dict[str, object]:
+        service = self._require_scheduled_task_service()
+        task = await service.enable_conversation_wakeup_task(task_id)
+        return service.serialize_task(task)
+
+    async def disable_conversation_wakeup_schedule(self, task_id: str) -> dict[str, object]:
+        service = self._require_scheduled_task_service()
+        task = await service.disable_conversation_wakeup_task(task_id)
+        return service.serialize_task(task)
+
+    async def delete_conversation_wakeup_schedule(self, task_id: str) -> dict[str, object]:
+        service = self._require_scheduled_task_service()
+        deleted = await service.delete_conversation_wakeup_task(task_id)
+        if not deleted:
+            raise KeyError(task_id)
+        return {"task_id": task_id, "deleted": True}
 
     async def get_session(self, session_id: str) -> dict[str, object] | None:
         if self.config_control_plane is None:

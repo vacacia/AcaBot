@@ -275,7 +275,12 @@ async def test_scheduler_one_shot_e2e_creates_and_fires_in_same_conversation(tmp
     assert agent.created_task_id is not None
     assert agent.listed_task_ids == [agent.created_task_id]
     assert agent.wake_call_count == 1
-    assert components.scheduler.list_tasks() == []
+    tasks = components.scheduler.list_tasks()
+    assert len(tasks) == 1
+    assert tasks[0].task_id == agent.created_task_id
+    assert tasks[0].enabled is False
+    assert tasks[0].next_fire_at is None
+    assert tasks[0].last_fired_at is not None
 
     events = await components.channel_event_store.get_thread_events("qq:user:10001")
     assert [item.content_text for item in events] == ["帮我创建一个定时任务", "[scheduler-e2e] one-shot fired"]

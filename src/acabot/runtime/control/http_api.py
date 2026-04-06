@@ -16,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from acabot.config import Config
 
 from .control_plane import RuntimeControlPlane
+from ..scheduler.service import ScheduledTaskConflictError, ScheduledTaskUnavailableError
 
 logger = logging.getLogger("acabot.runtime.http_api")
 
@@ -188,6 +189,10 @@ class RuntimeHttpApiServer:
                     status, result = 404, {"ok": False, "error": f"not found: {exc}"}
                 except FileNotFoundError as exc:
                     status, result = 404, {"ok": False, "error": str(exc)}
+                except ScheduledTaskConflictError as exc:
+                    status, result = 409, {"ok": False, "error": str(exc)}
+                except ScheduledTaskUnavailableError as exc:
+                    status, result = 503, {"ok": False, "error": str(exc)}
                 except ValueError as exc:
                     status, result = 400, {"ok": False, "error": str(exc)}
                 except Exception as exc:  # pragma: no cover - 兜底保护
@@ -557,6 +562,39 @@ class RuntimeHttpApiServer:
             if not deleted:
                 return 404, {"ok": False, "error": "sticky note not found"}
             return self._ok({"deleted": True})
+        if segments == ["schedules", "conversation-wakeup"] and method == "GET":
+            enabled_query = _query_value(query, "enabled", "").strip().lower()
+            enabled: bool | None
+            if enabled_query == "":
+                enabled = None
+            elif enabled_query == "true":
+                enabled = True
+            elif enabled_query == "false":
+                enabled = False
+            else:
+                raise ValueError("enabled must be true or false")
+            return self._ok(
+                self._await(
+                    self.control_plane.list_conversation_wakeup_schedules(
+                        conversation_id=_query_value(query, "conversation_id", ""),
+                        enabled=enabled,
+                        limit=_query_int(query, "limit", 200),
+                    )
+                )
+            )
+        if segments == ["schedules", "conversation-wakeup"] and method == "POST":
+            created = self._await(self.control_plane.create_conversation_wakeup_schedule(payload))
+            return 201, {"ok": True, "data": _to_jsonable(created)}
+        if len(segments) == 4 and segments[:2] == ["schedules", "conversation-wakeup"] and segments[3] in {"enable", "disable"}:
+            task_id = segments[2]
+            if method != "POST":
+                raise KeyError("unsupported method")
+            if segments[3] == "enable":
+                return self._ok(self._await(self.control_plane.enable_conversation_wakeup_schedule(task_id)))
+            return self._ok(self._await(self.control_plane.disable_conversation_wakeup_schedule(task_id)))
+        if len(segments) == 3 and segments[:2] == ["schedules", "conversation-wakeup"] and method == "DELETE":
+            task_id = segments[2]
+            return self._ok(self._await(self.control_plane.delete_conversation_wakeup_schedule(task_id)))
         if segments == ["sessions"] and method == "GET":
             return self._ok(self._await(self.control_plane.list_sessions()))
         if segments == ["sessions"] and method == "POST":

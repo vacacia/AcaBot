@@ -13,7 +13,11 @@ import pytest
 from acabot.runtime.scheduler import RuntimeScheduler, SQLiteScheduledTaskStore
 from acabot.runtime.scheduler.codec import parse_schedule_payload, serialize_schedule_payload
 from acabot.runtime.scheduler.conversation_wakeup import ScheduledConversationWakeupDispatcher
-from acabot.runtime.scheduler.service import PluginScheduler, ScheduledTaskService
+from acabot.runtime.scheduler.service import (
+    PluginScheduler,
+    ScheduledTaskConflictError,
+    ScheduledTaskService,
+)
 
 
 @pytest.fixture()
@@ -98,6 +102,79 @@ async def test_cancel_task_checks_owner(service: ScheduledTaskService) -> None:
 
     assert await service.cancel_task(owner="qq:user:10001", task_id=task.task_id) is True
     assert service.list_tasks(owner="qq:user:10001") == []
+
+
+async def test_service_lists_conversation_wakeup_tasks_for_webui(service: ScheduledTaskService) -> None:
+    await service.create_conversation_wakeup_task(
+        owner="qq:user:10001",
+        conversation_id="qq:user:10001",
+        schedule_payload={"kind": "interval", "spec": {"seconds": 60}},
+        note="提醒 A",
+    )
+    await service.create_conversation_wakeup_task(
+        owner="qq:user:20002",
+        conversation_id="qq:user:20002",
+        schedule_payload={"kind": "cron", "spec": {"expr": "0 9 * * *"}},
+        note="提醒 B",
+    )
+
+    tasks = service.list_conversation_wakeup_tasks(limit=10)
+    assert len(tasks) == 2
+    assert {task.metadata["conversation_id"] for task in tasks} == {"qq:user:10001", "qq:user:20002"}
+
+    filtered = service.list_conversation_wakeup_tasks(conversation_id="qq:user:20002", limit=10)
+    assert len(filtered) == 1
+    assert filtered[0].metadata["conversation_id"] == "qq:user:20002"
+
+
+async def test_service_disable_and_enable_conversation_wakeup_task(service: ScheduledTaskService) -> None:
+    task = await service.create_conversation_wakeup_task(
+        owner="qq:user:10001",
+        conversation_id="qq:user:10001",
+        schedule_payload={"kind": "interval", "spec": {"seconds": 60}},
+        note="提醒一下",
+    )
+
+    disabled = await service.disable_conversation_wakeup_task(task.task_id)
+    assert disabled.enabled is False
+    assert disabled.next_fire_at is None
+
+    enabled = await service.enable_conversation_wakeup_task(task.task_id)
+    assert enabled.enabled is True
+    assert enabled.next_fire_at is not None
+    assert enabled.next_fire_at > time.time()
+
+
+async def test_service_enable_expired_one_shot_raises_conflict(service: ScheduledTaskService) -> None:
+    task = await service.create_conversation_wakeup_task(
+        owner="qq:user:10001",
+        conversation_id="qq:user:10001",
+        schedule_payload={"kind": "one_shot", "spec": {"fire_at": time.time() + 0.05}},
+        note="一次性提醒",
+    )
+
+    await service.disable_conversation_wakeup_task(task.task_id)
+    scheduler_task = service._scheduler._tasks[task.task_id]
+    scheduler_task.schedule = parse_schedule_payload({"kind": "one_shot", "spec": {"fire_at": time.time() - 10}})
+
+    with pytest.raises(ScheduledTaskConflictError):
+        await service.enable_conversation_wakeup_task(task.task_id)
+
+
+async def test_service_serialize_task_flattens_webui_fields(service: ScheduledTaskService) -> None:
+    task = await service.create_conversation_wakeup_task(
+        owner="qq:user:10001",
+        conversation_id="qq:user:10001",
+        schedule_payload={"kind": "interval", "spec": {"seconds": 60}},
+        note="提醒一下",
+    )
+
+    payload = service.serialize_task(task)
+    assert payload["conversation_id"] == "qq:user:10001"
+    assert payload["note"] == "提醒一下"
+    assert payload["kind"] == "conversation_wakeup"
+    assert payload["created_at"] == task.created_at
+    assert payload["last_fired_at"] is None
 
 
 async def test_conversation_wakeup_callback_injects_scheduler_synthetic_event(

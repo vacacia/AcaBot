@@ -49,8 +49,9 @@ class SQLiteScheduledTaskStore(_SQLiteStoreBase):
                     enabled,
                     created_at,
                     updated_at,
+                    last_fired_at,
                     metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     row.task_id,
@@ -62,20 +63,14 @@ class SQLiteScheduledTaskStore(_SQLiteStoreBase):
                     1 if row.enabled else 0,
                     row.created_at,
                     row.updated_at,
+                    row.last_fired_at,
                     self._encode_json(row.metadata),
                 ),
             )
             self._conn.commit()
 
     async def delete(self, task_id: str) -> bool:
-        """删除一条定时任务记录.
-
-        Args:
-            task_id: 待删除的任务 ID.
-
-        Returns:
-            是否成功删除了一行.
-        """
+        """删除一条定时任务记录."""
 
         async with self._lock:
             cursor = self._conn.execute(
@@ -86,14 +81,7 @@ class SQLiteScheduledTaskStore(_SQLiteStoreBase):
             return cursor.rowcount > 0
 
     async def delete_by_owner(self, owner: str) -> list[str]:
-        """按 owner 批量删除定时任务.
-
-        Args:
-            owner: 注册来源标识.
-
-        Returns:
-            被删除的 task_id 列表.
-        """
+        """按 owner 批量删除定时任务."""
 
         async with self._lock:
             rows = self._conn.execute(
@@ -109,13 +97,29 @@ class SQLiteScheduledTaskStore(_SQLiteStoreBase):
                 self._conn.commit()
             return task_ids
 
-    async def update_next_fire_at(self, task_id: str, next_fire_at: float) -> None:
-        """更新任务的下次触发时间.
+    async def update_schedule_state(
+        self,
+        task_id: str,
+        *,
+        next_fire_at: float | None,
+        enabled: bool,
+        last_fired_at: float | None = None,
+    ) -> None:
+        """更新任务的调度状态."""
 
-        Args:
-            task_id: 目标任务 ID.
-            next_fire_at: 新的触发时间 (Unix timestamp).
-        """
+        async with self._lock:
+            self._conn.execute(
+                """
+                UPDATE scheduled_tasks
+                SET next_fire_at = ?, enabled = ?, updated_at = ?, last_fired_at = COALESCE(?, last_fired_at)
+                WHERE task_id = ?
+                """,
+                (next_fire_at, 1 if enabled else 0, time.time(), last_fired_at, task_id),
+            )
+            self._conn.commit()
+
+    async def update_next_fire_at(self, task_id: str, next_fire_at: float | None) -> None:
+        """更新任务的 next_fire_at 与 updated_at."""
 
         async with self._lock:
             self._conn.execute(
@@ -124,26 +128,38 @@ class SQLiteScheduledTaskStore(_SQLiteStoreBase):
             )
             self._conn.commit()
 
-    async def disable(self, task_id: str) -> None:
-        """禁用一个定时任务.
-
-        Args:
-            task_id: 目标任务 ID.
-        """
+    async def enable(self, task_id: str, *, next_fire_at: float) -> bool:
+        """启用一个定时任务并写入新的 next_fire_at."""
 
         async with self._lock:
-            self._conn.execute(
-                "UPDATE scheduled_tasks SET enabled = 0, updated_at = ? WHERE task_id = ?",
-                (time.time(), task_id),
+            cursor = self._conn.execute(
+                """
+                UPDATE scheduled_tasks
+                SET enabled = 1, next_fire_at = ?, updated_at = ?
+                WHERE task_id = ?
+                """,
+                (next_fire_at, time.time(), task_id),
             )
             self._conn.commit()
+            return cursor.rowcount > 0
+
+    async def disable(self, task_id: str, *, next_fire_at: float | None = None) -> bool:
+        """禁用一个定时任务."""
+
+        async with self._lock:
+            cursor = self._conn.execute(
+                """
+                UPDATE scheduled_tasks
+                SET enabled = 0, next_fire_at = ?, updated_at = ?
+                WHERE task_id = ?
+                """,
+                (next_fire_at, time.time(), task_id),
+            )
+            self._conn.commit()
+            return cursor.rowcount > 0
 
     async def list_enabled(self) -> list[ScheduledTaskRow]:
-        """列出所有启用的定时任务, 按 next_fire_at 升序排列.
-
-        Returns:
-            启用状态的 ScheduledTaskRow 列表.
-        """
+        """列出所有启用的定时任务, 按 next_fire_at 升序排列."""
 
         async with self._lock:
             rows = self._conn.execute(
@@ -158,28 +174,38 @@ class SQLiteScheduledTaskStore(_SQLiteStoreBase):
                     enabled,
                     created_at,
                     updated_at,
+                    last_fired_at,
                     metadata_json
                 FROM scheduled_tasks
                 WHERE enabled = 1
                 ORDER BY next_fire_at
                 """,
             ).fetchall()
+        return [self._row_to_record(row) for row in rows]
 
-        return [
-            ScheduledTaskRow(
-                task_id=str(row["task_id"]),
-                owner=str(row["owner"]),
-                schedule_type=str(row["schedule_type"]),
-                schedule_spec=dict(self._decode_json(row["schedule_spec"])),
-                misfire_policy=str(row["misfire_policy"]),  # type: ignore[arg-type]
-                next_fire_at=float(row["next_fire_at"]),
-                enabled=bool(row["enabled"]),
-                created_at=float(row["created_at"]),
-                updated_at=float(row["updated_at"]),
-                metadata=dict(self._decode_json(row["metadata_json"])),
-            )
-            for row in rows
-        ]
+    async def list_all(self) -> list[ScheduledTaskRow]:
+        """列出所有定时任务, 包括 disabled tombstone."""
+
+        async with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT
+                    task_id,
+                    owner,
+                    schedule_type,
+                    schedule_spec,
+                    misfire_policy,
+                    next_fire_at,
+                    enabled,
+                    created_at,
+                    updated_at,
+                    last_fired_at,
+                    metadata_json
+                FROM scheduled_tasks
+                ORDER BY created_at DESC, task_id DESC
+                """,
+            ).fetchall()
+        return [self._row_to_record(row) for row in rows]
 
     # endregion
 
@@ -196,10 +222,11 @@ class SQLiteScheduledTaskStore(_SQLiteStoreBase):
                 schedule_type TEXT NOT NULL,
                 schedule_spec TEXT NOT NULL,
                 misfire_policy TEXT NOT NULL DEFAULT 'skip',
-                next_fire_at REAL NOT NULL,
+                next_fire_at REAL,
                 enabled INTEGER NOT NULL DEFAULT 1,
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL,
+                last_fired_at REAL,
                 metadata_json TEXT NOT NULL DEFAULT '{}'
             )
             """
@@ -216,6 +243,32 @@ class SQLiteScheduledTaskStore(_SQLiteStoreBase):
                 ON scheduled_tasks(owner)
             """
         )
+        self._ensure_column("next_fire_at", "REAL")
+        self._ensure_column("last_fired_at", "REAL")
         self._conn.commit()
+
+    def _ensure_column(self, name: str, definition: str) -> None:
+        columns = {
+            str(row["name"]): str(row["type"])
+            for row in self._conn.execute("PRAGMA table_info(scheduled_tasks)").fetchall()
+        }
+        if name in columns:
+            return
+        self._conn.execute(f"ALTER TABLE scheduled_tasks ADD COLUMN {name} {definition}")
+
+    def _row_to_record(self, row) -> ScheduledTaskRow:
+        return ScheduledTaskRow(
+            task_id=str(row["task_id"]),
+            owner=str(row["owner"]),
+            schedule_type=str(row["schedule_type"]),
+            schedule_spec=dict(self._decode_json(row["schedule_spec"])),
+            misfire_policy=str(row["misfire_policy"]),  # type: ignore[arg-type]
+            next_fire_at=None if row["next_fire_at"] is None else float(row["next_fire_at"]),
+            enabled=bool(row["enabled"]),
+            created_at=float(row["created_at"]),
+            updated_at=float(row["updated_at"]),
+            last_fired_at=None if row["last_fired_at"] is None else float(row["last_fired_at"]),
+            metadata=dict(self._decode_json(row["metadata_json"])),
+        )
 
     # endregion

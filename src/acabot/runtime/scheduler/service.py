@@ -16,12 +16,17 @@ TASK_KIND_CONVERSATION_WAKEUP = "conversation_wakeup"
 TASK_KIND_PLUGIN_HANDLER = "plugin_handler"
 
 
+class ScheduledTaskConflictError(RuntimeError):
+    """表示当前任务状态与操作请求冲突."""
+
+
+class ScheduledTaskUnavailableError(RuntimeError):
+    """表示 scheduler service 当前不可用."""
+
+
 @dataclass(slots=True)
 class PluginScheduler:
-    """插件可见的稳定 scheduler facade.
-
-    本轮只开放 list/cancel，并保留 create_handler_task 形状但显式声明 deferred。
-    """
+    """插件可见的稳定 scheduler facade."""
 
     plugin_id: str
     _service: "ScheduledTaskService"
@@ -67,6 +72,8 @@ class ScheduledTaskService:
         conversation_id: str,
         schedule_payload: dict[str, Any],
         note: str | None,
+        created_by: str = "llm_tool",
+        source: str = "builtin:scheduler",
     ) -> ScheduledTaskInfo:
         schedule = parse_schedule_payload(schedule_payload)
         task_id = f"sched:{uuid.uuid4().hex}"
@@ -74,8 +81,8 @@ class ScheduledTaskService:
             "kind": TASK_KIND_CONVERSATION_WAKEUP,
             "conversation_id": str(conversation_id or "").strip(),
             "note": str(note or ""),
-            "created_by": "llm_tool",
-            "source": "builtin:scheduler",
+            "created_by": created_by,
+            "source": source,
             "created_at": time.time(),
         }
         callback = await self._resolve_callback_for_metadata(
@@ -99,22 +106,72 @@ class ScheduledTaskService:
     def list_tasks(self, *, owner: str) -> list[ScheduledTaskInfo]:
         return [task for task in self._scheduler.list_tasks() if task.owner == owner]
 
+    def list_conversation_wakeup_tasks(
+        self,
+        *,
+        conversation_id: str | None = None,
+        enabled: bool | None = None,
+        limit: int = 200,
+    ) -> list[ScheduledTaskInfo]:
+        tasks = [
+            task
+            for task in self._scheduler.list_tasks()
+            if str(task.metadata.get("kind", "") or "") == TASK_KIND_CONVERSATION_WAKEUP
+        ]
+        if conversation_id:
+            tasks = [
+                task
+                for task in tasks
+                if str(task.metadata.get("conversation_id", "") or "") == conversation_id
+            ]
+        if enabled is not None:
+            tasks = [task for task in tasks if task.enabled is enabled]
+        tasks.sort(key=lambda item: item.created_at, reverse=True)
+        return tasks[: max(1, limit)]
+
     async def cancel_task(self, *, owner: str, task_id: str) -> bool:
         task = next((item for item in self.list_tasks(owner=owner) if item.task_id == task_id), None)
         if task is None:
             return False
         return await self._scheduler.cancel(task_id)
 
+    async def disable_conversation_wakeup_task(self, task_id: str) -> ScheduledTaskInfo:
+        task = self._require_conversation_wakeup_task(task_id)
+        _ = task
+        if not await self._scheduler.disable(task_id):
+            raise KeyError(task_id)
+        return self._find_task(task_id)
+
+    async def enable_conversation_wakeup_task(self, task_id: str) -> ScheduledTaskInfo:
+        task = self._require_conversation_wakeup_task(task_id)
+        try:
+            if not await self._scheduler.enable(task_id):
+                raise KeyError(task_id)
+        except ValueError as exc:
+            raise ScheduledTaskConflictError(str(exc)) from exc
+        return self._find_task(task_id)
+
+    async def delete_conversation_wakeup_task(self, task_id: str) -> bool:
+        self._require_conversation_wakeup_task(task_id)
+        return await self._scheduler.cancel(task_id)
+
     def serialize_task(self, task: ScheduledTaskInfo) -> dict[str, Any]:
+        metadata = dict(task.metadata)
         return {
             "task_id": task.task_id,
             "owner": task.owner,
+            "conversation_id": str(metadata.get("conversation_id", "") or task.owner),
+            "note": str(metadata.get("note", "") or ""),
+            "kind": str(metadata.get("kind", "") or ""),
             "schedule": serialize_schedule_payload(task.schedule),
             "persist": task.persist,
             "misfire_policy": task.misfire_policy,
             "next_fire_at": task.next_fire_at,
+            "created_at": task.created_at,
+            "updated_at": task.updated_at,
+            "last_fired_at": task.last_fired_at,
             "enabled": task.enabled,
-            "metadata": dict(task.metadata),
+            "metadata": metadata,
         }
 
     def build_plugin_scheduler(self, *, plugin_id: str) -> PluginScheduler:
@@ -154,6 +211,12 @@ class ScheduledTaskService:
             return None
         return None
 
+    def _require_conversation_wakeup_task(self, task_id: str) -> ScheduledTaskInfo:
+        task = self._find_task(task_id)
+        if str(task.metadata.get("kind", "") or "") != TASK_KIND_CONVERSATION_WAKEUP:
+            raise KeyError(task_id)
+        return task
+
     def _find_task(self, task_id: str) -> ScheduledTaskInfo:
         task = self._find_task_or_none(task_id)
         if task is None:
@@ -169,7 +232,9 @@ class ScheduledTaskService:
 
 __all__ = [
     "PluginScheduler",
+    "ScheduledTaskConflictError",
     "ScheduledTaskService",
+    "ScheduledTaskUnavailableError",
     "TASK_KIND_CONVERSATION_WAKEUP",
     "TASK_KIND_PLUGIN_HANDLER",
 ]

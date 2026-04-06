@@ -7,6 +7,7 @@ import shutil
 import socket
 import subprocess
 import textwrap
+import time
 from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import quote
@@ -21,6 +22,7 @@ from acabot.runtime import (
     ModelBinding,
     ModelPreset,
     ModelProvider,
+    OneShotSchedule,
     OpenAICompatibleProviderConfig,
     RouteDecision,
     RunStep,
@@ -1237,6 +1239,244 @@ async def test_runtime_http_api_server_serves_status_and_session_crud(tmp_path: 
 
         workspaces_result = await asyncio.to_thread(request_json, base_url, "/api/workspaces")
         assert workspaces_result["ok"] is True
+    finally:
+        await server.stop()
+
+
+async def test_runtime_http_api_server_supports_schedule_webui_crud(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(
+        config_path,
+        webui_enabled=True,
+        port=0,
+        filesystem_enabled=True,
+        base_dir=tmp_path,
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+        log_buffer=InMemoryLogBuffer(),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+
+        created_status, created = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/schedules/conversation-wakeup",
+            method="POST",
+            payload={
+                "conversation_id": "qq:user:20001",
+                "schedule": {"kind": "interval", "spec": {"seconds": 60}},
+                "note": "测试提醒",
+            },
+        )
+        assert created_status == 201
+        assert created["ok"] is True
+        task_id = created["data"]["task_id"]
+        assert created["data"]["conversation_id"] == "qq:user:20001"
+        assert created["data"]["kind"] == "conversation_wakeup"
+        assert created["data"]["enabled"] is True
+
+        listed = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/schedules/conversation-wakeup?conversation_id=qq%3Auser%3A20001&enabled=true&limit=20",
+        )
+        assert listed["ok"] is True
+        assert len(listed["data"]["items"]) == 1
+        assert listed["data"]["items"][0]["task_id"] == task_id
+
+        disabled = await asyncio.to_thread(
+            request_json,
+            base_url,
+            f"/api/schedules/conversation-wakeup/{quote(task_id, safe='')}/disable",
+            method="POST",
+            payload={},
+        )
+        assert disabled["data"]["enabled"] is False
+        assert disabled["data"]["next_fire_at"] is None
+
+        enabled = await asyncio.to_thread(
+            request_json,
+            base_url,
+            f"/api/schedules/conversation-wakeup/{quote(task_id, safe='')}/enable",
+            method="POST",
+            payload={},
+        )
+        assert enabled["data"]["enabled"] is True
+        assert enabled["data"]["next_fire_at"] is not None
+
+        deleted = await asyncio.to_thread(
+            request_json,
+            base_url,
+            f"/api/schedules/conversation-wakeup/{quote(task_id, safe='')}",
+            method="DELETE",
+        )
+        assert deleted["data"]["deleted"] is True
+        assert deleted["data"]["task_id"] == task_id
+
+        missing_status, missing = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            f"/api/schedules/conversation-wakeup/{quote(task_id, safe='')}/enable",
+            method="POST",
+            payload={},
+        )
+        assert missing_status == 404
+        assert missing["ok"] is False
+    finally:
+        await server.stop()
+
+
+async def test_runtime_http_api_server_rejects_invalid_schedule_webui_payload(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(
+        config_path,
+        webui_enabled=True,
+        port=0,
+        filesystem_enabled=True,
+        base_dir=tmp_path,
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+        log_buffer=InMemoryLogBuffer(),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+
+        status, payload = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/schedules/conversation-wakeup",
+            method="POST",
+            payload={
+                "conversation_id": "qq:user:20001",
+                "schedule": {"kind": "interval", "spec": {}},
+                "note": "x" * 600,
+            },
+        )
+        assert status == 400
+        assert payload["ok"] is False
+
+        past_status, past_payload = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/schedules/conversation-wakeup",
+            method="POST",
+            payload={
+                "conversation_id": "qq:user:20001",
+                "schedule": {"kind": "one_shot", "spec": {"fire_at": time.time() - 10}},
+                "note": "过去时间",
+            },
+        )
+        assert past_status == 400
+        assert past_payload["ok"] is False
+    finally:
+        await server.stop()
+
+
+async def test_runtime_http_api_server_returns_conflict_for_expired_one_shot_enable(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(
+        config_path,
+        webui_enabled=True,
+        port=0,
+        filesystem_enabled=True,
+        base_dir=tmp_path,
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+        log_buffer=InMemoryLogBuffer(),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+
+        created = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/schedules/conversation-wakeup",
+            method="POST",
+            payload={
+                "conversation_id": "qq:user:20001",
+                "schedule": {"kind": "one_shot", "spec": {"fire_at": time.time() + 0.1}},
+                "note": "测试 one-shot",
+            },
+        )
+        task_id = created["data"]["task_id"]
+        await asyncio.to_thread(
+            request_json,
+            base_url,
+            f"/api/schedules/conversation-wakeup/{quote(task_id, safe='')}/disable",
+            method="POST",
+            payload={},
+        )
+        components.scheduler._tasks[task_id].schedule = OneShotSchedule(fire_at=time.time() - 10)
+
+        status, payload = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            f"/api/schedules/conversation-wakeup/{quote(task_id, safe='')}/enable",
+            method="POST",
+            payload={},
+        )
+        assert status == 409
+        assert payload["ok"] is False
+    finally:
+        await server.stop()
+
+
+async def test_runtime_http_api_server_returns_service_unavailable_for_schedule_api_without_service(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(
+        config_path,
+        webui_enabled=True,
+        port=0,
+        filesystem_enabled=True,
+        base_dir=tmp_path,
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+        log_buffer=InMemoryLogBuffer(),
+    )
+    components.control_plane.scheduled_task_service = None
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+
+        status, payload = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/schedules/conversation-wakeup",
+        )
+        assert status == 503
+        assert payload["ok"] is False
     finally:
         await server.stop()
 
@@ -3636,6 +3876,158 @@ def test_webui_real_pages_system_view_becomes_shared_system_entrypoint() -> None
 
     assert "/api/system/configuration" in api_source
     assert '"/api/runtime/reload-config"' in api_source
+
+
+def test_webui_real_pages_schedule_view_registers_route_sidebar_and_fresh_api() -> None:
+    schedule_view_source = Path("webui/src/views/SchedulesView.vue").read_text(encoding="utf-8")
+    router_source = Path("webui/src/router.ts").read_text(encoding="utf-8")
+    sidebar_source = Path("webui/src/components/AppSidebar.vue").read_text(encoding="utf-8")
+    api_source = Path("webui/src/lib/api.ts").read_text(encoding="utf-8")
+
+    assert 'path: "/schedules"' in router_source
+    assert 'to="/schedules"' in sidebar_source
+    assert "getSchedulesList" in api_source
+    assert "apiGetFresh<ScheduleListResponse>" in api_source
+    assert "data-schedule-create-button" in schedule_view_source
+    assert "data-schedule-row" in schedule_view_source
+    assert "data-schedule-create-modal" in schedule_view_source
+    assert "data-schedule-next-fire" in schedule_view_source
+
+
+async def test_schedule_page_supports_create_toggle_delete_and_visible_refresh(tmp_path: Path) -> None:
+    ensure_webui_assets_built()
+
+    config_path = tmp_path / "config.yaml"
+    _write_config(
+        config_path,
+        webui_enabled=True,
+        port=0,
+        filesystem_enabled=True,
+        base_dir=tmp_path,
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+        log_buffer=InMemoryLogBuffer(),
+    )
+    await components.control_plane.create_session(
+        {
+            "session_id": "qq:user:10001",
+            "title": "调度测试会话",
+            "template_id": "qq_private",
+        }
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await components.app.start()
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        result = await asyncio.to_thread(
+            run_page_script,
+            url=f"{base_url}/schedules",
+            width=1440,
+            height=1080,
+            wait_ms=1800,
+            init_script="""
+              window.confirm = () => true;
+            """,
+            script="""
+              return (async () => {
+                const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+                const click = (selector) => document.querySelector(selector)?.click();
+                const setValue = (selector, value) => {
+                  const element = document.querySelector(selector);
+                  if (!element) return false;
+                  element.focus();
+                  element.value = String(value);
+                  element.dispatchEvent(new Event('input', { bubbles: true }));
+                  element.dispatchEvent(new Event('change', { bubbles: true }));
+                  return true;
+                };
+
+                click('[data-schedule-create-button]');
+                await wait(200);
+                const modalOpen = Boolean(document.querySelector('[data-schedule-create-modal]'));
+                click('[data-schedule-session-option="qq:user:10001"]');
+                click('[data-schedule-kind="interval"]');
+                setValue('[data-schedule-interval-input]', 1);
+                setValue('[data-schedule-note-input]', '网页创建的调度任务');
+                click('[data-schedule-create-submit]');
+
+                for (let index = 0; index < 40; index += 1) {
+                  if (document.querySelector('[data-schedule-row]')) break;
+                  await wait(100);
+                }
+
+                const row = document.querySelector('[data-schedule-row]');
+                const taskId = row?.getAttribute('data-schedule-row') || '';
+                const nextBefore = taskId
+                  ? document.querySelector('[data-schedule-next-fire="' + taskId + '"]')?.textContent?.trim() || ''
+                  : '';
+
+                for (let index = 0; index < 40; index += 1) {
+                  const last = taskId
+                    ? document.querySelector('[data-schedule-last-fired="' + taskId + '"]')?.textContent?.trim() || ''
+                    : '';
+                  if (last && last !== '—') break;
+                  await wait(100);
+                }
+
+                const lastAfterRefresh = taskId
+                  ? document.querySelector('[data-schedule-last-fired="' + taskId + '"]')?.textContent?.trim() || ''
+                  : '';
+
+                click('[data-schedule-toggle="' + taskId + '"]');
+                for (let index = 0; index < 20; index += 1) {
+                  const rowText = row?.textContent || '';
+                  if (rowText.includes('已暂停')) break;
+                  await wait(100);
+                }
+                const pausedText = row?.textContent || '';
+
+                click('[data-schedule-toggle="' + taskId + '"]');
+                for (let index = 0; index < 20; index += 1) {
+                  const rowText = row?.textContent || '';
+                  if (rowText.includes('启用中')) break;
+                  await wait(100);
+                }
+                const resumedText = row?.textContent || '';
+
+                click('[data-schedule-delete="' + taskId + '"]');
+                for (let index = 0; index < 20; index += 1) {
+                  if (!document.querySelector('[data-schedule-row="' + taskId + '"]')) break;
+                  await wait(100);
+                }
+
+                return {
+                  title: document.querySelector('h1')?.textContent?.trim() || '',
+                  modalOpen,
+                  taskId,
+                  nextBefore,
+                  lastAfterRefresh,
+                  pausedText,
+                  resumedText,
+                  remainingRows: document.querySelectorAll('[data-schedule-row]').length,
+                };
+              })();
+            """,
+        )
+
+        assert result["title"] == "调度任务"
+        assert result["modalOpen"] is True
+        assert result["taskId"]
+        assert result["nextBefore"]
+        assert result["lastAfterRefresh"] != "—"
+        assert "已暂停" in result["pausedText"]
+        assert "启用中" in result["resumedText"]
+        assert result["remainingRows"] == 0
+    finally:
+        await server.stop()
+        await components.app.stop()
 
 
 async def test_webui_real_pages_system_view_includes_render_bootstrap_guard_for_stale_cache(

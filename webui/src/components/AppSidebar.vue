@@ -76,6 +76,7 @@
       <RouterLink class="nav-item nav-entrance nav-entrance-13" to="/sessions">会话</RouterLink>
       <RouterLink class="nav-item nav-entrance nav-entrance-14" to="/system">系统</RouterLink>
       <RouterLink class="nav-item nav-entrance nav-entrance-15" to="/logs">日志</RouterLink>
+      <RouterLink class="nav-item nav-entrance nav-entrance-16" to="/schedules">调度</RouterLink>
     </nav>
   </aside>
 </template>

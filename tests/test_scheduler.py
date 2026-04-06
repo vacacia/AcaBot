@@ -81,6 +81,32 @@ async def test_store_upsert_and_list(store: SQLiteScheduledTaskStore) -> None:
     assert rows[0].task_id == "t1"
 
 
+async def test_store_list_all_includes_disabled_and_fire_metadata(store: SQLiteScheduledTaskStore) -> None:
+    """list_all 会返回 disabled 任务和 last_fired_at 等元数据."""
+    now = time.time()
+    row = ScheduledTaskRow(
+        task_id="done-1",
+        owner="qq:user:1",
+        schedule_type="one_shot",
+        schedule_spec={"fire_at": now - 10},
+        misfire_policy="skip",
+        next_fire_at=None,
+        enabled=False,
+        created_at=now - 100,
+        updated_at=now - 5,
+        last_fired_at=now - 6,
+        metadata={"kind": "conversation_wakeup"},
+    )
+    await store.upsert(row)
+
+    rows = await store.list_all()
+    assert len(rows) == 1
+    assert rows[0].task_id == "done-1"
+    assert rows[0].enabled is False
+    assert rows[0].next_fire_at is None
+    assert rows[0].last_fired_at == row.last_fired_at
+
+
 async def test_store_delete(store: SQLiteScheduledTaskStore) -> None:
     """upsert 后 delete, list_enabled 返回空."""
     await store.upsert(_make_row())
@@ -224,6 +250,43 @@ async def test_one_shot_fires_once(scheduler: RuntimeScheduler) -> None:
     assert count == 1
 
 
+async def test_one_shot_becomes_disabled_tombstone_after_fire(tmp_path: Path) -> None:
+    """persisted one-shot 触发后保留为 disabled tombstone, 不直接消失."""
+    db_path = tmp_path / "sched.db"
+    store = SQLiteScheduledTaskStore(db_path)
+    count = 0
+
+    async def cb() -> None:
+        nonlocal count
+        count += 1
+
+    scheduler = RuntimeScheduler(store=store)
+    await scheduler.register(
+        task_id="one-shot-done",
+        owner="qq:user:1",
+        schedule=OneShotSchedule(fire_at=time.time() + 0.05),
+        callback=cb,
+        persist=True,
+    )
+    await scheduler.start()
+    await asyncio.sleep(0.2)
+    await scheduler.stop()
+
+    tasks = scheduler.list_tasks()
+    assert count == 1
+    assert len(tasks) == 1
+    assert tasks[0].task_id == "one-shot-done"
+    assert tasks[0].enabled is False
+    assert tasks[0].next_fire_at is None
+    assert tasks[0].last_fired_at is not None
+
+    rows = await store.list_all()
+    assert rows[0].enabled is False
+    assert rows[0].next_fire_at is None
+    assert rows[0].last_fired_at is not None
+    store.close()
+
+
 async def test_cron_validates_expression(scheduler: RuntimeScheduler) -> None:
     """register 无效 cron 表达式, 期望 ValueError."""
 
@@ -347,6 +410,75 @@ async def test_callback_error_does_not_stop_scheduler(scheduler: RuntimeSchedule
 
 
 # region persistence tests
+
+
+async def test_disable_and_enable_interval_task_recomputes_future_fire(tmp_path: Path) -> None:
+    """disable 后 enable 同一 interval 任务会恢复且 next_fire_at 重新计算到未来."""
+    db_path = tmp_path / "sched.db"
+    store = SQLiteScheduledTaskStore(db_path)
+    fired = 0
+
+    async def cb() -> None:
+        nonlocal fired
+        fired += 1
+
+    scheduler = RuntimeScheduler(store=store)
+    await scheduler.register(
+        task_id="interval-1",
+        owner="qq:user:1",
+        schedule=IntervalSchedule(seconds=60),
+        callback=cb,
+        persist=True,
+    )
+    task_before = scheduler.list_tasks()[0]
+
+    disabled = await scheduler.disable("interval-1")
+    assert disabled is True
+    disabled_task = scheduler.list_tasks()[0]
+    assert disabled_task.enabled is False
+    assert disabled_task.next_fire_at is None
+
+    await scheduler.enable("interval-1")
+    enabled_task = scheduler.list_tasks()[0]
+    assert enabled_task.enabled is True
+    assert enabled_task.next_fire_at is not None
+    assert enabled_task.next_fire_at > time.time()
+    assert enabled_task.next_fire_at != task_before.next_fire_at
+    store.close()
+
+
+async def test_disabled_task_stays_disabled_after_restart(tmp_path: Path) -> None:
+    """disabled 持久化任务在重启后仍保留但不会重新入 heap."""
+    db_path = tmp_path / "sched.db"
+    store = SQLiteScheduledTaskStore(db_path)
+
+    async def cb() -> None:
+        pass
+
+    sched1 = RuntimeScheduler(store=store)
+    await sched1.register(
+        task_id="t-disabled",
+        owner="qq:user:1",
+        schedule=IntervalSchedule(seconds=60),
+        callback=cb,
+        persist=True,
+    )
+    await sched1.disable("t-disabled")
+    await sched1.start()
+    await sched1.stop()
+    store.close()
+
+    store2 = SQLiteScheduledTaskStore(db_path)
+    sched2 = RuntimeScheduler(store=store2)
+    await sched2.start()
+    tasks = sched2.list_tasks()
+    assert len(tasks) == 1
+    assert tasks[0].task_id == "t-disabled"
+    assert tasks[0].enabled is False
+    assert tasks[0].next_fire_at is None
+    assert sched2._heap == []
+    await sched2.stop()
+    store2.close()
 
 
 async def test_persist_task_survives_restart(tmp_path: Path) -> None:

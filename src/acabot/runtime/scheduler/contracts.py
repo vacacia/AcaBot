@@ -58,7 +58,10 @@ class ScheduledTaskInfo:
         schedule: 调度配置.
         persist: 是否持久化.
         misfire_policy: misfire 策略.
-        next_fire_at: 下次触发时间 (Unix timestamp).
+        next_fire_at: 下次触发时间 (Unix timestamp). disabled 时可为 None.
+        created_at: 首次创建时间.
+        updated_at: 最近一次状态更新时间.
+        last_fired_at: 最近一次开始执行 callback 的时间.
         enabled: 是否启用.
         metadata: 扩展元数据.
     """
@@ -68,7 +71,10 @@ class ScheduledTaskInfo:
     schedule: ScheduleType
     persist: bool
     misfire_policy: MisfirePolicy
-    next_fire_at: float
+    next_fire_at: float | None
+    created_at: float
+    updated_at: float
+    last_fired_at: float | None = None
     enabled: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -83,10 +89,11 @@ class ScheduledTaskRow:
         schedule_type: "cron" | "interval" | "one_shot".
         schedule_spec: JSON 反序列化后的 dict.
         misfire_policy: misfire 策略.
-        next_fire_at: 下次触发时间.
+        next_fire_at: 下次触发时间. disabled 时可为 None.
         enabled: 是否启用.
         created_at: 创建时间.
         updated_at: 最近更新时间.
+        last_fired_at: 最近一次开始执行 callback 的时间.
         metadata: 扩展元数据.
     """
 
@@ -95,10 +102,11 @@ class ScheduledTaskRow:
     schedule_type: str
     schedule_spec: dict[str, Any]
     misfire_policy: MisfirePolicy
-    next_fire_at: float
+    next_fire_at: float | None
     enabled: bool
     created_at: float
     updated_at: float
+    last_fired_at: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

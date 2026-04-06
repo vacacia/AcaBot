@@ -186,6 +186,9 @@ function cachePrefixesForPath(path: string): string[] {
   if (path.startsWith("/api/soul")) {
     return ["/api/soul"]
   }
+  if (path.startsWith("/api/schedules")) {
+    return ["/api/schedules"]
+  }
   if (path.startsWith("/api/sessions")) {
     return ["/api/sessions", "/api/ui/catalog"]
   }
@@ -255,4 +258,79 @@ async function apiRequest<T>(path: string, init: RequestInit & { signal?: AbortS
     console.error(`[API] ${init.method || "GET"} ${path} FAILED after ${duration}ms:`, error)
     throw error
   }
+}
+
+// Schedule task types
+export type ScheduleKind = "cron" | "interval" | "one_shot"
+
+export type ScheduleSpec =
+  | { kind: "cron"; spec: { expr: string } }
+  | { kind: "interval"; spec: { seconds: number } }
+  | { kind: "one_shot"; spec: { fire_at: number } }
+
+export type ScheduleTask = {
+  task_id: string
+  owner: string
+  conversation_id: string
+  note: string
+  kind: "conversation_wakeup"
+  schedule: ScheduleSpec
+  enabled: boolean
+  created_at: number
+  updated_at: number
+  last_fired_at: number | null
+  next_fire_at: number | null
+}
+
+export type ScheduleListResponse = {
+  items: ScheduleTask[]
+}
+
+export async function getSchedulesList(
+  conversationId?: string,
+  enabled?: boolean,
+  limit: number = 200
+): Promise<ScheduleListResponse> {
+  const params = new URLSearchParams()
+  if (conversationId) params.set("conversation_id", conversationId)
+  if (enabled !== undefined) params.set("enabled", String(enabled))
+  params.set("limit", String(limit))
+  const query = params.toString()
+  const path = `/api/schedules/conversation-wakeup${query ? `?${query}` : ""}`
+  return apiGetFresh<ScheduleListResponse>(path)
+}
+
+export async function createSchedule(
+  conversationId: string,
+  schedule: ScheduleSpec,
+  note?: string
+): Promise<ScheduleTask> {
+  const body: { conversation_id: string; schedule: ScheduleSpec; note?: string } = {
+    conversation_id: conversationId,
+    schedule,
+  }
+  if (note) body.note = note
+  return apiPost<ScheduleTask>("/api/schedules/conversation-wakeup", body)
+}
+
+export async function enableSchedule(taskId: string): Promise<ScheduleTask> {
+  return apiPost<ScheduleTask>(
+    `/api/schedules/conversation-wakeup/${taskId}/enable`,
+    {},
+  )
+}
+
+export async function disableSchedule(taskId: string): Promise<ScheduleTask> {
+  return apiPost<ScheduleTask>(
+    `/api/schedules/conversation-wakeup/${taskId}/disable`,
+    {},
+  )
+}
+
+export async function deleteSchedule(
+  taskId: string
+): Promise<{ task_id: string; deleted: boolean }> {
+  return apiDelete<{ task_id: string; deleted: boolean }>(
+    `/api/schedules/conversation-wakeup/${taskId}`
+  )
 }

@@ -606,6 +606,7 @@ def build_runtime_components(
         config_control_plane=config_control_plane,
         log_buffer=log_buffer,
         ltm_store=runtime_long_term_memory_store,
+        scheduled_task_service=runtime_scheduled_task_service,
     )
     _control_plane_ref[0] = control_plane
 

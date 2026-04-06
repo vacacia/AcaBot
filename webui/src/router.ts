@@ -20,6 +20,7 @@ export const router = createRouter({
     { path: "/sessions", name: "sessions", component: () => import("./views/SessionsView.vue") },
     { path: "/system", name: "system", component: () => import("./views/SystemView.vue") },
     { path: "/logs", name: "logs", component: () => import("./views/LogsView.vue") },
+    { path: "/schedules", name: "schedules", component: () => import("./views/SchedulesView.vue") },
     { path: "/:pathMatch(.*)*", redirect: "/" },
   ],
 })

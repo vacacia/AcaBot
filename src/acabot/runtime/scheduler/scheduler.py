@@ -38,13 +38,7 @@ logger = logging.getLogger("acabot.runtime.scheduler")
 
 @dataclass(order=True)
 class _HeapEntry:
-    """heapq 排序条目. lazy deletion 模式.
-
-    Attributes:
-        fire_at: 触发时间 (排序键).
-        task_id: 任务 ID (不参与排序).
-        cancelled: 是否已被标记取消 (不参与排序).
-    """
+    """heapq 排序条目. lazy deletion 模式."""
 
     fire_at: float
     task_id: str = field(compare=False)
@@ -53,20 +47,7 @@ class _HeapEntry:
 
 @dataclass(slots=True)
 class _TaskRecord:
-    """运行时的完整任务记录.
-
-    Attributes:
-        task_id: 任务 ID.
-        owner: 注册来源.
-        schedule: 调度配置.
-        callback: 异步回调.
-        persist: 是否持久化.
-        misfire_policy: misfire 策略.
-        next_fire_at: 下次触发时间.
-        enabled: 是否启用.
-        metadata: 扩展元数据.
-        heap_entry: 当前堆中的条目引用 (用于 lazy cancel).
-    """
+    """运行时的完整任务记录."""
 
     task_id: str
     owner: str
@@ -74,7 +55,10 @@ class _TaskRecord:
     callback: Callable[[], Awaitable[None]] | None
     persist: bool
     misfire_policy: MisfirePolicy
-    next_fire_at: float
+    next_fire_at: float | None
+    created_at: float
+    updated_at: float
+    last_fired_at: float | None = None
     enabled: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
     heap_entry: _HeapEntry | None = None
@@ -84,19 +68,9 @@ class _TaskRecord:
 
 
 class RuntimeScheduler:
-    """轻量级 asyncio 定时任务调度器.
-
-    支持 cron / interval / one-shot 三种调度类型.
-    使用 heapq + asyncio.Event 实现精确唤醒.
-    """
+    """轻量级 asyncio 定时任务调度器."""
 
     def __init__(self, *, store: SQLiteScheduledTaskStore | None = None) -> None:
-        """初始化调度器.
-
-        Args:
-            store: 可选的持久化 store. 为 None 时不支持 persist.
-        """
-
         self._store = store
         self._tasks: dict[str, _TaskRecord] = {}
         self._heap: list[_HeapEntry] = []
@@ -110,10 +84,7 @@ class RuntimeScheduler:
     # region public lifecycle
 
     async def start(self) -> None:
-        """启动调度器主循环.
-
-        恢复持久化任务并创建 worker 协程.
-        """
+        """启动调度器主循环."""
 
         if self._started:
             logger.warning("Scheduler already started, ignoring duplicate start()")
@@ -126,10 +97,7 @@ class RuntimeScheduler:
         logger.info("Scheduler started")
 
     async def stop(self) -> None:
-        """优雅关闭调度器.
-
-        等待 worker 退出并等所有正在执行的回调完成.
-        """
+        """优雅关闭调度器."""
 
         if not self._started:
             return
@@ -172,35 +140,20 @@ class RuntimeScheduler:
         misfire_policy: MisfirePolicy = "skip",
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        """注册一个定时任务.
+        """注册一个定时任务."""
 
-        如果 task_id 已存在则更新 (取消旧 heap entry, 重新入堆).
-        支持持久化任务恢复时重新绑定 callback.
-
-        Args:
-            task_id: 任务唯一标识.
-            owner: 注册来源标识.
-            schedule: 调度配置.
-            callback: 异步回调函数.
-            persist: 是否持久化到 store.
-            misfire_policy: 过期未触发时的处理策略.
-            metadata: 扩展元数据.
-        """
-
-        # 验证 schedule 合法性
         self._validate_schedule(schedule)
-
         existing = self._tasks.get(task_id)
 
-        # 计算 next_fire_at
-        if existing is not None:
-            # 任务已存在 (持久化恢复或重复注册): 保留旧的 next_fire_at, 重新入堆
-            next_fire_at = existing.next_fire_at
-            if existing.heap_entry is not None:
-                existing.heap_entry.cancelled = True
-        else:
-            next_fire_at = self._compute_initial_fire(schedule)
+        if existing is not None and existing.heap_entry is not None:
+            existing.heap_entry.cancelled = True
 
+        next_fire_at = (
+            existing.next_fire_at
+            if existing is not None and existing.next_fire_at is not None
+            else self._compute_initial_fire(schedule)
+        )
+        now = time.time()
         record = _TaskRecord(
             task_id=task_id,
             owner=owner,
@@ -209,49 +162,44 @@ class RuntimeScheduler:
             persist=persist,
             misfire_policy=misfire_policy,
             next_fire_at=next_fire_at,
+            created_at=existing.created_at if existing is not None else now,
+            updated_at=now,
+            last_fired_at=existing.last_fired_at if existing is not None else None,
+            enabled=True,
             metadata=metadata or {},
         )
         self._tasks[task_id] = record
 
-        # 持久化
         if persist and self._store is not None:
             stype, sspec = schedule_to_type_and_spec(schedule)
-            now = time.time()
-            await self._store.upsert(ScheduledTaskRow(
-                task_id=task_id,
-                owner=owner,
-                schedule_type=stype,
-                schedule_spec=sspec,
-                misfire_policy=misfire_policy,
-                next_fire_at=next_fire_at,
-                enabled=True,
-                created_at=now,
-                updated_at=now,
-                metadata=metadata or {},
-            ))
+            await self._store.upsert(
+                ScheduledTaskRow(
+                    task_id=task_id,
+                    owner=owner,
+                    schedule_type=stype,
+                    schedule_spec=sspec,
+                    misfire_policy=misfire_policy,
+                    next_fire_at=next_fire_at,
+                    enabled=True,
+                    created_at=record.created_at,
+                    updated_at=now,
+                    last_fired_at=record.last_fired_at,
+                    metadata=metadata or {},
+                )
+            )
 
-        # 入堆
         entry = self._enqueue(task_id, next_fire_at)
         record.heap_entry = entry
-
         self._wake_event.set()
         logger.debug("Registered task: task_id=%s, owner=%s, next_fire_at=%.3f", task_id, owner, next_fire_at)
 
     async def cancel(self, task_id: str) -> bool:
-        """取消一个定时任务.
-
-        Args:
-            task_id: 待取消的任务 ID.
-
-        Returns:
-            是否成功取消 (task_id 不存在时返回 False).
-        """
+        """取消一个定时任务."""
 
         record = self._tasks.pop(task_id, None)
         if record is None:
             return False
 
-        # lazy deletion: 标记 heap entry 为已取消
         if record.heap_entry is not None:
             record.heap_entry.cancelled = True
 
@@ -262,35 +210,66 @@ class RuntimeScheduler:
         logger.debug("Cancelled task: task_id=%s", task_id)
         return True
 
+    async def disable(self, task_id: str) -> bool:
+        """暂停一个任务, 保留记录但不再触发."""
+
+        record = self._tasks.get(task_id)
+        if record is None:
+            return False
+        if not record.enabled:
+            return True
+
+        if record.heap_entry is not None:
+            record.heap_entry.cancelled = True
+            record.heap_entry = None
+        record.enabled = False
+        record.next_fire_at = None
+        record.updated_at = time.time()
+
+        if record.persist and self._store is not None:
+            await self._store.disable(task_id, next_fire_at=None)
+
+        self._wake_event.set()
+        logger.debug("Disabled task: task_id=%s", task_id)
+        return True
+
+    async def enable(self, task_id: str) -> bool:
+        """恢复一个已暂停任务."""
+
+        record = self._tasks.get(task_id)
+        if record is None:
+            return False
+        if record.enabled:
+            return True
+
+        next_fire_at = self._compute_resumed_fire(record, time.time())
+        record.enabled = True
+        record.next_fire_at = next_fire_at
+        record.updated_at = time.time()
+        entry = self._enqueue(task_id, next_fire_at)
+        record.heap_entry = entry
+
+        if record.persist and self._store is not None:
+            await self._store.enable(task_id, next_fire_at=next_fire_at)
+
+        self._wake_event.set()
+        logger.debug("Enabled task: task_id=%s next_fire_at=%.3f", task_id, next_fire_at)
+        return True
+
     async def unregister_by_owner(self, owner: str) -> list[str]:
-        """按 owner 批量取消定时任务.
+        """按 owner 批量取消定时任务."""
 
-        Args:
-            owner: 注册来源标识.
-
-        Returns:
-            被取消的 task_id 列表.
-        """
-
-        task_ids = [
-            tid for tid, rec in self._tasks.items()
-            if rec.owner == owner
-        ]
+        task_ids = [tid for tid, rec in self._tasks.items() if rec.owner == owner]
         for tid in task_ids:
             await self.cancel(tid)
 
-        # 兜底: 批量清理 store 中可能遗留的记录
         if self._store is not None:
             await self._store.delete_by_owner(owner)
 
         return task_ids
 
     def list_tasks(self) -> list[ScheduledTaskInfo]:
-        """列出所有已注册的任务快照.
-
-        Returns:
-            ScheduledTaskInfo 列表.
-        """
+        """列出所有已注册的任务快照."""
 
         return [
             ScheduledTaskInfo(
@@ -300,6 +279,9 @@ class RuntimeScheduler:
                 persist=rec.persist,
                 misfire_policy=rec.misfire_policy,
                 next_fire_at=rec.next_fire_at,
+                created_at=rec.created_at,
+                updated_at=rec.updated_at,
+                last_fired_at=rec.last_fired_at,
                 enabled=rec.enabled,
                 metadata=rec.metadata,
             )
@@ -327,11 +309,7 @@ class RuntimeScheduler:
     # region worker loop
 
     async def _worker_loop(self) -> None:
-        """调度主循环.
-
-        不断从 heap 中取出最近需要触发的任务, 等待到触发时间后执行.
-        使用 asyncio.Event + wait_for 实现精确唤醒.
-        """
+        """调度主循环."""
 
         while not self._stopping:
             if not self._heap:
@@ -340,8 +318,6 @@ class RuntimeScheduler:
                 continue
 
             entry = self._heap[0]
-
-            # lazy deletion: 跳过已取消的条目
             if entry.cancelled:
                 heapq.heappop(self._heap)
                 continue
@@ -355,47 +331,50 @@ class RuntimeScheduler:
                     pass
                 continue
 
-            # 触发时间到达, pop 并执行
             heapq.heappop(self._heap)
-
             record = self._tasks.get(entry.task_id)
-            if record is None:
-                # 已被 cancel, 跳过
+            if record is None or not record.enabled:
                 continue
 
+            fired_at = time.time()
+            record.last_fired_at = fired_at
+            record.updated_at = fired_at
             self._fire_task(record)
 
-            # 计算下次触发时间
-            next_fire = self._compute_next_fire(record, time.time())
+            next_fire = self._compute_next_fire(record, fired_at)
             if next_fire is not None:
                 record.next_fire_at = next_fire
+                record.updated_at = fired_at
                 new_entry = self._enqueue(record.task_id, next_fire)
                 record.heap_entry = new_entry
-
-                # 持久化更新 next_fire_at
                 if record.persist and self._store is not None:
-                    await self._store.update_next_fire_at(record.task_id, next_fire)
+                    await self._store.update_schedule_state(
+                        record.task_id,
+                        next_fire_at=next_fire,
+                        enabled=True,
+                        last_fired_at=fired_at,
+                    )
             else:
-                # one-shot 任务, 执行后移除
-                self._tasks.pop(record.task_id, None)
+                record.enabled = False
+                record.next_fire_at = None
+                record.heap_entry = None
                 if record.persist and self._store is not None:
-                    await self._store.disable(record.task_id)
+                    await self._store.update_schedule_state(
+                        record.task_id,
+                        next_fire_at=None,
+                        enabled=False,
+                        last_fired_at=fired_at,
+                    )
 
     # endregion
 
     # region callback execution
 
     def _fire_task(self, record: _TaskRecord) -> None:
-        """触发一个任务的回调.
-
-        Args:
-            record: 待触发的任务记录.
-        """
+        """触发一个任务的回调."""
 
         if record.callback is None:
-            logger.warning(
-                "Skipping task with no callback: task_id=%s", record.task_id
-            )
+            logger.warning("Skipping task with no callback: task_id=%s", record.task_id)
             return
 
         task = asyncio.create_task(self._execute_callback(record))
@@ -403,19 +382,13 @@ class RuntimeScheduler:
         task.add_done_callback(self._running_callbacks.discard)
 
     async def _execute_callback(self, record: _TaskRecord) -> None:
-        """安全执行回调, 捕获异常并记录日志.
-
-        Args:
-            record: 任务记录.
-        """
+        """安全执行回调, 捕获异常并记录日志."""
 
         try:
             if record.callback is not None:
                 await record.callback()
         except Exception:
-            logger.exception(
-                "Callback error: task_id=%s", record.task_id
-            )
+            logger.exception("Callback error: task_id=%s", record.task_id)
 
     # endregion
 
@@ -423,40 +396,18 @@ class RuntimeScheduler:
 
     @staticmethod
     def _validate_schedule(schedule: ScheduleType) -> None:
-        """验证调度配置的合法性.
-
-        Args:
-            schedule: 待验证的调度配置.
-
-        Raises:
-            ValueError: 配置不合法时抛出.
-        """
-
         if isinstance(schedule, CronSchedule):
             if not croniter.is_valid(schedule.cron_expr):
                 raise ValueError(f"Invalid cron expression: {schedule.cron_expr!r}")
         elif isinstance(schedule, IntervalSchedule):
             if schedule.seconds <= 0:
-                raise ValueError(
-                    f"Interval seconds must be positive, got {schedule.seconds}"
-                )
+                raise ValueError(f"Interval seconds must be positive, got {schedule.seconds}")
         elif isinstance(schedule, OneShotSchedule):
             if schedule.fire_at <= 0:
-                raise ValueError(
-                    f"OneShotSchedule fire_at must be positive, got {schedule.fire_at}"
-                )
+                raise ValueError(f"OneShotSchedule fire_at must be positive, got {schedule.fire_at}")
 
     @staticmethod
     def _compute_initial_fire(schedule: ScheduleType) -> float:
-        """计算首次触发时间.
-
-        Args:
-            schedule: 调度配置.
-
-        Returns:
-            首次触发的 Unix timestamp.
-        """
-
         if isinstance(schedule, CronSchedule):
             return float(croniter(schedule.cron_expr, start_time=time.time()).get_next(float))
         if isinstance(schedule, IntervalSchedule):
@@ -467,16 +418,6 @@ class RuntimeScheduler:
 
     @staticmethod
     def _compute_next_fire(record: _TaskRecord, after: float) -> float | None:
-        """计算下次触发时间.
-
-        Args:
-            record: 任务记录.
-            after: 基准时间 (通常是当前时间).
-
-        Returns:
-            下次触发的 Unix timestamp, one-shot 返回 None.
-        """
-
         schedule = record.schedule
         if isinstance(schedule, CronSchedule):
             return float(croniter(schedule.cron_expr, start_time=after).get_next(float))
@@ -486,17 +427,20 @@ class RuntimeScheduler:
             return None
         raise TypeError(f"Unknown schedule type: {type(schedule)}")
 
+    @staticmethod
+    def _compute_resumed_fire(record: _TaskRecord, now: float) -> float:
+        schedule = record.schedule
+        if isinstance(schedule, CronSchedule):
+            return float(croniter(schedule.cron_expr, start_time=now).get_next(float))
+        if isinstance(schedule, IntervalSchedule):
+            return now + schedule.seconds
+        if isinstance(schedule, OneShotSchedule):
+            if schedule.fire_at <= now:
+                raise ValueError("expired one_shot task cannot be resumed")
+            return schedule.fire_at
+        raise TypeError(f"Unknown schedule type: {type(schedule)}")
+
     def _enqueue(self, task_id: str, fire_at: float) -> _HeapEntry:
-        """创建 heap entry 并入堆.
-
-        Args:
-            task_id: 任务 ID.
-            fire_at: 触发时间.
-
-        Returns:
-            新创建的 _HeapEntry.
-        """
-
         entry = _HeapEntry(fire_at=fire_at, task_id=task_id)
         heapq.heappush(self._heap, entry)
         return entry
@@ -506,16 +450,12 @@ class RuntimeScheduler:
     # region persistence recovery
 
     async def _recover_persisted_tasks(self) -> None:
-        """从 store 恢复持久化的定时任务.
-
-        处理 misfire 策略: skip 时推进到下一个触发时间, fire_once 时立即触发.
-        恢复后 callback 为 None, 需要通过 register() 重新绑定.
-        """
+        """从 store 恢复持久化的定时任务."""
 
         if self._store is None:
             return
 
-        rows = await self._store.list_enabled()
+        rows = await self._store.list_all()
         if not rows:
             return
 
@@ -523,27 +463,46 @@ class RuntimeScheduler:
         recovered = 0
 
         for row in rows:
+            if row.task_id in self._tasks:
+                continue
+
             schedule = spec_to_schedule(row.schedule_type, row.schedule_spec)
             next_fire_at = row.next_fire_at
+            enabled = row.enabled
 
-            if next_fire_at < now:
-                # misfire 处理
+            if enabled and next_fire_at is not None and next_fire_at < now:
                 if isinstance(schedule, OneShotSchedule):
                     if row.misfire_policy == "skip":
-                        await self._store.disable(row.task_id)
-                        continue
+                        enabled = False
+                        next_fire_at = None
+                        await self._store.disable(row.task_id, next_fire_at=None)
                     else:
-                        # fire_once: 立即触发
                         next_fire_at = now
                 else:
-                    # cron / interval
                     if row.misfire_policy == "skip":
-                        # 推进到下一个 >= now 的触发时间
                         next_fire_at = self._advance_to_future(schedule, now)
-                        await self._store.update_next_fire_at(row.task_id, next_fire_at)
+                        await self._store.enable(row.task_id, next_fire_at=next_fire_at)
                     else:
-                        # fire_once: 立即补触发一次
                         next_fire_at = now
+            elif enabled and next_fire_at is None:
+                next_fire_at = self._compute_resumed_fire(
+                    _TaskRecord(
+                        task_id=row.task_id,
+                        owner=row.owner,
+                        schedule=schedule,
+                        callback=None,
+                        persist=True,
+                        misfire_policy=row.misfire_policy,
+                        next_fire_at=None,
+                        created_at=row.created_at,
+                        updated_at=row.updated_at,
+                        last_fired_at=row.last_fired_at,
+                        enabled=True,
+                        metadata=row.metadata,
+                    ),
+                    now,
+                )
+                await self._store.enable(row.task_id, next_fire_at=next_fire_at)
 
             record = _TaskRecord(
                 task_id=row.task_id,
@@ -552,14 +511,18 @@ class RuntimeScheduler:
                 callback=None,
                 persist=True,
                 misfire_policy=row.misfire_policy,
-                next_fire_at=next_fire_at,
-                enabled=row.enabled,
+                next_fire_at=next_fire_at if enabled else None,
+                created_at=row.created_at,
+                updated_at=row.updated_at,
+                last_fired_at=row.last_fired_at,
+                enabled=enabled,
                 metadata=row.metadata,
             )
             self._tasks[row.task_id] = record
 
-            entry = self._enqueue(row.task_id, next_fire_at)
-            record.heap_entry = entry
+            if enabled and next_fire_at is not None:
+                entry = self._enqueue(row.task_id, next_fire_at)
+                record.heap_entry = entry
             recovered += 1
 
         if recovered > 0:
@@ -567,16 +530,6 @@ class RuntimeScheduler:
 
     @staticmethod
     def _advance_to_future(schedule: ScheduleType, now: float) -> float:
-        """推进调度到未来的下一个触发时间.
-
-        Args:
-            schedule: 调度配置.
-            now: 当前时间.
-
-        Returns:
-            下一个 >= now 的触发 timestamp.
-        """
-
         if isinstance(schedule, CronSchedule):
             return float(croniter(schedule.cron_expr, start_time=now).get_next(float))
         if isinstance(schedule, IntervalSchedule):
