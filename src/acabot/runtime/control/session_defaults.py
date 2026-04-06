@@ -50,7 +50,25 @@ def build_default_qq_group_surfaces() -> dict[str, Any]:
     }
 
 
+def build_default_qq_group_visible_tools() -> list[str]:
+    """返回新建 `qq_group` session 的默认前台工具基线。"""
+
+    return [
+        "Skill",
+        "ask_backend",
+        "bash",
+        "delegate_subagent",
+        "edit",
+        "message",
+        "read",
+        "sticky_note_append",
+        "sticky_note_read",
+        "write",
+        "refresh_extensions",
+    ]
+
+
 # endregion
 
 
-__all__ = ["build_default_qq_group_surfaces"]
+__all__ = ["build_default_qq_group_surfaces", "build_default_qq_group_visible_tools"]

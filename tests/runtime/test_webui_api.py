@@ -956,6 +956,19 @@ async def test_runtime_config_control_plane_create_session_seeds_qq_group_bot_ad
         assert computer["default"]["backend"] == "docker"
         assert computer["cases"][0]["when"] == {"is_bot_admin": True}
         assert computer["cases"][0]["use"]["backend"] == "host"
+    assert created["agent"]["visible_tools"] == [
+        "Skill",
+        "ask_backend",
+        "bash",
+        "delegate_subagent",
+        "edit",
+        "message",
+        "read",
+        "sticky_note_append",
+        "sticky_note_read",
+        "write",
+        "refresh_extensions",
+    ]
     assert "computer_policy" not in created["agent"]
 
 

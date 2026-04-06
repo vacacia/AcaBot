@@ -13,9 +13,12 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from acabot.config import Config
 from acabot.runtime import ResolvedAgent, ComputerPolicy, ToolBroker, ToolExecutionContext, build_runtime_components
 from acabot.runtime.builtin_tools.computer import BuiltinComputerToolSurface
+from acabot.runtime.builtin_tools.extensions import BUILTIN_EXTENSIONS_TOOL_SOURCE, BuiltinExtensionsToolSurface
 from acabot.runtime.builtin_tools.message import BUILTIN_MESSAGE_TOOL_SOURCE, BuiltinMessageToolSurface
 from acabot.types import EventSource
 
@@ -199,42 +202,61 @@ class _SpyComputerRuntime:
         return []
 
 
-def _tool_execution_context(*, enabled_tools: list[str]) -> ToolExecutionContext:
+def _tool_execution_context(
+    *,
+    enabled_tools: list[str],
+    actor_id: str = "actor-1",
+    agent_id: str = "aca",
+    message_type: str = "private",
+    user_id: str = "10001",
+    group_id: str | None = None,
+    metadata: dict[str, object] | None = None,
+) -> ToolExecutionContext:
     """构造一份最小可用的 ToolExecutionContext.
 
     Args:
         enabled_tools (list[str]): 当前 run 允许的工具名.
+        actor_id (str): 当前 actor 标识.
+        agent_id (str): 当前 agent 标识.
+        message_type (str): 消息类型.
+        user_id (str): 发送者 user_id.
+        group_id (str | None): 群号.
+        metadata (dict[str, object] | None): 额外 metadata 覆盖.
 
     Returns:
         ToolExecutionContext: 最小工具执行上下文.
     """
 
+    base_metadata = {
+        "visible_tools": list(enabled_tools),
+        "backend_kind": "host",
+        "allow_exec": True,
+        "allow_sessions": True,
+        "network_mode": "enabled",
+        "channel_scope": f"qq:group:{group_id}" if message_type == "group" and group_id else f"qq:user:{user_id}",
+    }
+    if metadata:
+        base_metadata.update(metadata)
     return ToolExecutionContext(
         run_id="run-1",
         thread_id="thread-1",
-        actor_id="actor-1",
-        agent_id="aca",
+        actor_id=actor_id,
+        agent_id=agent_id,
         target=EventSource(
             platform="qq",
-            message_type="private",
-            user_id="10001",
-            group_id=None,
+            message_type=message_type,
+            user_id=user_id,
+            group_id=group_id,
         ),
         agent=ResolvedAgent(
-            agent_id="aca",
+            agent_id=agent_id,
             name="Aca",
             prompt_ref="prompt/aca",
             enabled_tools=list(enabled_tools),
             computer_policy=ComputerPolicy(),
         ),
         world_view=SimpleNamespace(name="world-view"),
-        metadata={
-            "visible_tools": list(enabled_tools),
-            "backend_kind": "host",
-            "allow_exec": True,
-            "allow_sessions": True,
-            "network_mode": "enabled",
-        },
+        metadata=base_metadata,
     )
 
 
@@ -320,11 +342,111 @@ async def test_build_runtime_components_registers_core_tools_as_builtin_sources(
     assert sources["sticky_note_append"] == "builtin:sticky_notes"
     assert sources["scheduler"] == "builtin:scheduler"
     assert sources["delegate_subagent"] == "builtin:subagents"
+    assert sources["refresh_extensions"] == BUILTIN_EXTENSIONS_TOOL_SOURCE
     assert sources["message"] == BUILTIN_MESSAGE_TOOL_SOURCE
     assert "sticky_note_put" not in sources
     assert "sticky_note_get" not in sources
     assert "sticky_note_list" not in sources
     assert "sticky_note_delete" not in sources
+
+
+async def test_builtin_extensions_surface_rejects_non_admin_or_non_host_or_non_frontstage() -> None:
+    """refresh_extensions 必须同时要求 frontstage + host + bot admin。"""
+
+    async def _never_called(*, session_id: str) -> dict[str, object]:
+        raise AssertionError(f"unexpected refresh call for {session_id}")
+
+    surface = BuiltinExtensionsToolSurface(
+        refresh_service_getter=lambda: SimpleNamespace(refresh_skills=_never_called),
+        admin_actor_ids_getter=lambda: {"qq:user:10001"},
+    )
+
+    with pytest.raises(PermissionError, match="frontstage"):
+        await surface._handle_refresh(
+            {"kind": "skills"},
+            _tool_execution_context(
+                enabled_tools=["refresh_extensions"],
+                actor_id="qq:user:10001",
+                agent_id="aca",
+                message_type="group",
+                group_id="123",
+            ),
+        )
+
+    with pytest.raises(PermissionError, match="host"):
+        await surface._handle_refresh(
+            {"kind": "skills"},
+            _tool_execution_context(
+                enabled_tools=["refresh_extensions"],
+                actor_id="qq:user:10001",
+                agent_id="session:qq:group:123:frontstage",
+                message_type="group",
+                group_id="123",
+                metadata={"backend_kind": "docker"},
+            ),
+        )
+
+    with pytest.raises(PermissionError, match="bot admin"):
+        await surface._handle_refresh(
+            {"kind": "skills"},
+            _tool_execution_context(
+                enabled_tools=["refresh_extensions"],
+                actor_id="qq:user:20002",
+                agent_id="session:qq:group:123:frontstage",
+                message_type="group",
+                group_id="123",
+            ),
+        )
+
+
+async def test_builtin_extensions_surface_delegates_to_refresh_service() -> None:
+    """admin host 前台调用应该委托给共享 refresh 服务。"""
+
+    calls: list[str] = []
+
+    async def _refresh_skills(*, session_id: str) -> dict[str, object]:
+        calls.append(session_id)
+        return {"kind": "skills", "session_id": session_id, "changed": True}
+
+    surface = BuiltinExtensionsToolSurface(
+        refresh_service_getter=lambda: SimpleNamespace(refresh_skills=_refresh_skills),
+        admin_actor_ids_getter=lambda: {"qq:user:10001"},
+    )
+
+    result = await surface._handle_refresh(
+        {"kind": "skills"},
+        _tool_execution_context(
+            enabled_tools=["refresh_extensions"],
+            actor_id="qq:user:10001",
+            agent_id="session:qq:group:123:frontstage",
+            message_type="group",
+            group_id="123",
+        ),
+    )
+
+    assert calls == ["qq:group:123"]
+    assert result.raw["changed"] is True
+
+
+async def test_builtin_extensions_surface_rejects_unsupported_kind() -> None:
+    """refresh_extensions 只支持 kind=skills。"""
+
+    surface = BuiltinExtensionsToolSurface(
+        refresh_service_getter=lambda: SimpleNamespace(refresh_skills=lambda **_: None),
+        admin_actor_ids_getter=lambda: {"qq:user:10001"},
+    )
+
+    with pytest.raises(ValueError, match="unsupported extension refresh kind"):
+        await surface._handle_refresh(
+            {"kind": "subagents"},
+            _tool_execution_context(
+                enabled_tools=["refresh_extensions"],
+                actor_id="qq:user:10001",
+                agent_id="session:qq:group:123:frontstage",
+                message_type="group",
+                group_id="123",
+            ),
+        )
 
 
 async def test_builtin_core_tools_survive_reconciler_run(tmp_path: Path) -> None:

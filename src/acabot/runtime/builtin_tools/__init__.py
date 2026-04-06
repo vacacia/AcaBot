@@ -9,12 +9,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from ..computer import ComputerRuntime
+from ..control.extension_refresh import ExtensionRefreshService
 from ..scheduler.service import ScheduledTaskService
 from ..skills import SkillCatalog
 from ..subagents import SubagentDelegationBroker
 from ..tool_broker import ToolBroker
 from .computer import BUILTIN_COMPUTER_TOOL_SOURCE, BuiltinComputerToolSurface
+from .extensions import BUILTIN_EXTENSIONS_TOOL_SOURCE, BuiltinExtensionsToolSurface
 from .message import BUILTIN_MESSAGE_TOOL_SOURCE, BuiltinMessageToolSurface
 from .scheduler import BUILTIN_SCHEDULER_TOOL_SOURCE, BuiltinSchedulerToolSurface
 from .skills import BUILTIN_SKILL_TOOL_SOURCE, BuiltinSkillToolSurface
@@ -44,6 +48,8 @@ def register_core_builtin_tools(
     sticky_note_service,
     subagent_delegator: SubagentDelegationBroker | None,
     scheduled_task_service: ScheduledTaskService | None = None,
+    extension_refresh_service_getter: Callable[[], ExtensionRefreshService | None] | None = None,
+    admin_actor_ids_getter: Callable[[], set[str]] | None = None,
 ) -> dict[str, list[str]]:
     """把 core builtin tool 注册到 ToolBroker.
 
@@ -74,12 +80,17 @@ def register_core_builtin_tools(
     subagent_surface = BuiltinSubagentToolSurface(
         delegator=subagent_delegator,
     )
+    extensions_surface = BuiltinExtensionsToolSurface(
+        refresh_service_getter=extension_refresh_service_getter,
+        admin_actor_ids_getter=admin_actor_ids_getter,
+    )
     registrations = {
         BUILTIN_COMPUTER_TOOL_SOURCE: computer_surface.register(tool_broker),
         BUILTIN_SKILL_TOOL_SOURCE: skill_surface.register(tool_broker),
         BUILTIN_MESSAGE_TOOL_SOURCE: message_surface.register(tool_broker),
         BUILTIN_STICKY_NOTE_TOOL_SOURCE: sticky_note_surface.register(tool_broker),
         BUILTIN_SUBAGENT_TOOL_SOURCE: subagent_surface.register(tool_broker),
+        BUILTIN_EXTENSIONS_TOOL_SOURCE: extensions_surface.register(tool_broker),
     }
     if scheduled_task_service is not None:
         scheduler_surface = BuiltinSchedulerToolSurface(service=scheduled_task_service)
@@ -92,12 +103,14 @@ def register_core_builtin_tools(
 
 __all__ = [
     "BUILTIN_COMPUTER_TOOL_SOURCE",
+    "BUILTIN_EXTENSIONS_TOOL_SOURCE",
     "BUILTIN_MESSAGE_TOOL_SOURCE",
     "BUILTIN_SCHEDULER_TOOL_SOURCE",
     "BUILTIN_SKILL_TOOL_SOURCE",
     "BUILTIN_STICKY_NOTE_TOOL_SOURCE",
     "BUILTIN_SUBAGENT_TOOL_SOURCE",
     "BuiltinComputerToolSurface",
+    "BuiltinExtensionsToolSurface",
     "BuiltinMessageToolSurface",
     "BuiltinSchedulerToolSurface",
     "BuiltinSkillToolSurface",

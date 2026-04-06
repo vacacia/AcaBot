@@ -51,7 +51,7 @@ from .prompt_loader import (
     ReloadablePromptLoader,
 )
 from .session_bundle_loader import SessionBundleLoader
-from .session_defaults import build_default_qq_group_surfaces
+from .session_defaults import build_default_qq_group_surfaces, build_default_qq_group_visible_tools
 from .session_loader import SessionConfigLoader
 from .session_runtime import SessionRuntime
 
@@ -447,7 +447,7 @@ class RuntimeConfigControlPlane:
         agent_payload = {
             "agent_id": agent_id,
             "prompt_ref": self.bootstrap_defaults.prompt_ref,
-            "visible_tools": [],
+            "visible_tools": self._default_visible_tools_for_template(template_id),
             "visible_skills": [],
             "visible_subagents": [],
         }
@@ -1003,6 +1003,15 @@ class RuntimeConfigControlPlane:
         if normalized == "qq_group":
             return build_default_qq_group_surfaces()
         return {}
+
+    @staticmethod
+    def _default_visible_tools_for_template(template_id: str) -> list[str]:
+        """返回某个模板在新建 session 时的默认 visible_tools。"""
+
+        normalized = str(template_id or "").strip()
+        if normalized == "qq_group":
+            return build_default_qq_group_visible_tools()
+        return []
 
     @staticmethod
     def _build_session_payload(

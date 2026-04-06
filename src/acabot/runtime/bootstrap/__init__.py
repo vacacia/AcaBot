@@ -409,6 +409,12 @@ def build_runtime_components(
         sticky_note_service=runtime_sticky_notes,
         subagent_delegator=runtime_subagent_delegator,
         scheduled_task_service=runtime_scheduled_task_service,
+        extension_refresh_service_getter=lambda: _extension_refresh_ref[0],
+        admin_actor_ids_getter=lambda: (
+            set(_control_plane_ref[0].app.backend_admin_actor_ids)
+            if _control_plane_ref[0] is not None
+            else set(runtime_backend_admin_actor_ids)
+        ),
     )
     # BackendBridgeToolPlugin 直接注册 tool, 不经过 Reconciler.
     # 这里必须早于 session bundle 校验, 否则 agent.yaml 里的 ask_backend
