@@ -1431,11 +1431,23 @@ onMounted(() => {
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
-  transition: all 120ms;
+  transition:
+    transform 180ms cubic-bezier(0.25, 1, 0.5, 1),
+    background-color 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 .ds-secondary-button:hover {
-  border-color: var(--panel-line-strong);
+  transform: translateY(-2px) scale(1.02);
+  border-color: var(--accent);
+  box-shadow: 0 6px 16px var(--button-shadow-color);
+}
+
+.ds-secondary-button:active:not(:disabled) {
+  transform: translateY(1px) scale(0.98);
+  box-shadow: 0 2px 6px var(--button-shadow-color);
+  transition-duration: 80ms;
 }
 
 .ds-danger-button {
@@ -1448,12 +1460,24 @@ onMounted(() => {
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
-  transition: all 120ms;
+  transition:
+    transform 180ms cubic-bezier(0.25, 1, 0.5, 1),
+    background-color 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 .ds-danger-button:hover {
+  transform: translateY(-2px) scale(1.02);
   background: rgba(239, 68, 68, 0.15);
   border-color: rgba(239, 68, 68, 0.5);
+  box-shadow: 0 6px 16px rgba(239, 68, 68, 0.2);
+}
+
+.ds-danger-button:active:not(:disabled) {
+  transform: translateY(1px) scale(0.98);
+  box-shadow: 0 2px 6px rgba(239, 68, 68, 0.15);
+  transition-duration: 80ms;
 }
 
 /* ─── Responsive ───────────────────────────────────────── */

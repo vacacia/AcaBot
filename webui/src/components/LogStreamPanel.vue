@@ -443,10 +443,27 @@ button {
   color: var(--text);
   padding: 8px 10px;
   font-size: 13px;
+  transition:
+    transform 180ms cubic-bezier(0.25, 1, 0.5, 1),
+    background-color 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 button {
   cursor: pointer;
+}
+
+button:hover {
+  transform: translateY(-2px) scale(1.02);
+  border-color: var(--accent);
+  box-shadow: 0 4px 12px var(--button-shadow-color);
+}
+
+button:active {
+  transform: translateY(0) scale(0.98);
+  box-shadow: none;
+  transition-duration: 80ms;
 }
 
 .toggle {
@@ -615,14 +632,21 @@ button {
   max-width: 100%;
   overflow: hidden;
   transition:
-    background 0.15s ease,
-    transform 0.15s ease,
-    border-color 0.15s ease;
+    background 150ms ease,
+    transform 150ms cubic-bezier(0.25, 1, 0.5, 1),
+    border-color 150ms ease,
+    box-shadow 150ms cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 .extra-chip:hover {
   background: rgba(19, 41, 68, 0.18);
-  transform: translateY(-1px);
+  transform: translateY(-2px) scale(1.04);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15);
+}
+
+.extra-chip:active {
+  transform: translateY(0) scale(0.96);
+  transition-duration: 60ms;
 }
 
 .extra-chip:focus-visible {

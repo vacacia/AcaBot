@@ -117,25 +117,28 @@
   padding: 10px 14px;
   cursor: pointer;
   transition:
-    transform 120ms ease,
-    background-color 120ms ease,
-    color 120ms ease,
-    border-color 120ms ease;
+    transform 180ms cubic-bezier(0.25, 1, 0.5, 1),
+    background-color 180ms ease,
+    color 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms cubic-bezier(0.25, 1, 0.5, 1);
 }
 
-.ds-primary-button:hover,
-.ds-secondary-button:hover,
-.ds-ghost-button:hover,
-.ds-inline-button:hover {
-  transform: translateY(-1px);
+.ds-primary-button:hover:not(:disabled),
+.ds-secondary-button:hover:not(:disabled),
+.ds-ghost-button:hover:not(:disabled),
+.ds-inline-button:hover:not(:disabled) {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 8px 20px var(--button-shadow-color);
 }
 
 .ds-primary-button:active:not(:disabled),
 .ds-secondary-button:active:not(:disabled),
 .ds-ghost-button:active:not(:disabled),
 .ds-inline-button:active:not(:disabled) {
-  transform: translateY(1px);
+  transform: translateY(1px) scale(0.98);
   box-shadow: 0 2px 6px var(--button-shadow-color);
+  transition-duration: 80ms;
 }
 
 .ds-primary-button {
@@ -145,8 +148,12 @@
   box-shadow: 0 16px 26px var(--button-shadow-color);
 }
 
+.ds-primary-button:hover:not(:disabled) {
+  box-shadow: 0 20px 32px var(--button-shadow-color);
+}
+
 .ds-primary-button:active:not(:disabled) {
-  box-shadow: 0 4px 12px var(--button-shadow-color);
+  box-shadow: 0 6px 14px var(--button-shadow-color);
 }
 
 .ds-secondary-button,

@@ -78,15 +78,13 @@ const limitOptions = [
   align-items: center;
   gap: 10px;
   color: var(--muted);
-}
-
-.toggle-row {
   border-radius: 18px;
+  /* 确保下拉菜单不被裁剪 */
+  overflow: visible;
 }
 
 .limit-row {
   min-width: 220px;
-  border-radius: 18px;
 }
 
 .logs-layout {

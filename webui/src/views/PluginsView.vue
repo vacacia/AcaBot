@@ -705,13 +705,21 @@ onMounted(() => {
   color: var(--danger);
   font-weight: 600;
   transition:
-    transform 120ms ease,
-    background-color 120ms ease;
+    transform 180ms cubic-bezier(0.25, 1, 0.5, 1),
+    background-color 180ms ease,
+    box-shadow 180ms cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 .ds-danger-button:hover {
-  transform: translateY(-1px);
+  transform: translateY(-2px) scale(1.02);
   background: color-mix(in srgb, var(--danger) 15%, var(--panel-strong));
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--danger) 25%, transparent);
+}
+
+.ds-danger-button:active:not(:disabled) {
+  transform: translateY(1px) scale(0.98);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--danger) 20%, transparent);
+  transition-duration: 80ms;
 }
 
 .ds-danger-button:disabled {

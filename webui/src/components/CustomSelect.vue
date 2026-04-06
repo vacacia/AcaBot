@@ -88,6 +88,11 @@ onBeforeUnmount(() => document.removeEventListener("click", onClickOutside, true
 .cs-root {
   position: relative;
   width: 100%;
+  z-index: 1;
+}
+
+.cs-root.is-open {
+  z-index: 100;
 }
 
 .cs-trigger {
@@ -96,7 +101,7 @@ onBeforeUnmount(() => document.removeEventListener("click", onClickOutside, true
   justify-content: space-between;
   width: 100%;
   box-sizing: border-box;
-  padding: 9px 12px;
+  padding: 10px 14px;
   border: 1px solid var(--panel-line-soft);
   border-radius: 10px;
   background: var(--panel-strong);
@@ -104,17 +109,23 @@ onBeforeUnmount(() => document.removeEventListener("click", onClickOutside, true
   font-size: 13px;
   font-family: inherit;
   cursor: pointer;
-  transition: border-color 120ms ease, box-shadow 120ms ease;
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms cubic-bezier(0.25, 1, 0.5, 1),
+    transform 180ms cubic-bezier(0.25, 1, 0.5, 1);
   text-align: left;
 }
 
 .cs-trigger:hover:not(.is-readonly .cs-trigger) {
-  border-color: var(--panel-line-strong);
+  border-color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px var(--button-shadow-color);
 }
 
 .cs-root.is-open .cs-trigger {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-soft);
+  transform: translateY(0);
 }
 
 .is-readonly .cs-trigger {
@@ -179,16 +190,17 @@ onBeforeUnmount(() => document.removeEventListener("click", onClickOutside, true
   font-family: inherit;
   cursor: pointer;
   text-align: left;
-  transition: background 120ms ease, transform 80ms ease;
+  transition: background 150ms ease, transform 150ms cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 .cs-option:hover {
   background: var(--accent-soft);
-  transform: translateX(2px);
+  transform: translateX(3px);
 }
 
 .cs-option:active {
-  transform: translateX(1px) scale(0.98);
+  transform: translateX(1px) scale(0.97);
+  transition-duration: 60ms;
 }
 
 .cs-option.is-selected {

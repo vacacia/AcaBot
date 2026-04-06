@@ -195,6 +195,22 @@ onBeforeUnmount(() => document.removeEventListener('click', onClickOutside))
   padding: 0;
   cursor: pointer;
   font-family: inherit;
+  transition:
+    transform 180ms cubic-bezier(0.25, 1, 0.5, 1),
+    box-shadow 180ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.brand-mark:hover {
+  transform: translateY(-2px) scale(1.05);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    0 8px 20px rgba(0, 0, 0, 0.3);
+}
+
+.brand-mark:active {
+  transform: translateY(0) scale(0.97);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  transition-duration: 80ms;
 }
 
 .brand-title {
@@ -260,7 +276,20 @@ onBeforeUnmount(() => document.removeEventListener('click', onClickOutside))
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
-  transition: all 120ms;
+  transition:
+    background 150ms ease,
+    transform 150ms cubic-bezier(0.25, 1, 0.5, 1),
+    color 150ms ease;
+}
+
+.popover-option:hover {
+  background: color-mix(in srgb, var(--accent-soft) 70%, transparent);
+  transform: scale(1.05);
+}
+
+.popover-option:active {
+  transform: scale(0.95);
+  transition-duration: 60ms;
 }
 
 .popover-option.active {
@@ -284,7 +313,18 @@ onBeforeUnmount(() => document.removeEventListener('click', onClickOutside))
   padding: 0;
   display: grid;
   place-items: center;
-  transition: border-color 120ms;
+  transition:
+    border-color 150ms ease,
+    transform 150ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.accent-btn:hover {
+  transform: scale(1.15);
+}
+
+.accent-btn:active {
+  transform: scale(0.92);
+  transition-duration: 60ms;
 }
 
 .accent-btn.active {
@@ -340,14 +380,22 @@ onBeforeUnmount(() => document.removeEventListener('click', onClickOutside))
   color: var(--sidebar-text);
   text-decoration: none;
   transition:
-    background-color 120ms ease,
-    transform 120ms ease,
-    color 120ms ease;
+    background-color 150ms ease,
+    transform 150ms cubic-bezier(0.25, 1, 0.5, 1),
+    color 150ms ease,
+    box-shadow 150ms cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 .nav-item:hover {
   background: color-mix(in srgb, var(--accent-soft) 90%, transparent);
-  transform: translateY(-1px);
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.nav-item:active {
+  transform: translateY(0) scale(0.98);
+  box-shadow: none;
+  transition-duration: 60ms;
 }
 
 .nav-group-toggle {
@@ -363,11 +411,19 @@ onBeforeUnmount(() => document.removeEventListener('click', onClickOutside))
   font-size: inherit;
   font-family: inherit;
   cursor: pointer;
-  transition: background 120ms, transform 120ms;
+  transition:
+    background 150ms ease,
+    transform 150ms cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 .nav-group-toggle:hover {
   background: color-mix(in srgb, var(--accent-soft) 90%, transparent);
+  transform: translateY(-2px) scale(1.02);
+}
+
+.nav-group-toggle:active {
+  transform: translateY(0) scale(0.98);
+  transition-duration: 60ms;
 }
 
 .nav-group-toggle.expanded {
