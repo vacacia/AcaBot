@@ -26,9 +26,15 @@ RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \
 # ── Python 包管理 ──
 RUN pip install uv --no-cache-dir
 
+# ── 前端依赖与构建 ──
+COPY webui/package.json webui/package-lock.json ./webui/
+RUN npm --prefix webui ci
+
 # ── 项目依赖 ──
 COPY pyproject.toml ./
 COPY src/ src/
+COPY webui/ ./webui/
+RUN npm --prefix webui run build
 RUN uv pip install --system .
 
 # ── Playwright browser 安装（依赖已由项目安装） ──
