@@ -78,6 +78,15 @@ export async function apiPost<T>(path: string, body: unknown, signal?: AbortSign
   })
 }
 
+export async function apiPostFormData<T>(path: string, body: FormData, signal?: AbortSignal): Promise<T> {
+  invalidateApiCache(path)
+  return apiRequest<T>(path, {
+    method: "POST",
+    body,
+    signal,
+  })
+}
+
 export async function apiDelete<T>(path: string): Promise<T> {
   invalidateApiCache(path)
   return apiRequest<T>(path, { method: "DELETE" })
@@ -192,6 +201,9 @@ function cachePrefixesForPath(path: string): string[] {
   if (path.startsWith("/api/sessions")) {
     return ["/api/sessions", "/api/ui/catalog"]
   }
+  if (path.startsWith("/api/skills")) {
+    return ["/api/skills", "/api/ui/catalog"]
+  }
   return [path]
 }
 
@@ -232,12 +244,13 @@ function getPersistedCache(path: string): CacheEntry | null {
 async function apiRequest<T>(path: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<T> {
   const start = performance.now()
   try {
+    const headers = new Headers(init.headers ?? {})
+    if (!(init.body instanceof FormData) && !headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json")
+    }
     const response = await fetch(path, {
       ...init,
-      headers: {
-        "Content-Type": "application/json",
-        ...(init.headers ?? {}),
-      },
+      headers,
     })
     const payload = (await response.json()) as ApiResponse<T>
     const duration = (performance.now() - start).toFixed(1)

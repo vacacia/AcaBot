@@ -1,6 +1,8 @@
 import asyncio
+import io
 import json
 import re
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 import shutil
@@ -228,6 +230,44 @@ def request_json_with_status(
     except HTTPError as exc:
         body = exc.read().decode("utf-8")
         return int(exc.code), json.loads(body)
+
+
+def request_multipart(
+    base_url: str,
+    path: str,
+    *,
+    fields: dict[str, str] | None = None,
+    files: dict[str, tuple[str, bytes, str]] | None = None,
+) -> dict[str, Any]:
+    """发送一条 multipart/form-data 请求, 供上传接口测试使用。"""
+
+    boundary = "----AcaBotTestBoundary20260406"
+    body = io.BytesIO()
+    for key, value in (fields or {}).items():
+        body.write(f"--{boundary}\r\n".encode("utf-8"))
+        body.write(f'Content-Disposition: form-data; name="{key}"\r\n\r\n'.encode("utf-8"))
+        body.write(str(value).encode("utf-8"))
+        body.write(b"\r\n")
+    for key, (filename, content, content_type) in (files or {}).items():
+        body.write(f"--{boundary}\r\n".encode("utf-8"))
+        body.write(
+            (
+                f'Content-Disposition: form-data; name="{key}"; filename="{filename}"\r\n'
+                f"Content-Type: {content_type}\r\n\r\n"
+            ).encode("utf-8")
+        )
+        body.write(content)
+        body.write(b"\r\n")
+    body.write(f"--{boundary}--\r\n".encode("utf-8"))
+
+    request = Request(
+        f"{base_url}{path}",
+        data=body.getvalue(),
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
+    with urlopen(request, timeout=5) as response:
+        return json.loads(response.read().decode("utf-8"))
 
 
 def measure_page_layout(
@@ -4261,6 +4301,18 @@ def test_webui_real_pages_system_view_becomes_shared_system_entrypoint() -> None
     assert '"/api/runtime/reload-config"' in api_source
 
 
+def test_webui_real_pages_skills_view_supports_zip_upload() -> None:
+    """Skills 页面应提供 zip 上传入口, API 层应支持 FormData。"""
+
+    skills_view_source = Path("webui/src/views/SkillsView.vue").read_text(encoding="utf-8")
+    api_source = Path("webui/src/lib/api.ts").read_text(encoding="utf-8")
+
+    assert "上传 Skill 压缩包" in skills_view_source
+    assert 'type="file"' in skills_view_source
+    assert "apiPostFormData" in skills_view_source
+    assert "FormData" in api_source
+
+
 def test_webui_real_pages_schedule_view_registers_route_sidebar_and_fresh_api() -> None:
     schedule_view_source = Path("webui/src/views/SchedulesView.vue").read_text(encoding="utf-8")
     router_source = Path("webui/src/router.ts").read_text(encoding="utf-8")
@@ -5783,3 +5835,69 @@ async def test_sessions_page_supports_creating_and_editing_session_owned_agent(t
         assert any("已保存" in item for item in result["statusTexts"])
     finally:
         await server.stop()
+
+
+async def test_runtime_http_api_server_uploads_skill_zip_and_refreshes_catalog(tmp_path: Path) -> None:
+    """上传 zip 后, skills 列表应立即出现新安装的 skill。"""
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""
+agent:
+  system_prompt: "You are Aca."
+runtime:
+  default_agent_id: "aca"
+  filesystem:
+    base_dir: "{tmp_path}"
+  profiles:
+    aca:
+      name: "Aca"
+      prompt_ref: "prompt/aca"
+  prompts:
+    prompt/aca: "hello"
+  webui:
+    enabled: true
+    host: "127.0.0.1"
+    port: 0
+""".strip(),
+        encoding="utf-8",
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as archive:
+        archive.writestr(
+            "uploaded-demo-skill/SKILL.md",
+            "---\nname: 上传演示 Skill\ndescription: 用于验证 zip 上传安装。\n---\n\n# 上传演示\n",
+        )
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        uploaded = await asyncio.to_thread(
+            request_multipart,
+            base_url,
+            "/api/skills/upload",
+            files={
+                "file": (
+                    "uploaded-demo-skill.zip",
+                    zip_buffer.getvalue(),
+                    "application/zip",
+                )
+            },
+        )
+        listed = await asyncio.to_thread(request_json, base_url, "/api/skills")
+    finally:
+        await server.stop()
+
+    assert uploaded["ok"] is True
+    assert uploaded["data"]["installed_skill"]["skill_name"] == "uploaded-demo-skill"
+    assert any(item["skill_name"] == "uploaded-demo-skill" for item in listed["data"])
+    assert (tmp_path / "extensions" / "skills" / "uploaded-demo-skill" / "SKILL.md").exists()

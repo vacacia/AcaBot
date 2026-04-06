@@ -24,6 +24,7 @@ from .scheduler import BUILTIN_SCHEDULER_TOOL_SOURCE, BuiltinSchedulerToolSurfac
 from .skills import BUILTIN_SKILL_TOOL_SOURCE, BuiltinSkillToolSurface
 from .sticky_notes import BUILTIN_STICKY_NOTE_TOOL_SOURCE, BuiltinStickyNoteToolSurface
 from .subagents import BUILTIN_SUBAGENT_TOOL_SOURCE, BuiltinSubagentToolSurface
+from .web import BUILTIN_WEB_TOOL_SOURCE, BuiltinWebToolSurface
 
 
 # region register
@@ -84,6 +85,7 @@ def register_core_builtin_tools(
         refresh_service_getter=extension_refresh_service_getter,
         admin_actor_ids_getter=admin_actor_ids_getter,
     )
+    web_surface = BuiltinWebToolSurface()
     registrations = {
         BUILTIN_COMPUTER_TOOL_SOURCE: computer_surface.register(tool_broker),
         BUILTIN_SKILL_TOOL_SOURCE: skill_surface.register(tool_broker),
@@ -91,6 +93,7 @@ def register_core_builtin_tools(
         BUILTIN_STICKY_NOTE_TOOL_SOURCE: sticky_note_surface.register(tool_broker),
         BUILTIN_SUBAGENT_TOOL_SOURCE: subagent_surface.register(tool_broker),
         BUILTIN_EXTENSIONS_TOOL_SOURCE: extensions_surface.register(tool_broker),
+        BUILTIN_WEB_TOOL_SOURCE: web_surface.register(tool_broker),
     }
     if scheduled_task_service is not None:
         scheduler_surface = BuiltinSchedulerToolSurface(service=scheduled_task_service)
@@ -109,6 +112,7 @@ __all__ = [
     "BUILTIN_SKILL_TOOL_SOURCE",
     "BUILTIN_STICKY_NOTE_TOOL_SOURCE",
     "BUILTIN_SUBAGENT_TOOL_SOURCE",
+    "BUILTIN_WEB_TOOL_SOURCE",
     "BuiltinComputerToolSurface",
     "BuiltinExtensionsToolSurface",
     "BuiltinMessageToolSurface",
@@ -116,6 +120,7 @@ __all__ = [
     "BuiltinSkillToolSurface",
     "BuiltinStickyNoteToolSurface",
     "BuiltinSubagentToolSurface",
+    "BuiltinWebToolSurface",
     "remove_stale_core_tool_adapter_sources",
     "register_core_builtin_tools",
 ]

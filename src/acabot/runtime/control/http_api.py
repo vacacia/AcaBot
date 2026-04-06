@@ -89,6 +89,64 @@ def _entry_to_dict(entry: Any) -> dict[str, Any]:
     }
 
 
+def _parse_content_disposition(header_value: str) -> dict[str, str]:
+    """解析 multipart part 的 Content-Disposition 参数。"""
+
+    result: dict[str, str] = {}
+    for chunk in str(header_value or "").split(";"):
+        if "=" not in chunk:
+            continue
+        key, value = chunk.split("=", 1)
+        result[key.strip().lower()] = value.strip().strip('"')
+    return result
+
+
+def _parse_multipart_form_data(raw_body: bytes, content_type: str) -> dict[str, Any]:
+    """把 multipart/form-data 收成简单字段与文件字典。"""
+
+    marker = "boundary="
+    if marker not in content_type:
+        raise ValueError("multipart/form-data missing boundary")
+    boundary = content_type.split(marker, 1)[1].strip().strip('"')
+    if not boundary:
+        raise ValueError("multipart/form-data boundary is empty")
+    boundary_bytes = f"--{boundary}".encode("utf-8")
+    result = {"fields": {}, "files": {}}
+    for chunk in raw_body.split(boundary_bytes):
+        part = chunk.strip()
+        if not part or part == b"--":
+            continue
+        if part.endswith(b"--"):
+            part = part[:-2].rstrip()
+        if part.startswith(b"\r\n"):
+            part = part[2:]
+        header_blob, separator, body = part.partition(b"\r\n\r\n")
+        if not separator:
+            continue
+        headers: dict[str, str] = {}
+        for header_line in header_blob.decode("utf-8", errors="replace").split("\r\n"):
+            if ":" not in header_line:
+                continue
+            key, value = header_line.split(":", 1)
+            headers[key.strip().lower()] = value.strip()
+        if body.endswith(b"\r\n"):
+            body = body[:-2]
+        disposition = _parse_content_disposition(headers.get("content-disposition", ""))
+        field_name = str(disposition.get("name", "") or "")
+        if not field_name:
+            continue
+        filename = str(disposition.get("filename", "") or "")
+        if filename:
+            result["files"][field_name] = {
+                "filename": filename,
+                "content_type": str(headers.get("content-type", "application/octet-stream") or "application/octet-stream"),
+                "content": body,
+            }
+            continue
+        result["fields"][field_name] = body.decode("utf-8", errors="replace")
+    return result
+
+
 class RuntimeHttpApiServer:
     """本地单机 HTTP server, 暴露 control plane API 并可选托管静态 WebUI."""
 
@@ -176,11 +234,15 @@ class RuntimeHttpApiServer:
             def _dispatch_api(self, method: str, split) -> None:
                 try:
                     length = int(self.headers.get("Content-Length", "0") or "0")
+                    content_type = str(self.headers.get("Content-Type", "") or "")
                     payload: dict[str, Any] = {}
                     if length > 0:
                         raw = self.rfile.read(length)
                         if raw:
-                            payload = json.loads(raw.decode("utf-8"))
+                            if content_type.startswith("multipart/form-data"):
+                                payload = _parse_multipart_form_data(raw, content_type)
+                            else:
+                                payload = json.loads(raw.decode("utf-8"))
                     query = parse_qs(split.query, keep_blank_values=True)
                     status, result = server.handle_api_request(
                         method=method,
@@ -626,6 +688,23 @@ class RuntimeHttpApiServer:
                 return self._ok(self._await(self.control_plane.update_session_agent(session_id, payload)))
         if segments == ["skills"] and method == "GET":
             return self._ok(self._await(self.control_plane.list_skills()))
+        if segments == ["skills", "upload"] and method == "POST":
+            files = dict(payload.get("files", {}) or {})
+            uploaded = dict(files.get("file", {}) or {})
+            filename = str(uploaded.get("filename", "") or "").strip()
+            content = uploaded.get("content", b"")
+            if not filename:
+                raise ValueError("upload requires file field")
+            if not isinstance(content, (bytes, bytearray)):
+                raise ValueError("uploaded file content is invalid")
+            return self._ok(
+                self._await(
+                    self.control_plane.install_skill_zip(
+                        filename=filename,
+                        content=bytes(content),
+                    )
+                )
+            )
         if len(segments) == 3 and segments[0] == "agents" and segments[2] == "skills" and method == "GET":
             return self._ok(self._await(self.control_plane.list_agent_skills(segments[1])))
         if segments == ["subagents"] and method == "GET":

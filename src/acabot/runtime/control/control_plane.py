@@ -485,6 +485,17 @@ class RuntimeControlPlane:
         result = await self.extension_refresh_service.refresh_skills(session_id=normalized_session_id)
         return dict(result)
 
+    async def install_skill_zip(self, *, filename: str, content: bytes) -> dict[str, object]:
+        """安装一份上传的 skill zip 包。"""
+
+        if self.extension_refresh_service is None:
+            raise RuntimeError("extension refresh service unavailable")
+        result = await self.extension_refresh_service.install_skill_zip(
+            filename=filename,
+            content=content,
+        )
+        return dict(result)
+
     async def list_skills(self) -> list[SkillSnapshot]:
         """列出当前已注册的显式 skills.
 

@@ -20,6 +20,12 @@ from acabot.runtime import ResolvedAgent, ComputerPolicy, ToolBroker, ToolExecut
 from acabot.runtime.builtin_tools.computer import BuiltinComputerToolSurface
 from acabot.runtime.builtin_tools.extensions import BUILTIN_EXTENSIONS_TOOL_SOURCE, BuiltinExtensionsToolSurface
 from acabot.runtime.builtin_tools.message import BUILTIN_MESSAGE_TOOL_SOURCE, BuiltinMessageToolSurface
+from acabot.runtime.builtin_tools.web import (
+    BUILTIN_WEB_TOOL_SOURCE,
+    BuiltinWebToolSurface,
+    FetchedWebDocument,
+    WebSearchHit,
+)
 from acabot.types import EventSource
 
 from tests.runtime._agent_fakes import FakeAgent, FakeAgentResponse
@@ -329,6 +335,8 @@ async def test_build_runtime_components_registers_core_tools_as_builtin_sources(
     assert sources["bash"] == "builtin:computer"
     assert bash_tool["parameters"]["properties"]["command"]["type"] == "string"
     assert bash_tool["parameters"]["properties"]["timeout"]["type"] == "integer"
+    assert sources["web_fetch"] == BUILTIN_WEB_TOOL_SOURCE
+    assert sources["web_search"] == BUILTIN_WEB_TOOL_SOURCE
     assert "exec" not in sources
     assert "ls" not in sources
     assert "grep" not in sources
@@ -674,6 +682,98 @@ async def test_builtin_computer_surface_calls_runtime_without_skill_side_work() 
     assert runtime.write_calls[0]["world_path"] == "/workspace/demo.txt"
     assert runtime.edit_calls[0]["world_path"] == "/workspace/demo.txt"
     assert runtime.bash_calls[0]["command"] == "printf 'hello from bash'"
+
+
+async def test_builtin_web_fetch_surface_returns_cleaned_document_text() -> None:
+    """web_fetch 应该把抓取结果整理成模型可读摘要."""
+
+    broker = ToolBroker()
+    surface = BuiltinWebToolSurface(
+        fetch_document=lambda **_: FetchedWebDocument(
+            url="https://example.com/post",
+            final_url="https://example.com/post",
+            status_code=200,
+            content_type="text/html; charset=utf-8",
+            title="示例页面",
+            text="第一段\n\n第二段",
+            truncated=False,
+        ),
+    )
+    surface.register(broker)
+    ctx = _tool_execution_context(enabled_tools=["web_fetch"])
+
+    result = await broker.execute(
+        tool_name="web_fetch",
+        arguments={"url": "https://example.com/post"},
+        ctx=ctx,
+    )
+
+    assert "示例页面" in result.llm_content
+    assert "第一段" in result.llm_content
+    assert result.raw["final_url"] == "https://example.com/post"
+    assert result.raw["status_code"] == 200
+
+
+async def test_builtin_web_search_surface_returns_ranked_hits() -> None:
+    """web_search 应该返回结构化搜索结果列表."""
+
+    broker = ToolBroker()
+    surface = BuiltinWebToolSurface(
+        search_web=lambda **_: [
+            WebSearchHit(
+                title="OpenClaw 技能系统",
+                url="https://example.com/openclaw-skills",
+                snippet="介绍 skill 安装、刷新与来源追踪。",
+            ),
+            WebSearchHit(
+                title="Claude Code tools",
+                url="https://example.com/claude-tools",
+                snippet="说明 web fetch、web search、agent tool。",
+            ),
+        ],
+    )
+    surface.register(broker)
+    ctx = _tool_execution_context(enabled_tools=["web_search"])
+
+    result = await broker.execute(
+        tool_name="web_search",
+        arguments={"query": "acabot web search", "limit": 2},
+        ctx=ctx,
+    )
+
+    assert "1. OpenClaw 技能系统" in result.llm_content
+    assert result.raw["query"] == "acabot web search"
+    assert len(result.raw["results"]) == 2
+
+
+async def test_builtin_web_tools_require_enabled_network() -> None:
+    """network_mode=disabled 时不应允许 web 工具出网."""
+
+    broker = ToolBroker()
+    surface = BuiltinWebToolSurface(
+        fetch_document=lambda **_: FetchedWebDocument(
+            url="https://example.com",
+            final_url="https://example.com",
+            status_code=200,
+            content_type="text/plain",
+            title="",
+            text="ok",
+            truncated=False,
+        ),
+    )
+    surface.register(broker)
+    ctx = _tool_execution_context(
+        enabled_tools=["web_fetch"],
+        metadata={"network_mode": "disabled"},
+    )
+
+    result = await broker.execute(
+        tool_name="web_fetch",
+        arguments={"url": "https://example.com"},
+        ctx=ctx,
+    )
+
+    assert "network access disabled" in result.llm_content
 
 
 async def test_builtin_computer_surface_keeps_image_blocks_in_read_result() -> None:
