@@ -26,15 +26,14 @@ onMounted(async () => {
 
 <template>
   <section class="ds-page">
-    <article class="ds-panel ds-panel-padding">
-      <div class="ds-section-head compact-head">
-        <div class="ds-section-title">
-          <div>
-            <p class="ds-eyebrow">Skills</p>
-            <h2>已安装 Skills</h2>
-          </div>
-        </div>
+    <header class="ds-hero">
+      <div class="ds-hero-copy">
+        <p class="ds-eyebrow">Config / Skills</p>
+        <h1>已安装 Skills</h1>
       </div>
+    </header>
+
+    <article class="ds-panel ds-panel-padding">
 
       <p v-if="loading" class="ds-status">加载中…</p>
       <p v-else-if="errorText" class="ds-status is-error">{{ errorText }}</p>
@@ -60,6 +59,11 @@ onMounted(async () => {
   opacity: 0;
   transform: translateY(8px);
   animation: skill-in 280ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+  position: relative;
+  border-left: 3px solid transparent;
+  transition: border-color 150ms cubic-bezier(0.25, 1, 0.5, 1),
+    background 150ms cubic-bezier(0.25, 1, 0.5, 1),
+    transform 150ms cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 .skill-item:nth-child(1) { animation-delay: 40ms; }
@@ -74,12 +78,9 @@ onMounted(async () => {
 }
 
 .skill-item:hover {
-  border-color: var(--accent);
+  border-left-color: var(--accent);
   background: var(--accent-soft);
   transform: translateX(3px);
-  transition: border-color 150ms cubic-bezier(0.25, 1, 0.5, 1),
-    background 150ms cubic-bezier(0.25, 1, 0.5, 1),
-    transform 150ms cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 .skill-item:active {

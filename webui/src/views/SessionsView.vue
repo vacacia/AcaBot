@@ -583,7 +583,7 @@ onMounted(() => { void loadSessions() })
       <!-- 左侧列表 -->
       <aside class="sv-sidebar">
         <p v-if="loading && sessions.length === 0" class="sv-empty-hint">加载中...</p>
-        <p v-else-if="sessions.length === 0" class="sv-empty-hint">暂无会话</p>
+        <p v-else-if="sessions.length === 0" class="sv-empty-hint">暂无会话。发送消息给 bot 即可自动创建会话。</p>
         <button
           v-for="(item, i) in sessions"
           :key="item.session_id"

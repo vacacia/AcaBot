@@ -209,6 +209,7 @@ const loading = ref(!cachedSnapshot)
 const refreshing = ref(false)
 const activeAction = ref("")
 const advancedOpen = ref(false)
+const pathsOpen = ref(false)
 
 const skillCatalogDirs = computed<string[]>({
   get() {
@@ -252,62 +253,6 @@ const adminActorIds = computed<string[]>({
       },
     }))
   },
-})
-
-const summaryCards = computed(() => {
-  if (!pathOverview.value) {
-    return []
-  }
-  return [
-    {
-      title: "配置文件位置",
-      value: pathOverview.value.config_path,
-      helper: "系统页里的共享设置最终都会写回这一份配置文件。",
-    },
-    {
-      title: "Backend 会话文件",
-      value: pathOverview.value.backend_session_path,
-      helper: "用于标记 backend 会话绑定和运行时状态落点。",
-    },
-  ]
-})
-
-const runtimePathRows = computed(() => {
-  if (!pathOverview.value) {
-    return []
-  }
-  return [
-    {
-      label: "文件系统根目录",
-      helper: "相对路径会基于这里解析。",
-      value: pathOverview.value.filesystem_base_dir,
-    },
-    {
-      label: "Prompts 目录",
-      helper: "文件系统 prompt 模式下实际读取的位置。",
-      value: pathOverview.value.prompts_dir,
-    },
-    {
-      label: "Sessions 目录",
-      helper: "会话配置和运行时 session 数据会落在这里。",
-      value: pathOverview.value.sessions_dir,
-    },
-    {
-      label: "Sticky Notes 目录",
-      helper: "短记忆的文件落点。",
-      value: pathOverview.value.sticky_notes_dir,
-    },
-    {
-      label: "LTM 存储目录",
-      helper: "长期记忆向量/索引数据的主要落点。",
-      value: pathOverview.value.long_term_memory_storage_dir,
-    },
-    {
-      label: "Computer 工作区根目录",
-      helper: "computer/workspace 相关能力会从这里派生工作目录。",
-      value: pathOverview.value.computer_root_dir,
-    },
-  ]
 })
 
 function cloneSnapshot(snapshot: SystemConfigurationSnapshot): SystemDraft {
@@ -399,7 +344,7 @@ async function loadPage(): Promise<void> {
   } catch (error) {
     setFeedback(
       "is-error",
-      "系统页加载失败。请检查 runtime 是否正常启动，然后再试一次。",
+      "系统页加载失败。请检查 runtime 是否正常启动。",
       normalizeErrorMessage(error),
     )
   } finally {
@@ -414,7 +359,7 @@ async function refreshAfterMutation(): Promise<void> {
   } catch (error) {
     const detail = normalizeErrorMessage(error)
     if (!feedback.value) {
-      setFeedback("is-warning", "保存已经完成，但重新同步页面状态失败。", detail)
+      setFeedback("is-warning", "保存已完成，重新同步页面状态失败。", detail)
       return
     }
     feedback.value = {
@@ -442,7 +387,7 @@ async function saveGateway(): Promise<void> {
   } catch (error) {
     setFeedback(
       "is-error",
-      "共享网关设置保存失败。请检查输入项，必要时展开技术详情查看具体原因。",
+      "共享网关设置保存失败。",
       normalizeErrorMessage(error),
     )
   } finally {
@@ -461,10 +406,10 @@ async function saveRender(): Promise<void> {
       width: draft.value.render.width,
       device_scale_factor: draft.value.render.device_scale_factor,
     })
-    setApplyFeedback("Render 默认配置", saved)
+    setApplyFeedback("渲染配置", saved)
     await refreshAfterMutation()
   } catch (error) {
-    setFeedback("is-error", "Render 默认配置保存失败。", normalizeErrorMessage(error))
+    setFeedback("is-error", "渲染配置保存失败。", normalizeErrorMessage(error))
   } finally {
     activeAction.value = ""
   }
@@ -486,7 +431,7 @@ async function saveFilesystemConfig(): Promise<void> {
   } catch (error) {
     setFeedback(
       "is-error",
-      "扫描目录设置保存失败。请检查输入项，必要时展开技术详情查看具体原因。",
+      "扫描目录设置保存失败。",
       normalizeErrorMessage(error),
     )
   } finally {
@@ -509,7 +454,7 @@ async function saveAdmins(): Promise<void> {
   } catch (error) {
     setFeedback(
       "is-error",
-      "管理员保存失败。请检查输入项，必要时展开技术详情查看具体原因。",
+      "管理员保存失败。",
       normalizeErrorMessage(error),
     )
   } finally {
@@ -524,13 +469,13 @@ async function reloadConfiguration(): Promise<void> {
     const result = await apiPost<ReloadResult>("/api/runtime/reload-config", {})
     setFeedback(
       "is-ok",
-      `系统配置已重新读取。当前 ${result.session_count} 个 session。`,
+      `配置已重新读取，当前 ${result.session_count} 个 session。`,
     )
     await refreshAfterMutation()
   } catch (error) {
     setFeedback(
       "is-error",
-      "重新读取配置失败。请检查配置文件内容，必要时展开技术详情查看具体原因。",
+      "重新读取配置失败。",
       normalizeErrorMessage(error),
     )
   } finally {
@@ -549,510 +494,807 @@ function syncAdvancedOpen(event: Event): void {
   }
 }
 
+function syncPathsOpen(event: Event): void {
+  const target = event.target
+  if (target instanceof HTMLDetailsElement) {
+    pathsOpen.value = target.open
+  }
+}
+
 onMounted(() => {
   void loadPage()
 })
 </script>
 
 <template>
-  <section class="ds-page">
-    <header class="ds-hero">
-      <div class="ds-hero-copy">
-        <p class="ds-eyebrow">System</p>
-        <h1>系统设置</h1>
-        <p class="ds-summary">保存后即时生效，需重启的项目会明确提示。</p>
+  <section class="sys-page">
+    <!-- Page Header -->
+    <header class="sys-header">
+      <div class="sys-header-text">
+        <p class="sys-eyebrow">System</p>
+        <h1 class="sys-title">系统设置</h1>
       </div>
-      <div class="ds-actions">
-        <span v-if="refreshing" class="ds-chip">正在同步最新配置</span>
+      <div class="sys-header-meta">
+        <span v-if="refreshing" class="sys-badge">正在同步</span>
+        <span v-if="pathOverview" class="sys-badge sys-badge--mono">{{ pathOverview.config_path }}</span>
       </div>
     </header>
 
-    <div v-if="feedback" class="feedback-stack">
-      <p class="ds-status" :class="feedback.tone">{{ feedback.message }}</p>
-      <details v-if="feedback.detail" class="feedback-detail">
-        <summary>查看技术细节</summary>
-        <pre class="ds-mono feedback-code">{{ feedback.detail }}</pre>
+    <!-- Feedback -->
+    <div v-if="feedback" class="sys-feedback">
+      <p class="sys-status" :class="feedback.tone">{{ feedback.message }}</p>
+      <details v-if="feedback.detail" class="sys-feedback-detail">
+        <summary>技术详情</summary>
+        <pre class="sys-mono">{{ feedback.detail }}</pre>
       </details>
     </div>
 
-    <p v-if="loading" class="ds-empty">正在加载系统配置...</p>
+    <p v-if="loading" class="sys-empty">正在加载系统配置...</p>
 
     <template v-else-if="draft && pathOverview">
-      <section class="ds-card-grid-3">
-        <article v-for="card in summaryCards" :key="card.title" class="ds-surface ds-card-padding-sm summary-card">
-          <p class="summary-label">{{ card.title }}</p>
-          <code class="ds-mono summary-value">{{ card.value }}</code>
-          <p class="ds-summary">{{ card.helper }}</p>
-        </article>
+      <!-- Gateway Section -->
+      <section class="sys-section">
+        <div class="sys-section-label">
+          <h2 class="sys-section-title">共享网关</h2>
+          <p class="sys-section-desc">OneBot / 网关客户端连接配置。</p>
+        </div>
+        <div class="sys-fields">
+          <div class="sys-field-row">
+            <label class="sys-field">
+              <span class="sys-field-label">监听地址</span>
+              <input v-model="draft.gateway.host" class="sys-input sys-mono" type="text" placeholder="0.0.0.0" />
+            </label>
+            <label class="sys-field">
+              <span class="sys-field-label">端口</span>
+              <input v-model.number="draft.gateway.port" class="sys-input sys-mono" type="number" min="1" />
+            </label>
+            <label class="sys-field">
+              <span class="sys-field-label">超时（秒）</span>
+              <input v-model.number="draft.gateway.timeout" class="sys-input sys-mono" type="number" min="0" step="0.5" />
+            </label>
+          </div>
+          <div class="sys-field-row">
+            <label class="sys-field sys-field--wide">
+              <span class="sys-field-label">访问 Token</span>
+              <input v-model="draft.gateway.token" class="sys-input sys-mono" type="text" placeholder="留空表示不鉴权" />
+            </label>
+          </div>
+        </div>
+        <div class="sys-section-action">
+          <button class="sys-btn-primary" type="button" :disabled="activeAction !== ''" @click="void saveGateway()">
+            {{ activeAction === "gateway" ? "保存中..." : "保存" }}
+          </button>
+        </div>
       </section>
 
-      <article class="ds-panel ds-panel-padding">
-        <div class="ds-section-head">
-          <div class="ds-section-title">
-            <div>
-              <h2>共享网关设置</h2>
+      <!-- Render Section -->
+      <section class="sys-section">
+        <div class="sys-section-label">
+          <h2 class="sys-section-title">渲染配置</h2>
+          <p class="sys-section-desc">Message 工具渲染网页时的 viewport 设置。</p>
+        </div>
+        <div class="sys-fields">
+          <div class="sys-field-row">
+            <label class="sys-field">
+              <span class="sys-field-label">页面宽度</span>
+              <input v-model.number="draft.render.width" class="sys-input sys-mono" type="number" min="320" />
+            </label>
+            <label class="sys-field">
+              <span class="sys-field-label">缩放系数</span>
+              <input v-model.number="draft.render.device_scale_factor" class="sys-input sys-mono" type="number" min="1" step="0.1" />
+            </label>
+          </div>
+        </div>
+        <div class="sys-section-action">
+          <button class="sys-btn-primary" type="button" :disabled="activeAction !== ''" @click="void saveRender()">
+            {{ activeAction === "render" ? "保存中..." : "保存" }}
+          </button>
+        </div>
+      </section>
+
+      <!-- Catalog Section -->
+      <section class="sys-section">
+        <div class="sys-section-label">
+          <h2 class="sys-section-title">扩展扫描</h2>
+          <p class="sys-section-desc">AcaBot 扫描技能和子代理的目录列表。</p>
+        </div>
+
+        <!-- Skills -->
+        <div class="sys-catalog-block">
+          <div class="sys-catalog-header">
+            <h3 class="sys-catalog-title">技能目录</h3>
+            <span class="sys-catalog-count">{{ draft.filesystem.skill_catalog_dirs.length }} 个路径</span>
+          </div>
+          <EditableListField
+            v-model="skillCatalogDirs"
+            placeholder="添加技能目录，按回车确认"
+            empty-title="未配置"
+            empty-description="添加目录后，AcaBot 会解析实际生效位置。"
+            :disabled="activeAction !== ''"
+          />
+          <div v-if="draft.filesystem.resolved_skill_catalog_dirs.length" class="sys-resolved">
+            <span class="sys-resolved-label">已生效</span>
+            <ul class="sys-resolved-list">
+              <li v-for="item in draft.filesystem.resolved_skill_catalog_dirs" :key="`${item.scope}:${item.host_root_path}`" class="sys-resolved-item">
+                <span class="sys-chip">{{ scopeLabel(item.scope) }}</span>
+                <code class="sys-mono sys-resolved-path">{{ item.host_root_path }}</code>
+              </li>
+            </ul>
+          </div>
+          <p v-else class="sys-hint">使用默认路径：{{ draft.filesystem.default_skill_catalog_dirs.join("、") || "./extensions/skills" }}</p>
+        </div>
+
+        <!-- Subagents -->
+        <div class="sys-catalog-block">
+          <div class="sys-catalog-header">
+            <h3 class="sys-catalog-title">子代理目录</h3>
+            <span class="sys-catalog-count">{{ draft.filesystem.subagent_catalog_dirs.length }} 个路径</span>
+          </div>
+          <EditableListField
+            v-model="subagentCatalogDirs"
+            placeholder="添加子代理目录，按回车确认"
+            empty-title="未配置"
+            empty-description="添加目录后，AcaBot 会解析实际生效位置。"
+            :disabled="activeAction !== ''"
+          />
+          <div v-if="draft.filesystem.resolved_subagent_catalog_dirs.length" class="sys-resolved">
+            <span class="sys-resolved-label">已生效</span>
+            <ul class="sys-resolved-list">
+              <li v-for="item in draft.filesystem.resolved_subagent_catalog_dirs" :key="`${item.scope}:${item.host_root_path}`" class="sys-resolved-item">
+                <span class="sys-chip">{{ scopeLabel(item.scope) }}</span>
+                <code class="sys-mono sys-resolved-path">{{ item.host_root_path }}</code>
+              </li>
+            </ul>
+          </div>
+          <p v-else class="sys-hint">使用默认路径：{{ draft.filesystem.default_subagent_catalog_dirs.join("、") || "./extensions/subagents" }}</p>
+        </div>
+
+        <div class="sys-section-action">
+          <button class="sys-btn-primary" type="button" :disabled="activeAction !== ''" @click="void saveFilesystemConfig()">
+            {{ activeAction === "filesystem" ? "保存中..." : "保存" }}
+          </button>
+        </div>
+      </section>
+
+      <!-- Admins Section -->
+      <section class="sys-section">
+        <div class="sys-section-label">
+          <h2 class="sys-section-title">管理员</h2>
+          <p class="sys-section-desc">拥有管理权限的账号 ID 列表。</p>
+        </div>
+        <div class="sys-fields">
+          <div class="sys-field-row">
+            <label class="sys-field sys-field--wide">
+              <span class="sys-field-label">管理员 ID</span>
+              <EditableListField
+                v-model="adminActorIds"
+                placeholder="添加管理员 ID"
+                empty-title="未配置管理员"
+                empty-description="添加后权限立即生效。"
+                :disabled="activeAction !== ''"
+              />
+            </label>
+          </div>
+        </div>
+        <div class="sys-section-action">
+          <button class="sys-btn-primary" type="button" :disabled="activeAction !== ''" @click="void saveAdmins()">
+            {{ activeAction === "admins" ? "保存中..." : "保存" }}
+          </button>
+        </div>
+      </section>
+
+      <!-- Maintenance Section -->
+      <section class="sys-section sys-section--compact">
+        <div class="sys-section-label">
+          <h2 class="sys-section-title">维护</h2>
+        </div>
+        <div class="sys-maintenance">
+          <div class="sys-maintenance-info">
+            <p class="sys-maintenance-hint">直接改过配置文件或怀疑热更新未生效时，可从磁盘重读确认。注意：gateway 等需重启的设置，重读不能替代重启。</p>
+          </div>
+          <button class="sys-btn-secondary" type="button" :disabled="activeAction !== ''" @click="void reloadConfiguration()">
+            {{ activeAction === "reload" ? "重读中..." : "从磁盘重读配置" }}
+          </button>
+        </div>
+      </section>
+
+      <!-- Paths Overview (Collapsible) -->
+      <details class="sys-paths" :open="pathsOpen" @toggle="syncPathsOpen">
+        <summary class="sys-paths-summary">
+          <span class="sys-paths-title">路径总览</span>
+          <span class="sys-paths-toggle">{{ pathsOpen ? "收起" : "展开" }}</span>
+        </summary>
+
+        <div class="sys-paths-content">
+          <!-- Key Paths -->
+          <div class="sys-paths-grid">
+            <div class="sys-path-item">
+              <span class="sys-path-label">配置文件</span>
+              <code class="sys-mono sys-path-value">{{ pathOverview.config_path }}</code>
+            </div>
+            <div class="sys-path-item">
+              <span class="sys-path-label">Backend 会话</span>
+              <code class="sys-mono sys-path-value">{{ pathOverview.backend_session_path }}</code>
+            </div>
+            <div class="sys-path-item">
+              <span class="sys-path-label">文件系统根目录</span>
+              <code class="sys-mono sys-path-value">{{ pathOverview.filesystem_base_dir }}</code>
             </div>
           </div>
-          <div class="ds-actions">
-            <button class="ds-primary-button" type="button" :disabled="activeAction !== ''" @click="void saveGateway()">
-              {{ activeAction === "gateway" ? "保存中..." : "保存并尝试生效" }}
-            </button>
-          </div>
-        </div>
 
-        <div class="ds-form-grid">
-          <label class="ds-field">
-            <span>监听地址</span>
-            <p class="ds-helper">决定 gateway 对外监听在哪个地址。</p>
-            <input v-model="draft.gateway.host" class="ds-input ds-mono" type="text" placeholder="例如 0.0.0.0" />
-          </label>
-          <label class="ds-field">
-            <span>监听端口</span>
-            <p class="ds-helper">OneBot 或网关客户端最终会连到这个端口。</p>
-            <input v-model.number="draft.gateway.port" class="ds-input ds-mono" type="number" min="1" step="1" />
-          </label>
-          <label class="ds-field">
-            <span>超时时间（秒）</span>
-            <p class="ds-helper">连接和请求超时的基础阈值。</p>
-            <input v-model.number="draft.gateway.timeout" class="ds-input ds-mono" type="number" min="0" step="0.5" />
-          </label>
-          <label class="ds-field">
-            <span>访问 Token</span>
-            <p class="ds-helper">如果你的 gateway 需要鉴权，就在这里维护共享 token。</p>
-            <input v-model="draft.gateway.token" class="ds-input ds-mono" type="text" placeholder="留空表示不配置 token" />
-          </label>
-        </div>
-      </article>
-
-      <article class="ds-panel ds-panel-padding">
-        <div class="ds-section-head">
-          <div class="ds-section-title">
-            <div>
-              <h2>Render 默认配置</h2>
-            </div>
-          </div>
-          <div class="ds-actions">
-            <button class="ds-primary-button" type="button" :disabled="activeAction !== ''" @click="void saveRender()">
-              {{ activeAction === "render" ? "保存中..." : "保存并尝试生效" }}
-            </button>
-          </div>
-        </div>
-
-        <div class="ds-form-grid">
-          <label class="ds-field">
-            <span>Render 宽度</span>
-            <p class="ds-helper">控制渲染页面的基础 viewport 宽度，越大通常能容纳更多内容。</p>
-            <input v-model.number="draft.render.width" class="ds-input ds-mono" type="number" min="320" step="1" />
-          </label>
-          <label class="ds-field">
-            <span>Device scale factor</span>
-            <p class="ds-helper">控制截图像素密度。最终是否清晰以真实 QQ 客户端为准。</p>
-            <input
-              v-model.number="draft.render.device_scale_factor"
-              class="ds-input ds-mono"
-              type="number"
-              min="1"
-              step="0.1"
-            />
-          </label>
-        </div>
-      </article>
-
-      <article class="ds-panel ds-panel-padding">
-        <div class="ds-section-head">
-          <div class="ds-section-title">
-            <div>
-              <h2>Catalog 扫描目录</h2>
-            </div>
-          </div>
-          <div class="ds-actions">
-            <button
-              class="ds-primary-button"
-              type="button"
-              :disabled="activeAction !== ''"
-              @click="void saveFilesystemConfig()"
-            >
-              {{ activeAction === "filesystem" ? "保存中..." : "保存并尝试生效" }}
-            </button>
-          </div>
-        </div>
-
-        <div class="catalog-stack">
-          <div class="catalog-item">
-            <EditableListField
-              v-model="skillCatalogDirs"
-              label="Skill 扫描目录"
-              helper="一次添加一个目录。可以写相对路径，也可以写绝对路径；保存后会在下方显示当前实际扫描到的目录。"
-              placeholder="添加技能目录，按回车确认添加"
-              empty-title="还没有显式配置技能扫描目录"
-              empty-description="先添加一项，AcaBot 会在保存后解析实际生效位置，并在下方展示预览。"
-              :disabled="activeAction !== ''"
-            />
-
-            <div class="ds-surface ds-card-padding-sm preview-block">
-              <div class="preview-head">
-                <div>
-                  <h3>当前实际扫描到的技能目录</h3>
-                  <p class="ds-summary">
-                    这里显示的是已经生效的目录，不是你尚未保存的草稿。留空时会回退到默认值：{{ draft.filesystem.default_skill_catalog_dirs.join("、") || "./extensions/skills" }}。
-                  </p>
-                </div>
+          <!-- Runtime Paths -->
+          <div class="sys-path-group">
+            <h3 class="sys-path-group-title">运行时数据落点</h3>
+            <div class="sys-paths-grid sys-paths-grid--2">
+              <div class="sys-path-item">
+                <span class="sys-path-label">Prompts 目录</span>
+                <code class="sys-mono sys-path-value">{{ pathOverview.prompts_dir }}</code>
               </div>
-              <ul v-if="draft.filesystem.resolved_skill_catalog_dirs.length" class="preview-list">
-                <li
-                  v-for="item in draft.filesystem.resolved_skill_catalog_dirs"
-                  :key="`${item.scope}:${item.host_root_path}`"
-                  class="ds-list-item ds-list-item-padding preview-item"
-                >
-                  <span class="ds-chip">{{ scopeLabel(item.scope) }}</span>
-                  <code class="ds-mono preview-value">{{ item.host_root_path }}</code>
-                </li>
-              </ul>
-              <p v-else class="ds-empty">当前还没有任何已生效的技能扫描目录。</p>
-            </div>
-          </div>
-
-          <div class="catalog-item">
-            <EditableListField
-              v-model="subagentCatalogDirs"
-              label="Subagent 扫描目录"
-              helper="这里控制系统会到哪里寻找可用的子代理定义包。"
-              placeholder="添加子代理目录，按回车确认添加"
-              empty-title="还没有显式配置子代理扫描目录"
-              empty-description="先添加一项，AcaBot 会在保存后解析实际生效位置，并在下方展示预览。"
-              :disabled="activeAction !== ''"
-            />
-
-            <div class="ds-surface ds-card-padding-sm preview-block">
-              <div class="preview-head">
-                <div>
-                  <h3>当前实际扫描到的子代理目录</h3>
-                  <p class="ds-summary">
-                    如果你没有显式填写，系统会回退到默认值：{{ draft.filesystem.default_subagent_catalog_dirs.join("、") || "./extensions/subagents" }}。
-                  </p>
-                </div>
+              <div class="sys-path-item">
+                <span class="sys-path-label">Sessions 目录</span>
+                <code class="sys-mono sys-path-value">{{ pathOverview.sessions_dir }}</code>
               </div>
-              <ul v-if="draft.filesystem.resolved_subagent_catalog_dirs.length" class="preview-list">
-                <li
-                  v-for="item in draft.filesystem.resolved_subagent_catalog_dirs"
-                  :key="`${item.scope}:${item.host_root_path}`"
-                  class="ds-list-item ds-list-item-padding preview-item"
-                >
-                  <span class="ds-chip">{{ scopeLabel(item.scope) }}</span>
-                  <code class="ds-mono preview-value">{{ item.host_root_path }}</code>
-                </li>
-              </ul>
-              <p v-else class="ds-empty">当前还没有任何已生效的子代理扫描目录。</p>
-            </div>
-          </div>
-        </div>
-      </article>
-
-      <article class="ds-panel ds-panel-padding">
-        <div class="ds-section-head">
-          <div class="ds-section-title">
-            <div>
-              <h2>管理员</h2>
-            </div>
-          </div>
-          <div class="ds-actions">
-            <button class="ds-primary-button" type="button" :disabled="activeAction !== ''" @click="void saveAdmins()">
-              {{ activeAction === "admins" ? "保存中..." : "保存并尝试生效" }}
-            </button>
-          </div>
-        </div>
-
-        <EditableListField
-          v-model="adminActorIds"
-          label="管理员"
-          helper="一次添加一个管理员标识。保存后，系统权限判断会立刻使用这一份列表。"
-          placeholder="添加管理员标识，按回车确认添加"
-          empty-title="还没有配置任何管理员"
-          empty-description="先添加一项，AcaBot 保存后会立刻把它纳入管理员列表。"
-          :disabled="activeAction !== ''"
-        />
-      </article>
-
-      <article class="ds-panel ds-panel-padding">
-        <div class="ds-section-head">
-          <div class="ds-section-title">
-            <div>
-              <h2>维护动作</h2>
-            </div>
-          </div>
-          <div class="ds-actions">
-            <button
-              class="ds-secondary-button"
-              type="button"
-              :disabled="activeAction !== ''"
-              @click="void reloadConfiguration()"
-            >
-              {{ activeAction === "reload" ? "重新读取中..." : "重新读取配置" }}
-            </button>
-          </div>
-        </div>
-
-        <div class="ds-card-grid-2">
-          <article class="ds-surface ds-card-padding-sm maintenance-card">
-            <p class="summary-label">什么时候需要手动重读</p>
-            <p class="ds-summary">
-              主要用于你直接改过配置文件、怀疑热更新没有走到，或者想主动确认当前默认 agent / profile 装配状态的时候。
-            </p>
-          </article>
-          <article class="ds-surface ds-card-padding-sm maintenance-card">
-            <p class="summary-label">这一步不会替代重启</p>
-            <p class="ds-summary">
-              像 gateway 这种明确标成“已保存，但需重启”的设置，重新读取配置也不会替代真正的 runtime 重启。
-            </p>
-          </article>
-        </div>
-      </article>
-
-      <article class="ds-panel ds-panel-padding">
-        <details class="advanced-disclosure" :open="advancedOpen" @toggle="syncAdvancedOpen">
-          <summary class="advanced-summary">高级信息 / 路径总览</summary>
-          <p class="ds-summary advanced-copy">
-            这里展示当前真正生效的文件和目录位置。技术细节可以看，但主标签都翻成了人话，方便你快速判断“配置写到哪了、运行时实际扫了哪、数据最终落到哪”。
-          </p>
-
-          <section class="ds-card-grid-3 advanced-cards">
-            <article class="ds-surface ds-card-padding-sm summary-card">
-              <p class="summary-label">当前配置文件位置</p>
-              <code class="ds-mono summary-value">{{ pathOverview.config_path }}</code>
-            </article>
-            <article class="ds-surface ds-card-padding-sm summary-card">
-              <p class="summary-label">文件系统根目录</p>
-              <code class="ds-mono summary-value">{{ pathOverview.filesystem_base_dir }}</code>
-            </article>
-          </section>
-
-          <section class="advanced-section">
-            <div class="ds-section-head">
-              <div class="ds-section-title">
-                <div>
-                  <h3>运行时数据落点</h3>
-                  <p class="ds-summary">下面这些路径能帮助你快速确认 session、短记忆、LTM 和 computer 相关数据实际落在哪里。</p>
-                </div>
+              <div class="sys-path-item">
+                <span class="sys-path-label">Sticky Notes</span>
+                <code class="sys-mono sys-path-value">{{ pathOverview.sticky_notes_dir }}</code>
+              </div>
+              <div class="sys-path-item">
+                <span class="sys-path-label">LTM 存储</span>
+                <code class="sys-mono sys-path-value">{{ pathOverview.long_term_memory_storage_dir }}</code>
+              </div>
+              <div class="sys-path-item">
+                <span class="sys-path-label">Computer 工作区</span>
+                <code class="sys-mono sys-path-value">{{ pathOverview.computer_root_dir }}</code>
               </div>
             </div>
+          </div>
 
-            <div class="advanced-grid">
-              <article v-for="row in runtimePathRows" :key="row.label" class="ds-surface ds-card-padding-sm path-card">
-                <p class="summary-label">{{ row.label }}</p>
-                <p class="ds-summary">{{ row.helper }}</p>
-                <code class="ds-mono path-value">{{ row.value }}</code>
-              </article>
-            </div>
-          </section>
-
-          <section class="advanced-section">
-            <div class="ds-section-head">
-              <div class="ds-section-title">
-                <div>
-                  <h3>当前实际扫描到的目录</h3>
-                  <p class="ds-summary">这里给你看的是最后解析成的绝对路径，方便排查“为什么页面没扫到技能 / 子代理”。</p>
-                </div>
+          <!-- Resolved Catalogs -->
+          <div class="sys-path-group">
+            <h3 class="sys-path-group-title">已解析的扩展目录</h3>
+            <div class="sys-paths-grid sys-paths-grid--2">
+              <div class="sys-path-item">
+                <span class="sys-path-label">技能目录</span>
+                <code class="sys-mono sys-path-value">{{ pathOverview.resolved_skill_catalog_dirs.join("、") || "无" }}</code>
+              </div>
+              <div class="sys-path-item">
+                <span class="sys-path-label">子代理目录</span>
+                <code class="sys-mono sys-path-value">{{ pathOverview.resolved_subagent_catalog_dirs.join("、") || "无" }}</code>
               </div>
             </div>
-
-            <div class="ds-card-grid-2">
-              <article class="ds-surface ds-card-padding-sm">
-                <p class="summary-label">技能目录</p>
-                <ul v-if="pathOverview.resolved_skill_catalog_dirs.length" class="advanced-list">
-                  <li v-for="item in pathOverview.resolved_skill_catalog_dirs" :key="item">
-                    <code class="ds-mono path-value">{{ item }}</code>
-                  </li>
-                </ul>
-                <p v-else class="ds-empty">当前没有解析出任何技能目录。</p>
-              </article>
-              <article class="ds-surface ds-card-padding-sm">
-                <p class="summary-label">子代理目录</p>
-                <ul v-if="pathOverview.resolved_subagent_catalog_dirs.length" class="advanced-list">
-                  <li v-for="item in pathOverview.resolved_subagent_catalog_dirs" :key="item">
-                    <code class="ds-mono path-value">{{ item }}</code>
-                  </li>
-                </ul>
-                <p v-else class="ds-empty">当前没有解析出任何子代理目录。</p>
-              </article>
-            </div>
-          </section>
-        </details>
-      </article>
+          </div>
+        </div>
+      </details>
     </template>
 
-    <p v-else class="ds-empty">系统配置还没有准备好。可以稍后重试，或者先检查 runtime 是否已经正常启动。</p>
+    <p v-else class="sys-empty">系统配置加载失败。请检查 runtime 状态后重试。</p>
   </section>
 </template>
 
 <style scoped>
-.feedback-stack {
+/* ─── Page Structure ─────────────────────────────── */
+.sys-page {
   display: grid;
-  gap: 10px;
+  gap: 0;
+  padding: 32px 40px 64px;
+  max-width: 960px;
 }
 
-.feedback-detail {
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  padding: 12px 14px;
+/* ─── Header ─────────────────────────────────────── */
+.sys-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 24px;
+  margin-bottom: 40px;
+  padding-bottom: 28px;
+  border-bottom: 1px solid var(--line);
+}
+
+.sys-eyebrow {
+  margin: 0 0 6px;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.sys-title {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--heading-strong);
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+
+.sys-header-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.sys-badge {
+  display: inline-flex;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
   background: var(--panel-strong);
+  border: 1px solid var(--line);
 }
 
-.feedback-detail summary,
-.advanced-summary {
+.sys-badge--mono {
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ─── Feedback ────────────────────────────────────── */
+.sys-feedback {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 28px;
+}
+
+.sys-status {
+  margin: 0;
+  padding: 12px 16px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.sys-status.is-ok {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  color: var(--success);
+}
+
+.sys-status.is-warning {
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  color: var(--warning);
+}
+
+.sys-status.is-error {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
+
+.sys-feedback-detail {
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  font-size: 12px;
   cursor: pointer;
+}
+
+.sys-feedback-detail summary {
   font-weight: 700;
   color: var(--heading-soft);
 }
 
-.feedback-code {
-  margin: 12px 0 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.summary-card,
-.maintenance-card,
-.path-card {
-  display: grid;
-  gap: 10px;
-  opacity: 0;
-  transform: translateY(8px);
-  animation: sys-card-in 320ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
-}
-
-.summary-card:nth-child(1) { animation-delay: 40ms; }
-.summary-card:nth-child(2) { animation-delay: 80ms; }
-.maintenance-card:nth-child(1) { animation-delay: 120ms; }
-.maintenance-card:nth-child(2) { animation-delay: 160ms; }
-.path-card {
-  animation-delay: 200ms;
-}
-
-.ds-panel {
-  opacity: 0;
-  transform: translateY(8px);
-  animation: sys-card-in 320ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
-}
-
-.ds-panel:nth-of-type(1) { animation-delay: 80ms; }
-.ds-panel:nth-of-type(2) { animation-delay: 140ms; }
-.ds-panel:nth-of-type(3) { animation-delay: 200ms; }
-.ds-panel:nth-of-type(4) { animation-delay: 260ms; }
-.ds-panel:nth-of-type(5) { animation-delay: 320ms; }
-.ds-panel:nth-of-type(6) { animation-delay: 380ms; }
-
-@keyframes sys-card-in {
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.summary-label {
-  margin: 0;
+.sys-mono {
+  margin: 10px 0 0;
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
   color: var(--muted);
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
-.summary-value,
-.path-value,
-.preview-value {
-  color: var(--text);
-  overflow-wrap: anywhere;
-}
-
-.catalog-stack,
-.advanced-section {
+/* ─── Section ─────────────────────────────────────── */
+.sys-section {
+  padding: 32px 0;
+  border-bottom: 1px solid var(--line);
   display: grid;
-  gap: 16px;
+  gap: 20px;
 }
 
-.catalog-stack {
-  margin-top: 8px;
+.sys-section:last-of-type {
+  border-bottom: none;
 }
 
-.catalog-item {
-  padding: 12px 14px;
-  border: 1px solid var(--panel-line-soft);
-  border-radius: 12px;
-  background: var(--panel);
-  display: flex;
-  flex-direction: column;
+.sys-section--compact {
+  padding: 24px 0;
+}
+
+.sys-section-label {
+  display: grid;
   gap: 4px;
 }
 
-.preview-block {
+.sys-section-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--heading-strong);
+  letter-spacing: -0.02em;
+}
+
+.sys-section-desc {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.sys-section-action {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 12px;
+}
+
+/* ─── Fields ──────────────────────────────────────── */
+.sys-fields {
+  display: grid;
+  gap: 20px;
+}
+
+.sys-field-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.sys-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 160px;
+}
+
+.sys-field--wide {
+  flex: 2;
+}
+
+.sys-field-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--heading-soft);
+  letter-spacing: 0.02em;
+}
+
+.sys-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--panel-line-soft);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--panel-strong);
+  color: var(--text);
+  font-size: 13px;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.sys-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.sys-input::placeholder {
+  color: var(--muted);
+  opacity: 0.6;
+}
+
+/* ─── Buttons ─────────────────────────────────────── */
+.sys-btn-primary,
+.sys-btn-secondary {
+  border-radius: 10px;
+  padding: 10px 18px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.sys-btn-primary:hover,
+.sys-btn-secondary:hover {
+  transform: translateY(-1px);
+}
+
+.sys-btn-primary:active,
+.sys-btn-secondary:active {
+  transform: translateY(0);
+}
+
+.sys-btn-primary {
+  border: none;
+  background: linear-gradient(135deg, var(--button-primary-start), var(--button-primary-end));
+  color: #fff;
+  box-shadow: 0 4px 14px var(--button-shadow-color);
+}
+
+.sys-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.sys-btn-secondary {
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+  color: var(--text);
+}
+
+.sys-btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ─── Catalog Blocks ──────────────────────────────── */
+.sys-catalog-block {
   display: grid;
   gap: 12px;
+  padding: 20px;
+  border-radius: 12px;
+  background: var(--panel-strong);
+  border: 1px solid var(--panel-line-soft);
 }
 
-.preview-head h3 {
+.sys-catalog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.sys-catalog-title {
   margin: 0;
-  color: var(--heading-soft);
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--heading-strong);
 }
 
-.preview-list,
-.advanced-list {
+.sys-catalog-count {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.sys-resolved {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--panel-line-soft);
+}
+
+.sys-resolved-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.sys-resolved-list {
   margin: 0;
   padding: 0;
   list-style: none;
+  display: grid;
+  gap: 6px;
 }
 
-.preview-list {
-  display: grid;
+.sys-resolved-item {
+  display: flex;
+  align-items: center;
   gap: 10px;
 }
 
-.preview-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
+.sys-chip {
+  display: inline-flex;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-soft);
+  flex-shrink: 0;
 }
 
-.advanced-disclosure {
-  display: grid;
-  gap: 18px;
+.sys-resolved-path {
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.advanced-copy {
+.sys-hint {
   margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
 }
 
-.advanced-cards {
-  margin-top: 4px;
+/* ─── Maintenance ─────────────────────────────────── */
+.sys-maintenance {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
 }
 
-.advanced-grid {
+.sys-maintenance-info {
+  flex: 1;
+}
+
+.sys-maintenance-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* ─── Paths ───────────────────────────────────────── */
+.sys-paths {
+  margin-top: 24px;
+  border-radius: 12px;
+  background: var(--panel-strong);
+  border: 1px solid var(--panel-line-soft);
+  overflow: hidden;
+}
+
+.sys-paths-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--heading-soft);
+  user-select: none;
+  list-style: none;
+}
+
+.sys-paths-summary::-webkit-details-marker {
+  display: none;
+}
+
+.sys-paths-title {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--heading-strong);
+}
+
+.sys-paths-toggle {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.sys-paths-content {
+  padding: 0 20px 20px;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.sys-paths-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
   gap: 16px;
 }
 
-.advanced-list {
-  display: grid;
-  gap: 10px;
+.sys-paths-grid--2 {
+  grid-template-columns: repeat(2, 1fr);
 }
 
-@media (max-width: 960px) {
-  .advanced-grid {
+.sys-path-item {
+  display: grid;
+  gap: 4px;
+}
+
+.sys-path-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.sys-path-value {
+  font-size: 11px;
+  color: var(--text);
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+.sys-path-group {
+  display: grid;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--panel-line-soft);
+}
+
+.sys-path-group-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--heading-soft);
+}
+
+/* ─── Empty State ─────────────────────────────────── */
+.sys-empty {
+  margin: 0;
+  padding: 24px;
+  border-radius: 12px;
+  border: 1px dashed var(--line);
+  background: var(--panel-strong);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* ─── Animations ──────────────────────────────────── */
+.sys-page > * {
+  opacity: 0;
+  transform: translateY(6px);
+  animation: sys-fade-in 280ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+.sys-page > *:nth-child(1) { animation-delay: 40ms; }
+.sys-page > *:nth-child(2) { animation-delay: 80ms; }
+.sys-page > .sys-section:nth-of-type(1) { animation-delay: 120ms; }
+.sys-page > .sys-section:nth-of-type(2) { animation-delay: 180ms; }
+.sys-page > .sys-section:nth-of-type(3) { animation-delay: 240ms; }
+.sys-page > .sys-section:nth-of-type(4) { animation-delay: 300ms; }
+.sys-page > .sys-section:nth-of-type(5) { animation-delay: 360ms; }
+.sys-page > .sys-paths { animation-delay: 420ms; }
+
+@keyframes sys-fade-in {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Responsive ──────────────────────────────────── */
+@media (max-width: 768px) {
+  .sys-page {
+    padding: 24px 20px 48px;
+  }
+
+  .sys-header {
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .sys-header-meta {
+    align-items: flex-start;
+  }
+
+  .sys-field-row {
+    flex-direction: column;
+  }
+
+  .sys-field {
+    min-width: unset;
+  }
+
+  .sys-paths-grid {
     grid-template-columns: 1fr;
+  }
+
+  .sys-paths-grid--2 {
+    grid-template-columns: 1fr;
+  }
+
+  .sys-maintenance {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .summary-card,
-  .maintenance-card,
-  .path-card,
-  .ds-panel {
+  .sys-page > * {
     opacity: 1;
     transform: none;
     animation: none;
-  }
-}
-
-@media (max-width: 860px) {
-  .preview-item {
-    flex-direction: column;
   }
 }
 </style>

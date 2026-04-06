@@ -151,6 +151,10 @@ const bindingPreview = ref<EffectiveTargetPreview | null>(null)
 const loading = ref(true)
 const saveMessage = ref("")
 const errorMessage = ref("")
+const healthCheckMessage = ref("")
+const healthCheckError = ref("")
+const healthCheckRunning = ref(false)
+const healthCheckController = ref<AbortController | null>(null)
 
 const litellmInfo = ref<{ model_info: any; supported_params: string[]; param_hints?: Record<string, any> } | null>(null)
 const litellmLoading = ref(false)
@@ -163,6 +167,15 @@ function bindingStateClass(state: string): string {
   if (s === "inactive" || s === "disabled" || s === "unbound") return "state-chip is-inactive"
   if (s === "error" || s === "failed" || s === "unavailable") return "state-chip is-error"
   return "state-chip is-unknown"
+}
+
+function metaValueStateClass(state: string): string {
+  if (!state) return "meta-value is-unknown"
+  const s = state.toLowerCase()
+  if (s === "active" || s === "ready" || s === "bound") return "meta-value is-active"
+  if (s === "inactive" || s === "disabled" || s === "unbound") return "meta-value is-inactive"
+  if (s === "error" || s === "failed" || s === "unavailable") return "meta-value is-error"
+  return "meta-value is-unknown"
 }
 
 function queryLitellmInfo(model: string, providerKind: string): void {
@@ -235,6 +248,17 @@ watch(
       return
     }
     document.body.classList.toggle("overlay-active", presetOpen)
+    if (!presetOpen) {
+      // Cancel any in-flight health check when closing the editor
+      if (healthCheckController.value) {
+        healthCheckController.value.abort()
+        healthCheckController.value = null
+      }
+      // Clear stale health check feedback when closing the editor
+      healthCheckMessage.value = ""
+      healthCheckError.value = ""
+      healthCheckRunning.value = false
+    }
   },
   { immediate: true },
 )
@@ -373,6 +397,8 @@ function createPreset(): void {
 
 function openNewPresetEditor(): void {
   createPreset()
+  saveMessage.value = ""
+  errorMessage.value = ""
   showPresetEditor.value = true
 }
 
@@ -380,6 +406,8 @@ function openPresetEditor(): void {
   if (!draft.value) {
     return
   }
+  saveMessage.value = ""
+  errorMessage.value = ""
   showPresetEditor.value = true
 }
 
@@ -459,20 +487,33 @@ async function healthCheckPreset(): Promise<void> {
   if (!selectedId.value) {
     return
   }
-  saveMessage.value = "检查中..."
-  errorMessage.value = ""
+  // Cancel any in-flight health check request
+  if (healthCheckController.value) {
+    healthCheckController.value.abort()
+  }
+  healthCheckController.value = new AbortController()
+  healthCheckRunning.value = true
+  healthCheckMessage.value = ""
+  healthCheckError.value = ""
   try {
     const result = await apiPost<HealthCheckResult>(
       `/api/models/presets/${encodeURIComponent(selectedId.value)}/health-check`,
       {},
+      healthCheckController.value.signal,
     )
     if (!result.ok) {
       throw new Error(result.message || "健康检查失败")
     }
-    saveMessage.value = result.message || "健康检查通过"
+    healthCheckMessage.value = result.message || "健康检查通过"
   } catch (error) {
-    saveMessage.value = ""
-    errorMessage.value = error instanceof Error ? error.message : "健康检查失败"
+    // Ignore abort errors - they're expected when cancelling
+    if (error instanceof Error && error.name === 'AbortError') {
+      return
+    }
+    healthCheckError.value = error instanceof Error ? error.message : "健康检查失败"
+  } finally {
+    healthCheckRunning.value = false
+    healthCheckController.value = null
   }
 }
 
@@ -542,6 +583,8 @@ function openBindingEditor(): void {
     ...selectedBindingSnapshot.value.binding,
     preset_ids: [...selectedBindingSnapshot.value.binding.preset_ids],
   }
+  saveMessage.value = ""
+  errorMessage.value = ""
   showBindingEditor.value = true
 }
 
@@ -684,7 +727,7 @@ onBeforeUnmount(() => {
             <div class="binding-meta-grid">
               <article class="ds-surface ds-card-padding-sm binding-meta-card">
                 <p class="summary-label">State</p>
-                <strong class="meta-value" :class="bindingStateClass(selectedBindingSnapshot.binding_state)">{{ selectedBindingSnapshot.binding_state }}</strong>
+                <strong class="meta-value" :class="metaValueStateClass(selectedBindingSnapshot.binding_state)">{{ selectedBindingSnapshot.binding_state }}</strong>
               </article>
               <article class="ds-surface ds-card-padding-sm binding-meta-card">
                 <p class="summary-label">Effective model</p>
@@ -743,6 +786,8 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="side-sheet-body">
+            <p v-if="healthCheckMessage" class="ds-status is-ok">{{ healthCheckMessage }}</p>
+            <p v-if="healthCheckError" class="ds-status is-error">{{ healthCheckError }}</p>
             <p v-if="saveMessage" class="ds-status is-ok">{{ saveMessage }}</p>
             <p v-if="errorMessage" class="ds-status is-error">{{ errorMessage }}</p>
 
@@ -843,8 +888,11 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="modal-actions">
-            <button class="ds-secondary-button" type="button" :disabled="loading" @click="void healthCheckPreset()">
-              {{ loading ? "检查中..." : "健康检查" }}
+            <button class="ds-secondary-button" type="button" :disabled="healthCheckRunning || loading || !selectedId" @click="void healthCheckPreset()">
+              <svg v-if="healthCheckRunning" class="mv-spin-icon" width="13" height="13" viewBox="0 0 14 14" fill="none">
+                <circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5" stroke-dasharray="22" stroke-dashoffset="8" stroke-linecap="round"/>
+              </svg>
+              {{ healthCheckRunning ? "检查中..." : "健康检查" }}
             </button>
             <button class="ds-secondary-button" type="button" :disabled="loading" @click="void deletePreset()">
               {{ loading ? "删除中..." : "删除" }}

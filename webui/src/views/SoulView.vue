@@ -59,12 +59,20 @@ function displayName(name: string): string {
   return slash >= 0 ? name.slice(slash + 1) : name
 }
 
+const refreshSpinning = ref(false)
+
 async function loadFiles(preferredName = ""): Promise<void> {
-  const payload = await apiGet<{ items: SoulFileItem[] }>("/api/soul/files")
-  files.value = payload.items ?? []
-  const nextName = preferredName || selectedName.value || files.value[0]?.name || ""
-  if (nextName) {
-    await loadFile(nextName)
+  refreshSpinning.value = true
+  try {
+    const payload = await apiGet<{ items: SoulFileItem[] }>("/api/soul/files")
+    files.value = payload.items ?? []
+    const nextName = preferredName || selectedName.value || files.value[0]?.name || ""
+    if (nextName) {
+      await loadFile(nextName)
+    }
+  } finally {
+    // Keep spinning a bit longer so user notices
+    setTimeout(() => { refreshSpinning.value = false }, 300)
   }
 }
 
@@ -115,15 +123,20 @@ onMounted(() => {
 
 <template>
   <section class="ds-page">
-    <h1>Self</h1>
+    <header class="ds-hero">
+      <div class="ds-hero-copy">
+        <p class="ds-eyebrow">Memory / Self</p>
+        <h1>Self</h1>
+      </div>
+    </header>
 
     <div class="self-layout">
       <!-- File Tree -->
-      <aside class="ds-panel ds-panel-padding tree-column">
+      <aside class="ds-panel ds-panel-padding tree-column soul-tree">
         <div class="tree-header">
           <h2>文件</h2>
-          <button class="refresh-btn" type="button" @click="void loadFiles()" title="刷新">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <button class="refresh-btn" :class="{ spinning: refreshSpinning }" type="button" @click="void loadFiles()" title="刷新">
+            <svg class="refresh-icon" width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M11.67 2.33A6.27 6.27 0 007 .5C3.41.5 .5 3.41.5 7s2.91 6.5 6.5 6.5c3.08 0 5.64-2.13 6.33-5h-1.7A4.82 4.82 0 017 11.83 4.83 4.83 0 012.17 7 4.83 4.83 0 017 2.17c1.34 0 2.54.55 3.41 1.42L8.17 5.83H13.5V.5l-1.83 1.83z" fill="currentColor"/>
             </svg>
           </button>
@@ -182,20 +195,26 @@ onMounted(() => {
       </aside>
 
       <!-- Editor -->
-      <section class="ds-panel ds-panel-padding editor-column">
-        <div v-if="statusText" class="toast-status">{{ statusText }}</div>
+      <section class="ds-panel ds-panel-padding editor-column soul-editor">
+        <Transition name="toast">
+          <div v-if="statusText" class="toast-status">{{ statusText }}</div>
+        </Transition>
         <p v-if="errorText" class="ds-status is-error">{{ errorText }}</p>
         <p v-else-if="loading" class="ds-empty">正在加载...</p>
-        <div v-else-if="selectedName" class="editor-stack">
-          <div class="editor-head">
-            <div class="editor-title">
-              <span class="editor-filename">{{ selectedName }}</span>
-              <span v-if="draft !== content" class="editor-dirty">未保存</span>
+        <Transition v-else-if="selectedName" name="editor-swap" mode="out-in">
+          <div :key="selectedName" class="editor-stack">
+            <div class="editor-head">
+              <div class="editor-title">
+                <span class="editor-filename">{{ selectedName }}</span>
+                <Transition name="dirty">
+                  <span v-if="draft !== content" class="editor-dirty">未保存</span>
+                </Transition>
+              </div>
+              <button class="ds-primary-button editor-save-btn" type="button" @click="void saveFile()">保存</button>
             </div>
-            <button class="ds-primary-button" type="button" @click="void saveFile()">保存</button>
+            <textarea class="ds-textarea ds-mono editor-textarea" v-model="draft" rows="24" spellcheck="false"></textarea>
           </div>
-          <textarea class="ds-textarea ds-mono editor-textarea" v-model="draft" rows="24" spellcheck="false"></textarea>
-        </div>
+        </Transition>
         <div v-else class="ds-empty">选择一个文件开始编辑。</div>
       </section>
     </div>
@@ -203,14 +222,89 @@ onMounted(() => {
 </template>
 
 <style scoped>
+/* ─── Layout entrance ─────────────────────────────── */
 .self-layout {
   display: grid;
   grid-template-columns: minmax(0, 280px) minmax(0, 1fr);
   gap: 16px;
 }
 
-.tree-column {
-  min-width: 0;
+.soul-tree {
+  opacity: 0;
+  transform: translateX(-12px);
+  animation: panel-in 360ms cubic-bezier(0.25, 1, 0.5, 1) 60ms forwards;
+}
+
+.soul-editor {
+  opacity: 0;
+  transform: translateX(12px);
+  animation: panel-in 360ms cubic-bezier(0.25, 1, 0.5, 1) 120ms forwards;
+}
+
+@keyframes panel-in {
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* ─── Tree items stagger ─────────────────────────── */
+.tree-item {
+  opacity: 0;
+  transform: translateY(4px);
+  animation: tree-item-in 240ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+.tree-item:nth-child(1) { animation-delay: 160ms; }
+.tree-item:nth-child(2) { animation-delay: 200ms; }
+.tree-item:nth-child(3) { animation-delay: 240ms; }
+.tree-item:nth-child(4) { animation-delay: 280ms; }
+.tree-item:nth-child(n+5) { animation-delay: 320ms; }
+
+@keyframes tree-item-in {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Tree item interactions ────────────────────── */
+.tree-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 100ms, color 100ms;
+  position: relative;
+}
+
+.tree-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 120ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.tree-item:hover {
+  background: var(--panel-strong);
+}
+
+.tree-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.tree-item.active::before {
+  opacity: 1;
 }
 
 .tree-header {
@@ -274,6 +368,56 @@ onMounted(() => {
   color: var(--accent);
 }
 
+.tree-column {
+  min-width: 0;
+}
+
+.tree-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.tree-header h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.refresh-btn {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--panel-line-soft);
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 120ms cubic-bezier(0.25, 1, 0.5, 1),
+    border-color 120ms cubic-bezier(0.25, 1, 0.5, 1),
+    transform 300ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+.refresh-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.refresh-btn:active {
+  transform: scale(0.92);
+}
+.refresh-btn.spinning .refresh-icon {
+  animation: spin 500ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.tree-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .tree-child {
   padding-left: 30px;
 }
@@ -281,6 +425,7 @@ onMounted(() => {
 .tree-icon {
   flex-shrink: 0;
   opacity: 0.5;
+  transition: opacity 120ms;
 }
 
 .tree-item.active .tree-icon {
@@ -313,6 +458,7 @@ onMounted(() => {
   font-size: 11px;
   color: var(--muted);
   white-space: nowrap;
+  transition: color 120ms;
 }
 
 .tree-item.active .tree-meta {
@@ -349,7 +495,7 @@ onMounted(() => {
 
 .tree-chevron {
   flex-shrink: 0;
-  transition: transform 150ms ease;
+  transition: transform 150ms cubic-bezier(0.25, 1, 0.5, 1);
   color: var(--muted);
 }
 
@@ -412,8 +558,25 @@ onMounted(() => {
 .editor-textarea {
   min-height: 480px;
   resize: vertical;
+  transition: border-color 150ms cubic-bezier(0.25, 1, 0.5, 1),
+    box-shadow 150ms cubic-bezier(0.25, 1, 0.5, 1);
 }
 
+.editor-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.editor-save-btn {
+  transition: transform 100ms cubic-bezier(0.25, 1, 0.5, 1),
+    opacity 150ms;
+}
+.editor-save-btn:active {
+  transform: scale(0.95);
+}
+
+/* Toast */
 .toast-status {
   position: absolute;
   top: 18px;
@@ -436,9 +599,65 @@ onMounted(() => {
   z-index: 2;
 }
 
+/* Toast transition */
+.toast-enter-active { animation: toast-in 200ms cubic-bezier(0.25, 1, 0.5, 1) forwards; }
+.toast-leave-active { animation: toast-out 180ms cubic-bezier(0.25, 1, 0.5, 1) forwards; }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes toast-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to   { opacity: 0; transform: translateY(-4px) scale(0.97); }
+}
+
+/* Editor swap transition */
+.editor-swap-enter-active { animation: editor-fade-in 220ms cubic-bezier(0.25, 1, 0.5, 1) forwards; }
+.editor-swap-leave-active { animation: editor-fade-out 140ms cubic-bezier(0.25, 1, 0.5, 1) forwards; }
+@keyframes editor-fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes editor-fade-out {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(-4px); }
+}
+
+/* Dirty badge transition */
+.dirty-enter-active { animation: dirty-in 200ms cubic-bezier(0.25, 1, 0.5, 1) forwards; }
+.dirty-leave-active { animation: dirty-out 140ms cubic-bezier(0.25, 1, 0.5, 1) forwards; }
+@keyframes dirty-in {
+  from { opacity: 0; transform: scale(0.85); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes dirty-out {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(0.85); }
+}
+
 @media (max-width: 900px) {
   .self-layout {
     grid-template-columns: 1fr;
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .soul-tree,
+  .soul-editor,
+  .tree-item,
+  .refresh-btn,
+  .refresh-btn.spinning .refresh-icon,
+  .tree-chevron,
+  .toast-enter-active,
+  .toast-leave-active,
+  .editor-swap-enter-active,
+  .editor-swap-leave-active,
+  .dirty-enter-active,
+  .dirty-leave-active {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .toast-status { display: inline-flex; }
 }
 </style>

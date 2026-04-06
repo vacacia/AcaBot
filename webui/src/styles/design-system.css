@@ -222,7 +222,10 @@
 }
 
 .ds-form-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 14px 16px;
+  align-items: start;
 }
 
 .ds-panel-padding,
@@ -243,16 +246,30 @@
 }
 
 .ds-field {
-  display: grid;
-  gap: 8px;
+  display: contents;
 }
 
 .ds-field > span,
-.ds-field > label,
-.ds-field-label {
+.ds-field > label {
   color: var(--heading-soft);
   font-size: 13px;
   font-weight: 700;
+  grid-column: 1;
+  padding-top: 12px;
+  align-self: start;
+}
+
+.ds-field > .ds-helper {
+  color: var(--muted);
+  font-size: 12px;
+  grid-column: 1;
+}
+
+.ds-field > .ds-input,
+.ds-field > .ds-select,
+.ds-field > .ds-textarea {
+  grid-column: 2;
+  width: 100%;
 }
 
 .ds-input,

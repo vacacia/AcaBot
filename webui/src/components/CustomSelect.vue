@@ -47,19 +47,30 @@ onBeforeUnmount(() => document.removeEventListener("click", onClickOutside, true
 
 <template>
   <div ref="root" class="cs-root" :class="{ 'is-open': open, 'is-readonly': readonly }">
-    <button class="cs-trigger" type="button" @click="toggle">
+    <button
+      class="cs-trigger"
+      type="button"
+      :disabled="readonly"
+      :aria-expanded="open"
+      :aria-haspopup="!readonly ? 'listbox' : undefined"
+      :aria-disabled="readonly"
+      :aria-readonly="readonly"
+      @click="toggle"
+    >
       <span class="cs-value" :class="{ 'is-placeholder': !modelValue }">{{ selectedLabel }}</span>
       <svg v-if="!readonly" class="cs-arrow" width="12" height="12" viewBox="0 0 12 12" fill="none">
         <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     </button>
     <Transition name="cs-drop">
-      <div v-if="open" class="cs-dropdown">
+      <div v-if="open" class="cs-dropdown" role="listbox">
         <button
           v-for="opt in options"
           :key="opt.value"
           class="cs-option"
           :class="{ 'is-selected': opt.value === modelValue }"
+          role="option"
+          :aria-selected="opt.value === modelValue"
           type="button"
           @click="select(opt.value)"
         >
@@ -108,7 +119,12 @@ onBeforeUnmount(() => document.removeEventListener("click", onClickOutside, true
 
 .is-readonly .cs-trigger {
   opacity: .6;
-  cursor: default;
+  cursor: not-allowed;
+}
+
+.cs-trigger:disabled {
+  opacity: .6;
+  cursor: not-allowed;
 }
 
 .cs-value.is-placeholder {

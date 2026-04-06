@@ -434,13 +434,16 @@ onMounted(() => {
 <template>
   <section class="ds-page">
     <!-- Header -->
-    <div class="ltm-header">
-      <h1>Long-Term Memory</h1>
-    </div>
+    <header class="ds-hero">
+      <div class="ds-hero-copy">
+        <p class="ds-eyebrow">Memory / Long-Term Memory</p>
+        <h1>Long-Term Memory</h1>
+      </div>
+    </header>
 
     <!-- Stats cards -->
     <div class="stats-row">
-      <div class="stat-card">
+      <div class="stat-card stat-card-primary">
         <span class="stat-label">总记忆</span>
         <span class="stat-value">{{ statsLoading ? "..." : stats.total_entries }}</span>
       </div>
@@ -522,7 +525,7 @@ onMounted(() => {
       <p v-if="entriesError" class="ds-status is-error">{{ entriesError }}</p>
 
       <!-- Entry list -->
-      <div v-if="!entriesLoading && entries.length === 0 && !entriesError" class="ds-empty">暂无记忆条目</div>
+      <div v-if="!entriesLoading && entries.length === 0 && !entriesError" class="ds-empty">暂无记忆条目。等待 bot 处理更多对话后，记忆会自动积累到这里。</div>
 
       <div v-if="!entriesLoading && entries.length > 0" class="entry-list">
         <div
@@ -733,7 +736,7 @@ onMounted(() => {
         </div>
       </div>
       <div v-else-if="!searchLoading && searchQuery && searchResults.length === 0 && !searchError" class="ds-empty">
-        无匹配结果
+        无匹配结果。换个关键词试试，或扩大时间范围。
       </div>
     </div>
 
@@ -803,18 +806,6 @@ onMounted(() => {
 </template>
 
 <style scoped>
-/* ─── Header ───────────────────────────────────────────── */
-.ltm-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 20px;
-}
-
-.ltm-header h1 {
-  margin: 0;
-}
-
 /* ─── Tab bar ──────────────────────────────────────────── */
 .tab-bar {
   display: flex;
@@ -849,7 +840,7 @@ onMounted(() => {
 /* ─── Stats ────────────────────────────────────────────── */
 .stats-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: 2fr 1fr 1fr 1fr;
   gap: 12px;
   margin-bottom: 20px;
 }
@@ -883,6 +874,17 @@ onMounted(() => {
   transition: border-color 200ms cubic-bezier(0.25, 1, 0.5, 1),
     transform 200ms cubic-bezier(0.25, 1, 0.5, 1),
     box-shadow 200ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.stat-card-primary {
+  grid-column: 1;
+  background: linear-gradient(135deg, var(--accent-soft) 0%, transparent 60%);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--panel-line-soft));
+}
+
+.stat-card-primary .stat-value {
+  color: var(--accent);
+  font-size: 28px;
 }
 
 .stat-label {

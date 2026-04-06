@@ -216,7 +216,7 @@ async function scrollToEnd(): Promise<void> {
 }
 
 async function fetchSnapshot(): Promise<void> {
-  if (requestInFlight) {
+  if (requestInFlight || disposed) {
     return
   }
   requestInFlight = true
@@ -225,6 +225,7 @@ async function fetchSnapshot(): Promise<void> {
   resetHint.value = ""
   try {
     const payload = await apiGet<LogPayload>(buildPath())
+    if (disposed) return // Guard against state updates after unmount
     logs.value = payload.items ?? []
     nextSeq.value = payload.next_seq ?? 0
     if (payload.reset_required) {
@@ -232,6 +233,7 @@ async function fetchSnapshot(): Promise<void> {
     }
     await scrollToEnd()
   } catch (error) {
+    if (disposed) return
     errorText.value = error instanceof Error ? error.message : "加载日志失败"
   } finally {
     loading.value = false
@@ -240,12 +242,13 @@ async function fetchSnapshot(): Promise<void> {
 }
 
 async function fetchDelta(): Promise<void> {
-  if (requestInFlight || !autoRefresh.value) {
+  if (requestInFlight || !autoRefresh.value || disposed) {
     return
   }
   requestInFlight = true
   try {
     const payload = await apiGet<LogPayload>(buildPath(nextSeq.value))
+    if (disposed) return // Guard against state updates after unmount
     const items = payload.items ?? []
     if (payload.reset_required) {
       logs.value = items
@@ -259,6 +262,7 @@ async function fetchDelta(): Promise<void> {
       await scrollToEnd()
     }
   } catch (error) {
+    if (disposed) return
     errorText.value = error instanceof Error ? error.message : "刷新日志失败"
   } finally {
     requestInFlight = false

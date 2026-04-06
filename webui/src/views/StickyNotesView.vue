@@ -86,6 +86,7 @@ const noteItem = ref<StickyNoteItem | null>(cachedNote)
 const loadingText = ref(cachedNote || cachedNotes ? "" : "正在加载 Sticky Notes...")
 const statusText = ref("")
 const errorText = ref("")
+const refreshSpinning = ref(false)
 
 let statusTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -154,6 +155,15 @@ async function openKind(kind: StickyEntityKind, preserveCurrent = false): Promis
   }
   selectedEntityRef.value = ""
   noteItem.value = null
+}
+
+async function refreshNotes(): Promise<void> {
+  refreshSpinning.value = true
+  try {
+    await openFirstAvailableKind(entityKind.value)
+  } finally {
+    setTimeout(() => { refreshSpinning.value = false }, 300)
+  }
 }
 
 async function openFirstAvailableKind(preferredKind: StickyEntityKind): Promise<void> {
@@ -298,10 +308,15 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="ds-page">
-    <h1>{{ pageTitle }}</h1>
+    <header class="ds-hero">
+      <div class="ds-hero-copy">
+        <p class="ds-eyebrow">Memory / Sticky Notes</p>
+        <h1>{{ pageTitle }}</h1>
+      </div>
+    </header>
 
     <div class="memory-layout">
-      <aside class="ds-panel ds-panel-padding sidebar-column note-panel">
+      <aside class="ds-panel ds-panel-padding sidebar-column note-panel sn-sidebar">
         <div v-if="isMemoryOverview" class="ltm-summary-grid">
           <article class="ds-surface ds-card-padding-sm ltm-meta-card">
             <p class="summary-label">LTM</p>
@@ -315,7 +330,7 @@ onBeforeUnmount(() => {
 
         <div class="sidebar-header">
           <h2>Sticky Notes</h2>
-          <button class="refresh-btn" type="button" @click="void openFirstAvailableKind(entityKind)" title="刷新">
+          <button class="refresh-btn" :class="{ spinning: refreshSpinning }" type="button" @click="void refreshNotes()" title="刷新">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M11.67 2.33A6.27 6.27 0 007 .5C3.41.5 .5 3.41.5 7s2.91 6.5 6.5 6.5c3.08 0 5.64-2.13 6.33-5h-1.7A4.82 4.82 0 017 11.83 4.83 4.83 0 012.17 7 4.83 4.83 0 017 2.17c1.34 0 2.54.55 3.41 1.42L8.17 5.83H13.5V.5l-1.83 1.83z" fill="currentColor"/>
             </svg>
@@ -327,7 +342,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="ds-list note-list">
-          <p v-if="noteItems.length > 0 && filteredNoteItems.length === 0" class="ds-empty empty">没有匹配的 Sticky Note。</p>
+          <p v-if="noteItems.length > 0 && filteredNoteItems.length === 0" class="ds-empty empty">没有匹配的 Sticky Note，试试换个关键词。</p>
           <button
             v-for="item in filteredNoteItems"
             :key="item.entity_ref"
@@ -347,20 +362,24 @@ onBeforeUnmount(() => {
         </div>
       </aside>
 
-      <section class="ds-panel ds-panel-padding main-column">
-        <p v-if="statusText" class="toast-status">{{ statusText }}</p>
+      <section class="ds-panel ds-panel-padding main-column sn-main">
+        <Transition name="toast">
+          <p v-if="statusText" class="toast-status">{{ statusText }}</p>
+        </Transition>
         <div v-if="errorText" class="ds-status is-error error">{{ errorText }}</div>
         <div v-else-if="loadingText" class="ds-empty empty">{{ loadingText }}</div>
         <div v-else-if="noteItem === null" class="ds-empty empty">
           选择或新建一个 Sticky Note。
         </div>
-        <StickyNotePane
-          v-else
-          :readonly-content="noteItem.readonly"
-          :editable-content="noteItem.editable"
-          @save-readonly="(value) => void saveReadonly(value)"
-          @save-editable="(value) => void saveEditable(value)"
-        />
+        <Transition v-else name="editor-swap" mode="out-in">
+          <StickyNotePane
+            :key="noteItem.entity_ref"
+            :readonly-content="noteItem.readonly"
+            :editable-content="noteItem.editable"
+            @save-readonly="(value) => void saveReadonly(value)"
+            @save-editable="(value) => void saveEditable(value)"
+          />
+        </Transition>
 
         <div v-if="isMemoryOverview" class="ltm-targets">
           <h3>Long-Term Memory Targets</h3>
@@ -374,6 +393,128 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* ─── Layout entrance ─────────────────────────────── */
+.memory-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.sn-sidebar {
+  opacity: 0;
+  transform: translateX(-12px);
+  animation: panel-in 360ms cubic-bezier(0.25, 1, 0.5, 1) 60ms forwards;
+}
+
+.sn-main {
+  opacity: 0;
+  transform: translateX(12px);
+  animation: panel-in 360ms cubic-bezier(0.25, 1, 0.5, 1) 120ms forwards;
+}
+
+@keyframes panel-in {
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* ─── Note list stagger ─────────────────────────── */
+.list-item {
+  opacity: 0;
+  transform: translateY(4px);
+  animation: note-item-in 240ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+.list-item:nth-child(1) { animation-delay: 160ms; }
+.list-item:nth-child(2) { animation-delay: 200ms; }
+.list-item:nth-child(3) { animation-delay: 240ms; }
+.list-item:nth-child(4) { animation-delay: 280ms; }
+.list-item:nth-child(5) { animation-delay: 320ms; }
+.list-item:nth-child(n+6) { animation-delay: 360ms; }
+
+@keyframes note-item-in {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.list-item.newly-created {
+  animation: note-flash 400ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+@keyframes note-flash {
+  0%   { background: color-mix(in srgb, var(--accent) 20%, var(--panel-white)); transform: scale(1.01); }
+  100% { background: var(--panel-white); transform: scale(1); }
+}
+
+/* ─── Note item interactions ───────────────────── */
+.list-item {
+  width: 100%;
+  display: grid;
+  gap: 6px;
+  text-align: left;
+  border: 1px solid var(--panel-line-soft);
+  border-radius: 16px;
+  background: var(--panel-white);
+  color: var(--text);
+  padding: 12px 14px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+  transition: border-color 150ms cubic-bezier(0.25, 1, 0.5, 1),
+    background 150ms cubic-bezier(0.25, 1, 0.5, 1),
+    transform 150ms cubic-bezier(0.25, 1, 0.5, 1),
+    box-shadow 150ms cubic-bezier(0.25, 1, 0.5, 1);
+  position: relative;
+}
+
+.list-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 150ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.list-item:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--panel-line-soft));
+  transform: translateX(2px);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+}
+
+.list-item:hover::before {
+  opacity: 0.5;
+}
+
+.list-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--panel-line-soft));
+}
+
+.list-item.active::before {
+  opacity: 1;
+}
+
+.list-item strong {
+  font-size: 13px;
+  font-weight: 700;
+  color: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list-item small {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ─── Layout ───────────────────────────────────── */
 .sidebar-header {
   display: flex;
   align-items: center;
@@ -453,71 +594,6 @@ onBeforeUnmount(() => {
   overflow: auto;
 }
 
-.list-item {
-  width: 100%;
-  display: grid;
-  gap: 6px;
-  text-align: left;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: var(--panel-white);
-  color: var(--text);
-  padding: 12px 14px;
-  cursor: pointer;
-}
-
-.list-item.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.note-panel {
-  overflow: visible;
-}
-
-.refresh-btn {
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--panel-line-soft);
-  border-radius: 8px;
-  background: none;
-  color: var(--muted);
-  cursor: pointer;
-  transition: all 120ms;
-}
-.refresh-btn:hover {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
-.main-column {
-  position: relative;
-}
-
-.toast-status {
-  position: absolute;
-  top: 18px;
-  right: 18px;
-  margin: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: max-content;
-  max-width: min(320px, calc(100% - 36px));
-  padding: 9px 14px;
-  border-radius: 14px;
-  border: 1px solid var(--panel-line-soft);
-  background: var(--panel-strong);
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.01em;
-  box-shadow: var(--shadow-soft);
-  z-index: 2;
-}
-
 @media (max-width: 1100px) {
   .memory-layout {
     grid-template-columns: 1fr;
@@ -534,5 +610,22 @@ onBeforeUnmount(() => {
     flex: 1 0 auto;
     min-width: 0;
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sn-sidebar,
+  .sn-main,
+  .list-item,
+  .refresh-btn,
+  .refresh-btn.spinning svg,
+  .toast-enter-active,
+  .toast-leave-active,
+  .editor-swap-enter-active,
+  .editor-swap-leave-active {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .toast-status { display: inline-flex; }
 }
 </style>

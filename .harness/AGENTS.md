@@ -6,6 +6,7 @@ AcaBot 是一个 Python 3.11 的 agent runtime,负责把网关事件收进运行
 
 
 ## 目录指引
+- 看`/home/acacia/AcaBot/.harness/progress.md`了解进度
 - `.harness/use-claude-code.md`: 使用 claude code 来 review/explore, 可以减少上下文污染, 或提供不同的观点
   - claude: 提供不同观点; 干脏活; 便宜多用
   - subagent: 更聪明, 更贵, 但和你的思维方式一样(可能都忽视一些问题)
@@ -21,6 +22,7 @@ AcaBot 是一个 Python 3.11 的 agent runtime,负责把网关事件收进运行
   - FP-002: 异步E2E不能只等待消息数量
   - FP-003: 复用helper前先验证它的实际输出
   - FP-004: 给LLM的工具协议不能写成黑盒
+- 可以参考的项目在`/home/acacia/AcaBot/ref`下,主要是`ref/claude-code-sourcemap-main` 和 `ref/openclaw`
 
 
 ## 关键契约

@@ -287,7 +287,7 @@ onMounted(() => {
 
     <!-- 加载状态 -->
     <p v-if="loading" class="ds-status">加载中...</p>
-    <p v-if="!loading && plugins.length === 0" class="ds-empty">暂无插件</p>
+    <p v-if="!loading && plugins.length === 0" class="ds-empty">暂无插件。前往「插件市场」安装，或检查 runtime 是否已加载插件。</p>
 
     <!-- 插件列表 -->
     <section v-if="!loading && plugins.length > 0" class="ds-list" :class="{ reconciling: reconciling }">
