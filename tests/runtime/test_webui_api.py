@@ -1075,6 +1075,69 @@ runtime:
     assert [item["effective"] for item in payload["data"]] == [True, False]
 
 
+async def test_runtime_config_control_plane_normalizes_group_surface_aliases_for_runtime(
+    tmp_path: Path,
+) -> None:
+    """群聊配置页使用公共事件名保存时，后端会转成 runtime 可识别的 surface 键。"""
+
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, base_dir=tmp_path)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+
+    await components.control_plane.create_session(
+        {
+            "session_id": "qq:group:20001",
+            "title": "Group Worker Session",
+            "template_id": "qq_group",
+        }
+    )
+
+    await components.control_plane.update_session(
+        "qq:group:20001",
+        {
+            "surfaces": {
+                "message": {"admission": {"default": {"mode": "record_only"}}},
+                "message_mention": {"admission": {"default": {"mode": "respond"}}},
+                "message_reply": {"admission": {"default": {"mode": "respond"}}},
+            },
+        },
+    )
+
+    bundle = components.config_control_plane.get_session_bundle("qq:group:20001")
+    assert bundle is not None
+    assert bundle["surfaces"]["message.mention"]["admission"]["default"]["mode"] == "respond"
+    assert bundle["surfaces"]["message.reply_to_bot"]["admission"]["default"]["mode"] == "respond"
+
+    session_text = (tmp_path / "sessions" / "qq" / "group" / "20001" / "session.yaml").read_text(encoding="utf-8")
+    assert "message.mention:" in session_text
+    assert "message.reply_to_bot:" in session_text
+    assert "message_mention:" not in session_text
+    assert "message_reply:" not in session_text
+
+    decision = await components.router.route(
+        StandardEvent(
+            event_id="evt-mention",
+            event_type="message",
+            platform="qq",
+            timestamp=123,
+            source=EventSource(platform="qq", message_type="group", user_id="1733064202", group_id="20001"),
+            segments=[MsgSegment(type="text", data={"text": "@bot 说句话"})],
+            raw_message_id="msg-1",
+            sender_nickname="tester",
+            sender_role=None,
+            mentions_self=True,
+            targets_self=True,
+        )
+    )
+    assert decision.run_mode == "respond"
+    assert decision.metadata["surface_id"] == "message.mention"
+
+
 async def test_runtime_config_control_plane_rejects_updating_internal_session_agent_ids(
     tmp_path: Path,
 ) -> None:

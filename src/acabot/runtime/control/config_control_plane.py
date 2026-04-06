@@ -59,6 +59,59 @@ DEFAULT_SUBAGENT_CATALOG_DIRS = ["./extensions/subagents"]
 
 logger = logging.getLogger("acabot.runtime.control.config_control_plane")
 
+_SESSION_SURFACE_STORAGE_ALIASES: dict[str, dict[str, str]] = {
+    "qq_group": {
+        "message": "message.plain",
+        "message_mention": "message.mention",
+        "message_reply": "message.reply_to_bot",
+        "poke": "notice.notify",
+        "recall": "notice.group_recall",
+        "member_join": "notice.group_increase",
+        "member_leave": "notice.group_decrease",
+        "admin_change": "notice.group_admin",
+        "file_upload": "notice.group_upload",
+        "mute_change": "notice.group_ban",
+        "honor_change": "notice.notify",
+        "title_change": "notice.notify",
+        "lucky_king": "notice.notify",
+    },
+    "qq_private": {
+        "message": "message.private",
+        "poke": "notice.notify",
+        "recall": "notice.friend_recall",
+    },
+}
+
+
+def _normalize_session_surfaces_for_storage(
+    *,
+    surfaces: dict[str, Any],
+    template_id: str,
+) -> dict[str, Any]:
+    """把 WebUI / API 传来的公共事件名归一化成 runtime 使用的 surface 键.
+
+    这里承担 session 配置控制面的边界职责：
+    - WebUI 仍可继续使用 `message_mention` 这类公共事件名
+    - 真正落盘到 `session.yaml` 时统一写成 runtime 能命中的 canonical surface id
+    - 如果 payload 同时带了 alias 和 canonical，优先保留 canonical
+    """
+
+    alias_map = _SESSION_SURFACE_STORAGE_ALIASES.get(template_id, {})
+    normalized: dict[str, Any] = {}
+    source_rank: dict[str, int] = {}
+    for surface_id, surface_conf in surfaces.items():
+        raw_surface_id = str(surface_id or "").strip()
+        if not raw_surface_id:
+            continue
+        canonical_surface_id = alias_map.get(raw_surface_id, raw_surface_id)
+        rank = 1 if canonical_surface_id == raw_surface_id else 0
+        previous_rank = source_rank.get(canonical_surface_id, -1)
+        if previous_rank > rank:
+            continue
+        normalized[canonical_surface_id] = dict(surface_conf or {})
+        source_rank[canonical_surface_id] = rank
+    return normalized
+
 
 def _resolve_render_int(*, key: str, value: object, default: int) -> int:
     """安全解析 int 型 render 配置值, 无效时回退到 default."""
@@ -435,7 +488,10 @@ class RuntimeConfigControlPlane:
         if "selectors" in payload:
             raw["selectors"] = dict(payload.get("selectors", {}) or {})
         if "surfaces" in payload:
-            raw["surfaces"] = dict(payload.get("surfaces", {}) or {})
+            raw["surfaces"] = _normalize_session_surfaces_for_storage(
+                surfaces=dict(payload.get("surfaces", {}) or {}),
+                template_id=str(session_block.get("template", "") or ""),
+            )
         if "context" in payload:
             context_payload = dict(payload.get("context", {}) or {})
             context_block = dict(raw.get("context", {}) or {})
@@ -952,7 +1008,10 @@ class RuntimeConfigControlPlane:
         if selectors:
             payload["selectors"] = selectors
         if surfaces:
-            payload["surfaces"] = surfaces
+            payload["surfaces"] = _normalize_session_surfaces_for_storage(
+                surfaces=surfaces,
+                template_id=template_id,
+            )
         return payload
 
     @staticmethod

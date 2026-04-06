@@ -47,6 +47,60 @@ const TEMPLATE_EVENT_TYPES: Record<string, string[]> = {
   custom: Object.keys(EVENT_TYPE_LABELS),
 }
 
+const TEMPLATE_SURFACE_STORAGE: Record<string, Record<string, string>> = {
+  qq_private: {
+    message: "message.private",
+    poke: "notice.notify",
+    recall: "notice.friend_recall",
+  },
+  qq_group: {
+    message: "message.plain",
+    message_mention: "message.mention",
+    message_reply: "message.reply_to_bot",
+    poke: "notice.notify",
+    recall: "notice.group_recall",
+    member_join: "notice.group_increase",
+    member_leave: "notice.group_decrease",
+    admin_change: "notice.group_admin",
+    file_upload: "notice.group_upload",
+    mute_change: "notice.group_ban",
+    honor_change: "notice.notify",
+    title_change: "notice.notify",
+    lucky_king: "notice.notify",
+  },
+}
+
+const SURFACE_TO_VIEW_EVENT_TYPES: Record<string, string[]> = {
+  message: ["message"],
+  "message.private": ["message"],
+  "message.plain": ["message"],
+  message_mention: ["message_mention"],
+  "message.mention": ["message_mention"],
+  message_reply: ["message_reply"],
+  "message.reply_to_bot": ["message_reply"],
+  poke: ["poke"],
+  "notice.notify": ["poke", "honor_change", "title_change", "lucky_king"],
+  recall: ["recall"],
+  "notice.recall": ["recall"],
+  "notice.group_recall": ["recall"],
+  "notice.friend_recall": ["recall"],
+  member_join: ["member_join"],
+  "notice.group_increase": ["member_join"],
+  member_leave: ["member_leave"],
+  "notice.group_decrease": ["member_leave"],
+  admin_change: ["admin_change"],
+  "notice.group_admin": ["admin_change"],
+  file_upload: ["file_upload"],
+  "notice.group_upload": ["file_upload"],
+  mute_change: ["mute_change"],
+  "notice.group_ban": ["mute_change"],
+  friend_added: ["friend_added"],
+  "notice.friend_add": ["friend_added"],
+  honor_change: ["honor_change"],
+  title_change: ["title_change"],
+  lucky_king: ["lucky_king"],
+}
+
 type SessionSummary = {
   session_id: string
   title: string
@@ -214,12 +268,21 @@ function normalizeSessionDraft(detail: SessionDetail): SessionDraft {
   }
 }
 
+function storageSurfaceIdForEventType(templateId: string, eventType: string): string {
+  return TEMPLATE_SURFACE_STORAGE[templateId]?.[eventType] || eventType
+}
+
+function viewEventTypesForSurfaceId(surfaceId: string): string[] {
+  return SURFACE_TO_VIEW_EVENT_TYPES[surfaceId] || [surfaceId]
+}
+
 function normalizeSurfacesDraft(detail: SessionDetail): Record<string, AdmissionMode> {
   const result: Record<string, AdmissionMode> = {}
   for (const [surfaceId, surface] of Object.entries(detail.surfaces || {})) {
     const mode = surface?.admission?.default?.mode
-    if (mode === "respond" || mode === "record_only" || mode === "silent_drop") {
-      result[surfaceId] = mode
+    if (mode !== "respond" && mode !== "record_only" && mode !== "silent_drop") continue
+    for (const eventType of viewEventTypesForSurfaceId(surfaceId)) {
+      result[eventType] = mode
     }
   }
   return result
@@ -406,8 +469,10 @@ async function saveSession(): Promise<void> {
   errorMessage.value = ""
   try {
     const surfacesPayload: Record<string, unknown> = {}
+    const templateId = sessionDraft.value.template_id
     for (const [eventType, mode] of Object.entries(surfacesDraft.value)) {
-      surfacesPayload[eventType] = { admission: { default: { mode } } }
+      const surfaceId = storageSurfaceIdForEventType(templateId, eventType)
+      surfacesPayload[surfaceId] = { admission: { default: { mode } } }
     }
     const payload = await apiPut<SessionDetail>(
       `/api/sessions/${encodeURIComponent(selectedDetail.value.session.session_id)}`,
