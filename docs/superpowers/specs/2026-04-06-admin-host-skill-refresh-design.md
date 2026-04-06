@@ -35,6 +35,32 @@ Admin frontstage runs in host mode already have the right execution shape for in
 
 There is no separate install surface. Installation is just file placement into the real catalog root.
 
+Important boundary: the writable install target is **not** `/skills`. `/skills` remains the per-run mirrored skill view. The install target is the real catalog root on disk (normally project `extensions/skills`).
+
+Because the current frontstage workspace reminder says work should stay in `/workspace`, this round must also add an explicit admin-host carve-out in prompt/tool guidance: when an admin host run is performing extension maintenance, it may operate on the real extension catalog root and session config files outside `/workspace`. That guidance must name the project skill source of truth clearly enough that the model does not confuse it with `/skills`.
+
+This carve-out must be **run-scoped**, not a global weakening of the normal `/workspace` reminder. In practice that means adding an extra reminder/tool-guidance contribution only for `owner|admin + host` runs.
+
+That run-scoped guidance must surface, in model-readable form:
+
+- the resolved writable project skill root for the current installation attempt
+- the target session-owned agent config path that will be rewritten on refresh
+
+Without that, the model still cannot reliably distinguish the real host paths from `/skills` and `/workspace`.
+
+The model must not blindly assume `extensions/skills`. Before installation it should resolve the effective skill catalog roots from runtime configuration (`runtime.filesystem.skill_catalog_dirs`).
+
+Resolver rule for this round: install-target selection, model-visible resolved paths, and live catalog reload must all use the **same shared resolver/source of truth** as the runtime skill catalog itself. Do not invent a separate control-plane-only path interpretation for installation. In implementation terms, this should reuse the runtime catalog directory resolver (`resolve_skill_catalog_dirs()` or an extracted shared helper with identical semantics), not a separately interpreted control-plane path view.
+
+Install-target selection rule for this round:
+
+- collect the resolved catalog roots whose scope is `project`
+- if there is exactly one project-scope root, use it as the writable install target
+- if there are zero project-scope roots, fail clearly instead of installing into a user-scope root
+- if there are multiple project-scope roots, fail clearly; multi-project-root install precedence is out of scope for this round
+
+`extensions/skills` is only the default fallback when no explicit override is configured.
+
 ### 2. Add a narrow extension refresh surface
 
 Introduce a narrow refresh contract instead of exposing full runtime reload.
@@ -53,16 +79,25 @@ Control-plane-facing operation:
 
 This keeps the model-facing action aligned with the real use case: “I just changed extensions on disk; refresh what the bot can see.”
 
-### 3. Tool visibility must stay stable
+### 3. Avoid adding extra dynamic tool gating
 
 Do **not** add special run-time visibility gating for `refresh_extensions` based on host/admin state.
 
 Reason:
 
-- changing per-run tool inventory affects tool description stability
-- that in turn affects prompt caching characteristics
+- the runtime already has some dynamic tool metadata churn (`Skill`, subagents, etc.)
+- this round should not introduce one more run-specific gate for the new refresh tool
+- that keeps the new tool aligned with the normal agent tool allowlist and avoids extra prompt-caching instability beyond what already exists
 
 So the tool surface stays statically controlled by the normal agent tool allowlist. Whether a specific call succeeds is enforced by the tool implementation and runtime context, not by dynamically hiding the tool.
+
+Authorization rule for this round:
+
+- `refresh_extensions` must reject unless the caller is the session-owned frontstage agent
+- the current run must be an `owner` or `admin` run
+- the effective computer backend for the run must be `host`
+
+This keeps the tool statically present while still enforcing the admin-host maintenance boundary at execution time.
 
 ### 4. Refresh must solve both catalog discovery and frontstage allowlists
 
@@ -79,11 +114,15 @@ Therefore `refresh_extensions(kind="skills")` must do two things:
 1. reload the skill catalog from disk
 2. realign the current session-owned frontstage agent's `visible_skills` with the refreshed skill catalog
 
-For this round, “realign” means **rewrite `visible_skills` to the exact currently discovered skill name set for the active session policy**, not append-only mutation. That keeps disk state consistent in both directions:
+For this round, “realign” means **rewrite `visible_skills` to the exact currently discovered skill name set for the target session-owned frontstage agent**, not append-only mutation. That keeps disk state consistent in both directions:
 
 - newly installed skills are added
 - removed skills are dropped
 - later session bundle validation does not fail on stale references
+
+This is an intentional **session capability change** for the target frontstage agent, not a neutral cache refresh. In practical terms, after a successful refresh, that session's frontstage agent adopts the full currently discovered skill set from the configured skill catalog roots.
+
+The rewritten list must be persisted as a stable, deduplicated, name-only list derived from the catalog's **effective winner set by skill name**, not from raw manifest rows. Existing catalog precedence rules decide the winner for each skill name before `visible_skills` is rewritten.
 
 Target behavior:
 
@@ -101,7 +140,7 @@ For QQ group sessions, the default execution policy must become:
 - `admin` → host backend
 - `member` → docker backend
 
-`sender_roles` matching here relies on the existing event model, where a run carries **one canonical sender role** (`owner` / `admin` / `member`) and `EventFacts.sender_roles` is a one-item list used only for matcher compatibility. This design does **not** assume a sender matches multiple roles at once.
+`sender_roles` matching here relies on the existing event model, where a run carries **one canonical sender role** (`owner` / `admin` / `member`) and `EventFacts.sender_roles` is a one-item list used only for matcher compatibility. The matcher implementation uses set intersection, but under the current event model that still means one effective role per run. If upstream facts ever become multi-role in the future, this design must be revisited with an explicit composite/preferred-role rule instead of assuming the separate `owner` and `admin` cases remain safe.
 
 This belongs in session `computer.cases`, not in ad-hoc code branches.
 
@@ -120,8 +159,11 @@ For responding group surfaces, define explicit computer cases on the concrete ke
 
 - `message.mention`
 - `message.reply_to_bot`
+- `message.plain`
 
-Initial implementation only needs to cover the responding message surfaces above. Non-responding notice surfaces remain unchanged.
+Initial implementation should cover the responding message surfaces above. Non-responding notice surfaces remain unchanged.
+
+This round intentionally does **not** introduce a new `message.command` surface into existing group sessions. Today slash-command-like traffic can continue to fall through the existing surface chain and land on `message.plain` unless a future change explicitly adds `message.command` together with mirrored admission/routing/computer semantics.
 
 For each of those responding surfaces:
 
@@ -129,12 +171,17 @@ For each of those responding surfaces:
 - explicit case for `sender_roles: [owner]`: host
 - explicit case for `sender_roles: [admin]`: host
 
-The computer payload should control:
+The computer payload must control:
 
 - `backend`
 - `allow_exec`
 - `allow_sessions`
-- roots visibility as needed by the current work-world model
+- roots visibility
+
+This root policy is part of the sandbox boundary, not an optional detail. In particular:
+
+- member / docker runs must keep the normal frontstage world roots only (`/workspace`, `/skills`, `/self`) and must **not** gain direct world-path access to the real catalog root or session config source of truth
+- admin / host runs may keep the normal frontstage roots and also rely on the admin-host maintenance carve-out for host-path operations against the real extension catalog root and session config files
 
 The design keeps the distinction declarative and inspectable through session config.
 
@@ -150,9 +197,16 @@ Responsibilities for `kind="skills"`:
 4. overwrite that session agent's `visible_skills` with the refreshed skill names
 5. refresh dependent session bundle / agent loader state so later runs use the new allowlist
 
+Step 5 must explicitly cover both pieces of loader state:
+
+- refresh the session bundle loader's catalog-name snapshot used for `visible_skills` validation
+- invalidate any cached session bundles so the rewritten `agent.yaml` is re-read immediately instead of waiting for cache expiry
+
 The operation returns a structured summary, for example:
 
 - refreshed kind
+- resolved project install target (when uniquely determined)
+- resolved catalog roots reloaded
 - discovered skill names
 - updated session id / agent id
 - whether files were changed
@@ -178,6 +232,12 @@ This tool is intentionally narrow:
 - no plugin reload semantics in the first round
 - no hidden side path to unrelated runtime state changes
 
+The tool remains statically controlled by the agent tool allowlist. For this round, checked-in QQ group session-owned agents and new `qq_group` session defaults must include `refresh_extensions` in `visible_tools` so the builtin tool can actually appear without introducing extra dynamic gating logic.
+
+That requirement applies to the agent creation path as well: when a new `qq_group` session bundle is created, the generated `agent.yaml` default must seed the normal qq_group frontstage tool baseline and then append `refresh_extensions`, rather than starting from an otherwise empty tool list.
+
+Because session bundle validation rejects unknown tool names, builtin registration for `refresh_extensions` must happen before session bundle validation snapshots are built or refreshed.
+
 ## D. HTTP / control plane layer
 
 Add a matching narrow control-plane operation and HTTP endpoint, e.g.:
@@ -186,6 +246,22 @@ Add a matching narrow control-plane operation and HTTP endpoint, e.g.:
 - HTTP: `POST /api/runtime/refresh-extensions`
 
 Builtin tool and HTTP endpoint must share the same underlying refresh implementation so there is only one behavior definition.
+
+Target selection rules:
+
+- builtin tool path may derive the target session-owned frontstage agent from the current run context
+- HTTP / control-plane path must accept an explicit target identifier, at minimum `session_id`, so the service knows which `agent.yaml` to rewrite
+
+The shared implementation must refresh not only the catalog but also the session bundle loader's catalog snapshot before reloading the rewritten session bundle, so `visible_skills` validation uses the refreshed skill-name set.
+
+HTTP auth rule for this round:
+
+- the endpoint is privileged local-admin control-plane functionality, not a public conversation tool surface
+- `POST /api/runtime/refresh-extensions` must be loopback-only in this round
+- the HTTP wrapper authorizes loopback access and requires explicit `session_id`
+- the builtin-tool wrapper authorizes `owner|admin + host + session-owned frontstage agent`
+- after wrapper-level auth succeeds, both entrypoints call the same refresh core for the actual catalog reload + `visible_skills` rewrite
+- this feature does not rely on broad `/api/runtime/reload-config`; any existing broader reload endpoint behavior is out of scope and must not be treated as the security model for extension refresh
 
 ## Data Flow
 
