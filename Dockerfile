@@ -61,15 +61,15 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system --requirements /tmp/requirements.txt
 
+# ── Playwright browser 安装（放在源码复制前，避免业务改动打掉浏览器缓存） ──
+RUN python -m playwright install --with-deps chromium
+
 COPY src/ src/
 COPY webui/ ./webui/
 RUN --mount=type=cache,target=/root/.npm \
     npm --prefix webui run build
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system --no-deps .
-
-# ── Playwright browser 安装（依赖已由项目安装） ──
-RUN python -m playwright install --with-deps chromium
 
 # ── Bot 常用 Python 库 ──
 RUN uv pip install --system \
