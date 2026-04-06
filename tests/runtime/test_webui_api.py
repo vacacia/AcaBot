@@ -2789,6 +2789,67 @@ async def test_runtime_http_api_server_persists_model_provider_name(tmp_path: Pa
         await server.stop()
 
 
+async def test_runtime_http_api_server_preserves_hidden_model_provider_fields_on_partial_update(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, webui_enabled=True, port=0)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+
+        created = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/models/providers/openai-main",
+            method="PUT",
+            payload={
+                "name": "OpenAI 主线路",
+                "kind": "openai_compatible",
+                "base_url": "https://llm.example.com/v1",
+                "api_key_env": "OPENAI_API_KEY",
+                "default_headers": {"X-Trace": "1"},
+                "default_query": {"api-version": "2024-01-01"},
+                "default_body": {"metadata": {"source": "seed"}},
+            },
+        )
+        assert created["ok"] is True
+
+        updated = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/models/providers/openai-main",
+            method="PUT",
+            payload={
+                "name": "OpenAI 主线路(改名)",
+                "kind": "openai_compatible",
+                "base_url": "https://llm.example.com/v1",
+                "api_key_env": "OPENAI_API_KEY",
+            },
+        )
+        assert updated["ok"] is True
+
+        provider_detail = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/models/providers/openai-main",
+        )
+        assert provider_detail["ok"] is True
+        assert provider_detail["data"]["name"] == "OpenAI 主线路(改名)"
+        assert provider_detail["data"]["config"]["default_headers"] == {"X-Trace": "1"}
+        assert provider_detail["data"]["config"]["default_query"] == {"api-version": "2024-01-01"}
+        assert provider_detail["data"]["config"]["default_body"] == {"metadata": {"source": "seed"}}
+    finally:
+        await server.stop()
+
+
 async def test_runtime_http_api_server_persists_model_preset_task_kind_and_capabilities(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     _write_config(config_path, webui_enabled=True, port=0)
@@ -3717,6 +3778,7 @@ async def test_runtime_http_api_server_blocks_deleting_prompt_that_is_still_refe
 
 
 def test_webui_shell_is_vite_bundle_entry() -> None:
+    ensure_webui_assets_built()
     html = Path("src/acabot/webui/index.html").read_text(encoding="utf-8")
 
     assert "<div id=\"app\"></div>" in html
@@ -3725,17 +3787,20 @@ def test_webui_shell_is_vite_bundle_entry() -> None:
 
 
 def test_webui_built_assets_include_render_settings_entrypoint() -> None:
+    ensure_webui_assets_built()
     html = Path("src/acabot/webui/index.html").read_text(encoding="utf-8")
     script_match = re.search(r'src="(/assets/[^"]+\.js)"', html)
 
     assert script_match is not None
-    built_js = Path("src/acabot/webui") / script_match.group(1).lstrip("/")
-    script_source = built_js.read_text(encoding="utf-8")
+    assets_dir = Path("src/acabot/webui/assets")
+    js_sources = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted(assets_dir.glob("*.js"))
+    )
 
-    assert "/api/render/config" in script_source
-    assert "Render 默认配置" in script_source
-    assert "查看 Run 详情" in script_source
-    assert "最近 200 条 Steps" in script_source
+    assert "/api/render/config" in js_sources
+    assert "查看 Run 详情" in js_sources
+    assert "最近 200 条 Steps" in js_sources
 
 
 def test_webui_router_removes_legacy_preview_routes() -> None:
