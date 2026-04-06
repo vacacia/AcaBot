@@ -240,16 +240,6 @@ class RuntimeApp:
         """
         run_id: str | None = None
         try:
-            logger.info(
-                "Inbound event: event_id=%s type=%s relation=%s channel=%s user=%s targets_self=%s preview=%s",
-                event.event_id,
-                event.event_type,
-                event.bot_relation,
-                event.session_key,
-                event.source.user_id,
-                event.targets_self,
-                self._preview_event(event),
-            )
             if await self._handle_backend_entrypoint(event):
                 return
             decision = await self.router.route(event)
@@ -262,7 +252,15 @@ class RuntimeApp:
                 decision.channel_scope,
             )
             if decision.run_mode == "silent_drop":
-                logger.info("Event dropped by route: event_id=%s", event.event_id)
+                self._log_message_handling_summary(
+                    event=event,
+                    decision=decision,
+                    prompt_ref="-",
+                    agent_id=decision.agent_id or "-",
+                    model="-",
+                    run_id=None,
+                    thread_id=decision.thread_id,
+                )
                 return
             # 根据路由决策, 创建或获取当前的对话 Thread
             thread = await self.thread_manager.get_or_create(
@@ -306,7 +304,21 @@ class RuntimeApp:
                 decision=decision,
                 model_snapshot=model_snapshot,
             )
+            run.metadata["prompt_ref"] = agent.prompt_ref
+            if model_request is not None:
+                run.metadata["resolved_model"] = str(getattr(model_request, "model", "") or "")
+            if summary_model_request is not None:
+                run.metadata["summary_model"] = str(getattr(summary_model_request, "model", "") or "")
             run_id = run.run_id
+            self._log_message_handling_summary(
+                event=event,
+                decision=decision,
+                prompt_ref=agent.prompt_ref,
+                agent_id=agent.agent_id,
+                model=str(getattr(model_request, "model", "") or "-"),
+                run_id=run.run_id,
+                thread_id=decision.thread_id,
+            )
             if self._should_persist_event(decision):
                 await self.channel_event_store.save(
                     self._build_channel_event_record(
@@ -486,6 +498,70 @@ class RuntimeApp:
         if len(text) <= max_len:
             return text
         return f"{text[:max_len]}..."
+
+    @staticmethod
+    def _sender_display_name(event: StandardEvent) -> str:
+        metadata = dict(event.metadata or {})
+        return str(
+            metadata.get("sender_display_name")
+            or metadata.get("sender_card")
+            or event.sender_nickname
+            or event.source.user_id
+            or "unknown"
+        )
+
+    @staticmethod
+    def _conversation_label(event: StandardEvent) -> tuple[str, str, str]:
+        metadata = dict(event.metadata or {})
+        if event.is_group:
+            group_id = str(event.source.group_id or "-")
+            group_name = str(metadata.get("group_name", "") or "")
+            label = f"{group_name}({group_id})" if group_name else group_id
+            return "群聊", label, group_name
+        return "私聊", str(event.source.user_id or "-"), ""
+
+    def _log_message_handling_summary(
+        self,
+        *,
+        event: StandardEvent,
+        decision: RouteDecision,
+        prompt_ref: str,
+        agent_id: str,
+        model: str,
+        run_id: str | None,
+        thread_id: str,
+    ) -> None:
+        message_kind, conversation_label, group_name = self._conversation_label(event)
+        sender_name = self._sender_display_name(event)
+        sender_id = str(event.source.user_id or "-")
+        content_preview = self._preview_event(event)
+        summary = (
+            f"[MESSAGE] 接收 <- {message_kind} [{conversation_label}] "
+            f"[{sender_name}({sender_id})] {content_preview} "
+            f"| 策略={decision.run_mode} | prompt={prompt_ref or '-'}"
+        )
+        logger.info(
+            summary,
+            extra={
+                "log_kind": "message",
+                "event_id": event.event_id,
+                "run_id": run_id,
+                "thread_id": thread_id,
+                "agent_id": agent_id,
+                "conversation_kind": message_kind,
+                "conversation_label": conversation_label,
+                "group_name": group_name,
+                "group_id": event.source.group_id,
+                "sender_name": sender_name,
+                "sender_id": sender_id,
+                "content_preview": content_preview,
+                "run_mode": decision.run_mode,
+                "prompt_ref": prompt_ref,
+                "model": model,
+                "bot_relation": event.bot_relation,
+                "surface_id": decision.metadata.get("surface_id"),
+            },
+        )
 
     # region inbound事件
     def _load_agent_for_event(self, decision: RouteDecision) -> ResolvedAgent:

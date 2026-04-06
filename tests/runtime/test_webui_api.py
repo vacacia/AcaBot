@@ -4188,6 +4188,9 @@ def test_webui_logs_view_wires_expandable_logs_and_run_details() -> None:
     assert "position: fixed" in logs_view
     assert "展开详情" in log_stream_panel
     assert "查看 Run 详情" in log_stream_panel
+    assert "formatClock" in log_stream_panel
+    assert "summary-tag" in log_stream_panel
+    assert "primary-field" in log_stream_panel
     assert "最近 200 条 Steps" in run_detail_panel
     assert "activeRequestToken" in run_detail_panel
     assert "requestToken !== activeRequestToken" in run_detail_panel
@@ -5421,7 +5424,7 @@ async def test_logs_page_exists_and_exposes_mode_toggle(tmp_path: Path) -> None:
         await server.stop()
 
 
-async def test_logs_page_renders_structured_extra_fields(tmp_path: Path) -> None:
+async def test_logs_page_renders_structured_summaries_tags_and_time(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     _write_config(config_path, webui_enabled=True, port=0)
     config = Config.from_file(str(config_path))
@@ -5434,11 +5437,35 @@ async def test_logs_page_renders_structured_extra_fields(tmp_path: Path) -> None
     )
     log_buffer.append(
         LogEntry(
-            timestamp=1.0,
+            timestamp=1712418950.0,
             level="INFO",
-            logger="acabot.runtime.pipeline",
-            message="Run token usage",
-            extra={"tool_name": "echo", "duration_ms": 42, "run_id": "run:1"},
+            logger="acabot.runtime.app",
+            kind="message",
+            message="接收 <- 群聊 [肥猪交流群(1039173249)] [我是你坝(908900359)] 结果他笔试挂了 | 策略=record_only | prompt=prompt/record_only",
+            extra={
+                "group_name": "肥猪交流群",
+                "group_id": "1039173249",
+                "sender_name": "我是你坝",
+                "sender_id": "908900359",
+                "content_preview": "结果他笔试挂了",
+                "run_mode": "record_only",
+                "prompt_ref": "prompt/record_only",
+                "run_id": "run:1",
+            },
+        )
+    )
+    log_buffer.append(
+        LogEntry(
+            timestamp=1712418951.0,
+            level="INFO",
+            logger="acabot.runtime.tool_broker",
+            kind="tool_call",
+            message="Tool call",
+            extra={
+                "tool_name": "message.send",
+                "tool_arguments": {"content": "你好"},
+                "run_id": "run:1",
+            },
         )
     )
     server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
@@ -5454,18 +5481,25 @@ async def test_logs_page_renders_structured_extra_fields(tmp_path: Path) -> None
             height=1000,
             wait_ms=1200,
             script="""
-              const chips = Array.from(document.querySelectorAll('.extra-chip'));
+              const tags = Array.from(document.querySelectorAll('.summary-tag')).map((item) => item.textContent?.trim() || '');
+              const times = Array.from(document.querySelectorAll('.time-chip-inline')).map((item) => item.textContent?.trim() || '');
+              const fields = Array.from(document.querySelectorAll('.primary-field')).map((item) => item.textContent?.trim() || '');
               return {
-                chipCount: chips.length,
-                titles: chips.map((item) => item.getAttribute('title') || ''),
+                bodyText: document.body.textContent || '',
+                tags,
+                times,
+                fields,
               };
             """,
         )
 
-        assert result["chipCount"] == 3
-        assert "tool_name=echo" in result["titles"]
-        assert "duration_ms=42" in result["titles"]
-        assert "run_id=run:1" in result["titles"]
+        assert "MESSAGE" in result["tags"]
+        assert "TOOL CALL" in result["tags"]
+        assert any(value.count(":") >= 2 for value in result["times"])
+        assert any("肥猪交流群" in value for value in result["fields"])
+        assert any("我是你坝" in value for value in result["fields"])
+        assert any("record_only" in value for value in result["fields"])
+        assert "message.send" in result["bodyText"]
     finally:
         await server.stop()
 

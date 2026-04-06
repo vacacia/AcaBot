@@ -917,7 +917,11 @@ class RuntimeHttpApiServer:
         jsonable = _to_jsonable(data)
         duration = time.perf_counter() - start
         if duration > 0.1:
-            logger.info("JSON serialization took %.3fs", duration)
+            logger.debug(
+                "[PERF] HTTP API json_encode took %.3fs",
+                duration,
+                extra={"log_kind": "runtime_perf", "operation": "json_encode", "duration_ms": round(duration * 1000, 1)},
+            )
         return 200, {"ok": True, "data": jsonable}
 
     def _get_ltm_store(self):
@@ -928,15 +932,21 @@ class RuntimeHttpApiServer:
         import time
         if self._loop is None:
             raise RuntimeError("http api server is not started")
-        
+
+        operation = getattr(getattr(awaitable, "cr_code", None), "co_name", None) or getattr(awaitable, "__name__", None) or "unknown"
         start = time.perf_counter()
         future = asyncio.run_coroutine_threadsafe(awaitable, self._loop)
         result = future.result(timeout=self.request_timeout_sec)
         duration = time.perf_counter() - start
-        
+
         if duration > 0.1:
-            logger.info("Async task execution took %.3fs", duration)
-            
+            logger.debug(
+                "[PERF] HTTP API await %s took %.3fs",
+                operation,
+                duration,
+                extra={"log_kind": "runtime_perf", "operation": operation, "duration_ms": round(duration * 1000, 1)},
+            )
+
         return result
 
 

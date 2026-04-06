@@ -179,7 +179,7 @@ class NapCatGateway(BaseGateway):
             or f"[{event.event_type}]"
         )
         if event.event_type == "message":
-            logger.info(
+            logger.debug(
                 "NapCat inbound message: event_id=%s channel=%s user=%s group=%s subtype=%s preview=%s",
                 event.event_id,
                 event.session_key,
@@ -231,6 +231,10 @@ class NapCatGateway(BaseGateway):
             user_id=str(raw.get("user_id", "")),
             group_id=str(raw["group_id"]) if "group_id" in raw else None,
         )
+        sender_nickname = str(sender.get("nickname", "") or "")
+        sender_card = str(sender.get("card", "") or "")
+        sender_display_name = sender_card or sender_nickname or str(raw.get("user_id", "") or "")
+        group_name = str(raw.get("group_name", "") or "")
         segments = [
             MsgSegment(type=s["type"], data=s.get("data", {}))
             for s in raw_segments
@@ -243,7 +247,7 @@ class NapCatGateway(BaseGateway):
             source=source,
             segments=segments,
             raw_message_id=str(raw.get("message_id", "")),
-            sender_nickname=sender.get("nickname", ""),
+            sender_nickname=sender_nickname,
             sender_role=sender.get("role"),
             message_subtype=str(raw.get("sub_type", "") or "") or None,
             reply_to_message_id=reply_reference.message_id if reply_reference is not None else None,
@@ -259,6 +263,11 @@ class NapCatGateway(BaseGateway):
                 or reply_targets_self
             ),
             attachments=attachments,
+            metadata={
+                "group_name": group_name,
+                "sender_card": sender_card,
+                "sender_display_name": sender_display_name,
+            },
             raw_event=dict(raw),
         )
 
@@ -991,23 +1000,33 @@ class NapCatGateway(BaseGateway):
     def _log_outbound_action(self, action: Action, *, echo: str) -> None:
         """为出站动作写一条简洁日志."""
 
+        target_label = self._target_label(action.target)
         if action.action_type in {ActionType.SEND_TEXT, ActionType.SEND_SEGMENTS}:
             preview = self._preview_text(self._extract_action_text(action))
             logger.info(
-                "NapCat outbound message: echo=%s action=%s target=%s preview=%s",
-                echo,
-                action.action_type,
-                self._target_label(action.target),
+                "[OUTBOUND] 发送 -> %s 文本=%s",
+                target_label,
                 preview,
-                extra={"log_kind": "napcat_message"},
+                extra={
+                    "log_kind": "outbound",
+                    "echo": echo,
+                    "action": str(action.action_type),
+                    "target": target_label,
+                    "preview": preview,
+                },
             )
             return
         logger.info(
-            "NapCat outbound action: echo=%s action=%s target=%s payload=%s",
-            echo,
+            "[OUTBOUND] 发送 -> %s action=%s",
+            target_label,
             action.action_type,
-            self._target_label(action.target),
-            action.payload,
+            extra={
+                "log_kind": "outbound",
+                "echo": echo,
+                "action": str(action.action_type),
+                "target": target_label,
+                "payload": action.payload,
+            },
         )
 
     @staticmethod

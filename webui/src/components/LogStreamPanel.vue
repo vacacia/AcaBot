@@ -19,6 +19,13 @@ type LogPayload = {
   reset_required: boolean
 }
 
+type PrimaryField = {
+  key: string
+  label: string
+  value: string
+  tone?: string
+}
+
 const props = withDefaults(
   defineProps<{
     title?: string
@@ -85,14 +92,62 @@ function levelClass(levelName: string): string {
   }
 }
 
-function kindClass(kindName?: string): string {
-  switch (String(kindName || "").toLowerCase()) {
+function normalizeKind(kindName?: string, item?: LogItem): string {
+  const explicit = String(kindName || "").trim().toLowerCase()
+  if (explicit) {
+    return explicit
+  }
+  if (String(item?.level || "").toUpperCase() === "ERROR") {
+    return "error"
+  }
+  return "runtime"
+}
+
+function kindClass(kindName?: string, item?: LogItem): string {
+  switch (normalizeKind(kindName, item)) {
+    case "message":
     case "napcat_message":
-      return "is-napcat-message"
+      return "is-message"
     case "napcat_notice":
-      return "is-napcat-notice"
+      return "is-notice"
+    case "tool_call":
+      return "is-tool-call"
+    case "tool_result":
+      return "is-tool-result"
+    case "token_usage":
+      return "is-token-usage"
+    case "outbound":
+      return "is-outbound"
+    case "runtime_perf":
+      return "is-runtime-perf"
+    case "error":
+      return "is-error-kind"
     default:
       return ""
+  }
+}
+
+function kindTag(kindName?: string, item?: LogItem): string {
+  switch (normalizeKind(kindName, item)) {
+    case "message":
+    case "napcat_message":
+      return "MESSAGE"
+    case "napcat_notice":
+      return "NOTICE"
+    case "tool_call":
+      return "TOOL CALL"
+    case "tool_result":
+      return "TOOL RESULT"
+    case "token_usage":
+      return "TOKEN"
+    case "outbound":
+      return "OUTBOUND"
+    case "runtime_perf":
+      return "PERF"
+    case "error":
+      return "ERROR"
+    default:
+      return "RUNTIME"
   }
 }
 
@@ -127,9 +182,16 @@ function extraChipClass(key: string): string {
     case "prompt_tokens":
     case "completion_tokens":
     case "total_tokens":
+    case "cache_read_input_tokens":
+    case "cache_creation_input_tokens":
+    case "cached_prompt_tokens":
+    case "prompt_cache_hit_tokens":
       return "is-token"
     case "error":
       return "is-error-field"
+    case "preview":
+    case "content_preview":
+      return "is-preview"
     default:
       return ""
   }
@@ -215,6 +277,114 @@ async function scrollToEnd(): Promise<void> {
   }
 }
 
+function formatClock(timestamp: number): string {
+  return new Date(timestamp * 1000).toLocaleTimeString("zh-CN", { hour12: false })
+}
+
+function formatPreciseTime(timestamp: number): string {
+  return new Date(timestamp * 1000).toLocaleString("zh-CN", {
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  })
+}
+
+function normalizeSummaryText(item: LogItem): string {
+  const raw = String(item.message || "").trim()
+  return raw.replace(/^\[[A-Z_ ]+\]\s*/u, "").trim() || raw
+}
+
+function joinNameId(name: unknown, id: unknown): string {
+  const text = String(name || "").trim()
+  const normalizedId = String(id || "").trim()
+  if (text && normalizedId) {
+    return `${text} (${normalizedId})`
+  }
+  return text || normalizedId || "-"
+}
+
+function field(label: string, value: unknown, key: string, tone = ""): PrimaryField | null {
+  const normalized = String(value ?? "").trim()
+  if (!normalized) {
+    return null
+  }
+  return { key, label, value: normalized, tone }
+}
+
+function summarizeToolArguments(value: unknown): string {
+  if (value == null) {
+    return "-"
+  }
+  try {
+    const json = JSON.stringify(value, null, 0)
+    return json.length > 120 ? `${json.slice(0, 117)}...` : json
+  } catch {
+    return formatExtraValue(value)
+  }
+}
+
+function summaryText(item: LogItem): string {
+  const kind = normalizeKind(item.kind, item)
+  const extra = item.extra ?? {}
+  if (kind === "tool_call") {
+    return String(extra.tool_name || normalizeSummaryText(item) || "Tool call")
+  }
+  if (kind === "tool_result") {
+    return String(extra.result_summary || extra.tool_name || normalizeSummaryText(item) || "Tool result")
+  }
+  if (kind === "token_usage") {
+    return `模型 ${String(extra.model || "-")}`
+  }
+  if (kind === "outbound") {
+    return String(extra.preview || normalizeSummaryText(item))
+  }
+  return normalizeSummaryText(item)
+}
+
+function primaryFields(item: LogItem): PrimaryField[] {
+  const kind = normalizeKind(item.kind, item)
+  const extra = item.extra ?? {}
+  const fields: Array<PrimaryField | null> = []
+
+  if (kind === "message" || kind === "napcat_message") {
+    fields.push(field("会话", String(extra.conversation_label || joinNameId(extra.group_name, extra.group_id)), "conversation", "is-strong"))
+    fields.push(field("发送者", joinNameId(extra.sender_name, extra.sender_id), "sender", "is-strong"))
+    fields.push(field("消息", extra.content_preview, "content"))
+    fields.push(field("策略", extra.run_mode, "run_mode", "is-emphasis"))
+    fields.push(field("Prompt", extra.prompt_ref, "prompt_ref"))
+    fields.push(field("模型", extra.model, "model"))
+  } else if (kind === "tool_call") {
+    fields.push(field("工具", extra.tool_name, "tool_name", "is-strong"))
+    fields.push(field("参数", summarizeToolArguments(extra.tool_arguments), "tool_arguments"))
+  } else if (kind === "tool_result") {
+    fields.push(field("工具", extra.tool_name, "tool_name", "is-strong"))
+    fields.push(field("结果", extra.result_summary || extra.error, "result_summary"))
+    fields.push(field("耗时", extra.duration_ms != null ? `${extra.duration_ms} ms` : "", "duration_ms"))
+  } else if (kind === "token_usage") {
+    fields.push(field("模型", extra.model, "model", "is-strong"))
+    fields.push(field("Prompt", extra.prompt_tokens, "prompt_tokens", "is-token"))
+    fields.push(field("Completion", extra.completion_tokens, "completion_tokens", "is-token"))
+    fields.push(field("Total", extra.total_tokens, "total_tokens", "is-token"))
+    fields.push(field("Cache", [extra.cache_read_input_tokens, extra.cached_prompt_tokens, extra.prompt_cache_hit_tokens].filter(Boolean).join(" / "), "cache_tokens"))
+    fields.push(field("Prompt Ref", extra.prompt_ref, "prompt_ref"))
+  } else if (kind === "outbound") {
+    fields.push(field("目标", extra.target, "target", "is-strong"))
+    fields.push(field("动作", extra.action, "action"))
+    fields.push(field("文本", extra.preview, "preview"))
+  } else if (kind === "runtime_perf") {
+    fields.push(field("操作", extra.operation, "operation", "is-strong"))
+    fields.push(field("耗时", extra.duration_ms != null ? `${extra.duration_ms} ms` : "", "duration_ms", "is-emphasis"))
+  } else if (kind === "error") {
+    fields.push(field("错误", extra.error || item.message, "error", "is-emphasis"))
+  }
+
+  return fields.filter((item): item is PrimaryField => item !== null)
+}
+
 async function fetchSnapshot(): Promise<void> {
   if (requestInFlight || disposed) {
     return
@@ -225,7 +395,7 @@ async function fetchSnapshot(): Promise<void> {
   resetHint.value = ""
   try {
     const payload = await apiGet<LogPayload>(buildPath())
-    if (disposed) return // Guard against state updates after unmount
+    if (disposed) return
     logs.value = payload.items ?? []
     nextSeq.value = payload.next_seq ?? 0
     if (payload.reset_required) {
@@ -248,7 +418,7 @@ async function fetchDelta(): Promise<void> {
   requestInFlight = true
   try {
     const payload = await apiGet<LogPayload>(buildPath(nextSeq.value))
-    if (disposed) return // Guard against state updates after unmount
+    if (disposed) return
     const items = payload.items ?? []
     if (payload.reset_required) {
       logs.value = items
@@ -346,17 +516,15 @@ onBeforeUnmount(() => {
         v-for="item in logs"
         :key="item.seq"
         class="log-line"
-        :class="[levelClass(item.level), kindClass(item.kind)]"
+        :class="[levelClass(item.level), kindClass(item.kind, item)]"
       >
-        <div class="log-meta-row">
-          <div class="log-meta">
-            <span class="seq-chip">#{{ item.seq }}</span>
-            <span class="time-chip">{{ new Date(item.timestamp * 1000).toLocaleTimeString("zh-CN", { hour12: false }) }}</span>
+        <div class="log-header-row">
+          <div class="log-chips">
+            <span class="time-chip-inline" :title="formatPreciseTime(item.timestamp)">{{ formatClock(item.timestamp) }}</span>
             <span class="level-chip" :class="levelClass(item.level)">{{ item.level }}</span>
-            <span v-if="item.kind && item.kind !== 'runtime'" class="kind-chip" :class="kindClass(item.kind)">{{ item.kind }}</span>
-            <span class="logger-chip">{{ item.logger }}</span>
+            <span class="summary-tag" :class="kindClass(item.kind, item)">{{ kindTag(item.kind, item) }}</span>
           </div>
-          <div v-if="showDetails || showRunDetails" class="log-actions">
+          <div v-if="showDetails || showRunDetails || (item.extra && Object.keys(item.extra).length > 0)" class="log-actions">
             <button v-if="showDetails" type="button" class="ds-inline-button" @click="toggleExpanded(item.seq)">
               {{ isExpanded(item.seq) ? "收起详情" : "展开详情" }}
             </button>
@@ -370,26 +538,42 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </div>
-        <pre class="log-message">{{ item.message }}</pre>
-        <div v-if="item.extra && Object.keys(item.extra).length > 0" class="log-extra">
-          <button
-            v-for="(value, key) in item.extra"
-            :key="String(key)"
-            type="button"
-            class="extra-chip"
-            :class="extraChipClass(String(key))"
-            :title="`${String(key)}=${formatExtraValue(value)}`"
-            :aria-label="`按 ${String(key)} 过滤`"
-            @click="applyExtraFilter(String(key), value)"
+
+        <div class="log-summary">{{ summaryText(item) }}</div>
+
+        <div v-if="primaryFields(item).length" class="primary-fields">
+          <div
+            v-for="entry in primaryFields(item)"
+            :key="entry.key"
+            class="primary-field"
+            :class="entry.tone"
           >
-            <span class="extra-key">{{ key }}</span>
-            <span class="extra-value">{{ formatExtraValue(value) }}</span>
-          </button>
+            <span class="primary-label">{{ entry.label }}</span>
+            <span class="primary-value">{{ entry.value }}</span>
+          </div>
         </div>
-        <div v-if="showDetails && isExpanded(item.seq)" class="log-detail-block">
-          <div class="detail-section">
-            <p class="detail-title">完整 message</p>
-            <pre class="detail-json">{{ item.message }}</pre>
+
+        <div v-if="isExpanded(item.seq)" class="log-expanded">
+          <div class="expanded-meta">
+            <span class="seq-chip">#{{ item.seq }}</span>
+            <span class="time-chip">{{ formatPreciseTime(item.timestamp) }}</span>
+            <span class="logger-chip">{{ item.logger }}</span>
+          </div>
+          <pre class="log-message">{{ item.message }}</pre>
+          <div v-if="item.extra && Object.keys(item.extra).length > 0" class="log-extra">
+            <button
+              v-for="(value, key) in item.extra"
+              :key="String(key)"
+              type="button"
+              class="extra-chip"
+              :class="extraChipClass(String(key))"
+              :title="`${String(key)}=${formatExtraValue(value)}`"
+              :aria-label="`按 ${String(key)} 过滤`"
+              @click="applyExtraFilter(String(key), value)"
+            >
+              <span class="extra-key">{{ key }}</span>
+              <span class="extra-value">{{ formatExtraValue(value) }}</span>
+            </button>
           </div>
         </div>
       </article>
@@ -497,43 +681,148 @@ button:active {
 .log-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   overflow: auto;
 }
 
 .log-line {
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 16px;
   background: color-mix(in srgb, var(--panel-strong) 92%, transparent);
-  padding: 8px 10px;
+  padding: 12px 14px;
   border-left-width: 4px;
+  transition: background 150ms ease;
 }
 
-.log-meta-row {
+.log-line:hover {
+  background: color-mix(in srgb, var(--panel-strong) 85%, transparent);
+}
+
+.log-header-row {
   display: flex;
   justify-content: space-between;
-  gap: 10px;
-  align-items: flex-start;
+  align-items: center;
+  gap: 8px;
 }
 
-.log-meta {
+.log-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.3;
   align-items: center;
+}
+
+.time-chip-inline,
+.seq-chip,
+.time-chip,
+.level-chip,
+.summary-tag,
+.logger-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: rgba(19, 41, 68, 0.12);
+  font-size: 10px;
+}
+
+.time-chip-inline,
+.time-chip {
+  color: var(--log-time);
+}
+
+.level-chip {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.summary-tag {
+  font-weight: 800;
+  letter-spacing: 0.04em;
 }
 
 .log-actions {
   display: inline-flex;
-  gap: 6px;
+  gap: 4px;
   flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.log-summary {
+  margin-top: 8px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.primary-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.primary-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 6px 10px;
+  border-radius: 12px;
+  background: rgba(19, 41, 68, 0.08);
+  border: 1px solid rgba(19, 41, 68, 0.08);
+}
+
+.primary-field.is-strong {
+  background: color-mix(in srgb, var(--accent-soft) 44%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.primary-field.is-emphasis {
+  background: rgba(154, 103, 0, 0.12);
+  border-color: rgba(154, 103, 0, 0.22);
+}
+
+.primary-field.is-token {
+  background: color-mix(in srgb, #0f766e 16%, transparent);
+  border-color: color-mix(in srgb, #0f766e 26%, transparent);
+}
+
+.primary-label {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.primary-value {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.log-expanded {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.expanded-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 10px;
+  align-items: center;
 }
 
 .log-message {
-  margin: 4px 0 0;
+  margin: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family:
@@ -544,7 +833,7 @@ button:active {
     "Liberation Mono",
     monospace;
   font-size: 12px;
-  line-height: 1.45;
+  line-height: 1.5;
   color: var(--log-message);
 }
 
@@ -552,62 +841,6 @@ button:active {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
-  margin-top: 6px;
-}
-
-.log-detail-block {
-  display: grid;
-  gap: 10px;
-  margin-top: 10px;
-}
-
-.detail-section {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 10px;
-  background: rgba(255, 255, 255, 0.02);
-}
-
-.detail-title {
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.detail-json {
-  margin: 8px 0 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-size: 12px;
-  line-height: 1.45;
-  font-family:
-    "SFMono-Regular",
-    "Menlo",
-    "Monaco",
-    "Consolas",
-    "Liberation Mono",
-    monospace;
-}
-
-.seq-chip,
-.time-chip,
-.level-chip,
-.kind-chip,
-.logger-chip {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 999px;
-  padding: 2px 8px;
-  background: rgba(19, 41, 68, 0.12);
-}
-
-.seq-chip {
-  font-weight: 700;
-  color: var(--log-seq);
-}
-
-.time-chip {
-  color: var(--log-time);
 }
 
 .logger-chip {
@@ -671,49 +904,59 @@ button:active {
   white-space: nowrap;
 }
 
-.level-chip {
-  font-weight: 800;
-  letter-spacing: 0.03em;
-}
-
-.kind-chip {
-  font-weight: 700;
-  color: var(--napcat-chip);
-}
-
 .log-line.is-debug {
   border-left-color: var(--log-debug-border);
-  background: linear-gradient(90deg, var(--log-debug-bg), color-mix(in srgb, var(--panel-strong) 94%, transparent));
 }
 
 .log-line.is-info {
   border-left-color: var(--log-info-border);
-  background: linear-gradient(90deg, var(--log-info-bg), color-mix(in srgb, var(--panel-strong) 94%, transparent));
 }
 
 .log-line.is-warning {
   border-left-color: var(--log-warn-border);
-  background: linear-gradient(90deg, var(--log-warn-bg), color-mix(in srgb, var(--panel-strong) 94%, transparent));
 }
 
-.log-line.is-error {
+.log-line.is-error,
+.log-line.is-error-kind {
   border-left-color: var(--log-error-border);
   background: linear-gradient(90deg, var(--log-error-bg), color-mix(in srgb, var(--panel-strong) 94%, transparent));
 }
 
 .log-line.is-critical {
   border-left-color: var(--log-critical-border);
-  background: linear-gradient(90deg, var(--log-critical-bg), color-mix(in srgb, var(--panel-strong) 94%, transparent));
 }
 
-.log-line.is-napcat-message {
-  box-shadow: inset 0 0 0 1px var(--log-napcat-msg-border);
-  background: linear-gradient(90deg, var(--log-napcat-msg-bg), color-mix(in srgb, var(--panel-strong) 94%, transparent));
+.log-line.is-message {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent-soft) 42%, transparent), color-mix(in srgb, var(--panel-strong) 94%, transparent));
 }
 
-.log-line.is-napcat-notice {
+.log-line.is-notice {
   box-shadow: inset 0 0 0 1px var(--log-napcat-notice-border);
-  background: linear-gradient(90deg, var(--log-napcat-notice-bg), color-mix(in srgb, var(--panel-strong) 94%, transparent));
+}
+
+.log-line.is-tool-call {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #2563eb 26%, transparent);
+  background: linear-gradient(90deg, rgba(37, 99, 235, 0.10), color-mix(in srgb, var(--panel-strong) 94%, transparent));
+}
+
+.log-line.is-tool-result {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #7c3aed 24%, transparent);
+  background: linear-gradient(90deg, rgba(124, 58, 237, 0.10), color-mix(in srgb, var(--panel-strong) 94%, transparent));
+}
+
+.log-line.is-token-usage {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #0f766e 26%, transparent);
+  background: linear-gradient(90deg, rgba(15, 118, 110, 0.10), color-mix(in srgb, var(--panel-strong) 94%, transparent));
+}
+
+.log-line.is-outbound {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #d97706 24%, transparent);
+  background: linear-gradient(90deg, rgba(217, 119, 6, 0.10), color-mix(in srgb, var(--panel-strong) 94%, transparent));
+}
+
+.log-line.is-runtime-perf {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #64748b 22%, transparent);
 }
 
 .level-chip.is-debug {
@@ -741,14 +984,44 @@ button:active {
   color: var(--log-critical-chip-text);
 }
 
-.kind-chip.is-napcat-message {
-  background: var(--log-napcat-msg-chip-bg);
-  color: var(--log-napcat-msg-chip-text);
+.summary-tag.is-message {
+  background: color-mix(in srgb, var(--accent-soft) 66%, transparent);
+  color: var(--accent);
 }
 
-.kind-chip.is-napcat-notice {
+.summary-tag.is-notice {
   background: var(--log-napcat-notice-chip-bg);
   color: var(--log-napcat-notice-chip-text);
+}
+
+.summary-tag.is-tool-call {
+  background: rgba(37, 99, 235, 0.16);
+  color: #1d4ed8;
+}
+
+.summary-tag.is-tool-result {
+  background: rgba(124, 58, 237, 0.16);
+  color: #6d28d9;
+}
+
+.summary-tag.is-token-usage {
+  background: rgba(15, 118, 110, 0.16);
+  color: #0f766e;
+}
+
+.summary-tag.is-outbound {
+  background: rgba(217, 119, 6, 0.16);
+  color: #b45309;
+}
+
+.summary-tag.is-runtime-perf {
+  background: rgba(100, 116, 139, 0.16);
+  color: #475569;
+}
+
+.summary-tag.is-error-kind {
+  background: rgba(180, 35, 24, 0.14);
+  color: var(--danger);
 }
 
 .extra-chip.is-context {
@@ -825,42 +1098,16 @@ button:active {
   padding: 10px 12px;
 }
 
-.panel.is-dense .log-list {
-  gap: 4px;
-}
-
 .panel.is-dense .log-line {
-  padding: 6px 8px;
-  border-radius: 10px;
+  padding: 10px 12px;
 }
 
-.panel.is-dense .log-meta {
-  gap: 4px;
-  font-size: 10px;
+.panel.is-dense .log-summary {
+  font-size: 13px;
 }
 
-.panel.is-dense .seq-chip,
-.panel.is-dense .time-chip,
-.panel.is-dense .level-chip,
-.panel.is-dense .kind-chip,
-.panel.is-dense .logger-chip {
-  padding: 1px 6px;
-}
-
-.panel.is-dense .log-message {
-  margin-top: 3px;
-  font-size: 11px;
-  line-height: 1.35;
-}
-
-.panel.is-dense .log-extra {
-  gap: 4px;
-  margin-top: 4px;
-}
-
-.panel.is-dense .extra-chip {
-  padding: 1px 7px;
-  font-size: 10px;
+.panel.is-dense .primary-field {
+  padding: 5px 8px;
 }
 
 @media (max-width: 900px) {
@@ -880,34 +1127,36 @@ button:active {
   }
 
   .log-line {
-    padding: 8px 9px;
+    padding: 10px;
   }
 
-  .log-message {
-    font-size: 11px;
+  .log-actions {
+    width: 100%;
+    justify-content: flex-end;
   }
 
-  .log-extra {
-    gap: 4px;
-  }
-
+  .primary-field,
   .extra-chip {
     width: 100%;
     justify-content: space-between;
   }
 }
 
-/* ── Entrance animation ── */
 .panel-entrance {
   animation: panel-entrance-in 360ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
 }
 
 @keyframes panel-entrance-in {
-  from { opacity: 0; transform: translateY(10px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-/* ── Reduced motion ── */
 @media (prefers-reduced-motion: reduce) {
   .panel-entrance {
     animation: none;

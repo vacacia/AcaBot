@@ -636,6 +636,12 @@ class ToolBroker:
                 started_at=started_at,
             )
 
+        self._log_tool_call(
+            ctx=ctx,
+            tool_name=tool_name,
+            source=registered.source,
+            arguments=arguments,
+        )
         try:
             raw = registered.handler(arguments, ctx)
             if isawaitable(raw):
@@ -758,6 +764,12 @@ class ToolBroker:
                 status="rejected",
             )
 
+        self._log_tool_call(
+            ctx=ctx,
+            tool_name=pending.tool_name,
+            source=registered.source,
+            arguments=dict(pending.tool_arguments),
+        )
         try:
             raw = registered.handler(dict(pending.tool_arguments), ctx)
             if isawaitable(raw):
@@ -1140,6 +1152,19 @@ class ToolBroker:
         return round((time.monotonic() - started_at) * 1000, 1)
 
     @staticmethod
+    def _summarize_arguments(arguments: dict[str, Any], *, limit: int = 160) -> str:
+        try:
+            text = json.dumps(
+                sanitize_inspection_value(dict(arguments)),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        except Exception:
+            text = str(arguments)
+        text = " ".join(text.split())
+        return text[:limit] if text else "{}"
+
+    @staticmethod
     def _summarize_result(result: ToolResult, *, limit: int = 160) -> str:
         content = result.llm_content
         if isinstance(content, list):
@@ -1178,6 +1203,25 @@ class ToolBroker:
             "user_action_count": len(result.user_actions),
         }
 
+    def _log_tool_call(
+        self,
+        *,
+        ctx: ToolExecutionContext,
+        tool_name: str,
+        source: str,
+        arguments: dict[str, Any],
+    ) -> None:
+        slog.info(
+            f"[TOOL_CALL] {tool_name} args={self._summarize_arguments(arguments)}",
+            **{
+                **self._tool_context_fields(ctx),
+                "log_kind": "tool_call",
+                "tool_name": tool_name,
+                "source": source,
+                "tool_arguments": sanitize_inspection_value(dict(arguments)),
+            },
+        )
+
     def _log_tool_success(
         self,
         *,
@@ -1190,6 +1234,7 @@ class ToolBroker:
     ) -> None:
         payload = {
             **self._tool_context_fields(ctx),
+            "log_kind": "tool_result",
             "tool_name": tool_name,
             "source": source,
             "duration_ms": duration_ms,
@@ -1198,7 +1243,7 @@ class ToolBroker:
             "result_summary": self._summarize_result(result),
             "attachment_count": len(result.attachments),
         }
-        slog.info("Tool executed", **payload)
+        slog.info(f"[TOOL_RESULT] {tool_name} {payload['result_summary']}", **payload)
 
     def _log_tool_rejection(
         self,
@@ -1210,9 +1255,10 @@ class ToolBroker:
         arguments: dict[str, Any],
     ) -> None:
         slog.warning(
-            "Tool rejected",
+            f"[TOOL_REJECTED] {tool_name} reason={reason}",
             **{
                 **self._tool_context_fields(ctx),
+                "log_kind": "tool_result",
                 "tool_name": tool_name,
                 "reason": reason,
                 "duration_ms": duration_ms,
@@ -1230,9 +1276,10 @@ class ToolBroker:
         arguments: dict[str, Any],
     ) -> None:
         slog.error(
-            "Tool execution failed",
+            f"[TOOL_RESULT] {tool_name} failed error={error}",
             **{
                 **self._tool_context_fields(ctx),
+                "log_kind": "tool_result",
                 "tool_name": tool_name,
                 "error": error,
                 "duration_ms": duration_ms,

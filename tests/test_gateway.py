@@ -74,18 +74,19 @@ class TestNapCatTranslation:
         assert event.text == "hello"
 
     def test_translate_group_message(self, gw):
-        # 群消息: group_id 转 str, 多段消息(at+text), sender_role 保留
+        # 群消息: group_id 转 str, 多段消息(at+text), sender_role 和显示名保留
         gw._self_id = "111"
         raw = {
             "post_type": "message", "message_type": "group", "sub_type": "normal",
             "time": 1700000000, "self_id": 111, "user_id": 222, "group_id": 444,
+            "group_name": "肥猪交流群",
             "message_id": 333,
             "message": [
                 {"type": "at", "data": {"qq": "111"}},
                 {"type": "text", "data": {"text": " hey"}},
             ],
             "raw_message": "[CQ:at,qq=111] hey",
-            "sender": {"user_id": 222, "nickname": "Bob", "role": "member"},
+            "sender": {"user_id": 222, "nickname": "Bob", "card": "我是你坝", "role": "member"},
         }
         event = gw.translate(raw)
         assert event.is_group
@@ -95,6 +96,9 @@ class TestNapCatTranslation:
         assert event.targets_self is True
         assert event.mentions_self is True
         assert event.bot_relation == "mention_self"
+        assert event.metadata["group_name"] == "肥猪交流群"
+        assert event.metadata["sender_card"] == "我是你坝"
+        assert event.metadata["sender_display_name"] == "我是你坝"
 
     def test_translate_message_extracts_reply_mentions_and_attachments(self, gw):
         gw._self_id = "111"

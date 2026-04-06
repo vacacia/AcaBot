@@ -144,7 +144,7 @@ class ThreadPipeline:
             # record_only 模式
             # -----------------------------------------------------
             if ctx.decision.run_mode == "record_only":
-                logger.info(
+                logger.debug(
                     "Pipeline record_only: run_id=%s thread=%s incoming_messages=%s",
                     ctx.run.run_id,
                     ctx.thread.thread_id,
@@ -392,16 +392,32 @@ class ThreadPipeline:
                 ctx.run.metadata.setdefault("model_used", model_used)
             if cost_usd is not None:
                 ctx.run.metadata["usage_cost_usd"] = cost_usd
+            cache_fields = {
+                key: int(value)
+                for key, value in token_usage.items()
+                if key in {
+                    "cache_creation_input_tokens",
+                    "cache_read_input_tokens",
+                    "cached_prompt_tokens",
+                    "prompt_cache_hit_tokens",
+                }
+                and isinstance(value, (int, float))
+            }
+            cache_summary = " ".join(f"{key}={value}" for key, value in cache_fields.items()) or "cache=0"
             slog.info(
-                "Run token usage",
+                f"[TOKEN] model={model_used or '-'} prompt={int(token_usage.get('prompt_tokens', 0))} "
+                f"completion={int(token_usage.get('completion_tokens', 0))} total={int(token_usage.get('total_tokens', 0))} {cache_summary}",
                 run_id=ctx.run.run_id,
                 thread_id=ctx.thread.thread_id,
                 agent_id=ctx.agent.agent_id,
+                log_kind="token_usage",
                 model=model_used,
+                prompt_ref=str(ctx.run.metadata.get("prompt_ref", "") or ctx.agent.prompt_ref or ""),
                 prompt_tokens=int(token_usage.get("prompt_tokens", 0)),
                 completion_tokens=int(token_usage.get("completion_tokens", 0)),
                 total_tokens=int(token_usage.get("total_tokens", 0)),
                 cost_usd=cost_usd,
+                **cache_fields,
             )
 
         if response.status == "waiting_approval":
