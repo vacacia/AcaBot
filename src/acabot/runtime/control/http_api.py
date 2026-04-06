@@ -673,6 +673,17 @@ class RuntimeHttpApiServer:
 
         if segments == ["runtime", "reload-config"] and method == "POST":
             return self._ok(self._await(self.control_plane.reload_runtime_configuration()))
+        if segments == ["runtime", "refresh-extensions"] and method == "POST":
+            if remote_addr not in {"127.0.0.1", "::1", "::ffff:127.0.0.1"}:
+                return 403, {"ok": False, "error": "extension refresh requires loopback access"}
+            return self._ok(
+                self._await(
+                    self.control_plane.refresh_extensions(
+                        kind=str(payload.get("kind", "") or ""),
+                        session_id=str(payload.get("session_id", "") or ""),
+                    )
+                )
+            )
         if segments == ["runtime", "events"] and method == "POST":
             if not self.allow_synthetic_events:
                 return 403, {"ok": False, "error": "synthetic events are disabled"}

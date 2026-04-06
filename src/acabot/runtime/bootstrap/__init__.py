@@ -621,6 +621,7 @@ def build_runtime_components(
         model_registry_manager=runtime_model_registry_manager,
         computer_runtime=runtime_computer_runtime,
         config_control_plane=config_control_plane,
+        extension_refresh_service=_extension_refresh_ref[0],
         log_buffer=log_buffer,
         ltm_store=runtime_long_term_memory_store,
         scheduled_task_service=runtime_scheduled_task_service,

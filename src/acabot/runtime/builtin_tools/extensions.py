@@ -78,7 +78,7 @@ class BuiltinExtensionsToolSurface:
             raise PermissionError("refresh_extensions requires host backend")
 
         admin_actor_ids = set(self._admin_actor_ids_getter() or set()) if self._admin_actor_ids_getter is not None else set()
-        if str(ctx.actor_id or "") not in admin_actor_ids:
+        if not self._is_bot_admin_actor(str(ctx.actor_id or ""), admin_actor_ids):
             raise PermissionError("refresh_extensions requires bot admin")
 
         service = self._refresh_service_getter() if self._refresh_service_getter is not None else None
@@ -89,6 +89,20 @@ class BuiltinExtensionsToolSurface:
             llm_content=json.dumps(result, ensure_ascii=False),
             raw=result,
         )
+
+    @staticmethod
+    def _is_bot_admin_actor(actor_id: str, admin_actor_ids: set[str]) -> bool:
+        """兼容 `platform:user:id` 与历史 `platform:private:id` 管理员写法。"""
+
+        normalized = str(actor_id or "").strip()
+        if not normalized:
+            return False
+        if normalized in admin_actor_ids:
+            return True
+        parts = normalized.split(":", 2)
+        if len(parts) == 3 and parts[1] == "user":
+            return f"{parts[0]}:private:{parts[2]}" in admin_actor_ids
+        return False
 
 
 __all__ = ["BUILTIN_EXTENSIONS_TOOL_SOURCE", "BuiltinExtensionsToolSurface"]

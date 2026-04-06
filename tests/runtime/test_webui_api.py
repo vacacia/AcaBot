@@ -715,6 +715,27 @@ def _write_config(
         _write_minimal_fs_session(resolved_base_dir, session_id="qq:user:99999")
 
 
+def _write_skill_package(root_dir: Path, relative_dir: str, *, name: str, description: str) -> None:
+    """写入一份最小可发现的 skill package。"""
+
+    skill_dir = root_dir / relative_dir
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    skill_dir.joinpath("SKILL.md").write_text(
+        "\n".join(
+            [
+                "---",
+                f"name: {name}",
+                f"description: {description}",
+                "---",
+                "",
+                f"# {name}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def _write_session_bundle(
     root: Path,
     *,
@@ -3920,6 +3941,105 @@ async def test_runtime_http_api_server_blocks_non_loopback_synthetic_event_injec
     assert status == 403
     assert payload["ok"] is False
     assert payload["error"] == "synthetic events require loopback access"
+
+
+async def test_runtime_http_api_server_blocks_non_loopback_extension_refresh(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(
+        config_path,
+        webui_enabled=True,
+        port=0,
+        base_dir=tmp_path,
+        write_session=False,
+    )
+    (tmp_path / "prompts").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "prompts" / "default.md").write_text("hello", encoding="utf-8")
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    status, payload = server.handle_api_request(
+        method="POST",
+        path="/api/runtime/refresh-extensions",
+        query={},
+        payload={"session_id": "qq:group:123", "kind": "skills"},
+        remote_addr="10.0.0.8",
+    )
+
+    assert status == 403
+    assert payload["ok"] is False
+    assert payload["error"] == "extension refresh requires loopback access"
+
+
+async def test_runtime_http_api_server_refresh_extensions_requires_session_id_and_returns_summary(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(
+        config_path,
+        webui_enabled=True,
+        port=0,
+        base_dir=tmp_path,
+        backend_admin_actor_ids=["qq:user:10001"],
+        write_session=False,
+    )
+    _write_skill_package(tmp_path / "extensions" / "skills", "demo-skill", name="demo-skill", description="demo")
+    _write_session_bundle(
+        tmp_path,
+        session_id="qq:group:123",
+        visible_tools=["refresh_extensions"],
+        visible_skills=["demo-skill"],
+        visible_subagents=[],
+    )
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    server = RuntimeHttpApiServer(config=config, control_plane=components.control_plane)
+
+    await server.start()
+    try:
+        port = server._httpd.server_address[1]  # type: ignore[union-attr]
+        base_url = f"http://127.0.0.1:{port}"
+        status, missing = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/runtime/refresh-extensions",
+            method="POST",
+            payload={"kind": "skills"},
+        )
+        assert status == 400
+        assert missing["ok"] is False
+        assert "session_id is required" in missing["error"]
+
+        status, unsupported = await asyncio.to_thread(
+            request_json_with_status,
+            base_url,
+            "/api/runtime/refresh-extensions",
+            method="POST",
+            payload={"session_id": "qq:group:123", "kind": "subagents"},
+        )
+        assert status == 400
+        assert unsupported["ok"] is False
+        assert "unsupported extension refresh kind" in unsupported["error"]
+
+        refreshed = await asyncio.to_thread(
+            request_json,
+            base_url,
+            "/api/runtime/refresh-extensions",
+            method="POST",
+            payload={"session_id": "qq:group:123", "kind": "skills"},
+        )
+        assert refreshed["ok"] is True
+        assert refreshed["data"]["kind"] == "skills"
+        assert refreshed["data"]["session_id"] == "qq:group:123"
+        assert refreshed["data"]["visible_skills"] == ["demo-skill"]
+    finally:
+        await server.stop()
 
 
 async def test_runtime_http_api_server_blocks_deleting_prompt_that_is_still_referenced(tmp_path: Path) -> None:

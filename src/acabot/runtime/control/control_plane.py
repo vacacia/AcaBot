@@ -29,6 +29,7 @@ from ..computer import (
     WorkspaceState,
 )
 from .config_control_plane import RuntimeConfigControlPlane
+from .extension_refresh import ExtensionRefreshService
 from ..model.model_registry import (
     EffectiveModelSnapshot,
     FileSystemModelRegistryManager,
@@ -114,6 +115,7 @@ class RuntimeControlPlane:
         model_registry_manager: FileSystemModelRegistryManager | None = None,
         computer_runtime: ComputerRuntime | None = None,
         config_control_plane: RuntimeConfigControlPlane | None = None,
+        extension_refresh_service: ExtensionRefreshService | None = None,
         log_buffer: InMemoryLogBuffer | None = None,
         ltm_store: object | None = None,
         scheduled_task_service: ScheduledTaskService | None = None,
@@ -140,6 +142,7 @@ class RuntimeControlPlane:
             model_registry_manager: 可选的模型注册表管理器.
             computer_runtime: 可选的 computer 基础设施入口.
             config_control_plane: 可选的 runtime 配置控制面.
+            extension_refresh_service: 可选的扩展刷新服务.
             ltm_store: 可选的 LTM 存储实例 (LanceDbLongTermMemoryStore).
         """
 
@@ -162,6 +165,7 @@ class RuntimeControlPlane:
         self.model_registry_manager = model_registry_manager
         self.computer_runtime = computer_runtime
         self.config_control_plane = config_control_plane
+        self.extension_refresh_service = extension_refresh_service
         self.log_buffer = log_buffer
         self.ltm_store = ltm_store
         self.scheduled_task_service = scheduled_task_service
@@ -466,6 +470,20 @@ class RuntimeControlPlane:
         }
         self.app.router.session_runtime.set_shared_admin_actor_ids(self.app.backend_admin_actor_ids)
         return result
+
+    async def refresh_extensions(self, *, kind: str, session_id: str) -> dict[str, object]:
+        """执行窄范围的运行时扩展刷新。"""
+
+        normalized_kind = str(kind or "").strip()
+        normalized_session_id = str(session_id or "").strip()
+        if not normalized_session_id:
+            raise ValueError("session_id is required")
+        if normalized_kind != "skills":
+            raise ValueError(f"unsupported extension refresh kind: {normalized_kind!r}")
+        if self.extension_refresh_service is None:
+            raise RuntimeError("extension refresh service unavailable")
+        result = await self.extension_refresh_service.refresh_skills(session_id=normalized_session_id)
+        return dict(result)
 
     async def list_skills(self) -> list[SkillSnapshot]:
         """列出当前已注册的显式 skills.

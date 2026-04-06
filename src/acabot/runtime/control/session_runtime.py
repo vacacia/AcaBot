@@ -89,7 +89,7 @@ class SessionRuntime:
             mentions_self=event.mentions_self,
             reply_targets_self=event.reply_targets_self,
             mentioned_everyone=event.mentioned_everyone,
-            is_bot_admin=actor_id in self._shared_admin_actor_ids,
+            is_bot_admin=self._is_shared_admin_actor(actor_id),
             sender_roles=sender_roles,
             attachments_present=bool(event.attachments),
             attachment_kinds=attachment_kinds,
@@ -379,6 +379,19 @@ class SessionRuntime:
             priority=priority,
             specificity=specificity,
         )
+
+    def _is_shared_admin_actor(self, actor_id: str) -> bool:
+        """判断一个 canonical actor_id 是否命中共享管理员集合。"""
+
+        normalized = str(actor_id or "").strip()
+        if not normalized:
+            return False
+        if normalized in self._shared_admin_actor_ids:
+            return True
+        parts = normalized.split(":", 2)
+        if len(parts) == 3 and parts[1] == "user":
+            return f"{parts[0]}:private:{parts[2]}" in self._shared_admin_actor_ids
+        return False
 
     @staticmethod
     def build_actor_id(event: StandardEvent) -> str:
