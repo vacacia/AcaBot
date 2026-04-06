@@ -4,6 +4,13 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { apiDelete, apiGet, apiPost, apiPut, peekCachedGet } from "../lib/api"
 import ModelParamEditor from "../components/ModelParamEditor.vue"
 import CustomSelect from "../components/CustomSelect.vue"
+import {
+  applyLitellmAutofill,
+  derivePresetId as buildPresetId,
+  hasUnsafeFilesystemId,
+  type LitellmModelInfo,
+  type PresetTouchedState,
+} from "../lib/model_config_drafts"
 
 type TaskKind =
   | "chat"
@@ -98,6 +105,12 @@ type EffectiveTargetPreview = {
   }
 }
 
+type LitellmInfoPayload = {
+  model_info: LitellmModelInfo | null
+  supported_params: string[]
+  param_hints?: Record<string, any>
+}
+
 const DEFAULT_TASK_KIND_OPTIONS: TaskKind[] = [
   "chat",
   "embedding",
@@ -119,6 +132,12 @@ const DEFAULT_CAPABILITY_OPTIONS: Capability[] = [
   "video_input",
   "video_output",
 ]
+
+const DEFAULT_TOUCHED_STATE: PresetTouchedState = {
+  context_window: false,
+  max_output_tokens: false,
+  capabilities: false,
+}
 
 const cachedCatalog = peekCachedGet<CatalogPayload>("/api/ui/catalog")
 const taskKindOptions = ref<TaskKind[]>(cachedCatalog?.options?.model_task_kinds ?? DEFAULT_TASK_KIND_OPTIONS)
@@ -149,6 +168,8 @@ const showBindingEditor = ref(false)
 const bindingPreview = ref<EffectiveTargetPreview | null>(null)
 
 const loading = ref(true)
+const savingPreset = ref(false)
+const deletingPreset = ref(false)
 const saveMessage = ref("")
 const errorMessage = ref("")
 const healthCheckMessage = ref("")
@@ -156,9 +177,11 @@ const healthCheckError = ref("")
 const healthCheckRunning = ref(false)
 const healthCheckController = ref<AbortController | null>(null)
 
-const litellmInfo = ref<{ model_info: any; supported_params: string[]; param_hints?: Record<string, any> } | null>(null)
+const litellmInfo = ref<LitellmInfoPayload | null>(null)
 const litellmLoading = ref(false)
+const litellmTouched = ref<PresetTouchedState>({ ...DEFAULT_TOUCHED_STATE })
 let litellmDebounceTimer: ReturnType<typeof setTimeout> | null = null
+let litellmRequestVersion = 0
 
 function bindingStateClass(state: string): string {
   if (!state) return "state-chip is-unknown"
@@ -178,47 +201,107 @@ function metaValueStateClass(state: string): string {
   return "meta-value is-unknown"
 }
 
-function queryLitellmInfo(model: string, providerKind: string): void {
+function replaceTouchedState(next: PresetTouchedState): void {
+  litellmTouched.value = { ...next }
+}
+
+function markPresetFieldTouched(field: keyof PresetTouchedState): void {
+  litellmTouched.value = {
+    ...litellmTouched.value,
+    [field]: true,
+  }
+}
+
+function cancelPendingLitellmProbe(): void {
+  if (litellmDebounceTimer) {
+    clearTimeout(litellmDebounceTimer)
+    litellmDebounceTimer = null
+  }
+  litellmRequestVersion += 1
+}
+
+function resetLitellmProbeState(touchedState: PresetTouchedState): void {
+  cancelPendingLitellmProbe()
   litellmInfo.value = null
-  if (litellmDebounceTimer) clearTimeout(litellmDebounceTimer)
-  if (!model.trim()) return
-  const capturedId = selectedId.value
+  litellmLoading.value = false
+  replaceTouchedState(touchedState)
+}
+
+function providerKindFor(providerId: string): string {
+  return providers.value.find((item) => item.provider_id === providerId)?.kind || ""
+}
+
+function scheduleCurrentLitellmProbe(): void {
+  if (!draft.value) {
+    resetLitellmProbeState({ ...DEFAULT_TOUCHED_STATE })
+    return
+  }
+  queryLitellmInfo({
+    model: draft.value.model,
+    providerId: draft.value.provider_id,
+    providerKind: providerKindFor(draft.value.provider_id),
+  })
+}
+
+function queryLitellmInfo(args: {
+  model: string
+  providerId: string
+  providerKind: string
+}): void {
+  cancelPendingLitellmProbe()
+  const normalizedModel = args.model.trim()
+  if (!normalizedModel) {
+    litellmInfo.value = null
+    litellmLoading.value = false
+    return
+  }
+  const requestVersion = litellmRequestVersion
+  const capturedPresetId = selectedId.value
+  const capturedProviderId = args.providerId
+  const capturedModel = normalizedModel
   litellmDebounceTimer = setTimeout(async () => {
-    if (selectedId.value !== capturedId) return
     litellmLoading.value = true
     try {
-      const kindMeta = providerKindOptions.value.find((k) => k.value === providerKind)
+      const kindMeta = providerKindOptions.value.find((item) => item.value === args.providerKind)
       const prefix = kindMeta?.litellm_prefix || ""
-      const fullModel = model.includes("/") ? model : `${prefix}${model}`
-      if (selectedId.value !== capturedId) return
-      litellmInfo.value = await apiGet(`/api/models/litellm-info?model=${encodeURIComponent(fullModel)}`)
-      if (selectedId.value !== capturedId) {
-        litellmInfo.value = null
+      const fullModel = normalizedModel.includes("/") ? normalizedModel : `${prefix}${normalizedModel}`
+      const payload = await apiGet<LitellmInfoPayload>(`/api/models/litellm-info?model=${encodeURIComponent(fullModel)}`)
+      if (requestVersion !== litellmRequestVersion) {
         return
       }
-      if (litellmInfo.value?.model_info && draft.value) {
-        const info = litellmInfo.value.model_info
-        // Always overwrite from litellm — it's the source of truth for the queried model
-        if (info.max_input_tokens) {
-          draft.value.context_window = String(info.max_input_tokens)
-        }
-        if (info.max_output_tokens) {
-          draft.value.max_output_tokens = String(info.max_output_tokens)
-        }
-        // Always sync capabilities from litellm
-        const caps: Capability[] = []
-        if (info.supports_function_calling) caps.push("tool_calling")
-        if (info.supports_vision) caps.push("image_input")
-        if (info.supports_reasoning) caps.push("reasoning")
-        if (info.supports_response_schema) caps.push("structured_output")
-        if (info.supports_audio_input) caps.push("audio_input")
-        if (info.supports_audio_output) caps.push("audio_output")
-        draft.value.capabilities = caps
+      if (!draft.value) {
+        return
+      }
+      if (selectedId.value !== capturedPresetId) {
+        return
+      }
+      if (draft.value.provider_id !== capturedProviderId || draft.value.model.trim() !== capturedModel) {
+        return
+      }
+      litellmInfo.value = payload
+      if (payload.model_info) {
+        const next = applyLitellmAutofill({
+          draft: {
+            context_window: draft.value.context_window,
+            max_output_tokens: draft.value.max_output_tokens,
+            capabilities: [...draft.value.capabilities],
+          },
+          touched: litellmTouched.value,
+          modelInfo: payload.model_info,
+        })
+        draft.value.context_window = next.context_window
+        draft.value.max_output_tokens = next.max_output_tokens
+        draft.value.capabilities = [...next.capabilities] as Capability[]
       }
     } catch {
+      if (requestVersion !== litellmRequestVersion) {
+        return
+      }
       litellmInfo.value = null
     } finally {
-      litellmLoading.value = false
+      if (requestVersion === litellmRequestVersion) {
+        litellmLoading.value = false
+      }
     }
   }, 600)
 }
@@ -271,10 +354,7 @@ function jsonText(value: unknown): string {
 }
 
 function derivePresetId(providerId: string, model: string): string {
-  const p = providerId.trim()
-  const m = model.trim()
-  if (!p || !m) return ""
-  return `${p}--${m}`
+  return buildPresetId(providerId, model)
 }
 
 function blankDraft(): PresetDraft {
@@ -327,6 +407,7 @@ function toggleCapability(capability: Capability, enabled: boolean): void {
   if (!draft.value) {
     return
   }
+  markPresetFieldTouched("capabilities")
   const next = new Set(draft.value.capabilities)
   if (enabled) {
     next.add(capability)
@@ -367,24 +448,28 @@ async function loadModels(preferredPresetId = ""): Promise<void> {
 }
 
 async function selectPreset(presetId: string, existingList?: PresetRecord[]): Promise<void> {
+  resetLitellmProbeState({
+    context_window: true,
+    max_output_tokens: true,
+    capabilities: true,
+  })
   selectedId.value = presetId
   const source = existingList || presets.value
   const found = source.find((item) => item.preset_id === presetId)
   if (found) {
     draft.value = toDraft(found)
     await syncBindingSelection()
-    const provider = providers.value.find((p) => p.provider_id === found.provider_id)
-    if (found.model) queryLitellmInfo(found.model, provider?.kind || "")
+    if (found.model) scheduleCurrentLitellmProbe()
     return
   }
   const payload = await apiGet<PresetRecord>(`/api/models/presets/${encodeURIComponent(presetId)}`)
   draft.value = toDraft(payload)
   await syncBindingSelection()
-  const provider = providers.value.find((p) => p.provider_id === payload.provider_id)
-  if (payload.model) queryLitellmInfo(payload.model, provider?.kind || "")
+  if (payload.model) scheduleCurrentLitellmProbe()
 }
 
 function createPreset(): void {
+  resetLitellmProbeState({ ...DEFAULT_TOUCHED_STATE })
   selectedId.value = ""
   draft.value = blankDraft()
   bindingDraft.value = null
@@ -411,6 +496,37 @@ function openPresetEditor(): void {
   showPresetEditor.value = true
 }
 
+function onProviderChange(providerId: string): void {
+  if (!draft.value) {
+    return
+  }
+  draft.value.provider_id = providerId
+  scheduleCurrentLitellmProbe()
+}
+
+function onModelInput(): void {
+  scheduleCurrentLitellmProbe()
+}
+
+function applyCurrentLitellmProbe(): void {
+  if (!draft.value || !litellmInfo.value?.model_info) {
+    return
+  }
+  replaceTouchedState({ ...DEFAULT_TOUCHED_STATE })
+  const next = applyLitellmAutofill({
+    draft: {
+      context_window: draft.value.context_window,
+      max_output_tokens: draft.value.max_output_tokens,
+      capabilities: [...draft.value.capabilities],
+    },
+    touched: { ...DEFAULT_TOUCHED_STATE },
+    modelInfo: litellmInfo.value.model_info,
+  })
+  draft.value.context_window = next.context_window
+  draft.value.max_output_tokens = next.max_output_tokens
+  draft.value.capabilities = [...next.capabilities] as Capability[]
+}
+
 function closePresetEditor(): void {
   showPresetEditor.value = false
 }
@@ -423,7 +539,6 @@ async function savePreset(): Promise<void> {
     errorMessage.value = "请先选择一个 Provider"
     return
   }
-  // Auto-derive preset_id for new presets
   if (!selectedId.value && !draft.value.preset_id.trim()) {
     const derived = derivePresetId(draft.value.provider_id, draft.value.model)
     if (!derived) {
@@ -437,6 +552,11 @@ async function savePreset(): Promise<void> {
     errorMessage.value = "Preset ID 不能为空"
     return
   }
+  if (hasUnsafeFilesystemId(presetId)) {
+    errorMessage.value = "Preset ID 不能包含 /、\\ 或 .."
+    return
+  }
+  savingPreset.value = true
   saveMessage.value = "保存中..."
   errorMessage.value = ""
   try {
@@ -458,6 +578,8 @@ async function savePreset(): Promise<void> {
   } catch (error) {
     saveMessage.value = ""
     errorMessage.value = error instanceof Error ? error.message : "保存失败"
+  } finally {
+    savingPreset.value = false
   }
 }
 
@@ -465,6 +587,7 @@ async function deletePreset(): Promise<void> {
   if (!selectedId.value) {
     return
   }
+  deletingPreset.value = true
   saveMessage.value = ""
   errorMessage.value = ""
   try {
@@ -480,6 +603,8 @@ async function deletePreset(): Promise<void> {
     await loadModels()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "删除失败"
+  } finally {
+    deletingPreset.value = false
   }
 }
 
@@ -533,6 +658,27 @@ const presetEditorButtonLabel = computed(() => {
     return "打开 Preset 设置"
   }
   return draft.value.preset_id.trim() ? "打开 Preset 设置" : "继续填写新 Preset"
+})
+
+const derivedPresetIdHint = computed(() => {
+  if (!draft.value) {
+    return ""
+  }
+  return derivePresetId(draft.value.provider_id, draft.value.model)
+})
+
+const presetIdValidationMessage = computed(() => {
+  if (!draft.value || selectedId.value) {
+    return ""
+  }
+  const presetId = draft.value.preset_id.trim()
+  if (!presetId) {
+    return ""
+  }
+  if (hasUnsafeFilesystemId(presetId)) {
+    return "Preset ID 不能包含 /、\\ 或 .."
+  }
+  return ""
 })
 
 const selectedPresetCapabilities = computed(() => {
@@ -625,10 +771,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  if (litellmDebounceTimer) {
-    clearTimeout(litellmDebounceTimer)
-    litellmDebounceTimer = null
-  }
+  cancelPendingLitellmProbe()
   if (typeof document !== "undefined") {
     document.body.classList.remove("overlay-active")
   }
@@ -803,8 +946,10 @@ onBeforeUnmount(() => {
                   class="ds-input"
                   v-model="draft.preset_id"
                   type="text"
-                  :placeholder="derivePresetId(draft.provider_id, draft.model) || '留空时自动生成'"
+                  :placeholder="derivedPresetIdHint || '留空时自动生成'"
                 />
+                <small v-if="derivedPresetIdHint" class="binding-fallback-text">建议使用：{{ derivedPresetIdHint }}</small>
+                <small v-if="presetIdValidationMessage" class="ds-status is-error">{{ presetIdValidationMessage }}</small>
               </label>
               <label class="ds-field">
                 <span>Provider</span>
@@ -812,12 +957,12 @@ onBeforeUnmount(() => {
                   :model-value="draft.provider_id"
                   :options="[{ value: '', label: '请选择' }, ...providers.map(p => ({ value: p.provider_id, label: p.name || p.provider_id }))]"
                   placeholder="请选择"
-                  @update:model-value="(v: string) => { if (draft) draft.provider_id = v }"
+                  @update:model-value="onProviderChange"
                 />
               </label>
               <label class="ds-field">
                 <span>模型名</span>
-                <input class="ds-input" v-model="draft.model" type="text" @input="draft && queryLitellmInfo(draft.model, providers.find(p => p.provider_id === draft!.provider_id)?.kind || '')" />
+                <input class="ds-input" v-model="draft.model" type="text" @input="onModelInput" />
               </label>
               <label class="ds-field">
                 <span>任务类型</span>
@@ -829,27 +974,32 @@ onBeforeUnmount(() => {
               </label>
             </div>
 
-            <!-- Model info (auto-detected) -->
             <div class="sheet-section">
-              <div class="sheet-section-title">模型信息</div>
+              <div class="sheet-section-title">自动探测</div>
+              <div class="capability-preview-head">
+                <p class="binding-fallback-text">自动探测不会覆盖你已经手动改过的字段；如果想重新采纳 litellm 的建议，可以手动应用。</p>
+                <button class="ds-secondary-button" type="button" :disabled="!litellmInfo?.model_info" @click="applyCurrentLitellmProbe()">应用探测结果</button>
+              </div>
+              <p v-if="litellmLoading" class="binding-fallback-text">正在根据当前 Provider + 模型刷新 litellm 信息…</p>
               <div v-if="litellmInfo?.model_info" class="sheet-info-row">
                 <div class="sheet-info-item">
-                  <span class="sheet-info-label">上下文窗口</span>
-                  <span class="sheet-info-value">{{ draft.context_window || '—' }}</span>
+                  <span class="sheet-info-label">litellm 上下文窗口</span>
+                  <span class="sheet-info-value">{{ litellmInfo.model_info.max_input_tokens || '—' }}</span>
                 </div>
                 <div class="sheet-info-item">
-                  <span class="sheet-info-label">最大输出</span>
-                  <span class="sheet-info-value">{{ draft.max_output_tokens || '—' }}</span>
+                  <span class="sheet-info-label">litellm 最大输出</span>
+                  <span class="sheet-info-value">{{ litellmInfo.model_info.max_output_tokens || '—' }}</span>
                 </div>
               </div>
-              <div v-else class="ds-form-grid preset-fields-grid">
+              <p v-else class="binding-fallback-text">当前没有可用的 litellm 探测结果，下面填写的是最终保存到 Preset 的值。</p>
+              <div class="ds-form-grid preset-fields-grid">
                 <label class="ds-field">
                   <span>上下文窗口</span>
-                  <input class="ds-input" v-model="draft.context_window" type="number" min="0" />
+                  <input class="ds-input" v-model="draft.context_window" type="number" min="0" @input="markPresetFieldTouched('context_window')" />
                 </label>
                 <label class="ds-field">
                   <span>最大输出 Tokens</span>
-                  <input class="ds-input" v-model="draft.max_output_tokens" type="number" min="0" />
+                  <input class="ds-input" v-model="draft.max_output_tokens" type="number" min="0" @input="markPresetFieldTouched('max_output_tokens')" />
                 </label>
               </div>
             </div>
@@ -888,20 +1038,23 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="modal-actions">
-            <button class="ds-secondary-button" type="button" :disabled="healthCheckRunning || loading || !selectedId" @click="void healthCheckPreset()">
+            <button class="ds-secondary-button" type="button" :disabled="healthCheckRunning || loading || savingPreset || deletingPreset || !selectedId" @click="void healthCheckPreset()">
               <svg v-if="healthCheckRunning" class="mv-spin-icon" width="13" height="13" viewBox="0 0 14 14" fill="none">
                 <circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5" stroke-dasharray="22" stroke-dashoffset="8" stroke-linecap="round"/>
               </svg>
               {{ healthCheckRunning ? "检查中..." : "健康检查" }}
             </button>
-            <button class="ds-secondary-button" type="button" :disabled="loading" @click="void deletePreset()">
-              {{ loading ? "删除中..." : "删除" }}
-            </button>
-            <button class="ds-primary-button" type="button" :disabled="loading || !draft" @click="void savePreset()">
-              <svg v-if="loading" class="mv-spin-icon" width="13" height="13" viewBox="0 0 14 14" fill="none">
+            <button class="ds-secondary-button" type="button" :disabled="loading || savingPreset || deletingPreset || !selectedId" @click="void deletePreset()">
+              <svg v-if="deletingPreset" class="mv-spin-icon" width="13" height="13" viewBox="0 0 14 14" fill="none">
                 <circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5" stroke-dasharray="22" stroke-dashoffset="8" stroke-linecap="round"/>
               </svg>
-              {{ loading ? "保存中..." : "保存" }}
+              {{ deletingPreset ? "删除中..." : "删除" }}
+            </button>
+            <button class="ds-primary-button" type="button" :disabled="loading || savingPreset || deletingPreset || !draft" @click="void savePreset()">
+              <svg v-if="savingPreset" class="mv-spin-icon" width="13" height="13" viewBox="0 0 14 14" fill="none">
+                <circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5" stroke-dasharray="22" stroke-dashoffset="8" stroke-linecap="round"/>
+              </svg>
+              {{ savingPreset ? "保存中..." : "保存" }}
             </button>
           </div>
         </article>

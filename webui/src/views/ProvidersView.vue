@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue"
 
 import CustomSelect from "../components/CustomSelect.vue"
 import { apiDelete, apiGet, apiPut, peekCachedGet } from "../lib/api"
+import { buildProviderSavePayload, type HeaderEntry } from "../lib/model_config_drafts"
 
 type ProviderRecord = {
   provider_id: string
@@ -29,8 +30,6 @@ type MutationResult = {
   message: string
 }
 
-type HeaderEntry = { key: string; value: string }
-
 type ProviderDraft = {
   provider_id: string
   name: string
@@ -44,6 +43,8 @@ type ProviderDraft = {
   location: string
   use_vertex_ai: boolean
   default_headers: HeaderEntry[]
+  default_query: Record<string, unknown>
+  default_body: Record<string, unknown>
 }
 
 type ProviderKindOption = {
@@ -65,6 +66,8 @@ const providerKinds = ref<ProviderKindOption[]>(peekCachedGet<Catalog>('/api/ui/
 const selectedId = ref('')
 const draft = ref<ProviderDraft | null>(null)
 const loading = ref(!(providers.value.length > 0 || providerKinds.value.length > 0))
+const savingProvider = ref(false)
+const deletingProvider = ref(false)
 const saveMessage = ref('')
 const errorMessage = ref('')
 const showAdvanced = ref(false)
@@ -77,6 +80,25 @@ const currentConfigClass = computed(() => {
   if (!draft.value) return 'openai_like'
   return providerKinds.value.find(k => k.value === draft.value!.kind)?.config_class ?? 'openai_like'
 })
+
+function jsonText(value: unknown): string {
+  if (!value || (typeof value === 'object' && !Array.isArray(value) && Object.keys(value as object).length === 0)) {
+    return ''
+  }
+  return JSON.stringify(value, null, 2)
+}
+
+function parseObjectText(label: string, value: string): Record<string, unknown> {
+  const text = value.trim()
+  if (!text) {
+    return {}
+  }
+  const parsed = JSON.parse(text) as Record<string, unknown>
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+    throw new Error(`${label} 必须是 JSON 对象`)
+  }
+  return parsed
+}
 
 function blankDraft(): ProviderDraft {
   return {
@@ -92,6 +114,8 @@ function blankDraft(): ProviderDraft {
     location: '',
     use_vertex_ai: false,
     default_headers: [],
+    default_query: {},
+    default_body: {},
   }
 }
 
@@ -117,6 +141,8 @@ function toDraft(item: ProviderRecord): ProviderDraft {
     default_headers: Object.entries(item.config?.default_headers || {}).map(
       ([key, value]) => ({ key, value: String(value) })
     ),
+    default_query: { ...(item.config?.default_query || {}) },
+    default_body: { ...(item.config?.default_body || {}) },
   }
 }
 
@@ -138,6 +164,18 @@ function addHeader(): void {
 function removeHeader(index: number): void {
   if (!draft.value) return
   draft.value.default_headers.splice(index, 1)
+}
+
+function onProviderJsonChange(field: 'default_query' | 'default_body', label: string, value: string): void {
+  if (!draft.value) {
+    return
+  }
+  try {
+    draft.value[field] = parseObjectText(label, value)
+    errorMessage.value = ''
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : `${label} 格式错误`
+  }
 }
 
 async function loadProviders(preferredId = ''): Promise<void> {
@@ -195,28 +233,14 @@ async function saveProvider(): Promise<void> {
     errorMessage.value = 'Provider ID 不能为空'
     return
   }
+  savingProvider.value = true
   saveMessage.value = '保存中...'
   errorMessage.value = ''
   try {
-    const result = await apiPut<MutationResult>(`/api/models/providers/${encodeURIComponent(providerId)}`, {
-      name: draft.value.name.trim() || providerId,
-      kind: draft.value.kind,
-      base_url: draft.value.base_url,
-      api_key_env: draft.value.api_key_env,
-      api_key: draft.value.api_key,
-      anthropic_version: draft.value.anthropic_version,
-      api_version: draft.value.api_version,
-      project_id: draft.value.project_id,
-      location: draft.value.location,
-      use_vertex_ai: draft.value.use_vertex_ai,
-      default_headers: Object.fromEntries(
-        draft.value.default_headers
-          .filter(h => h.key.trim())
-          .map(h => [h.key.trim(), h.value])
-      ),
-      default_query: {},
-      default_body: {},
-    })
+    const result = await apiPut<MutationResult>(
+      `/api/models/providers/${encodeURIComponent(providerId)}`,
+      buildProviderSavePayload(draft.value),
+    )
     if (!result.ok || !result.applied) {
       throw new Error(result.message || '保存失败')
     }
@@ -225,6 +249,8 @@ async function saveProvider(): Promise<void> {
   } catch (error) {
     saveMessage.value = ''
     errorMessage.value = error instanceof Error ? error.message : '保存失败'
+  } finally {
+    savingProvider.value = false
   }
 }
 
@@ -232,6 +258,7 @@ async function deleteProvider(): Promise<void> {
   if (!selectedId.value) {
     return
   }
+  deletingProvider.value = true
   saveMessage.value = ''
   errorMessage.value = ''
   try {
@@ -244,6 +271,8 @@ async function deleteProvider(): Promise<void> {
     await loadProviders()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '删除失败'
+  } finally {
+    deletingProvider.value = false
   }
 }
 
@@ -288,17 +317,17 @@ onMounted(() => {
             </div>
           </div>
           <div class="ds-actions">
-            <button class="ds-secondary-button" type="button" :disabled="loading" @click="void deleteProvider()">
-              <svg v-if="loading" class="pv-spin-icon" width="13" height="13" viewBox="0 0 14 14" fill="none">
+            <button class="ds-secondary-button" type="button" :disabled="loading || savingProvider || deletingProvider || !selectedId" @click="void deleteProvider()">
+              <svg v-if="deletingProvider" class="pv-spin-icon" width="13" height="13" viewBox="0 0 14 14" fill="none">
                 <circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5" stroke-dasharray="22" stroke-dashoffset="8" stroke-linecap="round"/>
               </svg>
-              {{ loading ? "处理中..." : "删除" }}
+              {{ deletingProvider ? "删除中..." : "删除" }}
             </button>
-            <button class="ds-primary-button" type="button" :disabled="loading || !draft" @click="void saveProvider()">
-              <svg v-if="loading" class="pv-spin-icon" width="13" height="13" viewBox="0 0 14 14" fill="none">
+            <button class="ds-primary-button" type="button" :disabled="loading || savingProvider || deletingProvider || !draft" @click="void saveProvider()">
+              <svg v-if="savingProvider" class="pv-spin-icon" width="13" height="13" viewBox="0 0 14 14" fill="none">
                 <circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5" stroke-dasharray="22" stroke-dashoffset="8" stroke-linecap="round"/>
               </svg>
-              {{ loading ? "保存中..." : "保存" }}
+              {{ savingProvider ? "保存中..." : "保存" }}
             </button>
           </div>
         </div>
@@ -380,6 +409,24 @@ onMounted(() => {
                 <button class="kv-add" type="button" @click="addHeader()">+ 添加 Header</button>
               </div>
             </div>
+            <label class="ds-field is-span-2">
+              <span>Default Query (JSON)</span>
+              <textarea
+                class="ds-textarea ds-mono"
+                :value="jsonText(draft.default_query)"
+                rows="6"
+                @change="onProviderJsonChange('default_query', 'Default Query', ($event.target as HTMLTextAreaElement).value)"
+              />
+            </label>
+            <label class="ds-field is-span-2">
+              <span>Default Body (JSON)</span>
+              <textarea
+                class="ds-textarea ds-mono"
+                :value="jsonText(draft.default_body)"
+                rows="6"
+                @change="onProviderJsonChange('default_body', 'Default Body', ($event.target as HTMLTextAreaElement).value)"
+              />
+            </label>
           </template>
         </div>
       </article>

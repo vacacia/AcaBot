@@ -1109,6 +1109,7 @@ class FileSystemModelRegistryManager:
                 cascaded_binding_ids=list(cascaded_binding_ids or []),
             )
 
+        self._invalidate_filesystem_cache()
         reload_result = await self.reload()
         resolved_binding_state = binding_state
         if entity_type == "binding":
@@ -1198,6 +1199,12 @@ class FileSystemModelRegistryManager:
         if meta and meta.litellm_prefix:
             return f"{meta.litellm_prefix}{normalized}"
         return normalized
+
+    def _invalidate_filesystem_cache(self) -> None:
+        """清空 filesystem registry 缓存，确保写后读拿到最新文件内容."""
+
+        self._cache_registry = None
+        self._cache_expiry = 0.0
 
     def _load_registry_from_filesystem(self) -> ModelRegistry:
         import time

@@ -423,6 +423,30 @@ async def test_model_registry_manager_blocks_delete_without_force_and_cascades_w
     assert manager.list_bindings() == []
 
 
+async def test_model_registry_invalidates_filesystem_cache_after_upsert(
+    tmp_path: Path,
+) -> None:
+    manager = _manager(tmp_path)
+    manager.reload_now()
+
+    result = await manager.upsert_provider(
+        ModelProvider(
+            provider_id="openai-main",
+            kind="openai_compatible",
+            config=OpenAICompatibleProviderConfig(
+                base_url="https://llm.example.com/v1",
+                api_key_env="OPENAI_API_KEY",
+            ),
+        )
+    )
+
+    assert result.ok is True
+    assert [item.provider_id for item in manager.list_providers()] == ["openai-main"]
+    fetched = manager.get_provider("openai-main")
+    assert fetched is not None
+    assert fetched.provider_id == "openai-main"
+
+
 async def test_model_registry_manager_health_check_is_explicit_and_optional(
     monkeypatch,
     tmp_path: Path,

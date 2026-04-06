@@ -34,6 +34,41 @@
       "priority": 7,
       "status": "planned",
       "verification": "完成从 AstrBot 历史到 LTM 的导入流程；抽查若干已知历史事实，能在 LTM 查询/召回中命中，并保留来源与时间等关键信息。"
+    },
+    {
+      "id": "model-ui-001",
+      "description": "模型 Preset 页面里的 litellm 探测信息不能静默覆盖用户手动编辑的上下文窗口、最大输出和能力标签；同一 Preset 内的旧请求也不能在晚到时把新输入改回去。",
+      "priority": 1,
+      "status": "planned",
+      "verification": "在 WebUI 的模型 Preset 编辑器里选择 deepseek-chat 等模型，手动修改 context_window / max_output_tokens / capabilities 后，再触发 litellm 探测或快速切换模型名；页面不能把用户值静默改回去，旧请求响应也不能覆盖最新草稿。"
+    },
+    {
+      "id": "model-ui-002",
+      "description": "模型 Preset 页面需要把“自动探测信息”和“用户可编辑配置”分开，切换 Provider / 新建 Preset / 重新打开编辑器时不能残留上一条模型的 litellm 信息，也要按最新 Provider 重新探测。",
+      "priority": 2,
+      "status": "planned",
+      "verification": "在 WebUI 中依次切换不同 Provider、不同 Preset，并创建空白新 Preset；litellm 信息区不会残留上一条模型的数据，Provider 变化后会按当前 Provider 的 kind 重新探测，界面始终清楚区分参考信息与最终保存值。"
+    },
+    {
+      "id": "model-ui-003",
+      "description": "Provider 页面保存时不能丢失 default_query 和 default_body 等已有配置；未暴露到表单的字段不能因为点了保存就被清空。",
+      "priority": 1,
+      "status": "planned",
+      "verification": "准备一个带 default_headers / default_query / default_body 的 Provider，通过 WebUI 打开并仅修改名称或其它字段后保存；保存后重新加载页面和配置文件，default_query / default_body 仍完整保留。"
+    },
+    {
+      "id": "model-ui-004",
+      "description": "模型 Preset / Provider 的 ID 生成与校验要保证文件系统安全，不能把带 `/` 等路径字符的模型名直接拼进 preset_id，避免配置保存后落到错误目录或重新加载时消失。",
+      "priority": 2,
+      "status": "planned",
+      "verification": "在 WebUI 中创建模型名含 `deepseek/deepseek-chat`、`openai/gpt-4o` 等斜杠的 Preset；系统会自动清洗或阻止非法 ID，保存后的 YAML 位于预期目录，并能被重新加载与列出。"
+    },
+    {
+      "id": "model-ui-005",
+      "description": "模型与 Provider 页面要修正明显反人类交互：无效删除按钮不能假可点，保存/加载/删除状态要分离，模型参数区在重新探测时不能频繁闪烁或退回错误状态。",
+      "priority": 3,
+      "status": "planned",
+      "verification": "在 WebUI 中完整操作新建、编辑、删除、切换模型与 Provider；无效操作会明确禁用或提示，保存/删除按钮反馈和页面加载状态语义正确，模型参数区在探测中保留稳定的过渡而不是闪烁回空白。"
     }
   ]
 }
