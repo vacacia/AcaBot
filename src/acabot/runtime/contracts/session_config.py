@@ -194,6 +194,18 @@ class MatchSpec:
             keys.append("notice_subtype")
         return keys
 
+    def to_dict(self) -> dict[str, Any]:
+        """把当前匹配条件序列化成普通字典，供调试视图和控制面返回使用。"""
+
+        payload: dict[str, Any] = {}
+        for key in self.match_keys():
+            value = getattr(self, key)
+            if isinstance(value, list):
+                payload[key] = list(value)
+            else:
+                payload[key] = value
+        return payload
+
     def specificity(self) -> int:
         """返回当前匹配条件的特异性.
 

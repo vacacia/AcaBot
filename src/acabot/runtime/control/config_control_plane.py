@@ -51,6 +51,7 @@ from .prompt_loader import (
     ReloadablePromptLoader,
 )
 from .session_bundle_loader import SessionBundleLoader
+from .session_defaults import build_default_qq_group_surfaces
 from .session_loader import SessionConfigLoader
 from .session_runtime import SessionRuntime
 
@@ -433,13 +434,15 @@ class RuntimeConfigControlPlane:
         if session_dir.exists():
             raise ValueError(f"session already exists: {session_id}")
         agent_id = self._session_agent_id(session_id)
+        template_id = str(payload.get("template_id", "") or "")
+        explicit_surfaces = dict(payload.get("surfaces", {}) or {})
         session_payload = self._build_session_payload(
             session_id=session_id,
             frontstage_agent_id=agent_id,
             title=str(payload.get("title", "") or ""),
-            template_id=str(payload.get("template_id", "") or ""),
+            template_id=template_id,
             selectors=dict(payload.get("selectors", {}) or {}),
-            surfaces=dict(payload.get("surfaces", {}) or {}),
+            surfaces=explicit_surfaces or self._default_surfaces_for_template(template_id),
         )
         agent_payload = {
             "agent_id": agent_id,
@@ -455,7 +458,7 @@ class RuntimeConfigControlPlane:
             target = self._path_for_prompt_ref(seed_prompt_ref)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("You are a helpful assistant.\n", encoding="utf-8")
-        if self.bootstrap_defaults.computer_policy is not None:
+        if self.bootstrap_defaults.computer_policy is not None and template_id != "qq_group":
             cp = self.bootstrap_defaults.computer_policy
             agent_payload["computer_policy"] = {
                 "backend": cp.backend,
@@ -991,6 +994,15 @@ class RuntimeConfigControlPlane:
             raise ValueError("session_id is required")
         SessionConfigLoader._split_session_id(normalized)
         return f"session:{normalized}:frontstage"
+
+    @staticmethod
+    def _default_surfaces_for_template(template_id: str) -> dict[str, Any]:
+        """返回某个模板在新建 session 时的默认 surfaces。"""
+
+        normalized = str(template_id or "").strip()
+        if normalized == "qq_group":
+            return build_default_qq_group_surfaces()
+        return {}
 
     @staticmethod
     def _build_session_payload(

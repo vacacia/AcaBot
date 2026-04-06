@@ -923,6 +923,42 @@ async def test_runtime_config_control_plane_creates_session_and_updates_agent_pr
     assert (tmp_path / "prompts" / "worker.md").exists()
 
 
+async def test_runtime_config_control_plane_create_session_seeds_qq_group_bot_admin_surfaces(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, base_dir=tmp_path)
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+        log_buffer=InMemoryLogBuffer(),
+    )
+    await _seed_model_registry(components.control_plane)
+
+    created = await components.control_plane.create_session(
+        {
+            "session_id": "qq:group:20001",
+            "title": "Group Session",
+            "template_id": "qq_group",
+        }
+    )
+
+    surfaces = created["surfaces"]
+    for surface_id, expected_mode in {
+        "message.mention": "respond",
+        "message.reply_to_bot": "respond",
+        "message.plain": "record_only",
+    }.items():
+        computer = surfaces[surface_id]["computer"]
+        assert surfaces[surface_id]["admission"]["default"]["mode"] == expected_mode
+        assert computer["default"]["backend"] == "docker"
+        assert computer["cases"][0]["when"] == {"is_bot_admin": True}
+        assert computer["cases"][0]["use"]["backend"] == "host"
+    assert "computer_policy" not in created["agent"]
+
+
 async def test_runtime_config_control_plane_create_session_keeps_default_agent_model_target_binding(
     tmp_path: Path,
 ) -> None:
