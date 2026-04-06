@@ -108,7 +108,7 @@ function formatSchedule(task: ScheduleTask): string {
     if (seconds < 3600) {
       return `间隔 · ${Math.round(seconds / 60)}m`
     }
-    return `间隔 · ${Math.round(seconds / 3600)}h`
+    return `间隔 · ${(seconds / 3600).toFixed(1)}h`
   }
   return `一次性 · ${formatLocalTime(task.schedule.spec.fire_at)}`
 }
@@ -318,105 +318,137 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="ds-page schedule-page">
-    <header class="ds-hero schedule-hero">
-      <div class="ds-hero-copy">
-        <p class="ds-eyebrow">Scheduler / Conversation Wakeup</p>
-        <h1>调度任务</h1>
+  <section class="page">
+    <header class="page-header">
+      <div class="page-header-main">
+        <p class="page-eyebrow">Scheduler / Conversation Wakeup</p>
+        <h1 class="page-title">调度任务</h1>
       </div>
-      <div class="schedule-actions">
+      <div class="page-header-actions">
         <button
-          class="ds-secondary-button"
+          class="btn btn-secondary"
           type="button"
           data-schedule-refresh-button
           @click="void refreshPage()"
         >
+          <svg class="btn-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M4 10a6 6 0 1 1 1.5 3.9" stroke-linecap="round"/>
+            <path d="M4 14V10h4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
           刷新
         </button>
         <button
-          class="ds-primary-button"
+          class="btn btn-primary"
           type="button"
           data-schedule-create-button
           @click="openCreateModal"
         >
+          <svg class="btn-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10 4v12M4 10h12" stroke-linecap="round"/>
+          </svg>
           新建任务
         </button>
       </div>
     </header>
 
-    <div v-if="actionMessage" class="ds-status is-ok schedule-status">
-      {{ actionMessage }}
-    </div>
-    <div v-if="errorMessage" class="ds-status is-error schedule-status" data-schedule-error>
-      {{ errorMessage }}
-    </div>
+    <Transition name="fade">
+      <div v-if="actionMessage" class="toast toast-success">
+        {{ actionMessage }}
+      </div>
+    </Transition>
+    <Transition name="fade">
+      <div v-if="errorMessage" class="toast toast-error" data-schedule-error>
+        {{ errorMessage }}
+      </div>
+    </Transition>
 
-    <article v-if="loading" class="ds-panel ds-panel-padding schedule-loading">
-      <div class="schedule-spinner"></div>
-      <p>正在读取调度任务...</p>
+    <article v-if="loading" class="state-panel">
+      <div class="spinner"></div>
+      <p class="state-text">正在读取调度任务...</p>
     </article>
 
-    <article v-else-if="tasks.length === 0" class="ds-panel ds-panel-padding ds-empty schedule-empty">
-      <strong>还没有调度任务</strong>
-      <p>创建后会显示在这里，并持续刷新最近执行时间与下一次执行时间。</p>
+    <article v-else-if="tasks.length === 0" class="state-panel state-empty">
+      <svg class="state-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="24" cy="24" r="20"/>
+        <path d="M24 14v10l6 4" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <strong class="state-title">还没有调度任务</strong>
+      <p class="state-desc">创建后会显示在这里，并持续刷新最近执行时间与下一次执行时间。</p>
+      <button class="btn btn-primary" type="button" @click="openCreateModal">
+        <svg class="btn-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M10 4v12M4 10h12" stroke-linecap="round"/>
+        </svg>
+        创建第一个任务
+      </button>
     </article>
 
-    <ul v-else class="schedule-list" role="list">
+    <ul v-else class="task-list" role="list">
       <li
         v-for="task in tasks"
         :key="task.task_id"
-        class="ds-panel ds-panel-padding schedule-row"
+        class="task-card"
         :data-schedule-row="task.task_id"
       >
-        <div class="schedule-row-main">
-          <div class="schedule-row-top">
-            <div class="schedule-row-heading">
-              <strong class="schedule-note">{{ task.note || "未填写备注" }}</strong>
-              <span class="schedule-kind-chip">{{ task.schedule.kind }}</span>
-              <span class="schedule-state-chip" :class="task.enabled ? 'is-enabled' : 'is-disabled'">
+        <div class="task-card-main">
+          <div class="task-card-header">
+            <div class="task-card-tags">
+              <span class="tag tag-accent">{{ task.schedule.kind }}</span>
+              <span class="tag" :class="task.enabled ? 'tag-success' : 'tag-muted'">
                 {{ stateLabel(task) }}
               </span>
             </div>
-            <code class="schedule-conversation ds-mono">{{ task.conversation_id }}</code>
+            <code class="task-conversation">{{ task.conversation_id }}</code>
           </div>
 
-          <div class="schedule-row-summary">
-            <span class="schedule-summary-item">
-              <span class="schedule-summary-label">调度</span>
-              <span class="schedule-summary-value">{{ formatSchedule(task) }}</span>
-            </span>
-            <span class="schedule-summary-item">
-              <span class="schedule-summary-label">创建</span>
-              <span class="schedule-summary-value ds-mono">{{ formatLocalTime(task.created_at) }}</span>
-            </span>
-            <span class="schedule-summary-item">
-              <span class="schedule-summary-label">最近执行</span>
-              <span class="schedule-summary-value ds-mono" :data-schedule-last-fired="task.task_id">
+          <p class="task-note">{{ task.note || "未填写备注" }}</p>
+
+          <div class="task-meta">
+            <div class="meta-item">
+              <span class="meta-label">调度</span>
+              <span class="meta-value">{{ formatSchedule(task) }}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">创建</span>
+              <span class="meta-value meta-mono">{{ formatLocalTime(task.created_at) }}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">最近执行</span>
+              <span class="meta-value meta-mono" :data-schedule-last-fired="task.task_id">
                 {{ formatLocalTime(task.last_fired_at) }}
               </span>
-            </span>
-            <span class="schedule-summary-item">
-              <span class="schedule-summary-label">下一次</span>
-              <span class="schedule-summary-value ds-mono" :data-schedule-next-fire="task.task_id">
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">下一次</span>
+              <span class="meta-value meta-mono" :data-schedule-next-fire="task.task_id">
                 {{ formatLocalTime(task.next_fire_at) }}
               </span>
-            </span>
+            </div>
           </div>
         </div>
 
-        <div class="schedule-row-actions">
+        <div class="task-card-actions">
+          <div class="toggle-wrapper">
+            <button
+              class="toggle-switch"
+              :class="{
+                'is-enabled': task.enabled,
+                'is-loading': busyTaskId === task.task_id && task.enabled,
+              }"
+              type="button"
+              role="switch"
+              :aria-checked="task.enabled"
+              :data-schedule-toggle="task.task_id"
+              :disabled="busyTaskId === task.task_id"
+              @click="void handleToggle(task)"
+            >
+              <span class="toggle-thumb"></span>
+            </button>
+            <span class="toggle-label" :class="{ 'is-enabled': task.enabled }">
+              {{ task.enabled ? "运行中" : "已暂停" }}
+            </span>
+          </div>
           <button
-            v-if="task.enabled || canResumeTask(task)"
-            class="ds-secondary-button"
-            type="button"
-            :data-schedule-toggle="task.task_id"
-            :disabled="busyTaskId === task.task_id"
-            @click="void handleToggle(task)"
-          >
-            {{ task.enabled ? "暂停" : "恢复" }}
-          </button>
-          <button
-            class="ds-ghost-button"
+            class="btn btn-sm btn-ghost btn-danger"
             type="button"
             :data-schedule-delete="task.task_id"
             :disabled="busyTaskId === task.task_id"
@@ -428,33 +460,37 @@ onBeforeUnmount(() => {
       </li>
     </ul>
 
-    <Transition name="schedule-modal">
-      <div v-if="showCreateModal" class="schedule-modal-backdrop" @click.self="closeCreateModal">
-        <section class="ds-panel ds-panel-padding schedule-modal" data-schedule-create-modal>
-          <header class="schedule-modal-header">
+    <Transition name="modal">
+      <div v-if="showCreateModal" class="modal-backdrop" @click.self="closeCreateModal">
+        <section class="modal" data-schedule-create-modal>
+          <header class="modal-header">
             <div>
-              <p class="ds-eyebrow">Create schedule</p>
-              <h2>新建调度任务</h2>
+              <p class="page-eyebrow">Create schedule</p>
+              <h2 class="modal-title">新建调度任务</h2>
             </div>
-            <button class="ds-ghost-button schedule-modal-close" type="button" @click="closeCreateModal">
-              关闭
+            <button class="btn btn-ghost btn-sm modal-close" type="button" @click="closeCreateModal">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M5 5l10 10M15 5L5 15" stroke-linecap="round"/>
+              </svg>
             </button>
           </header>
 
-          <p v-if="createError" class="ds-status is-error schedule-status" data-schedule-create-error>
-            {{ createError }}
-          </p>
+          <Transition name="fade">
+            <p v-if="createError" class="toast toast-error" data-schedule-create-error>
+              {{ createError }}
+            </p>
+          </Transition>
 
-          <div class="schedule-modal-grid">
-            <section class="schedule-form-section">
-              <header class="schedule-form-head">
+          <div class="modal-body">
+            <section class="form-section">
+              <header class="form-section-header">
                 <h3>目标会话</h3>
                 <p>可以直接选现有会话，也可以手动填写 conversation_id。</p>
               </header>
 
-              <div class="schedule-mode-row">
+              <div class="toggle-group">
                 <button
-                  class="schedule-mode-button"
+                  class="toggle-btn"
                   :class="{ active: conversationIdMode === 'select' }"
                   type="button"
                   data-schedule-mode-select
@@ -463,7 +499,7 @@ onBeforeUnmount(() => {
                   选择会话
                 </button>
                 <button
-                  class="schedule-mode-button"
+                  class="toggle-btn"
                   :class="{ active: conversationIdMode === 'manual' }"
                   type="button"
                   data-schedule-mode-manual
@@ -473,51 +509,51 @@ onBeforeUnmount(() => {
                 </button>
               </div>
 
-              <div v-if="conversationIdMode === 'select'" class="schedule-session-picker">
+              <div v-if="conversationIdMode === 'select'" class="session-picker">
                 <input
                   v-model="sessionSearch"
-                  class="ds-input"
+                  class="input"
                   type="text"
                   placeholder="搜索 session_id 或标题..."
                   data-schedule-session-search
                 />
-                <div class="schedule-session-list">
+                <div class="session-list">
                   <button
                     v-for="session in filteredSessions"
                     :key="session.session_id"
-                    class="schedule-session-option"
+                    class="session-option"
                     :class="{ active: selectedSessionId === session.session_id }"
                     type="button"
                     :data-schedule-session-option="session.session_id"
                     @click="selectedSessionId = session.session_id"
                   >
-                    <span class="schedule-session-title">{{ session.title || "未命名会话" }}</span>
-                    <code class="ds-mono">{{ session.session_id }}</code>
+                    <span class="session-title">{{ session.title || "未命名会话" }}</span>
+                    <code class="session-id">{{ session.session_id }}</code>
                   </button>
-                  <p v-if="filteredSessions.length === 0" class="schedule-session-empty">没有匹配的会话，试试手动输入。</p>
+                  <p v-if="filteredSessions.length === 0" class="session-empty">没有匹配的会话，试试手动输入。</p>
                 </div>
               </div>
               <input
                 v-else
                 v-model="manualConversationId"
-                class="ds-input ds-mono"
+                class="input input-mono"
                 type="text"
                 placeholder="例如 qq:user:1733064202"
                 data-schedule-manual-input
               />
             </section>
 
-            <section class="schedule-form-section">
-              <header class="schedule-form-head">
+            <section class="form-section">
+              <header class="form-section-header">
                 <h3>调度规则</h3>
                 <p>{{ scheduleSummary }}</p>
               </header>
 
-              <div class="schedule-kind-row">
+              <div class="toggle-group">
                 <button
                   v-for="item in SCHEDULE_KIND_OPTIONS"
                   :key="item.value"
-                  class="schedule-kind-button"
+                  class="toggle-btn"
                   :class="{ active: scheduleKind === item.value }"
                   type="button"
                   :data-schedule-kind="item.value"
@@ -530,7 +566,7 @@ onBeforeUnmount(() => {
               <input
                 v-if="scheduleKind === 'interval'"
                 v-model.number="intervalSeconds"
-                class="ds-input"
+                class="input"
                 type="number"
                 min="1"
                 step="1"
@@ -539,7 +575,7 @@ onBeforeUnmount(() => {
               <input
                 v-else-if="scheduleKind === 'cron'"
                 v-model="cronExpr"
-                class="ds-input ds-mono"
+                class="input input-mono"
                 type="text"
                 placeholder="0 9 * * *"
                 data-schedule-cron-input
@@ -547,20 +583,20 @@ onBeforeUnmount(() => {
               <input
                 v-else
                 v-model="oneShotTimestamp"
-                class="ds-input"
+                class="input"
                 type="datetime-local"
                 data-schedule-one-shot-input
               />
             </section>
 
-            <section class="schedule-form-section schedule-form-section-full">
-              <header class="schedule-form-head">
+            <section class="form-section form-section-full">
+              <header class="form-section-header">
                 <h3>备注</h3>
                 <p>这段文字会在任务触发时作为唤醒说明交给 agent。</p>
               </header>
               <input
                 v-model="note"
-                class="ds-input"
+                class="input"
                 type="text"
                 maxlength="500"
                 placeholder="例如：2 分钟后提醒我继续看日志"
@@ -569,12 +605,12 @@ onBeforeUnmount(() => {
             </section>
           </div>
 
-          <footer class="schedule-modal-footer">
-            <code class="ds-mono schedule-effective-id">{{ effectiveConversationId || "尚未选择 conversation_id" }}</code>
-            <div class="schedule-modal-actions">
-              <button class="ds-secondary-button" type="button" @click="closeCreateModal">取消</button>
+          <footer class="modal-footer">
+            <code class="effective-id">{{ effectiveConversationId || "尚未选择 conversation_id" }}</code>
+            <div class="modal-footer-actions">
+              <button class="btn btn-secondary" type="button" @click="closeCreateModal">取消</button>
               <button
-                class="ds-primary-button"
+                class="btn btn-primary"
                 type="button"
                 :disabled="creating"
                 data-schedule-create-submit
@@ -591,88 +627,256 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.schedule-page {
-  gap: 16px;
+/* ── Page layout ── */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 }
 
-.schedule-hero {
+.page-header {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
   gap: 18px;
+  flex-wrap: wrap;
 }
 
-.schedule-actions {
-  display: inline-flex;
+.page-header-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.page-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  margin: 0;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--heading-strong);
+  letter-spacing: -0.02em;
+}
+
+.page-header-actions {
+  display: flex;
   gap: 10px;
   flex-wrap: wrap;
 }
 
-.schedule-status {
+/* ── Buttons ── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border-radius: 14px;
+  border: none;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 120ms ease;
+  white-space: nowrap;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.btn-primary {
+  background: linear-gradient(145deg, var(--button-primary-start), var(--button-primary-end));
+  color: #fff;
+  box-shadow: 0 2px 8px var(--button-shadow-color);
+}
+
+.btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px var(--button-shadow-color);
+}
+
+.btn-secondary {
+  background: var(--panel-strong);
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--panel-line-soft);
+}
+
+.btn-success {
+  background: color-mix(in srgb, var(--success) 15%, transparent);
+  color: var(--success);
+  border: 1px solid color-mix(in srgb, var(--success) 30%, transparent);
+}
+
+.btn-success:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--success) 25%, transparent);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--muted);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--panel-strong);
+  color: var(--text);
+}
+
+.btn-danger {
+  color: var(--danger);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
+
+.btn-sm {
+  padding: 7px 12px;
+  font-size: 12px;
+  border-radius: 10px;
+}
+
+/* ── Toast ── */
+.toast {
+  padding: 12px 16px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 500;
   margin: 0;
 }
 
-.schedule-loading,
-.schedule-empty {
-  display: grid;
-  place-items: center;
-  gap: 12px;
+.toast-success {
+  background: color-mix(in srgb, var(--success) 15%, var(--panel));
+  color: var(--success);
+  border: 1px solid color-mix(in srgb, var(--success) 30%, transparent);
+}
+
+.toast-error {
+  background: color-mix(in srgb, var(--danger) 15%, var(--panel));
+  color: var(--danger);
+  border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+}
+
+/* ── State panels ── */
+.state-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 48px 24px;
+  border-radius: 20px;
+  background: var(--panel);
+  border: 1px solid var(--line);
   text-align: center;
-  min-height: 220px;
 }
 
-.schedule-spinner {
-  width: 20px;
-  height: 20px;
-  border-radius: 999px;
-  border: 2px solid color-mix(in srgb, var(--line) 78%, transparent);
+.state-empty {
+  min-height: 320px;
+}
+
+.spinner {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--line) 70%, transparent);
   border-top-color: var(--accent);
-  animation: schedule-spin 700ms linear infinite;
+  animation: spin 700ms linear infinite;
 }
 
-.schedule-list {
-  display: grid;
+.state-text {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.state-icon {
+  width: 56px;
+  height: 56px;
+  color: var(--muted);
+  opacity: 0.5;
+}
+
+.state-title {
+  font-size: 16px;
+  color: var(--heading-strong);
+}
+
+.state-desc {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  max-width: 280px;
+  line-height: 1.5;
+}
+
+/* ── Task list ── */
+.task-list {
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   list-style: none;
   padding: 0;
   margin: 0;
 }
 
-.schedule-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 16px;
-  align-items: start;
-}
-
-.schedule-row-main {
-  display: grid;
-  gap: 12px;
-  min-width: 0;
-}
-
-.schedule-row-top {
+.task-card {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
-  flex-wrap: wrap;
+  gap: 20px;
+  padding: 20px;
+  border-radius: 20px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
-.schedule-row-heading {
+.task-card:hover {
+  border-color: var(--panel-line-strong);
+  box-shadow: var(--shadow-card);
+}
+
+.task-card-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.task-card-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
-.schedule-note {
-  font-size: 16px;
-  color: var(--heading-strong);
+.task-card-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
-.schedule-kind-chip,
-.schedule-state-chip {
+.tag {
   display: inline-flex;
   align-items: center;
   padding: 4px 10px;
@@ -683,296 +887,503 @@ onBeforeUnmount(() => {
   text-transform: uppercase;
 }
 
-.schedule-kind-chip {
-  background: color-mix(in srgb, var(--accent) 11%, transparent);
-  color: var(--accent);
-}
-
-.schedule-state-chip.is-enabled {
-  background: color-mix(in srgb, var(--success) 13%, transparent);
-  color: var(--success);
-}
-
-.schedule-state-chip.is-disabled {
-  background: color-mix(in srgb, var(--muted) 16%, transparent);
-  color: var(--muted);
-}
-
-.schedule-conversation {
-  padding: 6px 10px;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--panel) 72%, transparent);
-  border: 1px solid var(--line);
-  font-size: 12px;
-}
-
-.schedule-row-summary {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.schedule-summary-item {
-  display: grid;
-  gap: 4px;
-}
-
-.schedule-summary-label {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted);
-}
-
-.schedule-summary-value {
-  color: var(--text);
-  line-height: 1.5;
-}
-
-.schedule-row-actions {
-  display: inline-flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.schedule-modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(12, 12, 16, 0.36);
-  backdrop-filter: blur(4px);
-}
-
-.schedule-modal {
-  width: min(980px, calc(100vw - 48px));
-  max-height: calc(100vh - 48px);
-  overflow: auto;
-  display: grid;
-  gap: 20px;
-}
-
-.schedule-modal-header,
-.schedule-modal-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.schedule-modal-header h2 {
-  margin: 4px 0 0;
-}
-
-.schedule-modal-close {
-  white-space: nowrap;
-}
-
-.schedule-modal-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.schedule-form-section {
-  display: grid;
-  gap: 12px;
-}
-
-.schedule-form-section-full {
-  grid-column: 1 / -1;
-}
-
-.schedule-form-head {
-  display: grid;
-  gap: 4px;
-}
-
-.schedule-form-head h3 {
-  margin: 0;
-  font-size: 15px;
-}
-
-.schedule-form-head p {
-  margin: 0;
-  color: var(--muted);
-  line-height: 1.5;
-}
-
-.schedule-mode-row,
-.schedule-kind-row {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.schedule-mode-button,
-.schedule-kind-button {
-  flex: 1;
-  min-width: 0;
-  padding: 10px 12px;
-  border-radius: 14px;
-  border: 1px solid var(--line);
-  background: color-mix(in srgb, var(--panel) 72%, transparent);
-  color: var(--muted);
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
-}
-
-.schedule-mode-button.active,
-.schedule-kind-button.active {
-  border-color: color-mix(in srgb, var(--accent) 66%, var(--line));
+.tag-accent {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--accent);
 }
 
-.schedule-session-picker {
+.tag-success {
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  color: var(--success);
+}
+
+.tag-muted {
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  color: var(--muted);
+}
+
+.task-conversation {
+  padding: 5px 10px;
+  border-radius: 10px;
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--muted);
+}
+
+.task-note {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--heading-strong);
+  line-height: 1.4;
+}
+
+.task-meta {
   display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+.meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.meta-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.meta-value {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.meta-mono {
+  font-family: "SF Mono", "Fira Code", "Fira Mono", ui-monospace, monospace;
+  font-size: 12px;
+}
+
+.task-card-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+
+/* ── Toggle Switch ── */
+.toggle-wrapper {
+  display: flex;
+  align-items: center;
   gap: 10px;
 }
 
-.schedule-session-list {
-  display: grid;
-  gap: 6px;
-  max-height: 220px;
-  overflow: auto;
-  padding: 8px;
-  border-radius: 16px;
-  border: 1px solid var(--line);
-  background: color-mix(in srgb, var(--panel) 70%, transparent);
+.toggle-switch {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--panel-line-strong);
+  cursor: pointer;
+  transition: background 200ms ease;
 }
 
-.schedule-session-option {
+.toggle-switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.toggle-switch.is-enabled {
+  background: var(--success);
+}
+
+.toggle-switch:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  transition: transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.toggle-switch.is-enabled .toggle-thumb {
+  transform: translateX(20px);
+}
+
+.toggle-switch.is-loading .toggle-thumb {
+  animation: toggle-pulse 800ms ease-in-out infinite;
+}
+
+.toggle-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  min-width: 48px;
+}
+
+.toggle-label.is-enabled {
+  color: var(--success);
+}
+
+@keyframes toggle-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ── Modal ── */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(12, 12, 16, 0.48);
+  backdrop-filter: blur(6px);
+}
+
+.modal {
+  width: min(900px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  border-radius: 24px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-soft);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 24px 24px 0;
+}
+
+.modal-title {
+  margin: 4px 0 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--heading-strong);
+}
+
+.modal-close {
+  padding: 8px;
+}
+
+.modal-close svg {
+  width: 18px;
+  height: 18px;
+}
+
+.modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+}
+
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 24px;
+  border-top: 1px solid var(--line);
+  background: var(--panel-strong);
+}
+
+.modal-footer-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.effective-id {
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+  font-family: inherit;
+}
+
+/* ── Form ── */
+.form-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.form-section-full {
+  grid-column: 1 / -1;
+}
+
+.form-section-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.form-section-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--heading-strong);
+}
+
+.form-section-header p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.toggle-group {
+  display: flex;
+  gap: 6px;
+}
+
+.toggle-btn {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.toggle-btn:hover {
+  border-color: var(--panel-line-strong);
+}
+
+.toggle-btn.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+}
+
+.input {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+  box-sizing: border-box;
+}
+
+.input::placeholder {
+  color: var(--muted);
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.input-mono {
+  font-family: "SF Mono", "Fira Code", "Fira Mono", ui-monospace, monospace;
+  font-size: 12px;
+}
+
+/* ── Session picker ── */
+.session-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 8px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+}
+
+.session-option {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding: 10px 12px;
   border: none;
-  border-radius: 12px;
+  border-radius: 10px;
   background: transparent;
   color: inherit;
   text-align: left;
   cursor: pointer;
+  transition: background 100ms ease;
 }
 
-.schedule-session-option:hover,
-.schedule-session-option.active {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+.session-option:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
-.schedule-session-title {
+.session-option.active {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.session-title {
   font-weight: 600;
+  font-size: 13px;
 }
 
-.schedule-session-empty {
-  margin: 0;
+.session-id {
+  font-size: 11px;
   color: var(--muted);
-  padding: 10px 12px;
+  font-family: inherit;
 }
 
-.schedule-effective-id {
-  padding: 6px 10px;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--panel) 72%, transparent);
+.session-empty {
+  margin: 0;
+  padding: 12px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
 }
 
-.schedule-modal-actions {
-  display: inline-flex;
-  gap: 10px;
+/* ── Animations ── */
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
-.schedule-modal-enter-active,
-.schedule-modal-leave-active {
+.fade-enter-active,
+.fade-leave-active {
   transition: opacity 160ms ease;
 }
 
-.schedule-modal-enter-from,
-.schedule-modal-leave-to {
+.fade-enter-from,
+.fade-leave-to {
   opacity: 0;
 }
 
-.schedule-modal-enter-active .schedule-modal {
-  animation: schedule-modal-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
+.modal-enter-active .modal {
+  animation: modal-in 200ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.schedule-modal-leave-active .schedule-modal {
-  animation: schedule-modal-out 120ms cubic-bezier(0.4, 0, 1, 1);
+.modal-leave-active .modal {
+  animation: modal-out 140ms cubic-bezier(0.4, 0, 1, 1);
 }
 
-@keyframes schedule-modal-in {
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity 180ms ease;
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+@keyframes modal-in {
   from {
     opacity: 0;
-    transform: translateY(10px) scale(0.98);
+    transform: scale(0.96) translateY(8px);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: scale(1) translateY(0);
   }
 }
 
-@keyframes schedule-modal-out {
+@keyframes modal-out {
   from {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: scale(1) translateY(0);
   }
   to {
     opacity: 0;
-    transform: translateY(6px) scale(0.985);
+    transform: scale(0.98) translateY(4px);
   }
 }
 
-@keyframes schedule-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (max-width: 980px) {
-  .schedule-row-summary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .schedule-modal-grid {
+/* ── Responsive ── */
+@media (max-width: 900px) {
+  .modal-body {
     grid-template-columns: 1fr;
   }
+
+  .task-meta {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 
-@media (max-width: 760px) {
-  .schedule-hero,
-  .schedule-modal-header,
-  .schedule-modal-footer,
-  .schedule-row {
-    grid-template-columns: 1fr;
-    display: grid;
+@media (max-width: 700px) {
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
-  .schedule-actions,
-  .schedule-row-actions,
-  .schedule-modal-actions {
+  .page-header-actions {
     width: 100%;
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .schedule-row-summary {
+  .page-header-actions .btn {
+    flex: 1;
+  }
+
+  .task-card {
+    flex-direction: column;
+  }
+
+  .task-card-actions {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+  }
+
+  .task-meta {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .modal-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .effective-id {
+    text-align: center;
+    margin-bottom: 8px;
+  }
+
+  .modal-footer-actions {
+    justify-content: stretch;
+  }
+
+  .modal-footer-actions .btn {
+    flex: 1;
+  }
+}
+
+@media (max-width: 480px) {
+  .task-meta {
     grid-template-columns: 1fr;
-  }
-
-  .schedule-modal {
-    width: min(100vw - 24px, 980px);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .schedule-spinner,
-  .schedule-modal-enter-active .schedule-modal,
-  .schedule-modal-leave-active .schedule-modal {
+  .spinner,
+  .modal-enter-active .modal,
+  .modal-leave-active .modal {
     animation: none;
   }
 }
