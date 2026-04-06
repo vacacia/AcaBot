@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from acabot.runtime import PersistedModelSnapshot, RunStep, SQLiteRunStore, StoreBackedRunManager, RouteDecision
 from acabot.types import EventSource, MsgSegment, StandardEvent
 
@@ -150,6 +152,29 @@ async def test_store_backed_run_manager_persists_model_snapshot_metadata(
     assert restored is not None
     assert restored.metadata["model_snapshot"]["provider_id"] == "openai-main"
     assert restored.metadata["model_snapshot"]["model"] == "gpt-main"
+
+
+async def test_sqlite_run_store_rolls_back_failed_write_so_other_connection_is_not_locked(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "runtime.db"
+    store1 = SQLiteRunStore(db_path)
+    store2 = SQLiteRunStore(db_path)
+    manager1 = StoreBackedRunManager(store1)
+    manager2 = StoreBackedRunManager(store2)
+
+    try:
+        first = await manager1.open(event=_event(), decision=_decision())
+
+        with pytest.raises(Exception):
+            await store1.create_run(first)
+
+        second = await manager2.open(event=_event(), decision=_decision())
+    finally:
+        store1.close()
+        store2.close()
+
+    assert second.run_id != first.run_id
 
 
 async def test_store_backed_run_manager_can_list_thread_steps(

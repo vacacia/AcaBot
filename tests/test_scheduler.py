@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import time
 from pathlib import Path
 
@@ -139,6 +140,64 @@ async def test_store_disable(store: SQLiteScheduledTaskStore) -> None:
     await store.upsert(_make_row())
     await store.disable("t1")
     assert await store.list_enabled() == []
+
+
+async def test_store_migrates_legacy_next_fire_at_not_null_schema(tmp_path: Path) -> None:
+    """旧的 next_fire_at NOT NULL 表结构会被自动迁移成可置空的新结构."""
+    db_path = tmp_path / "sched-legacy.db"
+    legacy = sqlite3.connect(db_path)
+    try:
+        legacy.execute(
+            """
+            CREATE TABLE scheduled_tasks (
+                task_id TEXT PRIMARY KEY,
+                owner TEXT NOT NULL,
+                schedule_type TEXT NOT NULL,
+                schedule_spec TEXT NOT NULL,
+                misfire_policy TEXT NOT NULL DEFAULT 'skip',
+                next_fire_at REAL NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                metadata_json TEXT NOT NULL DEFAULT '{}'
+            )
+            """
+        )
+        legacy.execute(
+            """
+            INSERT INTO scheduled_tasks (
+                task_id, owner, schedule_type, schedule_spec, misfire_policy,
+                next_fire_at, enabled, created_at, updated_at, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-task",
+                "qq:user:1733064202",
+                "one_shot",
+                '{"fire_at": 123}',
+                "skip",
+                123.0,
+                1,
+                100.0,
+                100.0,
+                '{}',
+            ),
+        )
+        legacy.commit()
+    finally:
+        legacy.close()
+
+    migrated = SQLiteScheduledTaskStore(db_path)
+    try:
+        assert await migrated.disable("legacy-task", next_fire_at=None) is True
+        rows = await migrated.list_all()
+    finally:
+        migrated.close()
+
+    assert len(rows) == 1
+    assert rows[0].task_id == "legacy-task"
+    assert rows[0].next_fire_at is None
+    assert rows[0].enabled is False
 
 
 async def test_store_upsert_replaces_existing(store: SQLiteScheduledTaskStore) -> None:

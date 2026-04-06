@@ -214,6 +214,25 @@ class SQLiteScheduledTaskStore(_SQLiteStoreBase):
     def _ensure_schema(self) -> None:
         """初始化 scheduled_tasks 表结构."""
 
+        self._create_table_if_missing()
+        self._ensure_column("next_fire_at", "REAL")
+        self._ensure_column("last_fired_at", "REAL")
+        self._migrate_legacy_next_fire_at_not_null_if_needed()
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_next_fire
+                ON scheduled_tasks(enabled, next_fire_at)
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_owner
+                ON scheduled_tasks(owner)
+            """
+        )
+        self._conn.commit()
+
+    def _create_table_if_missing(self) -> None:
         self._conn.execute(
             """
             CREATE TABLE IF NOT EXISTS scheduled_tasks (
@@ -231,21 +250,6 @@ class SQLiteScheduledTaskStore(_SQLiteStoreBase):
             )
             """
         )
-        self._conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_next_fire
-                ON scheduled_tasks(enabled, next_fire_at)
-            """
-        )
-        self._conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_owner
-                ON scheduled_tasks(owner)
-            """
-        )
-        self._ensure_column("next_fire_at", "REAL")
-        self._ensure_column("last_fired_at", "REAL")
-        self._conn.commit()
 
     def _ensure_column(self, name: str, definition: str) -> None:
         columns = {
@@ -255,6 +259,55 @@ class SQLiteScheduledTaskStore(_SQLiteStoreBase):
         if name in columns:
             return
         self._conn.execute(f"ALTER TABLE scheduled_tasks ADD COLUMN {name} {definition}")
+
+    def _migrate_legacy_next_fire_at_not_null_if_needed(self) -> None:
+        columns = {
+            str(row["name"]): {
+                "type": str(row["type"]),
+                "notnull": bool(row["notnull"]),
+            }
+            for row in self._conn.execute("PRAGMA table_info(scheduled_tasks)").fetchall()
+        }
+        next_fire = columns.get("next_fire_at")
+        if not next_fire or not next_fire.get("notnull"):
+            return
+
+        last_fired_expr = "last_fired_at" if "last_fired_at" in columns else "NULL"
+        metadata_expr = "metadata_json" if "metadata_json" in columns else "'{}'"
+
+        self._conn.execute("ALTER TABLE scheduled_tasks RENAME TO scheduled_tasks__legacy")
+        self._create_table_if_missing()
+        self._conn.execute(
+            f"""
+            INSERT INTO scheduled_tasks (
+                task_id,
+                owner,
+                schedule_type,
+                schedule_spec,
+                misfire_policy,
+                next_fire_at,
+                enabled,
+                created_at,
+                updated_at,
+                last_fired_at,
+                metadata_json
+            )
+            SELECT
+                task_id,
+                owner,
+                schedule_type,
+                schedule_spec,
+                misfire_policy,
+                next_fire_at,
+                enabled,
+                created_at,
+                updated_at,
+                {last_fired_expr},
+                {metadata_expr}
+            FROM scheduled_tasks__legacy
+            """
+        )
+        self._conn.execute("DROP TABLE scheduled_tasks__legacy")
 
     def _row_to_record(self, row) -> ScheduledTaskRow:
         return ScheduledTaskRow(

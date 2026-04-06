@@ -47,10 +47,20 @@ class _SQLiteStoreBase:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = asyncio.Lock()
-        self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        # 使用 autocommit 避免一次失败写入把事务挂在连接上，进而长期锁住整个数据库。
+        # runtime 里不同 store 会各自持有独立连接；如果保留默认 deferred 事务模式，
+        # 某个连接上的 IntegrityError / OperationalError 可能让事务悬空，后续其它连接写入
+        # 就会持续遇到 `database is locked`。
+        self._conn = sqlite3.connect(
+            self.db_path,
+            check_same_thread=False,
+            isolation_level=None,
+            timeout=30.0,
+        )
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.execute("PRAGMA busy_timeout=30000")
 
     def close(self) -> None:
         """关闭 SQLite 连接."""

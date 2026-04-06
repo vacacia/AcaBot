@@ -246,6 +246,20 @@ def _restart_runtime_container() -> None:
     raise AssertionError("runtime did not become ready after container restart")
 
 
+def _create_live_schedule(*, conversation_id: str, fire_at: float, note: str) -> dict[str, Any]:
+    response = _request_json(
+        "/api/schedules/conversation-wakeup",
+        method="POST",
+        payload={
+            "conversation_id": conversation_id,
+            "schedule": {"kind": "one_shot", "spec": {"fire_at": fire_at}},
+            "note": note,
+        },
+    )
+    assert response["ok"] is True
+    return dict(response["data"])
+
+
 async def test_scheduler_live_llm_e2e_uses_natural_language_and_fires_back_into_group() -> None:
     original_agent = _get_session_agent()
     updated_agent = dict(original_agent)
@@ -387,5 +401,125 @@ async def test_scheduler_live_llm_e2e_uses_natural_language_and_fires_back_into_
         print(json.dumps(evidence, ensure_ascii=False, indent=2))
     finally:
         _put_session_agent(original_agent)
+        _delete_live_test_scheduled_tasks()
+        _restart_runtime_container()
+
+
+async def test_scheduler_live_llm_can_wake_same_conversation_twice_in_a_row() -> None:
+    cleanup_deleted = _delete_live_test_scheduled_tasks()
+    _restart_runtime_container()
+
+    token_a = f"{LIVE_TOKEN_PREFIX}double-a-{int(time.time())}"
+    token_b = f"{LIVE_TOKEN_PREFIX}double-b-{int(time.time())}"
+    now = time.time()
+    schedule_a_fire_at = float(int(now + 20))
+    schedule_b_fire_at = float(int(now + 50))
+    evidence: dict[str, Any] = {
+        "conversation_id": LIVE_CONVERSATION_ID,
+        "cleanup_deleted_task_count": cleanup_deleted,
+        "token_a": token_a,
+        "token_b": token_b,
+        "schedule_a_fire_at": schedule_a_fire_at,
+        "schedule_b_fire_at": schedule_b_fire_at,
+    }
+
+    try:
+        task_a = _create_live_schedule(
+            conversation_id=LIVE_CONVERSATION_ID,
+            fire_at=schedule_a_fire_at,
+            note=f"请提醒我，口令 {token_a}",
+        )
+        task_b = _create_live_schedule(
+            conversation_id=LIVE_CONVERSATION_ID,
+            fire_at=schedule_b_fire_at,
+            note=f"请提醒我，口令 {token_b}",
+        )
+        evidence["task_a"] = task_a
+        evidence["task_b"] = task_b
+
+        scheduled_event_a = await _wait_for(
+            lambda: next(
+                (
+                    item
+                    for item in _list_thread_events(limit=1000)
+                    if item.get("raw_event", {}).get("synthetic") is True
+                    and item.get("payload_json", {}).get("metadata", {}).get("source") == "scheduler"
+                    and token_a in str(item.get("content_text", ""))
+                ),
+                None,
+            ),
+            timeout=60,
+            interval=2.0,
+        )
+        evidence["scheduled_event_a"] = scheduled_event_a
+
+        wake_run_a = await _wait_for(
+            lambda: (
+                lambda run: run if run.get("status") == "completed" else None
+            )(_get_run(str(scheduled_event_a["run_id"]))),
+            timeout=60,
+            interval=1.0,
+        )
+        evidence["wake_run_a"] = wake_run_a
+        assert str(wake_run_a.get("metadata", {}).get("model_used", "")).strip()
+
+        wake_message_a = await _wait_for(
+            lambda: next(
+                (
+                    item
+                    for item in _list_thread_messages(limit=1000)
+                    if item.get("run_id") == scheduled_event_a["run_id"] and item.get("role") == "assistant"
+                ),
+                None,
+            ),
+            timeout=30,
+            interval=1.0,
+        )
+        evidence["wake_message_a"] = wake_message_a
+        assert any(marker in str(wake_message_a.get("content_text", "")) for marker in ("提醒", "口令", token_a))
+
+        scheduled_event_b = await _wait_for(
+            lambda: next(
+                (
+                    item
+                    for item in _list_thread_events(limit=1000)
+                    if item.get("raw_event", {}).get("synthetic") is True
+                    and item.get("payload_json", {}).get("metadata", {}).get("source") == "scheduler"
+                    and token_b in str(item.get("content_text", ""))
+                ),
+                None,
+            ),
+            timeout=90,
+            interval=2.0,
+        )
+        evidence["scheduled_event_b"] = scheduled_event_b
+
+        wake_run_b = await _wait_for(
+            lambda: (
+                lambda run: run if run.get("status") == "completed" else None
+            )(_get_run(str(scheduled_event_b["run_id"]))),
+            timeout=60,
+            interval=1.0,
+        )
+        evidence["wake_run_b"] = wake_run_b
+        assert str(wake_run_b.get("metadata", {}).get("model_used", "")).strip()
+
+        wake_message_b = await _wait_for(
+            lambda: next(
+                (
+                    item
+                    for item in _list_thread_messages(limit=1000)
+                    if item.get("run_id") == scheduled_event_b["run_id"] and item.get("role") == "assistant"
+                ),
+                None,
+            ),
+            timeout=30,
+            interval=1.0,
+        )
+        evidence["wake_message_b"] = wake_message_b
+        assert any(marker in str(wake_message_b.get("content_text", "")) for marker in ("提醒", "口令", token_b))
+
+        print(json.dumps(evidence, ensure_ascii=False, indent=2))
+    finally:
         _delete_live_test_scheduled_tasks()
         _restart_runtime_container()
