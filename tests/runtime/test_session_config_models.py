@@ -17,6 +17,12 @@ def test_match_spec_specificity_counts_declared_fields() -> None:
     assert spec.specificity() == 3
 
 
+def test_match_spec_specificity_counts_is_bot_admin() -> None:
+    spec = MatchSpec(scene="group", is_bot_admin=True)
+
+    assert spec.specificity() == 2
+
+
 def test_match_spec_matches_event_facts() -> None:
     facts = EventFacts(
         platform="qq",
@@ -32,6 +38,19 @@ def test_match_spec_matches_event_facts() -> None:
     assert MatchSpec(scene="group", mentions_self=True).matches(facts)
     assert MatchSpec(sender_roles=["admin"]).matches(facts)
     assert not MatchSpec(sender_roles=["member"]).matches(facts)
+
+
+def test_match_spec_matches_is_bot_admin_event_facts() -> None:
+    facts = EventFacts(
+        platform="qq",
+        event_kind="message",
+        scene="group",
+        actor_id="qq:user:1",
+        is_bot_admin=True,
+    )
+
+    assert MatchSpec(is_bot_admin=True).matches(facts)
+    assert not MatchSpec(is_bot_admin=False).matches(facts)
 
 
 def test_surface_config_keeps_domain_defaults_and_cases() -> None:

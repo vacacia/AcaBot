@@ -32,6 +32,7 @@ class EventFacts:
         mentions_self (bool): 当前消息是否显式提到了 bot.
         reply_targets_self (bool): 当前消息是否在回复 bot.
         mentioned_everyone (bool): 当前消息是否 @ 全体.
+        is_bot_admin (bool): 当前发送者是否命中 bot 配置里的管理员集合.
         sender_roles (list[str]): 当前发送者命中的角色列表.
         attachments_present (bool): 当前事件是否带附件.
         attachment_kinds (list[str]): 附件类型列表, 例如 `image` `file`.
@@ -51,6 +52,7 @@ class EventFacts:
     mentions_self: bool = False
     reply_targets_self: bool = False
     mentioned_everyone: bool = False
+    is_bot_admin: bool = False
     sender_roles: list[str] = field(default_factory=list)
     attachments_present: bool = False
     attachment_kinds: list[str] = field(default_factory=list)
@@ -75,6 +77,7 @@ class MatchSpec:
         mentions_self (bool | None): 是否要求显式提到 bot.
         reply_targets_self (bool | None): 是否要求回复 bot.
         mentioned_everyone (bool | None): 是否要求 @ 全体.
+        is_bot_admin (bool | None): 是否要求发送者是 bot 配置管理员.
         sender_roles (list[str]): 允许命中的发送者角色集合.
         attachments_present (bool | None): 是否要求存在附件.
         attachment_kinds (list[str]): 允许命中的附件类型集合.
@@ -93,6 +96,7 @@ class MatchSpec:
     mentions_self: bool | None = None
     reply_targets_self: bool | None = None
     mentioned_everyone: bool | None = None
+    is_bot_admin: bool | None = None
     sender_roles: list[str] = field(default_factory=list)
     attachments_present: bool | None = None
     attachment_kinds: list[str] = field(default_factory=list)
@@ -129,6 +133,8 @@ class MatchSpec:
         if self.reply_targets_self is not None and self.reply_targets_self != facts.reply_targets_self:
             return False
         if self.mentioned_everyone is not None and self.mentioned_everyone != facts.mentioned_everyone:
+            return False
+        if self.is_bot_admin is not None and self.is_bot_admin != facts.is_bot_admin:
             return False
         if self.attachments_present is not None and self.attachments_present != facts.attachments_present:
             return False
@@ -172,6 +178,8 @@ class MatchSpec:
             keys.append("reply_targets_self")
         if self.mentioned_everyone is not None:
             keys.append("mentioned_everyone")
+        if self.is_bot_admin is not None:
+            keys.append("is_bot_admin")
         if self.sender_roles:
             keys.append("sender_roles")
         if self.attachments_present is not None:

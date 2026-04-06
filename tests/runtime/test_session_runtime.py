@@ -110,6 +110,33 @@ def test_session_loader_reads_surface_matrix_and_selectors(tmp_path: Path) -> No
     assert session.surfaces["message.mention"].computer.cases[0].use["backend"] == "host"
 
 
+def test_session_loader_reads_is_bot_admin_selectors(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "sessions/qq/group/123"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "session.yaml").write_text(
+        """
+session:
+  id: qq:group:123
+frontstage:
+  agent_id: aca.qq.group.default
+selectors:
+  bot_admin:
+    is_bot_admin: true
+surfaces:
+  message.mention:
+    admission:
+      default:
+        mode: respond
+""".strip(),
+        encoding="utf-8",
+    )
+    loader = SessionConfigLoader(config_root=tmp_path / "sessions")
+
+    session = loader.load_by_session_id("qq:group:123")
+
+    assert session.selectors["bot_admin"].is_bot_admin is True
+
+
 def _build_default_static_session() -> SessionConfig:
     """构造一份带默认 extraction 的静态 session，用于替代已删除的 ConfigBackedSessionConfigLoader."""
     from acabot.runtime.contracts import (

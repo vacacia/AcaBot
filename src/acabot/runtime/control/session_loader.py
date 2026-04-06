@@ -333,6 +333,7 @@ class SessionConfigLoader:
             mentions_self=_optional_bool(mapping.get("mentions_self")),
             reply_targets_self=_optional_bool(mapping.get("reply_targets_self")),
             mentioned_everyone=_optional_bool(mapping.get("mentioned_everyone")),
+            is_bot_admin=_optional_bool(mapping.get("is_bot_admin")),
             sender_roles=_require_string_list(mapping.get("sender_roles", []), label=f"{label}.sender_roles", path=path),
             attachments_present=_optional_bool(mapping.get("attachments_present")),
             attachment_kinds=_require_string_list(
