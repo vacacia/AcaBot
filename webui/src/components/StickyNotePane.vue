@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from "vue"
+import { computed, ref, watch } from "vue"
 
 const props = defineProps<{
   readonlyContent: string
@@ -7,17 +7,23 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: "save-editable", content: string): void
-  (e: "save-readonly", content: string): void
+  (e: "save", readonly: string, editable: string): void
 }>()
 
 const readonlyDraft = ref(props.readonlyContent)
 const editableDraft = ref(props.editableContent)
+const originalReadonly = ref(props.readonlyContent)
+const originalEditable = ref(props.editableContent)
+
+const isDirty = computed(
+  () => readonlyDraft.value !== originalReadonly.value || editableDraft.value !== originalEditable.value,
+)
 
 watch(
   () => props.readonlyContent,
   (value) => {
     readonlyDraft.value = value
+    originalReadonly.value = value
   },
 )
 
@@ -25,26 +31,60 @@ watch(
   () => props.editableContent,
   (value) => {
     editableDraft.value = value
+    originalEditable.value = value
   },
 )
 </script>
 
 <template>
-  <div class="layout ds-two-column">
-    <section class="note-section ds-panel ds-card-padding-sm">
-      <header class="section-title">Readonly</header>
-      <textarea class="ds-textarea ds-mono" v-model="readonlyDraft" rows="16"></textarea>
-      <button class="ds-primary-button note-save" type="button" @click="emit('save-readonly', readonlyDraft)">保存只读区</button>
-    </section>
-    <section class="note-section ds-panel ds-card-padding-sm">
-      <header class="section-title">Editable</header>
-      <textarea class="ds-textarea ds-mono" v-model="editableDraft" rows="16"></textarea>
-      <button class="ds-primary-button note-save" type="button" @click="emit('save-editable', editableDraft)">保存可编辑区</button>
-    </section>
+  <div class="pane-layout">
+    <div class="note-columns">
+      <section class="note-section ds-panel ds-card-padding-sm">
+        <header class="section-title">只读区 <span class="section-hint">LLM 可见，人工维护</span></header>
+        <textarea
+          class="ds-textarea ds-mono"
+          v-model="readonlyDraft"
+          rows="16"
+          placeholder="高可信内容，如身份设定、规则、参考信息..."
+        ></textarea>
+      </section>
+      <section class="note-section ds-panel ds-card-padding-sm">
+        <header class="section-title">可编辑区 <span class="section-hint">Bot 追加观察</span></header>
+        <textarea
+          class="ds-textarea ds-mono"
+          v-model="editableDraft"
+          rows="16"
+          placeholder="Bot 持续写入的观察和笔记..."
+        ></textarea>
+      </section>
+    </div>
+
+    <div class="save-row">
+      <button
+        class="ds-primary-button save-btn"
+        type="button"
+        :disabled="!isDirty"
+        @click="emit('save', readonlyDraft, editableDraft)"
+      >
+        {{ isDirty ? "保存更改" : "已保存" }}
+      </button>
+    </div>
   </div>
 </template>
 
 <style scoped>
+.pane-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.note-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
 .note-section {
   display: flex;
   flex-direction: column;
@@ -54,21 +94,50 @@ watch(
 
 .section-title {
   font-weight: 800;
+  font-size: 13px;
   color: var(--heading-strong);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.section-hint {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .ds-textarea {
   min-height: 320px;
+  resize: vertical;
 }
 
-.note-save {
-  align-self: flex-end;
+.save-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.save-btn {
+  min-width: 96px;
+  transition: opacity 150ms ease, background 150ms ease;
+}
+
+.save-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 @media (max-width: 900px) {
-  .note-save {
+  .note-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .save-row {
+    justify-content: stretch;
+  }
+
+  .save-btn {
     width: 100%;
-    align-self: stretch;
   }
 }
 </style>

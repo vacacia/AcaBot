@@ -113,6 +113,15 @@ const ltmBindingState = computed(() => {
   return ready ? "ready" : "needs setup"
 })
 
+const ltmBindingStateLabel = computed(() => {
+  switch (ltmBindingState.value) {
+    case "disabled": return "未启用"
+    case "needs setup": return "待配置"
+    case "ready": return "就绪"
+    default: return "不可用"
+  }
+})
+
 const ltmTargets = computed(() => ltmConfig.value?.required_target_ids ?? [])
 
 function clearStatus(): void {
@@ -181,7 +190,7 @@ async function openFirstAvailableKind(preferredKind: StickyEntityKind): Promise<
 async function openNote(entityRef: string): Promise<void> {
   const payload = await apiGet<StickyNoteItem>(noteItemPath(entityRef))
   selectedEntityRef.value = payload.entity_ref
-  draftEntityRef.value = payload.entity_ref
+  // 不修改 draftEntityRef — 它是"新建/浏览"输入框的独立状态
   noteItem.value = payload
   localStorage.setItem(MEMORY_ENTITY_STORAGE_KEY, payload.entity_ref)
 }
@@ -194,12 +203,18 @@ async function browseEntityRef(): Promise<void> {
   }
   errorText.value = ""
   clearStatus()
+  // 浏览失败时清理选中状态，避免列表高亮与内容区不一致
+  selectedEntityRef.value = ""
+  noteItem.value = null
   try {
     const inferredKind = inferEntityKind(entityRef)
     await openKind(inferredKind, true)
     await openNote(entityRef)
   } catch (error) {
     errorText.value = error instanceof Error ? error.message : "读取 sticky note 失败"
+    // 列表中也不会高亮任何项，因为 entity 不存在
+    selectedEntityRef.value = ""
+    noteItem.value = null
   }
 }
 
@@ -228,7 +243,7 @@ async function createNote(): Promise<void> {
   }
 }
 
-async function saveReadonly(content: string): Promise<void> {
+async function saveNote(readonly: string, editable: string): Promise<void> {
   if (!noteItem.value) {
     return
   }
@@ -237,30 +252,12 @@ async function saveReadonly(content: string): Promise<void> {
   try {
     noteItem.value = await apiPut<StickyNoteItem>("/api/memory/sticky-notes/item", {
       entity_ref: noteItem.value.entity_ref,
-      readonly: content,
-      editable: noteItem.value.editable,
+      readonly,
+      editable,
     })
-    showStatus("只读区已保存")
+    showStatus("已保存")
   } catch (error) {
-    errorText.value = error instanceof Error ? error.message : "保存只读区失败"
-  }
-}
-
-async function saveEditable(content: string): Promise<void> {
-  if (!noteItem.value) {
-    return
-  }
-  errorText.value = ""
-  clearStatus()
-  try {
-    noteItem.value = await apiPut<StickyNoteItem>("/api/memory/sticky-notes/item", {
-      entity_ref: noteItem.value.entity_ref,
-      readonly: noteItem.value.readonly,
-      editable: content,
-    })
-    showStatus("可编辑区已保存")
-  } catch (error) {
-    errorText.value = error instanceof Error ? error.message : "保存可编辑区失败"
+    errorText.value = error instanceof Error ? error.message : "保存失败"
   }
 }
 
@@ -320,11 +317,11 @@ onBeforeUnmount(() => {
         <div v-if="isMemoryOverview" class="ltm-summary-grid">
           <article class="ds-surface ds-card-padding-sm ltm-meta-card">
             <p class="summary-label">LTM</p>
-            <strong class="meta-value">{{ ltmConfig?.enabled ? "enabled" : "disabled" }}</strong>
+            <strong class="meta-value">{{ ltmConfig?.enabled ? "已启用" : "未启用" }}</strong>
           </article>
           <article class="ds-surface ds-card-padding-sm ltm-meta-card">
             <p class="summary-label">Binding</p>
-            <strong class="meta-value">{{ ltmBindingState }}</strong>
+            <strong class="meta-value">{{ ltmBindingStateLabel }}</strong>
           </article>
         </div>
 
@@ -376,8 +373,7 @@ onBeforeUnmount(() => {
             :key="noteItem.entity_ref"
             :readonly-content="noteItem.readonly"
             :editable-content="noteItem.editable"
-            @save-readonly="(value) => void saveReadonly(value)"
-            @save-editable="(value) => void saveEditable(value)"
+            @save="(readonly, editable) => void saveNote(readonly, editable)"
           />
         </Transition>
 
@@ -435,32 +431,29 @@ onBeforeUnmount(() => {
 }
 
 .list-item.newly-created {
-  animation: note-flash 400ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+  animation: note-flash 400ms ease forwards;
 }
 
 @keyframes note-flash {
-  0%   { background: color-mix(in srgb, var(--accent) 20%, var(--panel-white)); transform: scale(1.01); }
-  100% { background: var(--panel-white); transform: scale(1); }
+  0%   { background: color-mix(in srgb, var(--accent) 20%, var(--panel-white)); }
+  100% { background: var(--panel-white); }
 }
 
 /* ─── Note item interactions ───────────────────── */
 .list-item {
   width: 100%;
   display: grid;
-  gap: 6px;
+  gap: 4px;
   text-align: left;
   border: 1px solid var(--panel-line-soft);
-  border-radius: 16px;
+  border-radius: 12px;
   background: var(--panel-white);
   color: var(--text);
-  padding: 12px 14px;
+  padding: 10px 12px;
   cursor: pointer;
   font-family: inherit;
   font-size: inherit;
-  transition: border-color 150ms cubic-bezier(0.25, 1, 0.5, 1),
-    background 150ms cubic-bezier(0.25, 1, 0.5, 1),
-    transform 150ms cubic-bezier(0.25, 1, 0.5, 1),
-    box-shadow 150ms cubic-bezier(0.25, 1, 0.5, 1);
+  transition: border-color 150ms ease, background 150ms ease, transform 150ms ease;
   position: relative;
 }
 
@@ -468,23 +461,23 @@ onBeforeUnmount(() => {
   content: '';
   position: absolute;
   left: 0;
-  top: 10px;
-  bottom: 10px;
+  top: 50%;
+  transform: translateY(-50%);
   width: 2px;
-  border-radius: 0 2px 2px 0;
+  height: 60%;
   background: var(--accent);
   opacity: 0;
-  transition: opacity 150ms cubic-bezier(0.25, 1, 0.5, 1);
+  transition: opacity 150ms ease;
+  border-radius: 0 2px 2px 0;
 }
 
 .list-item:hover {
   border-color: color-mix(in srgb, var(--accent) 40%, var(--panel-line-soft));
   transform: translateX(2px);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
 }
 
 .list-item:hover::before {
-  opacity: 0.5;
+  opacity: 0.4;
 }
 
 .list-item.active {
@@ -589,8 +582,6 @@ onBeforeUnmount(() => {
 }
 
 .note-list {
-  min-height: 160px;
-  max-height: 420px;
   overflow: auto;
 }
 
