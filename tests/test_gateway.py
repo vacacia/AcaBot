@@ -3,10 +3,41 @@
 #   translate: OneBot v11 JSON → StandardEvent (收消息)
 #   build_send_payload: Action → OneBot API JSON (发消息)
 
+import asyncio
+from types import SimpleNamespace
+
 import pytest
 from acabot.gateway.napcat import NapCatGateway
 from acabot.gateway import BaseGateway
 from acabot.types import StandardEvent, Action, ActionType, EventSource
+
+
+class ControlledServerConnection:
+    """一个可控的假 WS 连接, 用来测试 NapCatGateway 的连接生命周期."""
+
+    def __init__(self, *, self_id: str) -> None:
+        """初始化假连接."""
+
+        self.request = SimpleNamespace(headers={"X-Self-ID": self_id})
+        self._queue: asyncio.Queue[object] = asyncio.Queue()
+
+    def __aiter__(self):
+        """返回自身, 供 `async for` 使用."""
+
+        return self
+
+    async def __anext__(self) -> str:
+        """等待下一条消息或关闭信号."""
+
+        item = await self._queue.get()
+        if item is StopAsyncIteration:
+            raise StopAsyncIteration
+        return str(item)
+
+    async def close_stream(self) -> None:
+        """结束这条假连接的消息流."""
+
+        await self._queue.put(StopAsyncIteration)
 
 
 class TestNapCatTranslation:
@@ -434,3 +465,35 @@ class TestNapCatTranslation:
         payload = gw.build_send_payload(action)
         assert payload["action"] == "set_group_kick"
         assert payload["params"]["user_id"] == "999"
+
+
+@pytest.mark.asyncio
+async def test_handle_connection_old_ws_exit_does_not_clear_new_ws() -> None:
+    """旧连接退出时, 不应把已经接管的新连接清空."""
+
+    gateway = NapCatGateway(host="127.0.0.1", port=8080)
+    ws1 = ControlledServerConnection(self_id="111")
+    ws2 = ControlledServerConnection(self_id="111")
+
+    task1 = asyncio.create_task(gateway._handle_connection(ws1))
+    for _ in range(20):
+        if gateway._ws is ws1:
+            break
+        await asyncio.sleep(0)
+    assert gateway._ws is ws1
+
+    task2 = asyncio.create_task(gateway._handle_connection(ws2))
+    for _ in range(20):
+        if gateway._ws is ws2:
+            break
+        await asyncio.sleep(0)
+    assert gateway._ws is ws2
+
+    await ws1.close_stream()
+    await task1
+
+    assert gateway._ws is ws2
+
+    await ws2.close_stream()
+    await task2
+    assert gateway._ws is None

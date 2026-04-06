@@ -120,7 +120,8 @@ class NapCatGateway(BaseGateway):
                 await ws.close(code=4401, reason="unauthorized")
                 return
         self._ws = ws
-        self._self_id = ws.request.headers.get("X-Self-ID")
+        connection_self_id = ws.request.headers.get("X-Self-ID")
+        self._self_id = connection_self_id
         logger.info(f"NapCat connected, self_id={self._self_id}")
         try:
             async for raw_msg in ws:
@@ -144,7 +145,10 @@ class NapCatGateway(BaseGateway):
         except websockets.ConnectionClosed:
             logger.warning("NapCat disconnected")
         finally:
-            self._ws = None
+            if self._ws is ws:
+                self._ws = None
+                if self._self_id == connection_self_id:
+                    self._self_id = None
 
     # endregion
 
