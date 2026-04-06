@@ -13,3 +13,8 @@ webui/node_modules/
 webui/.vite/
 src/acabot/webui/index.html
 src/acabot/webui/assets/
+.worktrees/
+ref/
+backup/
+.playwright-cli/
+.bg-shell/
