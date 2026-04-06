@@ -1,342 +1,387 @@
-# Admin Host Runs, Skill Refresh, and Group Session Computer Cases Design
+# Bot Admin Host Runs and Skill Refresh Design
 
 **Date:** 2026-04-06
-**Status:** Approved for implementation
+**Status:** Draft for re-review
 
 ## Goal
 
-Make group frontstage runs split cleanly by sender role:
+Make QQ group frontstage runs split by **bot-config admin identity**, not by QQ group role:
 
-- normal members run in sandbox (`docker` backend)
-- group admins / owners run in host mode
+- bot actual admins (from WebUI / config `admin_actor_ids`) run in `host`
+- everyone else runs in sandbox / `docker`
 
-On top of that, let an admin-triggered host frontstage run install skills by itself using `bash` (download + unpack into the skill catalog directory), then explicitly refresh the extension catalog so the new skills become available to later runs.
-
-This round does **not** try to make a newly installed skill available inside the same run. Later runs being able to see it is sufficient.
+On top of that, let an admin-triggered host frontstage run install skills by itself using `bash` into the real skill catalog root, then explicitly refresh extensions so the new skills become available to **later runs**.
 
 ## Non-Goals
 
 - No dedicated `install_skill` builtin tool
-- No attempt to make `/skills` become the writable skill source of truth
+- No attempt to make `/skills` become writable source of truth
 - No requirement that the current run immediately gains the newly installed skill
-- No foreground-worker-specific handling in this round
-- No broad `reload-config` tool exposure to the model
+- No dynamic tool visibility gating for `refresh_extensions`
+- No QQ owner/admin/member based host routing in this round
+- No extra host-lock design in this round
 
-## Decisions
+## Key Decisions
 
-### 1. Skill installation stays as host-side file operations
+### 1. Admin identity comes from bot config, not QQ group role
 
-Admin frontstage runs in host mode already have the right execution shape for installation:
+This change must follow the same product meaning as AstrBot:
 
-- the model uses `bash`
-- downloads archives from the network
-- unpacks them into the configured skill catalog directory
-- ensures the package has a valid `SKILL.md`
+- admin means the bot operator configured in WebUI / config
+- admin does **not** mean QQ 群主 / 群管理员
+- a normal group member may still be bot admin
+- a QQ group owner/admin may still be non-admin for AcaBot
 
-There is no separate install surface. Installation is just file placement into the real catalog root.
+The existing shared admin source of truth is `admin_actor_ids`.
 
-Important boundary: the writable install target is **not** `/skills`. `/skills` remains the per-run mirrored skill view. The install target is the real catalog root on disk (normally project `extensions/skills`).
+This round should reuse that same source for:
 
-Because the current frontstage workspace reminder says work should stay in `/workspace`, this round must also add an explicit admin-host carve-out in prompt/tool guidance: when an admin host run is performing extension maintenance, it may operate on the real extension catalog root and session config files outside `/workspace`. That guidance must name the project skill source of truth clearly enough that the model does not confuse it with `/skills`.
+- frontstage host/sandbox session decisions
+- builtin tool authorization
+- control-plane refresh authorization
 
-This carve-out must be **run-scoped**, not a global weakening of the normal `/workspace` reminder. In practice that means adding an extra reminder/tool-guidance contribution only for `owner|admin + host` runs.
+There must not be a second, unrelated “session admin” list.
 
-That run-scoped guidance must surface, in model-readable form:
+### 2. Add explicit `is_bot_admin` facts instead of overloading `sender_roles`
 
-- the resolved writable project skill root for the current installation attempt
-- the target session-owned agent config path that will be rewritten on refresh
+Current session matching only knows about:
 
-Without that, the model still cannot reliably distinguish the real host paths from `/skills` and `/workspace`.
+- `actor_id`
+- `sender_roles`
 
-The model must not blindly assume `extensions/skills`. Before installation it should resolve the effective skill catalog roots from runtime configuration (`runtime.filesystem.skill_catalog_dirs`).
+`sender_roles` currently means platform/group role and is the wrong axis for this feature.
 
-Resolver rule for this round: install-target selection, model-visible resolved paths, and live catalog reload must all use the **same shared resolver/source of truth** as the runtime skill catalog itself. Do not invent a separate control-plane-only path interpretation for installation. In implementation terms, this should reuse the runtime catalog directory resolver (`resolve_skill_catalog_dirs()` or an extracted shared helper with identical semantics), not a separately interpreted control-plane path view.
+For this round, add a dedicated admin fact to the session matcher layer:
 
-Install-target selection rule for this round:
+- `EventFacts.is_bot_admin: bool`
+- `MatchSpec.is_bot_admin: bool | None`
 
-- collect the resolved catalog roots whose scope is `project`
-- if there is exactly one project-scope root, use it as the writable install target
-- if there are zero project-scope roots, fail clearly instead of installing into a user-scope root
-- if there are multiple project-scope roots, fail clearly; multi-project-root install precedence is out of scope for this round
+`SessionRuntime.build_facts()` should set `is_bot_admin=True` when the current `actor_id` is in the configured shared admin set.
 
-`extensions/skills` is only the default fallback when no explicit override is configured.
+This is preferred over:
 
-### 2. Add a narrow extension refresh surface
+- pretending bot admin is a sender role
+- generating explicit `actor_id` cases into every group session
+- baking admin logic into ad-hoc computer runtime branches
 
-Introduce a narrow refresh contract instead of exposing full runtime reload.
+Reason: the policy stays declarative in `session.yaml`, while still following the global admin config.
 
-Model-facing builtin tool:
+### 3. `/skills` stays a read-only run-time view for everyone
 
-```text
-refresh_extensions(kind="skills")
-```
+`/skills` keeps one stable meaning:
 
-Control-plane-facing operation:
+- the current run's mirrored skill view
+- readable/usable by the run
+- not the writable installation target
 
-- refresh only extension catalogs relevant to the requested `kind`
-- initial supported kind: `skills`
-- design the API so more kinds can be added later (`subagents`, `all`, etc.)
+This must stay true for both:
 
-This keeps the model-facing action aligned with the real use case: “I just changed extensions on disk; refresh what the bot can see.”
+- ordinary sandbox runs
+- admin host runs
 
-### 3. Avoid adding extra dynamic tool gating
+Do **not** make `/skills` switch semantics based on who is speaking.
 
-Do **not** add special run-time visibility gating for `refresh_extensions` based on host/admin state.
+Admin host runs differ only in that they additionally gain maintenance access to:
 
-Reason:
+- the real resolved skill catalog root on host
+- the target session `agent.yaml` rewritten on refresh
+- the builtin refresh action
 
-- the runtime already has some dynamic tool metadata churn (`Skill`, subagents, etc.)
-- this round should not introduce one more run-specific gate for the new refresh tool
-- that keeps the new tool aligned with the normal agent tool allowlist and avoids extra prompt-caching instability beyond what already exists
+### 4. Skill installation remains host-side file operations
 
-So the tool surface stays statically controlled by the normal agent tool allowlist. Whether a specific call succeeds is enforced by the tool implementation and runtime context, not by dynamically hiding the tool.
+Admin host runs install skills by:
 
-Authorization rule for this round:
+- using `bash`
+- downloading/unpacking into the real catalog root
+- ensuring a valid `SKILL.md`
+- calling `refresh_extensions(kind="skills")`
 
-- `refresh_extensions` must reject unless the caller is the session-owned frontstage agent
-- the current run must be an `owner` or `admin` run
-- the effective computer backend for the run must be `host`
+The writable install target is the real catalog root on disk, not `/skills`.
 
-This keeps the tool statically present while still enforcing the admin-host maintenance boundary at execution time.
+Resolver rule:
 
-### 4. Refresh must solve both catalog discovery and frontstage allowlists
+- reuse the same catalog dir resolver as runtime skill discovery
+- collect resolved roots with `scope == "project"`
+- require exactly one project-scope root
+- fail clearly if zero or multiple project roots exist
 
-Refreshing only `SkillCatalog.reload()` is not enough.
+`extensions/skills` is only the default when config does not override it.
 
-Current skill usage is gated by:
+### 5. Restriction model: environment boundary + execution-time auth
 
-1. skill catalog discovery
-2. session-owned agent `visible_skills`
-3. run-time world visibility
+Do **not** restrict this by dynamically hiding `/skills` or dynamically hiding the tool.
 
-Therefore `refresh_extensions(kind="skills")` must do two things:
+Instead:
 
-1. reload the skill catalog from disk
-2. realign the current session-owned frontstage agent's `visible_skills` with the refreshed skill catalog
+- non-admin messages resolve to sandbox / docker
+- sandbox runs do not get direct access to the real host skill source of truth
+- admin messages resolve to host
+- only admin host runs can touch the real catalog root
+- `refresh_extensions` stays statically visible through normal `visible_tools`, but execution validates permissions
 
-For this round, “realign” means **rewrite `visible_skills` to the exact currently discovered skill name set for the target session-owned frontstage agent**, not append-only mutation. That keeps disk state consistent in both directions:
+Tool auth rule for this round:
 
-- newly installed skills are added
-- removed skills are dropped
-- later session bundle validation does not fail on stale references
+- caller must be the session-owned frontstage agent
+- current facts must say `is_bot_admin=True`
+- effective computer backend must be `host`
 
-This is an intentional **session capability change** for the target frontstage agent, not a neutral cache refresh. In practical terms, after a successful refresh, that session's frontstage agent adopts the full currently discovered skill set from the configured skill catalog roots.
+### 6. Group session computer policy becomes bot-admin-aware by default
 
-The rewritten list must be persisted as a stable, deduplicated, name-only list derived from the catalog's **effective winner set by skill name**, not from raw manifest rows. Existing catalog precedence rules decide the winner for each skill name before `visible_skills` is rewritten.
+For QQ group responding surfaces, default policy becomes:
 
-Target behavior:
+- default: `docker`
+- case when `is_bot_admin: true`: `host`
 
-- admin host run installs a skill under the configured catalog root
-- admin calls `refresh_extensions(kind="skills")`
-- runtime reloads the catalog
-- runtime updates the current session's `agent.yaml.visible_skills`
-- later runs in that same session can see and use the new skill
-
-### 5. Group session computer policy becomes sender-role-aware by default
-
-For QQ group sessions, the default execution policy must become:
-
-- `owner` → host backend
-- `admin` → host backend
-- `member` → docker backend
-
-`sender_roles` matching here relies on the existing event model, where a run carries **one canonical sender role** (`owner` / `admin` / `member`) and `EventFacts.sender_roles` is a one-item list used only for matcher compatibility. The matcher implementation uses set intersection, but under the current event model that still means one effective role per run. If upstream facts ever become multi-role in the future, this design must be revisited with an explicit composite/preferred-role rule instead of assuming the separate `owner` and `admin` cases remain safe.
-
-This belongs in session `computer.cases`, not in ad-hoc code branches.
-
-The split must be applied in two places:
-
-1. existing checked-in group session configs
-2. the default session payload produced for new `qq_group` sessions
-
-## Architecture
-
-## A. Session config layer
-
-Use surface-level `computer` domain cases keyed by `sender_roles`.
-
-For responding group surfaces, define explicit computer cases on the concrete keys already used by QQ group sessions:
+This applies to:
 
 - `message.mention`
 - `message.reply_to_bot`
 - `message.plain`
 
-Initial implementation should cover the responding message surfaces above. Non-responding notice surfaces remain unchanged.
+Notice surfaces remain unchanged.
 
-This round intentionally does **not** introduce a new `message.command` surface into existing group sessions. Today slash-command-like traffic can continue to fall through the existing surface chain and land on `message.plain` unless a future change explicitly adds `message.command` together with mirrored admission/routing/computer semantics.
+This must be applied in two places:
 
-For each of those responding surfaces:
+- existing checked-in QQ group sessions
+- newly created `qq_group` session bundles
 
-- default case for ordinary members: sandbox / docker
-- explicit case for `sender_roles: [owner]`: host
-- explicit case for `sender_roles: [admin]`: host
+### 7. Refresh rewrites session skill allowlist for later runs
 
-The computer payload must control:
+`refresh_extensions(kind="skills")` must:
 
-- `backend`
-- `allow_exec`
-- `allow_sessions`
-- roots visibility
+1. reload the skill catalog
+2. compute the effective winner set by skill name
+3. rewrite the current session-owned frontstage agent `visible_skills`
+4. refresh/invalidate bundle-loader state so later runs load the new list
 
-This root policy is part of the sandbox boundary, not an optional detail. In particular:
+For this round, refresh is intentionally a **session capability mutation**, not just cache refresh.
 
-- member / docker runs must keep the normal frontstage world roots only (`/workspace`, `/skills`, `/self`) and must **not** gain direct world-path access to the real catalog root or session config source of truth
-- admin / host runs may keep the normal frontstage roots and also rely on the admin-host maintenance carve-out for host-path operations against the real extension catalog root and session config files
+## Architecture
 
-The design keeps the distinction declarative and inspectable through session config.
+## A. Shared admin source of truth
 
-## B. Extension refresh service layer
+Reuse the existing shared admin configuration path already exposed in system settings:
 
-Add a dedicated runtime/control-plane service path for extension refresh.
+- config / WebUI: `admin_actor_ids`
+- bootstrap/runtime app backend entry already consumes it
 
-Responsibilities for `kind="skills"`:
+This round extends that same config to the session decision path.
 
-1. reload the skill catalog loader
-2. rebuild the catalog contents
-3. resolve the current session-owned frontstage agent
-4. overwrite that session agent's `visible_skills` with the refreshed skill names
-5. refresh dependent session bundle / agent loader state so later runs use the new allowlist
+Implementation shape:
 
-Step 5 must explicitly cover both pieces of loader state:
+- `SessionRuntime` must know the current shared admin actor set
+- config reload / admin update must refresh that set for later runs
 
-- refresh the session bundle loader's catalog-name snapshot used for `visible_skills` validation
-- invalidate any cached session bundles so the rewritten `agent.yaml` is re-read immediately instead of waiting for cache expiry
+## B. Session facts and matcher contract
 
-The operation returns a structured summary, for example:
+Extend session-config contracts:
 
-- refreshed kind
-- resolved project install target (when uniquely determined)
-- resolved catalog roots reloaded
-- discovered skill names
-- updated session id / agent id
-- whether files were changed
-- note that later runs will see the result
+- `EventFacts.is_bot_admin: bool = False`
+- `MatchSpec.is_bot_admin: bool | None = None`
 
-## C. Builtin tool layer
+Matcher semantics:
 
-Add a new builtin tool:
+- if `MatchSpec.is_bot_admin is not None`, require exact equality with facts
+
+`SessionRuntime.build_facts()` computes:
+
+- `actor_id = "{platform}:user:{user_id}"`
+- `is_bot_admin = actor_id in shared_admin_actor_ids`
+
+This keeps session rules declarative and inspectable.
+
+## C. Session config layer
+
+For QQ group responding surfaces, use `computer.default + cases` keyed by `is_bot_admin`.
+
+Target shape:
+
+```yaml
+surfaces:
+  message.mention:
+    computer:
+      default:
+        backend: docker
+        allow_exec: true
+        allow_sessions: true
+      cases:
+        - case_id: bot_admin_host
+          when:
+            is_bot_admin: true
+          use:
+            backend: host
+            allow_exec: true
+            allow_sessions: true
+```
+
+Same shape applies to:
+
+- `message.reply_to_bot`
+- `message.plain`
+
+World/root policy:
+
+- all normal frontstage runs keep `/workspace`, `/skills`, `/self`
+- non-admin sandbox runs still only reach sandboxed world roots
+- admin host runs may also perform explicit host maintenance against the resolved real skill root and target session config path
+
+That maintenance access should be described via run-scoped guidance / reminders, not by changing `/skills` semantics.
+
+## D. Admin-host maintenance guidance
+
+When the current run is:
+
+- frontstage
+- `is_bot_admin=True`
+- `backend=host`
+
+inject extra model-readable maintenance guidance that surfaces:
+
+- the resolved writable project skill root
+- the target session-owned `agent.yaml` path that refresh will rewrite
+- the reminder that `/skills` is only a mirrored view, not the install target
+
+This carve-out is run-scoped and should not weaken the default `/workspace` guidance for ordinary runs.
+
+## E. Builtin tool layer
+
+Add:
 
 ```text
 refresh_extensions(kind: string)
 ```
 
-Initial contract:
+Initial supported kind:
 
-- accepted values: `skills`
-- execution delegates to the new extension refresh service
-- failure is explicit if runtime context is insufficient (for example no active session-owned frontstage agent)
+- `skills`
 
-This tool is intentionally narrow:
+Rules:
 
-- no generic config reload semantics
-- no plugin reload semantics in the first round
-- no hidden side path to unrelated runtime state changes
+- tool remains controlled by ordinary `visible_tools`
+- no dynamic visibility gating based on admin/host state
+- execution-time auth enforces `frontstage agent + is_bot_admin + host`
 
-The tool remains statically controlled by the agent tool allowlist. For this round, checked-in QQ group session-owned agents and new `qq_group` session defaults must include `refresh_extensions` in `visible_tools` so the builtin tool can actually appear without introducing extra dynamic gating logic.
+Checked-in QQ group frontstage agents and new `qq_group` defaults must include `refresh_extensions` in `visible_tools`.
 
-That requirement applies to the agent creation path as well: when a new `qq_group` session bundle is created, the generated `agent.yaml` default must seed the normal qq_group frontstage tool baseline and then append `refresh_extensions`, rather than starting from an otherwise empty tool list.
+## F. Refresh service layer
 
-Because session bundle validation rejects unknown tool names, builtin registration for `refresh_extensions` must happen before session bundle validation snapshots are built or refreshed.
+For `kind="skills"`, the shared refresh implementation must:
 
-## D. HTTP / control plane layer
+1. resolve/reload skill catalog roots using the same runtime resolver semantics
+2. reload catalog contents
+3. resolve the target session-owned frontstage agent
+4. rewrite `agent.yaml.visible_skills` to the full discovered winner set
+5. refresh session bundle loader catalog snapshots
+6. invalidate cached bundles so later runs re-read the rewritten file
 
-Add a matching narrow control-plane operation and HTTP endpoint, e.g.:
+The operation returns a structured summary including:
+
+- refreshed kind
+- resolved project install target, when unique
+- resolved roots reloaded
+- discovered skill names
+- target session id / agent id
+- whether `agent.yaml` changed
+- note that later runs will see the result
+
+## G. HTTP / control plane layer
+
+Add a narrow control-plane operation and endpoint, e.g.:
 
 - control plane: `refresh_extensions(payload)`
 - HTTP: `POST /api/runtime/refresh-extensions`
 
-Builtin tool and HTTP endpoint must share the same underlying refresh implementation so there is only one behavior definition.
+Wrapper auth:
 
-Target selection rules:
+- builtin tool wrapper: `frontstage agent + is_bot_admin + host`
+- HTTP wrapper: loopback-only, explicit `session_id`
 
-- builtin tool path may derive the target session-owned frontstage agent from the current run context
-- HTTP / control-plane path must accept an explicit target identifier, at minimum `session_id`, so the service knows which `agent.yaml` to rewrite
-
-The shared implementation must refresh not only the catalog but also the session bundle loader's catalog snapshot before reloading the rewritten session bundle, so `visible_skills` validation uses the refreshed skill-name set.
-
-HTTP auth rule for this round:
-
-- the endpoint is privileged local-admin control-plane functionality, not a public conversation tool surface
-- `POST /api/runtime/refresh-extensions` must be loopback-only in this round
-- the HTTP wrapper authorizes loopback access and requires explicit `session_id`
-- the builtin-tool wrapper authorizes `owner|admin + host + session-owned frontstage agent`
-- after wrapper-level auth succeeds, both entrypoints call the same refresh core for the actual catalog reload + `visible_skills` rewrite
-- this feature does not rely on broad `/api/runtime/reload-config`; any existing broader reload endpoint behavior is out of scope and must not be treated as the security model for extension refresh
-
-## Data Flow
-
-### Admin installs a skill
-
-1. admin message hits a group frontstage surface
-2. session `computer.cases` resolves this run to host backend
-3. model uses `bash` to download and unpack a skill into the configured skill catalog root
-4. model calls `refresh_extensions(kind="skills")`
-5. refresh service reloads catalog and rewrites current session agent `visible_skills`
-6. current run completes
-7. next run in the same session sees the new skill in normal skill discovery and prompt summaries
-
-### Ordinary member message
-
-1. member message hits the same group surface
-2. session `computer.cases` resolves to docker backend
-3. run stays sandboxed
-4. no host-side installation path is available
+Both wrappers call the same refresh core.
 
 ## Configuration Strategy
 
-### Existing group sessions
+### Existing checked-in QQ group sessions
 
-Update checked-in `runtime_config/sessions/qq/group/*/session.yaml` files so they stop relying purely on static agent computer policy.
+Update `runtime_config/sessions/qq/group/*/session.yaml` so responding surfaces stop relying on platform sender roles for host routing.
 
-The intent is that role-based execution policy is visible directly in `session.yaml`.
+They should use:
+
+- default docker
+- `is_bot_admin: true` case -> host
 
 ### New `qq_group` sessions
 
-When control plane creates a new `qq_group` session bundle, the generated `session.yaml` must include the same role-based `computer` defaults.
+When `create_session()` generates a new `qq_group` bundle and caller did not supply explicit surfaces:
 
-Concretely, the session creation path must seed those `computer` blocks when:
+- seed the same default responding surfaces
+- seed the same `computer` cases with `is_bot_admin: true`
+- seed the normal frontstage tool baseline plus `refresh_extensions`
 
-- `template_id == "qq_group"`
-- the caller did not already provide explicit `surfaces`
+Do not leave newly created group sessions on static host default.
 
-This prevents newly created group sessions from silently missing the admin/member split while still letting explicit caller-provided surfaces override the defaults.
+## Data Flow
+
+### Bot admin installs a skill
+
+1. admin speaks in QQ group
+2. session facts mark `is_bot_admin=True`
+3. responding surface computer case resolves to `host`
+4. model uses `bash` against the resolved real skill root
+5. model calls `refresh_extensions(kind="skills")`
+6. refresh rewrites current session `agent.yaml.visible_skills`
+7. later runs in that session can use the new skill through normal `/skills` visibility
+
+### Ordinary group member
+
+1. member speaks in same QQ group
+2. session facts mark `is_bot_admin=False`
+3. responding surface falls through to default `docker`
+4. run stays sandboxed
+5. run may read `/skills`, but cannot modify real host skill roots or successfully call refresh
 
 ## Testing Strategy
 
-### Config and session-runtime tests
+### Facts / matcher tests
 
-- session loader / runtime tests proving `sender_roles=[owner]` and `sender_roles=[admin]` resolve to host backend
-- tests proving ordinary members resolve to docker backend
-- tests for default group session payload creation including the new `computer.cases`
+- `SessionRuntime.build_facts()` marks configured admin actor as `is_bot_admin=True`
+- non-admin actor gets `False`
+- `MatchSpec(is_bot_admin=True)` matches only admin facts
+
+### Session-runtime tests
+
+- QQ group responding surfaces resolve to `host` when `is_bot_admin=True`
+- same surfaces resolve to `docker` when `is_bot_admin=False`
+- no dependence on QQ `sender_role`
+
+### Session creation tests
+
+- new `qq_group` session defaults include the bot-admin-aware `computer` cases
+- new `qq_group` frontstage tool list includes `refresh_extensions`
 
 ### Refresh service tests
 
-- create a temporary skill under the configured skill root
-- run `refresh_extensions(kind="skills")`
-- assert catalog reload sees the new skill
-- assert current session agent `visible_skills` is rewritten to include it
-- assert later session bundle loads validate successfully against the refreshed catalog
+- temp skill added under resolved project skill root
+- refresh reloads catalog
+- target session `visible_skills` rewritten to include new winner set
+- stale removed skills are dropped
+- later bundle loads validate successfully
 
-### Builtin tool tests
+### Builtin tool auth tests
 
-- tool delegates to refresh service
-- `kind="skills"` returns a stable success payload
-- unsupported kinds fail clearly
-
-### Integration shape tests
-
-- simulate an admin host run that installs a skill on disk, refreshes extensions, then verify a later run exposes that skill through normal skill visibility
+- non-admin run calling refresh is rejected
+- admin sandbox run calling refresh is rejected
+- admin host run calling refresh succeeds
 
 ## Risks and Constraints
 
-- Rewriting `visible_skills` means refresh is session-scoped behavior, not purely global catalog behavior. This is intentional because the current product model uses session-owned agents as the frontstage allowlist boundary.
-- Because the tool inventory should stay stable for prompt caching, authorization should not rely on dynamically hiding `refresh_extensions` per run.
-- Same-run availability is explicitly deferred. If foreground-worker semantics later require in-run extension visibility updates, that should be handled as a separate design.
+- This design assumes host maintenance is effectively a single-operator path for now. If multi-admin or concurrent host maintenance becomes real later, add explicit host serialization/locking.
+- Refresh is intentionally session-scoped because current product capability boundaries live on session-owned agents.
+- Same-run immediate skill visibility is still deferred.
 
 ## Deferred
 
 - `refresh_extensions(kind="subagents")`
 - `refresh_extensions(kind="all")`
-- plugin extension refresh
-- current-run immediate skill visibility after refresh
-- foreground worker special handling
+- same-run skill visibility after refresh
+- explicit host locking / queueing
+- broader admin-maintenance UX improvements

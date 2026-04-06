@@ -25,6 +25,7 @@ from acabot.runtime.builtin_tools.web import (
     BuiltinWebToolSurface,
     FetchedWebDocument,
     WebSearchHit,
+    _DuckDuckGoHtmlParser,
 )
 from acabot.types import EventSource
 
@@ -744,6 +745,29 @@ async def test_builtin_web_search_surface_returns_ranked_hits() -> None:
     assert "1. OpenClaw 技能系统" in result.llm_content
     assert result.raw["query"] == "acabot web search"
     assert len(result.raw["results"]) == 2
+
+
+def test_duckduckgo_html_parser_extracts_real_result_cards() -> None:
+    """DuckDuckGo HTML 结果页应能解析出标题、链接和摘要。"""
+
+    html = """
+    <h2 class="result__title">
+      <a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fmd2card.com%2Fen%2Feditor">MD2Card - Convert Markdown to Knowledge Cards</a>
+    </h2>
+    <a class="result__snippet" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fmd2card.com%2Fen%2Feditor">MD2Card is a free tool that converts Markdown to beautiful knowledge cards.</a>
+    <h2 class="result__title">
+      <a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fmarkdown2image.com%2F">Markdown2Image - Convert Markdown to Beautiful Image Cards</a>
+    </h2>
+    <a class="result__snippet" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fmarkdown2image.com%2F">Convert Markdown text into beautiful card images.</a>
+    """
+
+    parser = _DuckDuckGoHtmlParser()
+    hits = parser.results(html=html, limit=5)
+
+    assert len(hits) == 2
+    assert hits[0].url == "https://md2card.com/en/editor"
+    assert "Knowledge Cards" in hits[0].title
+    assert "free tool" in hits[0].snippet
 
 
 async def test_builtin_web_tools_require_enabled_network() -> None:

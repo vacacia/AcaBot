@@ -8,7 +8,8 @@ AcaBot 是一个 Python 3.11 的 agent runtime,负责把网关事件收进运行
 ## 目录指引
 - 看`/home/acacia/AcaBot/.harness/progress.md`了解进度
 - `.harness/use-claude-code.md`: 使用 claude code 来 review/explore, 可以减少上下文污染, 或提供不同的观点
-  - claude: 提供不同观点; 干脏活; 便宜多用
+  - claude: 提供不同观点; 干脏活; 速度极快, explore一定要使用
+  - **当用户明确要求“让 Claude Code 去看/调研/对比”时，直接委托 Claude Code，不要先在本地铺垫一堆前置信息污染自己的上下文；只保留最小必要提示。**
   - subagent: 更聪明, 更贵, 但和你的思维方式一样(可能都忽视一些问题)
 - `docs/00-ai-entry.md`: 包含项目的组件理解(如plugin, skill...是什么)
 - 源码在 `src/acabot/`
@@ -22,16 +23,30 @@ AcaBot 是一个 Python 3.11 的 agent runtime,负责把网关事件收进运行
   - FP-002: 异步E2E不能只等待消息数量
   - FP-003: 复用helper前先验证它的实际输出
   - FP-004: 给LLM的工具协议不能写成黑盒
+  - FP-005: SQLite失败写入会毒死后续调度
+  - FP-007: 用户明确要Claude调研时, 先委托再说
 - 可以参考的项目在`/home/acacia/AcaBot/ref`下,主要是`ref/claude-code-sourcemap-main` 和 `ref/openclaw`
 
 
 ## 关键契约
+- git
+  - 有多个partner在修改代码, 所以:
+  - **只允许提交自己修改的内容**
+    - 禁止 `git add <目录>` 或 `git add .`
+    - 只准 `git add <具体文件>`，一个一个文件确认
+    - commit 前必须 `git status` 确认只有自己改的文件
+  - **commit 信息不写 coauthor**
+  - **绝对不要 `git reset --hard`**
+  - **绝对不要在没确认的情况下执行 revert**
+  - 如果不确定用户要commit哪些文件，先问清楚
 - 项目未正式使用, 不需要考虑任何兼容设计(兼容旧的数据/配置), 那都是之前的错误, 留下来只会误导自己.只要能变得更好, 一起都是可以舍弃, 可以重构的.
     - 如果你重构了, 不要体现出"原来是怎么样的", 比如测试里用黑名单/白名单, 注释里写"不要xxx", 除非是避坑式注释
 - 不要陷入打补丁的困境, 如果出现了问题, 先想为什么有这个问题?问题暴露出的是什么问题?架构不合理?需求没问清?
+- 共享 SQLite 持久化一旦出现写失败, 先怀疑事务/锁是否已被污染; 先修锁污染和 schema 漂移, 再看上层 scheduler / runtime 表象
 - **优雅**的解决问题, 设计令人惊叹的架构
 - 工具的desc表示如何使用工具; system prompt里声明什么时候使用工具(`src/acabot/runtime/context_assembly`)
 - 写文档, 记录错误, 甚至给工具写desc: 不要写"你会的", 你的知识永远都在, 只简洁的记录你不知道的
+- 看见`source /home/acacia/AcaBot/.venv/bin/activate`什么都不用管, 继续你的任务, 那是系统自己发送的
 
 
 ## 编码与文档
@@ -40,11 +55,20 @@ AcaBot 是一个 Python 3.11 的 agent runtime,负责把网关事件收进运行
 - 目录名、文件名、方法名要直接表达语义,不要抽象缩写
 - 做结构性改动时,同时更新相关文档
 
+## webui
+- `webui/` 是前端源码目录，只改这里的源码，不要手改 `src/acabot/webui/` 下的构建产物
+- `src/acabot/webui/index.html` 和 `src/acabot/webui/assets/` 是 build 产物，不再提交进 git
+- 前端改动后，本地验证用：`npm --prefix webui run build`
+- 运行中的 8765 页面读取的是构建产物；开发环境下重载后优先用：`docker restart acabot`
+- Docker 已负责在镜像构建时自动执行前端 build；不要把“手工提交 assets”当成流程的一部分
 
-## 验证
+## 验证是否正确
+### review
 - claude code review 之后, 推荐启动子代理(搭配review的skill)去 review 你这次的代码 和 测试文件.
     - 不要使用 gpt-5.1 ~ gpt-5.3的模型, 使用 gpt5.4 mini 和 gpt5.4
     - review 的粒度是一个完整的 任务/功能/需求, 不要写一点就 review 一次
+
+### 测试
 - 简陋的测试文件什么都不能说明
 - 任务/功能/需求的验收:
   - 完整的 E2E 测试
@@ -52,20 +76,33 @@ AcaBot 是一个 Python 3.11 的 agent runtime,负责把网关事件收进运行
       - 必须要真实的LLM响应, 工具的desc, system prompt也是设计的一环, fake agent/stub LLM说明不了问题; 
       - 如果LLM响应出现问题, 找用户换API; 
       - 如果LLM响应总是不符合预期, 可以让claude去检查payload(位于`runtime_data/debug/model_payloads`)
-      - 给LLM的消息不允许出现具体的工具/参数名(因为没人聊天的时候会像写代码一样说出name和desc);LLM没按预期做? -- 是你的desc和prompt引导有问题
+      - 给LLM的消息不允许出现具体的工具/参数名(因为没人聊天的时候会像写代码一样说出name和desc);
+      - 禁止引导LLM, 例如定时任务要设置随机数检查LLM是否能看见定时任务的内容;例如文件可见性要设置一个随机数让LLM自己看见, 当作CTF测试
+      - LLM没按预期做? -- 是你的desc和prompt引导有问题
     - 例如从伪造 event, 到 LLM 响应回复, 全部链路都要符合预期
     - 例如消息响应策略, 全部的消息类型, 每个消息类型的响应策略, 都要经过验证
     - 例如调度功能, 要模拟event让llm创建定时任务(每种类型都要有), 并观察是否成功执行
   - 覆盖 任务/功能/需求 方方面面
   - 查看日志来评估自己的任务是否符合预期的执行了(日志内容不全?代码就在这,去补充日志信息)
   - 没有完整日志作为证据, 不允许结束, 不允许找用户汇报结果, 继续测试
+
+### webui
 - WebUI 的验收标准:
-  - 最低标准是截图验收(1080p), 确保布局合理
-  - 如果有 MCP/playwright(当前有), 必须完整的操作页面的全部流程(推荐使用claude/subagent代为测试)
-- 部署改动后运行：`cd deploy && docker compose config`
+  - 用 playwright 截图验证, 确保布局合理;每次结束汇报都带着截图路径来(并且确认自己看过截图)
+  - 用 playwright 完整的操作页面的全部流程
+  - 在真实运行环境做验证, 禁止使用虚假的临时的测试环境
+
+### 部署/容器
+- 部署改动后运行：`cd deploy && docker compose -f compose.yaml -f compose.dev.yaml config`
+- **绝对不要重启 / recreate / stop `acabot-napcat`**
+  - 禁止使用会把整个 compose 项目一起处理的命令，例如：
+    - `docker compose -f compose.yaml -f compose.dev.yaml up -d --build`, `docker compose restart`, `docker compose down`
+  - 只允许针对 `acabot` 单独操作：
+    - 开发环境热更新后优先用：`docker restart acabot`
+    - 需要 compose 命令时只准：`docker compose -f compose.yaml -f compose.dev.yaml up -d --no-deps acabot`
+    - 需要重建镜像时只准：`docker compose -f compose.yaml -f compose.dev.yaml up -d --build --no-deps acabot`
 - 查看容器 acabot 和 acabot-napcat 的日志
 - 因为容器挂载的文件权限问题可以`sudo chown`
-- 如果这里的命令在当前仓库跑不通,先修正 AGENTS.md,不要留下失效命令。
 
 
 ## harness
@@ -79,7 +116,8 @@ AcaBot 是一个 Python 3.11 的 agent runtime,负责把网关事件收进运行
 │   ├── FP-001.md
 │   ├── FP-002.md
 │   ├── FP-003.md
-│   └── FP-004.md
+│   ├── FP-004.md
+│   └── FP-005.md
 ├── skills/                       ← 自定义 Skills
 ├── scripts/                      ← 确定性工具
 │   ├── check-architecture.js

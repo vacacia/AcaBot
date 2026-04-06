@@ -1,10 +1,9 @@
 """runtime.builtin_tools.web 提供受限的网页抓取与搜索工具。
 
-这个模块把对外网络访问压成两个稳定的 builtin tool:
+
 - `web_fetch`: 读取单个网页正文, 返回模型可消费的纯文本摘要
 - `web_search`: 通过受控 provider 搜索网页, 返回结构化候选结果
 
-实现目标参考了 Claude Code / OpenClaw 的共同思路:
 - 对模型暴露简单稳定的工具名
 - 真实实现留在 runtime 内部, 后续可以替换 provider
 - 默认限制只读、只支持 http/https、限制体积与超时
@@ -18,6 +17,7 @@ from html.parser import HTMLParser
 from inspect import isawaitable
 import re
 from typing import Any, Callable
+from urllib.error import HTTPError
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 from urllib.request import Request, urlopen
 
@@ -124,71 +124,43 @@ class _VisibleHtmlTextExtractor(HTMLParser):
 
 
 class _DuckDuckGoHtmlParser(HTMLParser):
-    """从 DuckDuckGo HTML 结果页里抽取标题、链接和摘要。"""
+    """从 DuckDuckGo HTML 结果页里抽取标题、链接和摘要。
+
+    早期版本用状态机增量解析, 但 DuckDuckGo 的 HTML 结果层级较深,
+    snippet 与 title 经常被拆进不同标签层里, 很容易出现全空结果。
+    这里改成“先用 HTMLParser 拿到纯净文本, 再按 result block 做正则提取”
+    的混合策略, 稳定性更高。
+    """
+
+    _RESULT_BLOCK_RE = re.compile(
+        r'<a[^>]*class="result__a"[^>]*href="(?P<href>[^"]+)"[^>]*>(?P<title>.*?)</a>(?P<tail>.*?)(?=(?:<h2 class="result__title">)|(?:<div class="nav-link">)|\Z)',
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    _SNIPPET_RE = re.compile(
+        r'class="result__snippet"[^>]*>(?P<snippet>.*?)</a>',
+        flags=re.IGNORECASE | re.DOTALL,
+    )
 
     def __init__(self) -> None:
-        """初始化搜索结果收集状态。"""
+        """保留 HTMLParser 基类初始化, 便于未来扩展。"""
 
         super().__init__(convert_charrefs=True)
-        self._hits: list[WebSearchHit] = []
-        self._current_title_parts: list[str] = []
-        self._current_snippet_parts: list[str] = []
-        self._current_href: str = ""
-        self._capture_title = False
-        self._capture_snippet = False
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        """识别结果标题与摘要标签。"""
+    def results(self, *, html: str, limit: int) -> list[WebSearchHit]:
+        """直接从完整 HTML 里提取搜索结果。"""
 
-        normalized = str(tag or "").lower()
-        attr_map = {key: value or "" for key, value in attrs}
-        class_name = str(attr_map.get("class", "") or "")
-        if normalized == "a" and ("result__a" in class_name or "result-link" in class_name):
-            self._flush_pending_hit()
-            self._capture_title = True
-            self._current_href = _decode_search_result_url(str(attr_map.get("href", "") or ""))
-            return
-        if normalized in {"a", "div", "span"} and ("result__snippet" in class_name or "result-snippet" in class_name):
-            self._capture_snippet = True
-
-    def handle_endtag(self, tag: str) -> None:
-        """结束当前标题或摘要采集。"""
-
-        normalized = str(tag or "").lower()
-        if normalized == "a" and self._capture_title:
-            self._capture_title = False
-            return
-        if normalized in {"a", "div", "span"} and self._capture_snippet:
-            self._capture_snippet = False
-
-    def handle_data(self, data: str) -> None:
-        """收集标题和摘要文本。"""
-
-        text = str(data or "")
-        if not text.strip():
-            return
-        if self._capture_title:
-            self._current_title_parts.append(text)
-            return
-        if self._capture_snippet:
-            self._current_snippet_parts.append(text)
-
-    def results(self, *, limit: int) -> list[WebSearchHit]:
-        """返回最终抽取出的搜索结果。"""
-
-        self._flush_pending_hit()
-        return self._hits[: max(1, limit)]
-
-    def _flush_pending_hit(self) -> None:
-        """把当前正在组装的命中写入结果列表。"""
-
-        title = _normalize_visible_text(" ".join(self._current_title_parts))
-        snippet = _normalize_visible_text(" ".join(self._current_snippet_parts))
-        if title and self._current_href:
-            self._hits.append(WebSearchHit(title=title, url=self._current_href, snippet=snippet))
-        self._current_title_parts = []
-        self._current_snippet_parts = []
-        self._current_href = ""
+        hits: list[WebSearchHit] = []
+        for match in self._RESULT_BLOCK_RE.finditer(str(html or "")):
+            href = _decode_search_result_url(str(match.group("href") or ""))
+            title = _strip_html_tags(str(match.group("title") or ""))
+            snippet_match = self._SNIPPET_RE.search(str(match.group("tail") or ""))
+            snippet = _strip_html_tags(str(snippet_match.group("snippet") or "")) if snippet_match else ""
+            if not href or not title:
+                continue
+            hits.append(WebSearchHit(title=title, url=href, snippet=snippet))
+            if len(hits) >= max(1, limit):
+                break
+        return hits
 
 
 # endregion
@@ -399,45 +371,26 @@ class BuiltinWebToolSurface:
 
     @staticmethod
     def _default_fetch_document(*, url: str, timeout: int, max_chars: int) -> FetchedWebDocument:
-        """使用内置 provider 抓取网页。"""
+        """使用内置 provider 抓取网页。
+
+        优先直接抓原站；遇到常见 403 / 401 / 406 之类的站点限制时，
+        回退到 `r.jina.ai/http://...` 文本镜像，尽量保证模型仍能拿到正文。
+        """
 
         _validate_http_url(url)
-        request = Request(
-            url,
-            headers={
-                "User-Agent": "AcaBot/0.1 (+https://local.runtime)",
-                "Accept": "text/html, text/plain, application/json;q=0.9, */*;q=0.5",
-            },
-            method="GET",
-        )
         max_bytes = max(4096, min(max_chars * 4, 400_000))
-        with urlopen(request, timeout=timeout) as response:
-            raw = response.read(max_bytes + 1)
-            truncated = len(raw) > max_bytes
-            if truncated:
-                raw = raw[:max_bytes]
-            content_type = str(response.headers.get("Content-Type", "") or "")
-            charset = _charset_from_content_type(content_type) or "utf-8"
-            decoded = raw.decode(charset, errors="replace")
-            if "html" in content_type.lower() or "<html" in decoded.lower():
-                extractor = _VisibleHtmlTextExtractor()
-                extractor.feed(decoded)
-                title = extractor.title()
-                text = extractor.text()
-            else:
-                title = ""
-                text = _normalize_visible_text(decoded)
-            if len(text) > max_chars:
-                text = text[:max_chars].rstrip()
-                truncated = True
-            return FetchedWebDocument(
+        try:
+            return _fetch_document_once(url=url, timeout=timeout, max_chars=max_chars, max_bytes=max_bytes)
+        except HTTPError as exc:
+            if int(getattr(exc, "code", 0) or 0) not in {401, 403, 406, 429}:
+                raise
+            fallback_url = _jina_reader_url(url)
+            return _fetch_document_once(
                 url=url,
-                final_url=str(getattr(response, "url", "") or url),
-                status_code=int(getattr(response, "status", 200) or 200),
-                content_type=content_type,
-                title=title,
-                text=text,
-                truncated=truncated,
+                request_url=fallback_url,
+                timeout=timeout,
+                max_chars=max_chars,
+                max_bytes=max_bytes,
             )
 
     @staticmethod
@@ -448,8 +401,9 @@ class BuiltinWebToolSurface:
         request = Request(
             url,
             headers={
-                "User-Agent": "AcaBot/0.1 (+https://local.runtime)",
-                "Accept": "text/html, */*;q=0.5",
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8",
             },
             method="GET",
         )
@@ -458,8 +412,7 @@ class BuiltinWebToolSurface:
             content_type = str(response.headers.get("Content-Type", "") or "")
         html = raw.decode(_charset_from_content_type(content_type) or "utf-8", errors="replace")
         parser = _DuckDuckGoHtmlParser()
-        parser.feed(html)
-        return parser.results(limit=limit)
+        return parser.results(html=html, limit=limit)
 
 
 # endregion
@@ -473,6 +426,76 @@ def _charset_from_content_type(content_type: str) -> str:
     if not match:
         return ""
     return str(match.group(1) or "").strip()
+
+
+def _fetch_document_once(
+    *,
+    url: str,
+    timeout: int,
+    max_chars: int,
+    max_bytes: int,
+    request_url: str | None = None,
+) -> FetchedWebDocument:
+    """执行一次真实网页抓取。"""
+
+    resolved_request_url = str(request_url or url)
+    request = Request(
+        resolved_request_url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36",
+            "Accept": "text/html, text/plain, application/json;q=0.9, */*;q=0.5",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        },
+        method="GET",
+    )
+    with urlopen(request, timeout=timeout) as response:
+        raw = response.read(max_bytes + 1)
+        truncated = len(raw) > max_bytes
+        if truncated:
+            raw = raw[:max_bytes]
+        content_type = str(response.headers.get("Content-Type", "") or "")
+        charset = _charset_from_content_type(content_type) or "utf-8"
+        decoded = raw.decode(charset, errors="replace")
+        if "html" in content_type.lower() or "<html" in decoded.lower():
+            extractor = _VisibleHtmlTextExtractor()
+            extractor.feed(decoded)
+            title = extractor.title()
+            text = extractor.text()
+        else:
+            title = _extract_title_from_plaintext(decoded)
+            text = _normalize_visible_text(decoded)
+        if len(text) > max_chars:
+            text = text[:max_chars].rstrip()
+            truncated = True
+        final_url = str(getattr(response, "url", "") or resolved_request_url)
+        return FetchedWebDocument(
+            url=url,
+            final_url=final_url,
+            status_code=int(getattr(response, "status", 200) or 200),
+            content_type=content_type,
+            title=title,
+            text=text,
+            truncated=truncated,
+        )
+
+
+def _extract_title_from_plaintext(text: str) -> str:
+    """从纯文本抓取结果里尝试抽标题。"""
+
+    for line in str(text or "").splitlines():
+        normalized = line.strip()
+        if not normalized:
+            continue
+        if normalized.lower().startswith("title:"):
+            return normalized.split(":", 1)[1].strip()
+        return normalized[:160]
+    return ""
+
+
+def _jina_reader_url(url: str) -> str:
+    """把原始 URL 转成 Jina Reader 文本镜像地址。"""
+
+    return f"https://r.jina.ai/http://{url}"
 
 
 def _validate_http_url(url: str) -> None:
@@ -495,6 +518,12 @@ def _normalize_visible_text(text: str) -> str:
     normalized = re.sub(r"\n{3,}", "\n\n", normalized)
     lines = [line.strip() for line in normalized.split("\n")]
     return "\n".join(line for line in lines if line).strip()
+
+
+def _strip_html_tags(html_fragment: str) -> str:
+    """把小片段 HTML 收成纯文本。"""
+
+    return _normalize_visible_text(re.sub(r"<.*?>", "", str(html_fragment or ""), flags=re.DOTALL))
 
 
 def _decode_search_result_url(raw_url: str) -> str:
