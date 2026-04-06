@@ -79,6 +79,12 @@ Therefore `refresh_extensions(kind="skills")` must do two things:
 1. reload the skill catalog from disk
 2. realign the current session-owned frontstage agent's `visible_skills` with the refreshed skill catalog
 
+For this round, “realign” means **rewrite `visible_skills` to the exact currently discovered skill name set for the active session policy**, not append-only mutation. That keeps disk state consistent in both directions:
+
+- newly installed skills are added
+- removed skills are dropped
+- later session bundle validation does not fail on stale references
+
 Target behavior:
 
 - admin host run installs a skill under the configured catalog root
@@ -91,8 +97,11 @@ Target behavior:
 
 For QQ group sessions, the default execution policy must become:
 
-- `owner` / `admin` → host backend
-- other members → docker backend
+- `owner` → host backend
+- `admin` → host backend
+- `member` → docker backend
+
+`sender_roles` matching here relies on the existing event model, where a run carries **one canonical sender role** (`owner` / `admin` / `member`) and `EventFacts.sender_roles` is a one-item list used only for matcher compatibility. This design does **not** assume a sender matches multiple roles at once.
 
 This belongs in session `computer.cases`, not in ad-hoc code branches.
 
@@ -107,10 +116,18 @@ The split must be applied in two places:
 
 Use surface-level `computer` domain cases keyed by `sender_roles`.
 
-For responding group surfaces (`message.mention`, `message.reply_to_bot`, and any other group message surface that should execute tools), define:
+For responding group surfaces, define explicit computer cases on the concrete keys already used by QQ group sessions:
+
+- `message.mention`
+- `message.reply_to_bot`
+
+Initial implementation only needs to cover the responding message surfaces above. Non-responding notice surfaces remain unchanged.
+
+For each of those responding surfaces:
 
 - default case for ordinary members: sandbox / docker
-- explicit case for `sender_roles: [owner, admin]`: host
+- explicit case for `sender_roles: [owner]`: host
+- explicit case for `sender_roles: [admin]`: host
 
 The computer payload should control:
 
@@ -201,7 +218,12 @@ The intent is that role-based execution policy is visible directly in `session.y
 
 When control plane creates a new `qq_group` session bundle, the generated `session.yaml` must include the same role-based `computer` defaults.
 
-This prevents newly created group sessions from silently missing the admin/member split.
+Concretely, the session creation path must seed those `computer` blocks when:
+
+- `template_id == "qq_group"`
+- the caller did not already provide explicit `surfaces`
+
+This prevents newly created group sessions from silently missing the admin/member split while still letting explicit caller-provided surfaces override the defaults.
 
 ## Testing Strategy
 
