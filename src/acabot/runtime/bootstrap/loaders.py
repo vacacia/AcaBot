@@ -158,13 +158,22 @@ def build_session_runtime(config: Config) -> SessionRuntime:
 
     runtime_conf = dict(config.get("runtime", {}) or {})
     fs_conf = dict(runtime_conf.get("filesystem", {}) or {})
+    backend_conf = dict(runtime_conf.get("backend", {}) or {})
     sessions_dir = resolve_filesystem_path(
         config,
         fs_conf,
         key="sessions_dir",
         default="sessions",
     )
-    return SessionRuntime(SessionConfigLoader(config_root=sessions_dir))
+    shared_admin_actor_ids = {
+        str(value)
+        for value in list(backend_conf.get("admin_actor_ids", []) or [])
+        if str(value)
+    }
+    return SessionRuntime(
+        SessionConfigLoader(config_root=sessions_dir),
+        shared_admin_actor_ids=shared_admin_actor_ids,
+    )
 
 
 __all__ = [

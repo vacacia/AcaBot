@@ -464,6 +464,7 @@ class RuntimeControlPlane:
             for value in list(admins.get("admin_actor_ids", []) or [])
             if str(value)
         }
+        self.app.router.session_runtime.set_shared_admin_actor_ids(self.app.backend_admin_actor_ids)
         return result
 
     async def list_skills(self) -> list[SkillSnapshot]:
@@ -827,6 +828,7 @@ class RuntimeControlPlane:
         self.config_control_plane.config.replace(data)
         self.config_control_plane.config.save()
         self.app.backend_admin_actor_ids = set(admin_actor_ids)
+        self.app.router.session_runtime.set_shared_admin_actor_ids(self.app.backend_admin_actor_ids)
         return self.config_control_plane.with_apply_result(
             {
                 "admin_actor_ids": list(admin_actor_ids),

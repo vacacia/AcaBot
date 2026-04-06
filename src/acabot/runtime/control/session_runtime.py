@@ -44,14 +44,26 @@ class SessionRuntime:
         loader (SessionConfigLoader): 读取 session config 的 loader.
     """
 
-    def __init__(self, loader: SessionConfigLoader) -> None:
+    def __init__(
+        self,
+        loader: SessionConfigLoader,
+        *,
+        shared_admin_actor_ids: set[str] | None = None,
+    ) -> None:
         """初始化运行时.
 
         Args:
             loader (SessionConfigLoader): 会话配置 loader.
+            shared_admin_actor_ids (set[str] | None): bot 配置里的共享管理员 actor 集合.
         """
 
         self.loader = loader
+        self._shared_admin_actor_ids = {str(value) for value in set(shared_admin_actor_ids or set()) if str(value)}
+
+    def set_shared_admin_actor_ids(self, actor_ids: set[str] | None) -> None:
+        """更新共享管理员 actor 集合，供热刷新后继续复用同一个运行时实例."""
+
+        self._shared_admin_actor_ids = {str(value) for value in set(actor_ids or set()) if str(value)}
 
     def build_facts(self, event: StandardEvent) -> EventFacts:
         """把平台事件标准化成 `EventFacts`.
@@ -65,17 +77,19 @@ class SessionRuntime:
 
         sender_roles = [event.sender_role] if event.sender_role else []
         attachment_kinds = sorted({attachment.type for attachment in event.attachments if attachment.type})
+        actor_id = self.build_actor_id(event)
         return EventFacts(
             platform=event.platform,
             event_kind=event.event_type,
             scene=self._derive_scene(event),
-            actor_id=self.build_actor_id(event),
+            actor_id=actor_id,
             channel_scope=self.build_channel_scope(event),
             thread_id=self.build_thread_id(event),
             targets_self=event.targets_self,
             mentions_self=event.mentions_self,
             reply_targets_self=event.reply_targets_self,
             mentioned_everyone=event.mentioned_everyone,
+            is_bot_admin=actor_id in self._shared_admin_actor_ids,
             sender_roles=sender_roles,
             attachments_present=bool(event.attachments),
             attachment_kinds=attachment_kinds,

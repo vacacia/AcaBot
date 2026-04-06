@@ -810,6 +810,9 @@ runtime:
     )
 
     assert components.app.backend_admin_actor_ids == {"qq:private:1"}
+    assert components.app.router.session_runtime.build_facts(
+        _session_event(message_type="private", user_id="1")
+    ).is_bot_admin is True
 
     config_path.write_text(
         f"""
@@ -833,6 +836,12 @@ runtime:
 
     assert "session_count" in result
     assert components.app.backend_admin_actor_ids == {"qq:private:2"}
+    assert components.app.router.session_runtime.build_facts(
+        _session_event(message_type="private", user_id="1")
+    ).is_bot_admin is False
+    assert components.app.router.session_runtime.build_facts(
+        _session_event(message_type="private", user_id="2")
+    ).is_bot_admin is True
 
 
 async def test_runtime_reload_rebinds_agent_loader_from_filesystem(tmp_path: Path) -> None:
@@ -3040,6 +3049,80 @@ async def test_runtime_http_api_server_health_check_prefixes_provider_model_for_
         assert result["data"]["metadata"]["model_used"] == "anthropic/glm-4.7"
     finally:
         await server.stop()
+
+
+async def test_put_admins_updates_session_runtime_without_restart(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, base_dir=tmp_path, write_session=False)
+    group_dir = tmp_path / "sessions" / "qq" / "group" / "123"
+    group_dir.mkdir(parents=True, exist_ok=True)
+    (group_dir / "session.yaml").write_text(
+        """
+session:
+  id: qq:group:123
+  template: qq_group
+frontstage:
+  agent_id: aca
+selectors:
+  bot_admin:
+    is_bot_admin: true
+surfaces:
+  message.mention:
+    admission:
+      default:
+        mode: respond
+    computer:
+      default:
+        backend: docker
+        allow_exec: true
+        allow_sessions: true
+      cases:
+        - case_id: bot_admin_host
+          when_ref: bot_admin
+          use:
+            backend: host
+            allow_exec: true
+            allow_sessions: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (group_dir / "agent.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "agent_id": "aca",
+                "prompt_ref": "prompt/default",
+                "visible_tools": [],
+                "visible_skills": [],
+                "visible_subagents": [],
+            },
+            sort_keys=False,
+            allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+    (prompts_dir / "default.md").write_text("hello", encoding="utf-8")
+
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+
+    before_facts = components.app.router.session_runtime.build_facts(
+        _session_event(message_type="group", user_id="10001", group_id="123", mentions_self=True, targets_self=True)
+    )
+    assert before_facts.is_bot_admin is False
+
+    result = await components.control_plane.put_admins(payload={"admin_actor_ids": ["qq:user:10001"]})
+
+    after_facts = components.app.router.session_runtime.build_facts(
+        _session_event(message_type="group", user_id="10001", group_id="123", mentions_self=True, targets_self=True)
+    )
+    assert result["admin_actor_ids"] == ["qq:user:10001"]
+    assert after_facts.is_bot_admin is True
 
 
 async def test_runtime_http_api_server_serves_product_shaped_bot_settings_and_admin_actor_ids_apply_status(

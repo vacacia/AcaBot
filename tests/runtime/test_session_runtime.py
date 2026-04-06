@@ -97,6 +97,56 @@ def _group_mention_event(*, sender_role: str = "admin") -> StandardEvent:
     )
 
 
+def _write_bot_admin_routed_group_session(tmp_path: Path) -> None:
+    """写入一份按 bot 管理员身份切换 computer backend 的群聊会话."""
+
+    bundle_dir = tmp_path / "sessions/qq/group/123"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "session.yaml").write_text(
+        """
+session:
+  id: qq:group:123
+  template: qq_group
+frontstage:
+  agent_id: aca.qq.group.default
+selectors:
+  bot_admin:
+    is_bot_admin: true
+surfaces:
+  message.mention:
+    admission:
+      default:
+        mode: respond
+    computer:
+      default:
+        backend: docker
+        allow_exec: true
+        allow_sessions: true
+      cases:
+        - case_id: bot_admin_host
+          when_ref: bot_admin
+          use:
+            backend: host
+            allow_exec: true
+            allow_sessions: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (bundle_dir / "agent.yaml").write_text(
+        """
+agent_id: aca.qq.group.default
+prompt_ref: prompt/aca/default
+visible_tools:
+  - read
+visible_skills:
+  - frontend-design
+visible_subagents:
+  - excel-worker
+""".strip(),
+        encoding="utf-8",
+    )
+
+
 def test_session_loader_reads_surface_matrix_and_selectors(tmp_path: Path) -> None:
     _write_session(tmp_path)
     loader = SessionConfigLoader(config_root=tmp_path / "sessions")
@@ -185,6 +235,35 @@ def test_session_runtime_builds_facts_and_resolves_surface(tmp_path: Path) -> No
     assert facts.channel_scope == "qq:group:123"
     assert facts.sender_roles == ["admin"]
     assert surface.surface_id == "message.mention"
+
+
+def test_session_runtime_marks_bot_admin_and_routes_host_without_sender_role_dependency(tmp_path: Path) -> None:
+    _write_bot_admin_routed_group_session(tmp_path)
+    runtime = SessionRuntime(
+        SessionConfigLoader(config_root=tmp_path / "sessions"),
+        shared_admin_actor_ids={"qq:user:10001"},
+    )
+
+    admin_facts = runtime.build_facts(_group_mention_event(sender_role="member"))
+    admin_session = runtime.load_session(admin_facts)
+    admin_surface = runtime.resolve_surface(admin_facts, admin_session)
+    admin_computer = runtime.resolve_computer(admin_facts, admin_session, admin_surface)
+
+    assert admin_facts.is_bot_admin is True
+    assert admin_computer.backend == "host"
+    assert admin_computer.source_case_id == "bot_admin_host"
+
+    non_admin_runtime = SessionRuntime(
+        SessionConfigLoader(config_root=tmp_path / "sessions"),
+        shared_admin_actor_ids=set(),
+    )
+    non_admin_facts = non_admin_runtime.build_facts(_group_mention_event(sender_role="admin"))
+    non_admin_session = non_admin_runtime.load_session(non_admin_facts)
+    non_admin_surface = non_admin_runtime.resolve_surface(non_admin_facts, non_admin_session)
+    non_admin_computer = non_admin_runtime.resolve_computer(non_admin_facts, non_admin_session, non_admin_surface)
+
+    assert non_admin_facts.is_bot_admin is False
+    assert non_admin_computer.backend == "docker"
 
 
 def test_static_session_loader_inline_default_extraction_only_keeps_tags() -> None:
