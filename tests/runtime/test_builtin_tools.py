@@ -218,6 +218,7 @@ def _tool_execution_context(
     user_id: str = "10001",
     group_id: str | None = None,
     metadata: dict[str, object] | None = None,
+    world_view=None,
 ) -> ToolExecutionContext:
     """构造一份最小可用的 ToolExecutionContext.
 
@@ -262,7 +263,7 @@ def _tool_execution_context(
             enabled_tools=list(enabled_tools),
             computer_policy=ComputerPolicy(),
         ),
-        world_view=SimpleNamespace(name="world-view"),
+        world_view=world_view if world_view is not None else SimpleNamespace(name="world-view"),
         metadata=base_metadata,
     )
 
@@ -352,6 +353,7 @@ async def test_build_runtime_components_registers_core_tools_as_builtin_sources(
     assert sources["scheduler"] == "builtin:scheduler"
     assert sources["delegate_subagent"] == "builtin:subagents"
     assert sources["refresh_extensions"] == BUILTIN_EXTENSIONS_TOOL_SOURCE
+    assert sources["install_skill"] == BUILTIN_EXTENSIONS_TOOL_SOURCE
     assert sources["message"] == BUILTIN_MESSAGE_TOOL_SOURCE
     assert "sticky_note_put" not in sources
     assert "sticky_note_get" not in sources
@@ -454,6 +456,76 @@ async def test_builtin_extensions_surface_rejects_unsupported_kind() -> None:
                 agent_id="session:qq:group:123:frontstage",
                 message_type="group",
                 group_id="123",
+            ),
+        )
+
+
+async def test_builtin_extensions_surface_installs_skill_from_workspace_path(tmp_path: Path) -> None:
+    """install_skill 应把 `/workspace/...` 目录委托给共享安装服务。"""
+
+    source_dir = tmp_path / "workspace" / "skills" / "renderkit"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    source_dir.joinpath("SKILL.md").write_text(
+        "---\nname: renderkit\ndescription: demo\n---\n\n# renderkit\n",
+        encoding="utf-8",
+    )
+
+    calls: list[dict[str, object]] = []
+
+    async def _install_skill_directory(**kwargs) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        return {"installed_skill": {"skill_name": "renderkit"}, "visible_skills": ["renderkit"]}
+
+    surface = BuiltinExtensionsToolSurface(
+        refresh_service_getter=lambda: SimpleNamespace(install_skill_directory=_install_skill_directory),
+        admin_actor_ids_getter=lambda: {"qq:user:10001"},
+    )
+
+    world_view = SimpleNamespace(
+        resolve=lambda path: SimpleNamespace(world_path=path, host_path=str(source_dir)),
+    )
+    result = await surface._handle_install_skill(
+        {"source_path": "/workspace/skills/renderkit"},
+        _tool_execution_context(
+            enabled_tools=["install_skill"],
+            actor_id="qq:user:10001",
+            agent_id="session:qq:group:123:frontstage",
+            message_type="group",
+            group_id="123",
+            world_view=world_view,
+        ),
+    )
+
+    assert calls == [
+        {
+            "source_dir_path": str(source_dir),
+            "target_name": None,
+            "installed_via": "builtin-install-skill",
+            "origin_label": "/workspace/skills/renderkit",
+        }
+    ]
+    assert result.raw["installed_skill"]["skill_name"] == "renderkit"
+    assert result.raw["session_id"] == "qq:group:123"
+
+
+async def test_builtin_extensions_surface_rejects_non_workspace_install_path() -> None:
+    """install_skill 只接受 `/workspace/...` 作为来源。"""
+
+    surface = BuiltinExtensionsToolSurface(
+        refresh_service_getter=lambda: SimpleNamespace(install_skill_directory=lambda **_: None),
+        admin_actor_ids_getter=lambda: {"qq:user:10001"},
+    )
+
+    with pytest.raises(ValueError, match="/workspace"):
+        await surface._handle_install_skill(
+            {"source_path": "/skills/renderkit"},
+            _tool_execution_context(
+                enabled_tools=["install_skill"],
+                actor_id="qq:user:10001",
+                agent_id="session:qq:group:123:frontstage",
+                message_type="group",
+                group_id="123",
+                world_view=SimpleNamespace(resolve=lambda path: SimpleNamespace(world_path=path, host_path=path)),
             ),
         )
 
@@ -834,9 +906,9 @@ def test_message_tool_contract_describes_workspace_relative_local_file_rule() ->
     registration = next(item for item in broker.list_registered_tools() if item["name"] == "message")
     images_description = registration["parameters"]["properties"]["images"]["description"]
 
-    assert "relative workspace paths" in images_description
-    assert "never `/workspace/foo.png`" in images_description
-    assert "copy or move it into the workspace first" in images_description
+    assert "相对路径" in images_description
+    assert "/workspace/xxx" in images_description
+    assert "挪回来" in images_description or "workspace" in images_description
 
 
 async def test_message_tool_rewrites_relative_local_file_paths_into_workspace_world_paths() -> None:

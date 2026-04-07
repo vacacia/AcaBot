@@ -1,6 +1,9 @@
+import json
 from dataclasses import dataclass, field
+import io
 from pathlib import Path
 from typing import Any
+import zipfile
 
 import pytest
 import yaml
@@ -147,6 +150,28 @@ def _write_skill_package(root_dir: Path, relative_dir: str, *, name: str, descri
     )
 
 
+def _build_flat_skill_zip(*, name: str, description: str) -> bytes:
+    """构造一个文件直接落在 zip 根目录的 skill 压缩包。"""
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            "SKILL.md",
+            "\n".join(
+                [
+                    "---",
+                    f"name: {name}",
+                    f"description: {description}",
+                    "---",
+                    "",
+                    f"# {name}",
+                    "",
+                ]
+            ),
+        )
+    return buffer.getvalue()
+
+
 async def test_extension_refresh_rejects_when_project_skill_root_is_not_unique(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     _write_config(
@@ -171,6 +196,81 @@ async def test_extension_refresh_rejects_when_project_skill_root_is_not_unique(t
 
     with pytest.raises(ValueError, match="unique project-scope skill root"):
         await service.refresh_skills(session_id="qq:group:123")
+
+
+async def test_extension_refresh_install_skill_zip_keeps_distinct_flat_archives(tmp_path: Path) -> None:
+    """多个扁平 zip 安装后, 不应该因为临时目录名相同而互相覆盖。"""
+
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, base_dir=tmp_path)
+    _write_prompt(tmp_path)
+
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    service = ExtensionRefreshService(
+        config_control_plane=components.config_control_plane,
+        skill_catalog=components.skill_catalog,
+    )
+
+    for filename in ("alpha.zip", "beta.zip", "gamma.zip"):
+        await service.install_skill_zip(
+            filename=filename,
+            content=_build_flat_skill_zip(
+                name=Path(filename).stem,
+                description=f"{filename} description",
+            ),
+        )
+
+    project_root = tmp_path / "extensions" / "skills"
+    assert sorted(item.name for item in project_root.iterdir() if item.is_dir()) == ["alpha", "beta", "gamma"]
+    assert [item.skill_name for item in components.skill_catalog.list_all()] == ["alpha", "beta", "gamma"]
+
+
+async def test_extension_refresh_install_skill_directory_copies_workspace_skill_into_project_catalog(tmp_path: Path) -> None:
+    """install_skill_directory 应把工作区里的 skill 目录复制到正式 catalog。"""
+
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, base_dir=tmp_path)
+    _write_prompt(tmp_path)
+
+    workspace_skill_dir = tmp_path / "thread-workspace" / "skills" / "renderkit"
+    _write_skill_package(
+        workspace_skill_dir.parent,
+        "renderkit",
+        name="renderkit",
+        description="render structured pages",
+    )
+
+    config = Config.from_file(str(config_path))
+    components = build_runtime_components(
+        config,
+        gateway=FakeGateway(),
+        agent=FakeAgent(FakeAgentResponse(text="ok")),
+    )
+    service = ExtensionRefreshService(
+        config_control_plane=components.config_control_plane,
+        skill_catalog=components.skill_catalog,
+    )
+
+    result = await service.install_skill_directory(
+        source_dir_path=str(workspace_skill_dir),
+        installed_via="builtin-install-skill",
+        origin_label="/workspace/skills/renderkit",
+    )
+
+    project_skill_dir = tmp_path / "extensions" / "skills" / "renderkit"
+    assert project_skill_dir.joinpath("SKILL.md").is_file()
+    origin_payload = json.loads(project_skill_dir.joinpath(".acabot-origin.json").read_text(encoding="utf-8"))
+    assert origin_payload["installed_via"] == "builtin-install-skill"
+    assert origin_payload["source_dir_path"] == str(workspace_skill_dir)
+    assert origin_payload["origin_label"] == "/workspace/skills/renderkit"
+    assert isinstance(origin_payload["installed_at"], int)
+    assert result["installed_skill"]["skill_name"] == "renderkit"
+    assert [item.skill_name for item in components.skill_catalog.list_all()] == ["renderkit"]
 
 
 async def test_extension_refresh_rewrites_visible_skills_and_recovers_stale_bundle(tmp_path: Path) -> None:

@@ -286,6 +286,39 @@ def test_build_skill_catalog_visible_skills_prefers_project_scope_for_duplicate_
     assert "Global Shared Skill" not in shared.raw_markdown
 
 
+def test_build_skill_catalog_honors_runtime_filesystem_base_dir_for_default_skill_root(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "project"
+    runtime_config_dir = project_dir / "runtime_config"
+
+    _write_skill_package(
+        runtime_config_dir / "extensions" / "skills",
+        "renderkit",
+        name="renderkit",
+        description="来自 runtime_config 的 skill。",
+        body="# RenderKit",
+    )
+
+    config = Config(
+        {
+            "runtime": {
+                "filesystem": {
+                    "base_dir": "runtime_config",
+                }
+            }
+        },
+        path=str(project_dir / "config.yaml"),
+    )
+
+    catalog = build_skill_catalog(config)
+
+    assert [item.skill_name for item in catalog.list_all()] == ["renderkit"]
+    assert catalog.list_all()[0].host_skill_root_path == str(
+        (runtime_config_dir / "extensions" / "skills" / "renderkit").resolve()
+    )
+
+
 def test_build_skill_catalog_infers_scope_from_skill_catalog_dirs_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

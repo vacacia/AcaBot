@@ -385,7 +385,7 @@ async function selectSession(sessionId: string): Promise<void> {
   // SWR: Try to restore everything from cache first for instant feedback
   const cachedDetail = peekCachedGet<SessionDetail>(sessionPath)
   if (cachedDetail) {
-    const agentId = `session:${sessionId}`
+    const agentId = cachedDetail.agent.agent_id
     selectedSessionId.value = sessionId
     selectedDetail.value = cachedDetail
     sessionDraft.value = normalizeSessionDraft(cachedDetail)
@@ -402,19 +402,20 @@ async function selectSession(sessionId: string): Promise<void> {
     detailLoading.value = false
   }
 
-  // Only show the heavy blocking spinner if we have absolutely nothing in cache
+  // 没有缓存时直接清空旧详情, 避免用户在异步切换 session 期间编辑到旧草稿后又被新请求覆盖。
   if (!cachedDetail) {
+    selectedDetail.value = null
     detailLoading.value = true
   }
   
   errorMessage.value = ""
   saveMessage.value = ""
   try {
-    // Parallelize detailed data fetching
-    const [payload, replyPresetIds, imageCaptionPresetIds] = await Promise.all([
-      apiGet<SessionDetail>(sessionPath),
-      loadBindingPresetIdsForAgent(sessionId, ""),
-      loadBindingPresetIdsForAgent(sessionId, ":image_caption"),
+    const payload = await apiGet<SessionDetail>(sessionPath)
+    const agentId = payload.agent.agent_id
+    const [replyPresetIds, imageCaptionPresetIds] = await Promise.all([
+      loadBindingPresetIds(agentId, ""),
+      loadBindingPresetIds(agentId, ":image_caption"),
     ])
 
     selectedSessionId.value = sessionId
@@ -429,16 +430,6 @@ async function selectSession(sessionId: string): Promise<void> {
   } finally {
     detailLoading.value = false
   }
-}
-
-// Optimized helper that derives target IDs from session bundle indirectly or predicts them
-// Note: In SessionsView.vue, the binding ID depends on the internal agent_id.
-// Since we are parallelizing, we might need to know the agent_id beforehand or fetch it with session detail.
-// BUT, usually AcaBot's agent_id for a session is predictable: "session:<session_id>" -> "agent:session:<session_id>"
-// Let's check how loadBindingPresetIds originally worked.
-async function loadBindingPresetIdsForAgent(sessionId: string, suffix: string): Promise<string[]> {
-  const agentId = `session:${sessionId}` // This matches current AcaBot convention for session-owned agents
-  return await loadBindingPresetIds(agentId, suffix)
 }
 
 async function createSession(): Promise<void> {

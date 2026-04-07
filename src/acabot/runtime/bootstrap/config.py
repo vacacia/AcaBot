@@ -92,7 +92,9 @@ def resolve_skill_catalog_dirs(
 
     raw_values = fs_conf.get("skill_catalog_dirs")
     items = _normalize_catalog_dir_values(raw_values, defaults=defaults)
-    project_root = config.base_dir()
+    project_root = Path(str(fs_conf.get("base_dir", ".") or "."))
+    if not project_root.is_absolute():
+        project_root = config.resolve_path(project_root)
 
     resolved: list[SkillDiscoveryRoot] = []
     seen: set[tuple[str, str]] = set()
@@ -127,7 +129,9 @@ def resolve_subagent_catalog_dirs(
 
     raw_values = fs_conf.get("subagent_catalog_dirs")
     items = _normalize_catalog_dir_values(raw_values, defaults=defaults)
-    project_root = config.base_dir()
+    project_root = Path(str(fs_conf.get("base_dir", ".") or "."))
+    if not project_root.is_absolute():
+        project_root = config.resolve_path(project_root)
 
     resolved: list[SubagentDiscoveryRoot] = []
     seen: set[tuple[str, str]] = set()

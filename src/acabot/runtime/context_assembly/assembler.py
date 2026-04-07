@@ -48,6 +48,7 @@ class ContextAssembler:
     SYSTEM_PROMPT_PRIORITY = {
         "base_prompt": 1000,
         "workspace_reminder": 950,
+        "run_persistence_reminder": 945,
         "admin_host_maintenance_reminder": 940,
         "tool_behavior_reminder": 925,
         "skill_reminder": 900,
@@ -109,6 +110,7 @@ class ContextAssembler:
             )
         ]
         contributions.extend(self._build_workspace_reminder_contribution())
+        contributions.extend(self._build_run_persistence_reminder_contribution())
         contributions.extend(self._build_admin_host_maintenance_contribution(tool_runtime))
         contributions.extend(self._build_tool_behavior_contribution())
         contributions.extend(self._build_tool_summary_contributions(tool_runtime))
@@ -133,6 +135,19 @@ class ContextAssembler:
                 priority=self.SYSTEM_PROMPT_PRIORITY["workspace_reminder"],
                 role="system",
                 content=(_PROMPT_DIR / "workspace_reminder.md").read_text(encoding="utf-8").strip(),
+            )
+        ]
+
+    def _build_run_persistence_reminder_contribution(self) -> list[ContextContribution]:
+        """返回稳定注入的 run 持久化提醒。"""
+
+        return [
+            ContextContribution(
+                source_kind="run_persistence_reminder",
+                target_slot="system_prompt",
+                priority=self.SYSTEM_PROMPT_PRIORITY["run_persistence_reminder"],
+                role="system",
+                content=(_PROMPT_DIR / "run_persistence_reminder.md").read_text(encoding="utf-8").strip(),
             )
         ]
 

@@ -140,10 +140,10 @@ def test_context_assembler_orders_system_prompt_and_message_slots() -> None:
 
     assembled = assembler.assemble(ctx, base_prompt="base", tool_runtime=ToolRuntime())
 
-    assert assembled.system_prompt == (
-        "base\n\n所有工作都在 /workspace 中完成。\n\n"
-        "工具选择约定：普通纯文本回复可以直接正常回答；但只要你需要把图片发给用户，想在一条消息里附带 @ 或引用，或想把回答内容用 Markdown / LaTeX 渲染后再发送，就选择 message 工具。在调用工具前，先用一句简短的话说明你接下来要做什么。如果工具调用失败、返回异常，或还没有完成任务，不要直接结束；先简短说明发生了什么，再检查原因并继续处理。"
-    )
+    assert assembled.system_prompt.startswith("base\n\n")
+    assert '<system-reminder name="workspace_restrictions">' in assembled.system_prompt
+    assert '<system-reminder name="run_persistence">' in assembled.system_prompt
+    assert '<system-reminder name="tool_behavior">' in assembled.system_prompt
     assert [item["content"] for item in assembled.messages] == ["self", "retrieved", "hello"]
 
 
@@ -160,6 +160,22 @@ def test_context_assembler_keeps_model_content_shape() -> None:
     assembled = assembler.assemble(ctx, base_prompt="base", tool_runtime=ToolRuntime())
 
     assert assembled.messages[-1]["content"] == multimodal
+
+
+def test_context_assembler_includes_run_persistence_reminder_in_system_prompt() -> None:
+    """system prompt 应明确告诉模型 run 是一次性的。"""
+
+    assembler = ContextAssembler()
+    ctx = _assembler_ctx(
+        retrieval_plan=RetrievalPlan(retained_history=[]),
+        message_projection=MessageProjection(history_text="hello", model_content="hello"),
+    )
+
+    assembled = assembler.assemble(ctx, base_prompt="base", tool_runtime=ToolRuntime())
+
+    assert '<system-reminder name="run_persistence">' in assembled.system_prompt
+    assert "snapshot" in assembled.system_prompt
+    assert "`/workspace`" in assembled.system_prompt
 
 
 def test_context_assembler_includes_skill_and_subagent_summaries_in_system_prompt() -> None:
@@ -211,6 +227,7 @@ def test_context_assembler_includes_admin_host_maintenance_reminder_for_frontsta
     tool_runtime = broker.build_tool_runtime(ctx)
     assembled = assembler.assemble(ctx, base_prompt="base", tool_runtime=tool_runtime)
 
+    assert '<system-reminder name="admin_host_maintenance">' in assembled.system_prompt
     assert "/host/extensions/skills" in assembled.system_prompt
     assert "/host/sessions/qq/group/123/agent.yaml" in assembled.system_prompt
     assert "mirrored runtime view" in assembled.system_prompt
@@ -240,6 +257,7 @@ def test_context_assembler_skips_admin_host_maintenance_reminder_for_non_frontst
     tool_runtime = broker.build_tool_runtime(ctx)
     assembled = assembler.assemble(ctx, base_prompt="base", tool_runtime=tool_runtime)
 
+    assert '<system-reminder name="admin_host_maintenance">' not in assembled.system_prompt
     assert "/host/extensions/skills" not in assembled.system_prompt
     assert "mirrored runtime view" not in assembled.system_prompt
 

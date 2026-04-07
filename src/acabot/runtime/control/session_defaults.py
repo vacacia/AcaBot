@@ -65,6 +65,7 @@ def build_default_qq_group_visible_tools() -> list[str]:
         "sticky_note_read",
         "write",
         "refresh_extensions",
+        "install_skill",
         "web_fetch",
         "web_search",
     ]

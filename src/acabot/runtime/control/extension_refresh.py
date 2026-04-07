@@ -111,9 +111,6 @@ class ExtensionRefreshService:
 
         if self.skill_catalog is None:
             raise RuntimeError("skill catalog unavailable")
-        project_skill_root_path = self._unique_project_skill_root_path()
-        project_skill_root = Path(project_skill_root_path)
-        project_skill_root.mkdir(parents=True, exist_ok=True)
 
         with TemporaryDirectory(prefix="acabot-skill-upload-") as temp_dir:
             temp_root = Path(temp_dir)
@@ -124,21 +121,70 @@ class ExtensionRefreshService:
             )
             target_name = self._target_name_for_package_root(
                 package_root=package_root,
+                extracted_root_name="unzipped",
                 archive_filename=filename,
             )
-            parse_skill_package(
-                skill_name=target_name,
-                scope="project",
-                root_dir=package_root,
+            return await self._install_skill_directory(
+                source_dir=package_root,
+                target_name=target_name,
+                installed_via="webui-upload",
+                origin_payload={"archive_filename": str(filename or "")},
             )
-            target_dir = project_skill_root / target_name
-            if target_dir.exists():
-                shutil.rmtree(target_dir)
-            shutil.copytree(package_root, target_dir)
-            self._write_install_origin_file(
-                target_dir=target_dir,
-                archive_filename=filename,
-            )
+
+    async def install_skill_directory(
+        self,
+        *,
+        source_dir_path: str,
+        target_name: str | None = None,
+        installed_via: str = "builtin-install-skill",
+        origin_label: str = "",
+    ) -> dict[str, Any]:
+        """把一个已存在的 skill 目录安装到项目级 skill 根目录。"""
+
+        source_dir = Path(str(source_dir_path or "")).expanduser().resolve()
+        if not source_dir.exists() or not source_dir.is_dir():
+            raise FileNotFoundError(f"skill source directory not found: {source_dir}")
+        resolved_target_name = self._normalize_skill_target_name(
+            target_name or self._infer_skill_name_from_directory(source_dir)
+        )
+        return await self._install_skill_directory(
+            source_dir=source_dir,
+            target_name=resolved_target_name,
+            installed_via=installed_via,
+            origin_payload={"source_dir_path": str(source_dir), "origin_label": str(origin_label or "")},
+        )
+
+    async def _install_skill_directory(
+        self,
+        *,
+        source_dir: Path,
+        target_name: str,
+        installed_via: str,
+        origin_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """把一个 skill 目录复制到项目级 catalog 并刷新 runtime。"""
+
+        if self.skill_catalog is None:
+            raise RuntimeError("skill catalog unavailable")
+        project_skill_root_path = self._unique_project_skill_root_path()
+        project_skill_root = Path(project_skill_root_path)
+        project_skill_root.mkdir(parents=True, exist_ok=True)
+
+        parse_skill_package(
+            skill_name=target_name,
+            scope="project",
+            root_dir=source_dir,
+        )
+        target_dir = project_skill_root / target_name
+        replaced_existing = target_dir.exists()
+        if target_dir.exists():
+            shutil.rmtree(target_dir)
+        shutil.copytree(source_dir, target_dir)
+        self._write_install_origin_file(
+            target_dir=target_dir,
+            installed_via=installed_via,
+            extra=origin_payload,
+        )
 
         visible_skills = self._reload_catalog_and_collect_winners()
         session_updates = self._rewrite_all_session_agent_visible_skills(visible_skills=visible_skills)
@@ -160,6 +206,7 @@ class ExtensionRefreshService:
             "project_skill_root_path": project_skill_root_path,
             "visible_skills": visible_skills,
             "session_updates": session_updates,
+            "replaced_existing": replaced_existing,
         }
 
     def _reload_catalog_and_collect_winners(self) -> list[str]:
@@ -256,10 +303,22 @@ class ExtensionRefreshService:
             raise ValueError(f"zip symlink entry is not allowed: {info.filename}")
 
     @staticmethod
-    def _target_name_for_package_root(*, package_root: Path, archive_filename: str) -> str:
-        """为安装目录选一个稳定名字。"""
+    def _target_name_for_package_root(
+        *,
+        package_root: Path,
+        extracted_root_name: str,
+        archive_filename: str,
+    ) -> str:
+        """为安装目录选一个稳定名字。
 
-        raw_name = package_root.name or Path(str(archive_filename or "skill.zip")).stem
+        扁平 zip 会直接把 `SKILL.md` 解到临时根目录, 此时目录名固定是 `unzipped`,
+        不能再拿它当最终 skill 名, 否则每次上传都会覆盖上一次。
+        """
+
+        archive_stem = Path(str(archive_filename or "skill.zip")).stem
+        raw_name = package_root.name
+        if not raw_name or raw_name == str(extracted_root_name or ""):
+            raw_name = archive_stem
         normalized = str(raw_name).strip().replace(" ", "-")
         normalized = "".join(ch for ch in normalized if ch.isalnum() or ch in {"-", "_", "."})
         if not normalized:
@@ -267,15 +326,49 @@ class ExtensionRefreshService:
         return normalized
 
     @staticmethod
-    def _write_install_origin_file(*, target_dir: Path, archive_filename: str) -> None:
-        """记录上传安装来源, 便于后续追踪。"""
+    def _infer_skill_name_from_directory(source_dir: Path) -> str:
+        """优先从 `SKILL.md` frontmatter 推断 skill 名, 再回退目录名。"""
+
+        skill_md = source_dir / "SKILL.md"
+        raw_name = source_dir.name
+        if skill_md.is_file():
+            raw_markdown = skill_md.read_text(encoding="utf-8")
+            if raw_markdown.startswith("---\n"):
+                closing_index = raw_markdown.find("\n---\n", 4)
+                if closing_index >= 0:
+                    frontmatter = yaml.safe_load(raw_markdown[4:closing_index]) or {}
+                    if isinstance(frontmatter, dict):
+                        candidate = str(frontmatter.get("name", "") or "").strip()
+                        if candidate:
+                            raw_name = candidate
+        return ExtensionRefreshService._normalize_skill_target_name(raw_name)
+
+    @staticmethod
+    def _normalize_skill_target_name(raw_name: str) -> str:
+        """把外部输入的 skill 目标名收成稳定目录名。"""
+
+        normalized = str(raw_name or "").strip().replace(" ", "-")
+        normalized = "".join(ch for ch in normalized if ch.isalnum() or ch in {"-", "_", "."})
+        if not normalized:
+            raise ValueError("cannot infer skill directory name")
+        return normalized
+
+    @staticmethod
+    def _write_install_origin_file(
+        *,
+        target_dir: Path,
+        installed_via: str,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        """记录安装来源, 便于后续追踪。"""
 
         origin_path = target_dir / ".acabot-origin.json"
         origin_payload = {
-            "installed_via": "webui-upload",
-            "archive_filename": str(archive_filename or ""),
+            "installed_via": str(installed_via or "unknown"),
             "installed_at": int(time.time()),
         }
+        if extra:
+            origin_payload.update({key: value for key, value in dict(extra).items() if value not in (None, "")})
         origin_path.write_text(
             json.dumps(origin_payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
